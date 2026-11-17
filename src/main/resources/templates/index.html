@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>홈 - zeek_AD Dashboard</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header class="topbar">
+    <a th:href="@{/}" class="topbar-brand">zeek_AD Dashboard</a>
+    <nav class="topbar-nav">
+        <a th:href="@{/}">조사 큐</a>
+        <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin/users}">사용자 관리</a>
+        <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin/audit-logs}">감사 로그</a>
+    </nav>
+    <div class="topbar-user">
+        <span th:if="${currentUser != null}">
+            <strong th:text="${currentUser.displayName}"></strong>
+            (<span th:text="${currentUser.role.koreanLabel}"></span>)
+        </span>
+        <form th:action="@{/logout}" method="post">
+            <button type="submit" class="btn btn-secondary btn-sm">로그아웃</button>
+        </form>
+    </div>
+</header>
+
+<main class="container">
+    <div class="card">
+        <h1>대시보드 홈</h1>
+        <p class="muted">인증 및 보안 세션 검증이 완료되었습니다. 조사 큐 및 사건 상세 기능은 다음 단계에서 연결됩니다.</p>
+        <div th:if="${currentUser != null}">
+            <p>계정: <strong th:text="${currentUser.username}"></strong></p>
+            <p>역할: <span class="badge" th:text="${currentUser.role.name()}"></span></p>
+            <p>허용 캡처 패턴:
+                <span th:each="pat : ${currentUser.capturePatterns}" class="badge" th:text="${pat}"></span>
+            </p>
+        </div>
+    </div>
+</main>
+</body>
+</html>

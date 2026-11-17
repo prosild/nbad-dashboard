@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사용자 관리 - zeek_AD Dashboard</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header class="topbar">
+    <a th:href="@{/}" class="topbar-brand">zeek_AD Dashboard</a>
+    <nav class="topbar-nav">
+        <a th:href="@{/}">조사 큐</a>
+        <a th:href="@{/admin/users}">사용자 관리</a>
+        <a th:href="@{/admin/audit-logs}">감사 로그</a>
+    </nav>
+    <div class="topbar-user">
+        <form th:action="@{/logout}" method="post">
+            <button type="submit" class="btn btn-secondary btn-sm">로그아웃</button>
+        </form>
+    </div>
+</header>
+
+<main class="container">
+    <div th:if="${successMessage}" class="alert alert-success" th:text="${successMessage}"></div>
+    <div th:if="${errorMessage}" class="alert alert-danger" th:text="${errorMessage}"></div>
+
+    <div class="card">
+        <h2>신규 사용자 생성</h2>
+        <form th:action="@{/admin/users}" method="post" class="form-inline">
+            <div class="form-group">
+                <label for="new-username">아이디</label>
+                <input id="new-username" name="username" type="text" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="new-displayName">표시 이름</label>
+                <input id="new-displayName" name="displayName" type="text" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="new-password">초기 비밀번호</label>
+                <input id="new-password" name="password" type="password" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label for="new-role">역할</label>
+                <select id="new-role" name="role" class="form-control">
+                    <option th:each="r : ${roles}" th:value="${r.name()}" th:text="${r.name()} + ' (' + ${r.koreanLabel} + ')'"></option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="new-patterns">허용 캡처 패턴 (쉼표 구분)</label>
+                <input id="new-patterns" name="capturePatterns" type="text" class="form-control" placeholder="예: cic17-*, syn1-tue" required>
+            </div>
+            <button type="submit" class="btn btn-primary">사용자 생성</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>사용자 목록 및 권한 관리</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>아이디</th>
+                    <th>표시 이름 / 역할 / 허용 캡처 패턴 수정</th>
+                    <th>상태</th>
+                    <th>실패 / 잠금</th>
+                    <th>TOTP</th>
+                    <th>관리 작업</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="u : ${users}">
+                    <td th:text="${u.id}"></td>
+                    <td><strong th:text="${u.username}"></strong></td>
+                    <td>
+                        <form th:action="@{/admin/users/{id}/update(id=${u.id})}" method="post" class="form-inline">
+                            <input name="displayName" type="text" class="form-control" th:value="${u.displayName}" required>
+                            <select name="role" class="form-control">
+                                <option th:each="r : ${roles}"
+                                        th:value="${r.name()}"
+                                        th:selected="${r == u.role}"
+                                        th:text="${r.name()}"></option>
+                            </select>
+                            <input name="capturePatterns" type="text" class="form-control"
+                                   th:value="${#strings.listJoin(u.capturePatterns, ', ')}" required>
+                            <button type="submit" class="btn btn-primary btn-sm">저장</button>
+                        </form>
+                    </td>
+                    <td>
+                        <span th:if="${u.enabled}" class="badge badge-success">활성</span>
+                        <span th:unless="${u.enabled}" class="badge badge-danger">비활성</span>
+                    </td>
+                    <td>
+                        <span th:text="${u.failedAttempts}"></span>회
+                        <div th:if="${u.lockedUntil != null}" class="badge badge-danger" th:text="'잠금: ' + ${u.lockedUntil}"></div>
+                    </td>
+                    <td>
+                        <span th:if="${u.role.name() == 'ADMIN'}">
+                            <span th:if="${u.totpEnabled}" class="badge badge-success">활성</span>
+                            <span th:unless="${u.totpEnabled}" class="badge">미등록</span>
+                        </span>
+                        <span th:unless="${u.role.name() == 'ADMIN'}" class="muted">해당 없음</span>
+                    </td>
+                    <td>
+                        <div class="actions-stack">
+                            <form th:action="@{/admin/users/{id}/toggle-enabled(id=${u.id})}" method="post">
+                                <button type="submit" class="btn btn-secondary btn-sm"
+                                        th:text="${u.enabled} ? '비활성화' : '활성화'"></button>
+                            </form>
+                            <form th:action="@{/admin/users/{id}/unlock(id=${u.id})}" method="post">
+                                <button type="submit" class="btn btn-secondary btn-sm">잠금 해제</button>
+                            </form>
+                            <form th:if="${u.role.name() == 'ADMIN'}"
+                                  th:action="@{/admin/users/{id}/reset-totp(id=${u.id})}" method="post">
+                                <button type="submit" class="btn btn-danger btn-sm">TOTP 초기화</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+</body>
+</html>

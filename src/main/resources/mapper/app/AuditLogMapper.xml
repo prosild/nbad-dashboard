@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zeekad.dashboard.mapper.app.AuditLogMapper">
+
+    <resultMap id="auditLogMap" type="com.zeekad.dashboard.model.AuditLog">
+        <id property="id" column="id"/>
+        <result property="occurredAt" column="occurred_at"/>
+        <result property="actorUsername" column="actor_username"/>
+        <result property="actorRole" column="actor_role"/>
+        <result property="actionType" column="action_type"/>
+        <result property="targetCaptureId" column="target_capture_id"/>
+        <result property="targetJobId" column="target_job_id"/>
+        <result property="targetIncidentId" column="target_incident_id"/>
+        <result property="detailJson" column="detail_json"/>
+        <result property="clientIp" column="client_ip"/>
+    </resultMap>
+
+    <insert id="insertAuditLog" parameterType="com.zeekad.dashboard.model.AuditLog"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO audit_logs (
+            occurred_at, actor_username, actor_role, action_type,
+            target_capture_id, target_job_id, target_incident_id,
+            detail_json, client_ip
+        ) VALUES (
+            #{occurredAt}, #{actorUsername}, #{actorRole}, #{actionType},
+            #{targetCaptureId}, #{targetJobId}, #{targetIncidentId},
+            #{detailJson}, #{clientIp}
+        )
+    </insert>
+
+    <select id="findFiltered" resultMap="auditLogMap">
+        SELECT id, occurred_at, actor_username, actor_role, action_type,
+               target_capture_id, target_job_id, target_incident_id,
+               detail_json, client_ip
+        FROM audit_logs
+        <where>
+            <if test="actionType != null and actionType != ''">
+                AND action_type = #{actionType}
+            </if>
+            <if test="actorUsername != null and actorUsername != ''">
+                AND LOWER(actor_username) LIKE LOWER(CONCAT('%', #{actorUsername}, '%'))
+            </if>
+        </where>
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

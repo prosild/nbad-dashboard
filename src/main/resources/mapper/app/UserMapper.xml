@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zeekad.dashboard.mapper.app.UserMapper">
+
+    <resultMap id="dashboardUserMap" type="com.zeekad.dashboard.model.DashboardUser">
+        <id property="id" column="id"/>
+        <result property="username" column="username"/>
+        <result property="displayName" column="display_name"/>
+        <result property="passwordHash" column="password_hash"/>
+        <result property="role" column="role"/>
+        <result property="totpSecret" column="totp_secret"/>
+        <result property="totpEnabled" column="totp_enabled"/>
+        <result property="failedAttempts" column="failed_attempts"/>
+        <result property="lockedUntil" column="locked_until"/>
+        <result property="enabled" column="enabled"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM users
+    </select>
+
+    <select id="findById" resultMap="dashboardUserMap">
+        SELECT id, username, display_name, password_hash, role,
+               totp_secret, totp_enabled, failed_attempts, locked_until,
+               enabled, created_at, updated_at
+        FROM users
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByUsername" resultMap="dashboardUserMap">
+        SELECT id, username, display_name, password_hash, role,
+               totp_secret, totp_enabled, failed_attempts, locked_until,
+               enabled, created_at, updated_at
+        FROM users
+        WHERE LOWER(username) = LOWER(#{username})
+    </select>
+
+    <select id="findAll" resultMap="dashboardUserMap">
+        SELECT id, username, display_name, password_hash, role,
+               totp_secret, totp_enabled, failed_attempts, locked_until,
+               enabled, created_at, updated_at
+        FROM users
+        ORDER BY id ASC
+    </select>
+
+    <select id="findCapturePatternsByUserId" resultType="string">
+        SELECT capture_pattern
+        FROM user_capture_access
+        WHERE user_id = #{userId}
+        ORDER BY capture_pattern ASC
+    </select>
+
+    <insert id="insertUser" parameterType="com.zeekad.dashboard.model.DashboardUser"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO users (
+            username, display_name, password_hash, role,
+            totp_secret, totp_enabled, failed_attempts, locked_until,
+            enabled, created_at, updated_at
+        ) VALUES (
+            #{username}, #{displayName}, #{passwordHash}, #{role},
+            #{totpSecret}, #{totpEnabled}, #{failedAttempts}, #{lockedUntil},
+            #{enabled}, #{createdAt}, #{updatedAt}
+        )
+    </insert>
+
+    <insert id="insertCapturePattern">
+        INSERT INTO user_capture_access (user_id, capture_pattern)
+        VALUES (#{userId}, #{capturePattern})
+    </insert>
+
+    <delete id="deleteCapturePatternsByUserId">
+        DELETE FROM user_capture_access
+        WHERE user_id = #{userId}
+    </delete>
+
+    <update id="updateLoginFailure">
+        UPDATE users
+        SET failed_attempts = #{failedAttempts},
+            locked_until = #{lockedUntil},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <update id="resetLoginFailure">
+        UPDATE users
+        SET failed_attempts = 0,
+            locked_until = NULL,
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateTotpState">
+        UPDATE users
+        SET totp_secret = #{totpSecret},
+            totp_enabled = #{totpEnabled},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateUserRoleAndDisplayName">
+        UPDATE users
+        SET display_name = #{displayName},
+            role = #{role},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateEnabled">
+        UPDATE users
+        SET enabled = #{enabled},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+</mapper>
