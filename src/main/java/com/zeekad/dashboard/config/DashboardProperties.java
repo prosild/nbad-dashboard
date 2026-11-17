@@ -88,6 +88,8 @@ public class DashboardProperties {
 
     public static class EvidenceApi {
         private String url = "http://127.0.0.1:8000";
+        private int connectTimeoutMs = 3000;
+        private int readTimeoutMs = 5000;
 
         public String getUrl() {
             return url;
@@ -95,6 +97,22 @@ public class DashboardProperties {
 
         public void setUrl(String url) {
             this.url = url;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
         }
     }
 

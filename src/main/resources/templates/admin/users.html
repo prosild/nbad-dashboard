@@ -7,19 +7,7 @@
     <link rel="stylesheet" th:href="@{/css/dashboard.css}">
 </head>
 <body>
-<header class="topbar">
-    <a th:href="@{/}" class="topbar-brand">zeek_AD Dashboard</a>
-    <nav class="topbar-nav">
-        <a th:href="@{/}">조사 큐</a>
-        <a th:href="@{/admin/users}">사용자 관리</a>
-        <a th:href="@{/admin/audit-logs}">감사 로그</a>
-    </nav>
-    <div class="topbar-user">
-        <form th:action="@{/logout}" method="post">
-            <button type="submit" class="btn btn-secondary btn-sm">로그아웃</button>
-        </form>
-    </div>
-</header>
+<header th:replace="~{fragments/layout :: topbar('admin-users')}"></header>
 
 <main class="container">
     <div th:if="${successMessage}" class="alert alert-success" th:text="${successMessage}"></div>

@@ -34,6 +34,7 @@ public class AdminController {
 
     @GetMapping("/users")
     public String listUsers(Model model) {
+        model.addAttribute("activeMenu", "admin-users");
         model.addAttribute("users", userAdminService.listUsersWithPatterns());
         model.addAttribute("roles", UserRole.values());
         return "admin/users";
@@ -136,6 +137,7 @@ public class AdminController {
                                 @RequestParam(name = "actorUsername", required = false) String actorUsername,
                                 @RequestParam(name = "limit", defaultValue = "100") int limit,
                                 Model model) {
+        model.addAttribute("activeMenu", "admin-audit");
         model.addAttribute("logs", userAdminService.findAuditLogs(actionType, actorUsername, limit));
         model.addAttribute("actionTypes", AuditActionType.values());
         model.addAttribute("selectedActionType", actionType == null ? "" : actionType);

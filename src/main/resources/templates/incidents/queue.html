@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>조사 큐 - zeek_AD Dashboard</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('incidents')}"></header>
+
+<main class="container">
+    <div th:if="${maskedView}" class="alert alert-warn">
+        조회자(VIEWER) 권한으로 접속 중입니다. IP 주소 및 사용자 계정명은 마스킹되어 표시됩니다.
+    </div>
+
+    <div th:if="${#lists.isEmpty(allowedCaptures)}" class="card">
+        <h1>조사 큐</h1>
+        <p class="muted">현재 계정에 허용된 캡처 데이터가 없거나 조회 가능한 채점 작업이 없습니다.</p>
+    </div>
+
+    <div th:unless="${#lists.isEmpty(allowedCaptures)}">
+        <div class="card">
+            <h1>이상탐지 조사 큐</h1>
+            <form th:action="@{/incidents}" method="get" class="filter-grid">
+                <div class="form-group">
+                    <label for="filter-capture">캡처</label>
+                    <select id="filter-capture" name="captureId" class="form-control">
+                        <option th:each="cap : ${allowedCaptures}"
+                                th:value="${cap}"
+                                th:selected="${cap == selectedCaptureId}"
+                                th:text="${cap}"></option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-picked-by">꼽은 모델</label>
+                    <select id="filter-picked-by" name="pickedBy" class="form-control">
+                        <option value="">전체</option>
+                        <option th:each="m : ${availableModels}"
+                                th:value="${m}"
+                                th:selected="${m == filterPickedBy}"
+                                th:text="${m}"></option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-role">역할</label>
+                    <select id="filter-role" name="role" class="form-control">
+                        <option value="">전체</option>
+                        <option value="originator" th:selected="${filterRole == 'originator'}">originator</option>
+                        <option value="responder" th:selected="${filterRole == 'responder'}">responder</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-asset">자산 (IP / 호스트명)</label>
+                    <input id="filter-asset" name="asset" type="text" class="form-control"
+                           th:value="${filterAsset}" placeholder="IP 또는 호스트명 일부">
+                </div>
+                <div class="form-group">
+                    <label for="filter-status">상태</label>
+                    <select id="filter-status" name="status" class="form-control">
+                        <option value="">전체</option>
+                        <option value="open" th:selected="${filterStatus == 'open'}">open</option>
+                        <option value="investigating" th:selected="${filterStatus == 'investigating'}">investigating</option>
+                        <option value="closed" th:selected="${filterStatus == 'closed'}">closed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-has-report">보고서 유무</label>
+                    <select id="filter-has-report" name="hasReport" class="form-control">
+                        <option value="">전체</option>
+                        <option value="true" th:selected="${filterHasReport == 'true'}">보고서 있음</option>
+                        <option value="false" th:selected="${filterHasReport == 'false'}">보고서 없음</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-would-send">실제 전송 여부</label>
+                    <select id="filter-would-send" name="wouldSend" class="form-control">
+                        <option value="">전체</option>
+                        <option value="true" th:selected="${filterWouldSend == 'true'}">전송</option>
+                        <option value="false" th:selected="${filterWouldSend == 'false'}">미전송/보류</option>
+                    </select>
+                </div>
+                <div class="form-group filter-actions">
+                    <button type="submit" class="btn btn-primary">필터 적용</button>
+                    <a th:href="@{/incidents(captureId=${selectedCaptureId})}" class="btn btn-secondary">초기화</a>
+                </div>
+            </form>
+        </div>
+
+        <div th:if="${selectedJob != null}" class="card summary-bar">
+            <div>
+                <strong>선택 작업:</strong>
+                <span class="badge" th:text="'job #' + ${selectedJob.jobId}"></span>
+                <span class="badge" th:text="${selectedJob.captureId}"></span>
+                <span class="badge" th:text="${selectedJob.bundleId}"></span>
+                <span class="badge"
+                      th:classappend="${selectedJob.status == 'succeeded'} ? ' badge-success' : (${selectedJob.status == 'failed'} ? ' badge-danger' : ' badge-warn')"
+                      th:text="${selectedJob.status}"></span>
+                <span class="muted" th:text="'표시 건수: ' + ${#lists.size(incidents)} + '건'"></span>
+            </div>
+            <form th:if="${#lists.size(captureJobs) > 1}" th:action="@{/incidents}" method="get" class="form-inline">
+                <label for="select-job" class="muted">다른 작업 보기</label>
+                <select id="select-job" name="jobId" class="form-control">
+                    <option th:each="cj : ${captureJobs}"
+                            th:value="${cj.jobId}"
+                            th:selected="${cj.jobId == selectedJob.jobId}"
+                            th:text="'job #' + ${cj.jobId} + ' (' + ${cj.status} + ')'"></option>
+                </select>
+                <button type="submit" class="btn btn-secondary btn-sm">이동</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <div th:if="${selectedJob == null}" class="muted">
+                선택한 캡처에 채점 작업이 아직 없습니다.
+            </div>
+            <div th:if="${selectedJob != null}" class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>순위</th>
+                        <th>자산 (IP / 호스트명)</th>
+                        <th>역할</th>
+                        <th>꼽은 모델 / 다중 탐지</th>
+                        <th>연결 수</th>
+                        <th>관측 구간 (UTC)</th>
+                        <th>상태</th>
+                        <th>보고서</th>
+                        <th>실제 전송</th>
+                        <th>상세</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="item : ${incidents}">
+                        <td><strong th:text="'#' + ${item.queueRank}"></strong></td>
+                        <td>
+                            <div class="code-inline" th:text="${item.hostIp}"></div>
+                            <div th:unless="${#lists.isEmpty(item.hostName)}" class="badge-group">
+                                <span th:each="hn : ${item.hostName}" class="badge" th:text="${hn}"></span>
+                            </div>
+                        </td>
+                        <td><span class="badge" th:text="${item.zeekadRole}"></span></td>
+                        <td>
+                            <span class="badge badge-info" th:text="${item.zeekadPickedBy}"></span>
+                            <div th:if="${item.multiModelFlagged}" class="badge-group">
+                                <span class="badge badge-multi">다중 탐지</span>
+                                <span th:each="other : ${item.zeekadAlsoFlaggedBy}"
+                                      class="badge" th:text="${other}"></span>
+                            </div>
+                        </td>
+                        <td th:text="${item.connectionCount}"></td>
+                        <td class="muted">
+                            <div th:text="${item.eventStart}"></div>
+                            <div th:text="${item.eventEnd}"></div>
+                        </td>
+                        <td>
+                            <span class="badge"
+                                  th:classappend="${item.zeekadStatus == 'closed'} ? ' badge-success' : (${item.zeekadStatus == 'investigating'} ? ' badge-warn' : '')"
+                                  th:text="${item.zeekadStatus}"></span>
+                        </td>
+                        <td>
+                            <span th:if="${item.hasReport}" class="badge badge-success">있음</span>
+                            <span th:unless="${item.hasReport}" class="badge">보고서 없음</span>
+                            <span th:if="${item.zeekadReportKind != null}" class="badge"
+                                  th:text="${item.zeekadReportKind}"></span>
+                        </td>
+                        <td>
+                            <span th:if="${item.zeekadWouldSend}" class="badge badge-danger">전송</span>
+                            <span th:unless="${item.zeekadWouldSend}" class="badge">미전송</span>
+                        </td>
+                        <td>
+                            <a th:href="@{/incidents/{jobId}/rank/{rank}(jobId=${item.jobId}, rank=${item.queueRank})}"
+                               class="btn btn-secondary btn-sm">상세 보기</a>
+                        </td>
+                    </tr>
+                    <tr th:if="${#lists.isEmpty(incidents)}">
+                        <td colspan="10" class="muted">조건에 맞는 사건이 없습니다.</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

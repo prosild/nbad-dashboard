@@ -1,6 +1,10 @@
 package com.zeekad.dashboard.config;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
+import com.zeekad.dashboard.mybatis.JsonNodeTypeHandler;
+import com.zeekad.dashboard.mybatis.StringListTypeHandler;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -76,21 +80,24 @@ public class DataSourceConfig {
     @Primary
     @Bean(name = "appSqlSessionFactory")
     @DependsOn("appFlyway")
-    public SqlSessionFactory appSqlSessionFactory(@Qualifier("appDataSource") DataSource dataSource)
+    public SqlSessionFactory appSqlSessionFactory(@Qualifier("appDataSource") DataSource dataSource,
+                                                  ObjectMapper objectMapper)
             throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath*:mapper/app/*.xml");
+        return createSqlSessionFactory(dataSource, "classpath*:mapper/app/*.xml", objectMapper);
     }
 
     @Bean(name = "zeekadReadSqlSessionFactory")
-    public SqlSessionFactory zeekadReadSqlSessionFactory(@Qualifier("zeekadReadDataSource") DataSource dataSource)
+    public SqlSessionFactory zeekadReadSqlSessionFactory(@Qualifier("zeekadReadDataSource") DataSource dataSource,
+                                                         ObjectMapper objectMapper)
             throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath*:mapper/zeekad/read/*.xml");
+        return createSqlSessionFactory(dataSource, "classpath*:mapper/zeekad/read/*.xml", objectMapper);
     }
 
     @Bean(name = "zeekadWriteSqlSessionFactory")
-    public SqlSessionFactory zeekadWriteSqlSessionFactory(@Qualifier("zeekadWriteDataSource") DataSource dataSource)
+    public SqlSessionFactory zeekadWriteSqlSessionFactory(@Qualifier("zeekadWriteDataSource") DataSource dataSource,
+                                                          ObjectMapper objectMapper)
             throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath*:mapper/zeekad/write/*.xml");
+        return createSqlSessionFactory(dataSource, "classpath*:mapper/zeekad/write/*.xml", objectMapper);
     }
 
     @Primary
@@ -132,12 +139,16 @@ public class DataSourceConfig {
         return ds;
     }
 
-    private SqlSessionFactory createSqlSessionFactory(DataSource dataSource, String mapperLocationPattern)
+    private SqlSessionFactory createSqlSessionFactory(DataSource dataSource,
+                                                      String mapperLocationPattern,
+                                                      ObjectMapper objectMapper)
             throws Exception {
         SqlSessionFactoryBean factoryBean = new SqlSessionFactoryBean();
         factoryBean.setDataSource(dataSource);
         org.apache.ibatis.session.Configuration config = new org.apache.ibatis.session.Configuration();
         config.setMapUnderscoreToCamelCase(true);
+        config.getTypeHandlerRegistry().register(JsonNode.class, new JsonNodeTypeHandler(objectMapper));
+        config.getTypeHandlerRegistry().register(StringListTypeHandler.class);
         factoryBean.setConfiguration(config);
         Resource[] resources = resolveMapperResources(mapperLocationPattern);
         if (resources.length > 0) {

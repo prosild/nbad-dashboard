@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>운영 상태 - zeek_AD Dashboard</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('operations')}"></header>
+
+<main class="container">
+    <div th:if="${maskedView}" class="alert alert-warn">
+        조회자(VIEWER) 권한으로 접속 중입니다. Slack 요약 페이로드 내 IPv4 주소는 마스킹되어 표시됩니다.
+    </div>
+
+    <div class="card">
+        <h1>운영 상태</h1>
+        <form th:action="@{/operations}" method="get" class="form-inline">
+            <div class="form-group">
+                <label for="ops-capture">캡처 필터</label>
+                <select id="ops-capture" name="captureId" class="form-control">
+                    <option value="">허용된 전체 캡처</option>
+                    <option th:each="cap : ${allowedCaptures}"
+                            th:value="${cap}"
+                            th:selected="${cap == selectedCaptureId}"
+                            th:text="${cap}"></option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">조회</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>채점 작업 목록 (scoring_jobs)</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>작업 ID</th>
+                    <th>캡처</th>
+                    <th>모델 묶음</th>
+                    <th>상태</th>
+                    <th>사건 수</th>
+                    <th>시작 시각 (UTC)</th>
+                    <th>종료 시각 (UTC)</th>
+                    <th>오류</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="job : ${jobs}">
+                    <td>
+                        <a th:href="@{/incidents(jobId=${job.jobId})}" th:text="'#' + ${job.jobId}"></a>
+                    </td>
+                    <td th:text="${job.captureId}"></td>
+                    <td th:text="${job.bundleId}"></td>
+                    <td>
+                        <span class="badge"
+                              th:classappend="${job.status == 'succeeded'} ? ' badge-success' : (${job.status == 'failed'} ? ' badge-danger' : ' badge-warn')"
+                              th:text="${job.status}"></span>
+                    </td>
+                    <td th:text="${job.incidentCount}"></td>
+                    <td class="muted" th:text="${job.startedAt}"></td>
+                    <td class="muted" th:text="${job.finishedAt}"></td>
+                    <td class="code-block" th:text="${job.error != null ? job.error : '-'}"></td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(jobs)}">
+                    <td colspan="8" class="muted">표시할 채점 작업이 없습니다.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>모델 묶음 및 임계값 (model_bundles)</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>번들 ID</th>
+                    <th>레지스트리 / 버전</th>
+                    <th>매니페스트 SHA-256</th>
+                    <th>등록 시각 (UTC)</th>
+                    <th>모델별 임계값</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="bundle : ${bundles}">
+                    <td><strong th:text="${bundle.bundleId}"></strong></td>
+                    <td>
+                        <span th:text="${bundle.registryName}"></span>
+                        <span class="badge" th:text="${bundle.registryVersion}"></span>
+                    </td>
+                    <td class="code-block" th:text="${bundle.manifestSha256}"></td>
+                    <td class="muted" th:text="${bundle.registeredAt}"></td>
+                    <td>
+                        <div class="badge-group" th:unless="${#maps.isEmpty(bundle.thresholdEntries)}">
+                            <span th:each="entry : ${bundle.thresholdEntries}" class="badge"
+                                  th:text="${entry.key} + ': ' + ${entry.value}"></span>
+                        </div>
+                        <span th:if="${#maps.isEmpty(bundle.thresholdEntries)}" class="muted">-</span>
+                    </td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(bundles)}">
+                    <td colspan="5" class="muted">등록된 모델 묶음이 없습니다.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>일일 Slack 요약 (slack_summaries)</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>작업 ID</th>
+                    <th>캡처</th>
+                    <th>메시지 버전</th>
+                    <th>전송 모드 / 상태</th>
+                    <th>채널</th>
+                    <th>요약 페이로드</th>
+                    <th>생성 시각 (UTC)</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="summary : ${slackSummaries}">
+                    <td th:text="'#' + ${summary.jobId}"></td>
+                    <td th:text="${summary.captureId}"></td>
+                    <td th:text="${summary.zeekadMessageVersion}"></td>
+                    <td>
+                        <span th:if="${summary.dryRunOrRecorded}" class="badge badge-warn">기록만(dry-run)</span>
+                        <span th:unless="${summary.dryRunOrRecorded}" class="badge badge-success"
+                              th:text="${summary.zeekadDeliveryMode} + ' / ' + ${summary.zeekadDeliveryStatus}"></span>
+                        <div class="muted"
+                             th:text="${summary.zeekadDeliveryMode} + ' / ' + ${summary.zeekadDeliveryStatus}"></div>
+                    </td>
+                    <td th:text="${summary.payloadChannel}"></td>
+                    <td class="code-block" th:text="${summary.payloadTextPreview}"></td>
+                    <td class="muted" th:text="${summary.createdAt}"></td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(slackSummaries)}">
+                    <td colspan="7" class="muted">표시할 일일 Slack 요약 기록이 없습니다.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+</body>
+</html>

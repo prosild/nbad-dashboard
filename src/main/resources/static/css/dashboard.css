@@ -60,6 +60,13 @@ body {
     text-decoration: underline;
 }
 
+.topbar-nav a.nav-active {
+    color: #ffffff;
+    font-weight: 700;
+    border-bottom: 2px solid #7ab4ff;
+    padding-bottom: 0.15rem;
+}
+
 .topbar-user {
     display: flex;
     align-items: center;
@@ -246,4 +253,69 @@ th {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+}
+
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+    align-items: end;
+}
+
+.filter-grid .form-group {
+    margin-bottom: 0;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.badge-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.25rem;
+}
+
+.badge-warn {
+    background-color: var(--warn-bg);
+    color: var(--warn);
+}
+
+.badge-info {
+    background-color: #eff6ff;
+    color: #1d4ed8;
+}
+
+.badge-multi {
+    background-color: #fef0c7;
+    color: #93370d;
+}
+
+.code-inline {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88rem;
+}
+
+.checkbox-inline label {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }

@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper">
+
+    <resultMap id="scoringJobMap" type="com.zeekad.dashboard.model.zeekad.ScoringJob">
+        <id property="jobId" column="job_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="bundleId" column="bundle_id"/>
+        <result property="status" column="status"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="finishedAt" column="finished_at"/>
+        <result property="error" column="error"/>
+        <result property="incidentCount" column="incident_count"/>
+    </resultMap>
+
+    <resultMap id="modelBundleMap" type="com.zeekad.dashboard.model.zeekad.ModelBundle">
+        <id property="bundleId" column="bundle_id"/>
+        <result property="registryName" column="registry_name"/>
+        <result property="registryVersion" column="registry_version"/>
+        <result property="manifestSha256" column="manifest_sha256"/>
+        <result property="registeredAt" column="registered_at"/>
+        <result property="thresholds" column="thresholds" typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+    </resultMap>
+
+    <resultMap id="incidentQueueMap" type="com.zeekad.dashboard.model.zeekad.IncidentQueueItem">
+        <result property="jobId" column="job_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="bundleId" column="bundle_id"/>
+        <result property="queueRank" column="queue_rank"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="hostIp" column="host_ip"/>
+        <result property="zeekadRole" column="zeekad_role"/>
+        <result property="eventStart" column="event_start"/>
+        <result property="eventEnd" column="event_end"/>
+        <result property="zeekadPickedBy" column="zeekad_picked_by"/>
+        <result property="zeekadAlsoFlaggedBy" column="zeekad_also_flagged_by"
+                typeHandler="com.zeekad.dashboard.mybatis.StringListTypeHandler"/>
+        <result property="connectionCount" column="connection_count"/>
+        <result property="hostName" column="host_name"
+                typeHandler="com.zeekad.dashboard.mybatis.StringListTypeHandler"/>
+        <result property="zeekadStatus" column="zeekad_status"/>
+        <result property="zeekadResolution" column="zeekad_resolution"/>
+        <result property="hasReport" column="has_report"/>
+        <result property="zeekadReportKind" column="zeekad_report_kind"/>
+        <result property="zeekadVerificationPassed" column="zeekad_verification_passed"/>
+        <result property="zeekadWouldSend" column="zeekad_would_send"/>
+    </resultMap>
+
+    <resultMap id="incidentModelScoreMap" type="com.zeekad.dashboard.model.zeekad.IncidentModelScore">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="zeekadModel" column="zeekad_model"/>
+        <result property="maxScore" column="max_score"/>
+        <result property="candidateWindows" column="candidate_windows"/>
+        <result property="windows" column="windows"/>
+    </resultMap>
+
+    <resultMap id="incidentReportMap" type="com.zeekad.dashboard.model.zeekad.IncidentReport">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="zeekadReportKind" column="zeekad_report_kind"/>
+        <result property="zeekadReportVersion" column="zeekad_report_version"/>
+        <result property="zeekadInputVersion" column="zeekad_input_version"/>
+        <result property="zeekadReport" column="zeekad_report"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="zeekadVerificationPassed" column="zeekad_verification_passed"/>
+        <result property="zeekadVerificationReason" column="zeekad_verification_reason"/>
+        <result property="zeekadVerificationProblems" column="zeekad_verification_problems"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="llmModelRequested" column="llm_model_requested"/>
+        <result property="llmModelVersion" column="llm_model_version"/>
+        <result property="llmSeconds" column="llm_seconds"/>
+        <result property="llmInputTokens" column="llm_input_tokens"/>
+        <result property="llmOutputTokens" column="llm_output_tokens"/>
+        <result property="llmThinkingTokens" column="llm_thinking_tokens"/>
+        <result property="llmError" column="llm_error"/>
+        <result property="zeekadAttackCandidates" column="zeekad_attack_candidates"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="zeekadSourceRun" column="zeekad_source_run"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="zeekadFacts" column="zeekad_facts"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="zeekadPseudonyms" column="zeekad_pseudonyms"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+    </resultMap>
+
+    <resultMap id="sendDecisionMap" type="com.zeekad.dashboard.model.zeekad.SendDecision">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="zeekadWouldSend" column="zeekad_would_send"/>
+        <result property="zeekadDecidedBy" column="zeekad_decided_by"/>
+        <result property="policyId" column="policy_id"/>
+        <result property="policyChoice" column="policy_choice"/>
+        <result property="policyMandatory" column="policy_mandatory"/>
+        <result property="policyReasons" column="policy_reasons"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="llmChoice" column="llm_choice"/>
+        <result property="decisionModel" column="decision_model"/>
+        <result property="decisionModelChoice" column="decision_model_choice"/>
+        <result property="decisionModelConfidence" column="decision_model_confidence"/>
+        <result property="decisionModelProbabilities" column="decision_model_probabilities"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="decisionModelError" column="decision_model_error"/>
+        <result property="zeekadSourceRun" column="zeekad_source_run"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <resultMap id="slackDeliveryMap" type="com.zeekad.dashboard.model.zeekad.SlackDelivery">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="zeekadMessageKind" column="zeekad_message_kind"/>
+        <result property="zeekadMessageVersion" column="zeekad_message_version"/>
+        <result property="zeekadDeliveryMode" column="zeekad_delivery_mode"/>
+        <result property="zeekadDeliveryStatus" column="zeekad_delivery_status"/>
+        <result property="slackPayload" column="slack_payload"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="slackTs" column="slack_ts"/>
+        <result property="deliveredAt" column="delivered_at"/>
+        <result property="error" column="error"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <resultMap id="slackSummaryMap" type="com.zeekad.dashboard.model.zeekad.SlackSummary">
+        <result property="jobId" column="job_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="zeekadMessageVersion" column="zeekad_message_version"/>
+        <result property="zeekadDeliveryMode" column="zeekad_delivery_mode"/>
+        <result property="zeekadDeliveryStatus" column="zeekad_delivery_status"/>
+        <result property="slackPayload" column="slack_payload"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+        <result property="slackTs" column="slack_ts"/>
+        <result property="deliveredAt" column="delivered_at"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <resultMap id="incidentStatusMap" type="com.zeekad.dashboard.model.zeekad.IncidentStatus">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="zeekadStatus" column="zeekad_status"/>
+        <result property="zeekadResolution" column="zeekad_resolution"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="updatedBy" column="updated_by"/>
+    </resultMap>
+
+    <resultMap id="incidentStatusHistoryMap" type="com.zeekad.dashboard.model.zeekad.IncidentStatusHistory">
+        <result property="jobId" column="job_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="fromStatus" column="from_status"/>
+        <result property="toStatus" column="to_status"/>
+        <result property="zeekadResolution" column="zeekad_resolution"/>
+        <result property="actor" column="actor"/>
+        <result property="reason" column="reason"/>
+        <result property="changedAt" column="changed_at"/>
+    </resultMap>
+
+    <resultMap id="analystReviewItemMap" type="com.zeekad.dashboard.model.zeekad.AnalystReviewItem">
+        <result property="jobId" column="job_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="queueRank" column="queue_rank"/>
+        <result property="hostIp" column="host_ip"/>
+        <result property="zeekadRole" column="zeekad_role"/>
+        <result property="zeekadReviewReason" column="zeekad_review_reason"/>
+        <result property="requestedAt" column="requested_at"/>
+        <result property="zeekadReviewAction" column="zeekad_review_action"/>
+        <result property="analyst" column="analyst"/>
+        <result property="decidedAt" column="decided_at"/>
+    </resultMap>
+
+    <select id="findDistinctCaptureIds" resultType="string">
+        SELECT DISTINCT capture_id
+        FROM dashboard.scoring_jobs
+        WHERE capture_id IS NOT NULL
+        ORDER BY capture_id ASC
+    </select>
+
+    <select id="findScoringJobs" resultMap="scoringJobMap">
+        SELECT job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count
+        FROM dashboard.scoring_jobs
+        <where>
+            <if test="captureId != null and captureId != ''">
+                AND capture_id = #{captureId}
+            </if>
+        </where>
+        ORDER BY job_id DESC
+    </select>
+
+    <select id="findScoringJobById" resultMap="scoringJobMap">
+        SELECT job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count
+        FROM dashboard.scoring_jobs
+        WHERE job_id = #{jobId}
+    </select>
+
+    <select id="findLatestSucceededJobByCaptureId" resultMap="scoringJobMap">
+        SELECT job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count
+        FROM dashboard.scoring_jobs
+        WHERE capture_id = #{captureId}
+          AND status = 'succeeded'
+        ORDER BY job_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestJobByCaptureId" resultMap="scoringJobMap">
+        SELECT job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count
+        FROM dashboard.scoring_jobs
+        WHERE capture_id = #{captureId}
+        ORDER BY job_id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findAllModelBundles" resultMap="modelBundleMap">
+        SELECT bundle_id, registry_name, registry_version, manifest_sha256, registered_at, thresholds
+        FROM dashboard.model_bundles
+        ORDER BY registered_at DESC, bundle_id ASC
+    </select>
+
+    <select id="findModelBundleById" resultMap="modelBundleMap">
+        SELECT bundle_id, registry_name, registry_version, manifest_sha256, registered_at, thresholds
+        FROM dashboard.model_bundles
+        WHERE bundle_id = #{bundleId}
+    </select>
+
+    <sql id="incidentQueueSelect">
+        SELECT q.job_id,
+               q.capture_id,
+               q.bundle_id,
+               q.queue_rank,
+               q.incident_id,
+               q.host_ip,
+               q.zeekad_role,
+               q.event_start,
+               q.event_end,
+               q.zeekad_picked_by,
+               q.zeekad_also_flagged_by,
+               q.connection_count,
+               q.host_name,
+               COALESCE(s.zeekad_status, 'open') AS zeekad_status,
+               s.zeekad_resolution,
+               CASE WHEN r.incident_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_report,
+               r.zeekad_report_kind,
+               r.zeekad_verification_passed,
+               COALESCE(d.zeekad_would_send, FALSE) AS zeekad_would_send
+        FROM dashboard.incident_queue q
+        LEFT JOIN dashboard.incident_status s
+               ON s.job_id = q.job_id AND s.incident_id = q.incident_id
+        LEFT JOIN dashboard.incident_reports r
+               ON r.job_id = q.job_id AND r.incident_id = q.incident_id
+        LEFT JOIN dashboard.send_decisions d
+               ON d.job_id = q.job_id AND d.incident_id = q.incident_id
+    </sql>
+
+    <select id="findIncidentQueue" resultMap="incidentQueueMap">
+        <include refid="incidentQueueSelect"/>
+        <where>
+            AND q.job_id = #{jobId}
+            <if test="pickedBy != null and pickedBy != ''">
+                AND LOWER(q.zeekad_picked_by) = LOWER(#{pickedBy})
+            </if>
+            <if test="role != null and role != ''">
+                AND LOWER(q.zeekad_role) = LOWER(#{role})
+            </if>
+            <if test="status != null and status != ''">
+                AND LOWER(COALESCE(s.zeekad_status, 'open')) = LOWER(#{status})
+            </if>
+            <if test="hasReport != null and hasReport">
+                AND r.incident_id IS NOT NULL
+            </if>
+            <if test="hasReport != null and !hasReport">
+                AND r.incident_id IS NULL
+            </if>
+            <if test="wouldSend != null">
+                AND COALESCE(d.zeekad_would_send, FALSE) = #{wouldSend}
+            </if>
+        </where>
+        ORDER BY q.queue_rank ASC
+    </select>
+
+    <select id="findIncidentQueueItemByJobAndRank" resultMap="incidentQueueMap">
+        <include refid="incidentQueueSelect"/>
+        WHERE q.job_id = #{jobId}
+          AND q.queue_rank = #{queueRank}
+        LIMIT 1
+    </select>
+
+    <select id="findIncidentQueueItemByJobAndIncident" resultMap="incidentQueueMap">
+        <include refid="incidentQueueSelect"/>
+        WHERE q.job_id = #{jobId}
+          AND q.incident_id = #{incidentId}
+        LIMIT 1
+    </select>
+
+    <select id="findModelScores" resultMap="incidentModelScoreMap">
+        SELECT job_id, incident_id, zeekad_model, max_score, candidate_windows, windows
+        FROM dashboard.incident_model_scores
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+        ORDER BY zeekad_model ASC
+    </select>
+
+    <select id="findRawAssetNames" resultType="map">
+        SELECT *
+        FROM dashboard.asset_names
+        WHERE capture_id = #{captureId}
+          AND host_ip = #{hostIp}
+    </select>
+
+    <select id="findIncidentReport" resultMap="incidentReportMap">
+        SELECT job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
+               zeekad_report, zeekad_verification_passed, zeekad_verification_reason,
+               zeekad_verification_problems, llm_model_requested, llm_model_version, llm_seconds,
+               llm_input_tokens, llm_output_tokens, llm_thinking_tokens, llm_error,
+               zeekad_attack_candidates, zeekad_source_run, created_at, zeekad_facts, zeekad_pseudonyms
+        FROM dashboard.incident_reports
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+    </select>
+
+    <select id="findSendDecision" resultMap="sendDecisionMap">
+        SELECT job_id, incident_id, zeekad_would_send, zeekad_decided_by, policy_id, policy_choice,
+               policy_mandatory, policy_reasons, llm_choice, decision_model, decision_model_choice,
+               decision_model_confidence, decision_model_probabilities, decision_model_error,
+               zeekad_source_run, created_at
+        FROM dashboard.send_decisions
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+    </select>
+
+    <select id="findSlackDeliveries" resultMap="slackDeliveryMap">
+        SELECT job_id, incident_id, zeekad_message_kind, zeekad_message_version,
+               zeekad_delivery_mode, zeekad_delivery_status, slack_payload,
+               slack_ts, delivered_at, error, created_at
+        FROM dashboard.slack_deliveries
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findSlackSummaries" resultMap="slackSummaryMap">
+        SELECT job_id, capture_id, zeekad_message_version, zeekad_delivery_mode,
+               zeekad_delivery_status, slack_payload, slack_ts, delivered_at, created_at
+        FROM dashboard.slack_summaries
+        <where>
+            <if test="captureId != null and captureId != ''">
+                AND capture_id = #{captureId}
+            </if>
+        </where>
+        ORDER BY created_at DESC, job_id DESC
+    </select>
+
+    <select id="findIncidentStatus" resultMap="incidentStatusMap">
+        SELECT job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by
+        FROM dashboard.incident_status
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+    </select>
+
+    <select id="findIncidentStatusHistory" resultMap="incidentStatusHistoryMap">
+        SELECT job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at
+        FROM dashboard.incident_status_history
+        WHERE job_id = #{jobId}
+          AND incident_id = #{incidentId}
+        ORDER BY changed_at DESC
+    </select>
+
+    <select id="findAnalystReviewQueue" resultMap="analystReviewItemMap">
+        SELECT a.job_id,
+               j.capture_id,
+               a.incident_id,
+               a.queue_rank,
+               a.host_ip,
+               a.zeekad_role,
+               a.zeekad_review_reason,
+               a.requested_at,
+               a.zeekad_review_action,
+               a.analyst,
+               a.decided_at
+        FROM dashboard.analyst_review_queue a
+        JOIN dashboard.scoring_jobs j ON j.job_id = a.job_id
+        <where>
+            <if test="captureId != null and captureId != ''">
+                AND j.capture_id = #{captureId}
+            </if>
+            <if test="pendingOnly != null and pendingOnly">
+                AND a.zeekad_review_action IS NULL
+            </if>
+        </where>
+        ORDER BY a.requested_at DESC, a.job_id DESC, a.queue_rank ASC
+    </select>
+
+</mapper>

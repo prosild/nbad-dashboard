@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>분석가 승인 대기 목록 - zeek_AD Dashboard</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('reviews')}"></header>
+
+<main class="container">
+    <div th:if="${maskedView}" class="alert alert-warn">
+        조회자(VIEWER) 권한으로 접속 중입니다. 자산 IP 주소는 마스킹되어 표시됩니다.
+    </div>
+
+    <div class="alert alert-warn">
+        Python 에이전트 재개 API 연결 예정: 현재 화면에서는 승인 대기 목록 조회만 제공하며, 승인·거절 버튼은 비활성화되어 있습니다.
+    </div>
+
+    <div class="card">
+        <h1>분석가 승인 대기 목록</h1>
+        <form th:action="@{/reviews}" method="get" class="form-inline">
+            <div class="form-group">
+                <label for="rev-capture">캡처 필터</label>
+                <select id="rev-capture" name="captureId" class="form-control">
+                    <option value="">허용된 전체 캡처</option>
+                    <option th:each="cap : ${allowedCaptures}"
+                            th:value="${cap}"
+                            th:selected="${cap == selectedCaptureId}"
+                            th:text="${cap}"></option>
+                </select>
+            </div>
+            <div class="form-group checkbox-inline">
+                <label for="rev-pending-only">
+                    <input id="rev-pending-only" type="checkbox" name="pendingOnly" value="true"
+                           th:checked="${pendingOnly}">
+                    미처리 대기 건만 보기
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary">조회</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>작업 / 순위</th>
+                    <th>캡처</th>
+                    <th>자산 IP</th>
+                    <th>역할</th>
+                    <th>검토 사유</th>
+                    <th>요청 시각 (UTC)</th>
+                    <th>결정 상태</th>
+                    <th>분석가 / 결정 시각</th>
+                    <th>승인 · 거절</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="rev : ${reviews}">
+                    <td>
+                        <a th:href="@{/incidents/{jobId}/rank/{rank}(jobId=${rev.jobId}, rank=${rev.queueRank})}"
+                           th:text="'job #' + ${rev.jobId} + ' / #' + ${rev.queueRank}"></a>
+                    </td>
+                    <td th:text="${rev.captureId}"></td>
+                    <td class="code-inline" th:text="${rev.hostIp}"></td>
+                    <td><span class="badge" th:text="${rev.zeekadRole}"></span></td>
+                    <td th:text="${rev.zeekadReviewReason}"></td>
+                    <td class="muted" th:text="${rev.requestedAt}"></td>
+                    <td>
+                        <span th:if="${rev.pending}" class="badge badge-warn">대기 중</span>
+                        <span th:unless="${rev.pending}" class="badge badge-success"
+                              th:text="${rev.zeekadReviewAction}"></span>
+                    </td>
+                    <td>
+                        <div th:text="${rev.analyst != null ? rev.analyst : '-'}"></div>
+                        <div class="muted" th:text="${rev.decidedAt != null ? rev.decidedAt : ''}"></div>
+                    </td>
+                    <td>
+                        <div class="actions-stack">
+                            <button type="button" class="btn btn-secondary btn-sm" disabled="disabled"
+                                    title="Python 에이전트 재개 API 연결 예정">승인</button>
+                            <button type="button" class="btn btn-secondary btn-sm" disabled="disabled"
+                                    title="Python 에이전트 재개 API 연결 예정">거절</button>
+                        </div>
+                        <div class="muted">Python 에이전트 재개 API 연결 예정</div>
+                    </td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(reviews)}">
+                    <td colspan="9" class="muted">조건에 맞는 승인 대기 항목이 없습니다.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+</body>
+</html>
