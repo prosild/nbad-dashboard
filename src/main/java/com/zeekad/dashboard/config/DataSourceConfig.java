@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zeekad.dashboard.mybatis.JsonNodeTypeHandler;
 import com.zeekad.dashboard.mybatis.StringListTypeHandler;
+import org.apache.ibatis.mapping.DatabaseIdProvider;
+import org.apache.ibatis.mapping.VendorDatabaseIdProvider;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.mybatis.spring.SqlSessionFactoryBean;
@@ -24,6 +26,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.time.Clock;
+import java.util.Properties;
 
 /**
  * 3중 DataSource(대시보드 자체 DB, zeekad 읽기 전용, zeekad 쓰기 전용) 및 MyBatis 매퍼 분리 설정.
@@ -139,12 +142,23 @@ public class DataSourceConfig {
         return ds;
     }
 
+    @Bean
+    public DatabaseIdProvider databaseIdProvider() {
+        VendorDatabaseIdProvider provider = new VendorDatabaseIdProvider();
+        Properties properties = new Properties();
+        properties.setProperty("PostgreSQL", "postgresql");
+        properties.setProperty("H2", "h2");
+        provider.setProperties(properties);
+        return provider;
+    }
+
     private SqlSessionFactory createSqlSessionFactory(DataSource dataSource,
                                                       String mapperLocationPattern,
                                                       ObjectMapper objectMapper)
             throws Exception {
         SqlSessionFactoryBean factoryBean = new SqlSessionFactoryBean();
         factoryBean.setDataSource(dataSource);
+        factoryBean.setDatabaseIdProvider(databaseIdProvider());
         org.apache.ibatis.session.Configuration config = new org.apache.ibatis.session.Configuration();
         config.setMapUnderscoreToCamelCase(true);
         config.getTypeHandlerRegistry().register(JsonNode.class, new JsonNodeTypeHandler(objectMapper));

@@ -21,8 +21,8 @@ dashboard:
       password: ""
       driver-class-name: org.h2.Driver
     zeekad-write:
-      url: jdbc:h2:mem:zeekad_write_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
-      username: dashboard_rw
+      url: jdbc:h2:mem:zeekad_read_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+      username: dashboard_ro
       password: ""
       driver-class-name: org.h2.Driver
   security:

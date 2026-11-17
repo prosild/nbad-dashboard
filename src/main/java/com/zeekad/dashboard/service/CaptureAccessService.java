@@ -86,6 +86,21 @@ public class CaptureAccessService {
         return item;
     }
 
+    public IncidentQueueItem requireIncidentAccessByRank(DashboardUserPrincipal principal,
+                                                         Long jobId,
+                                                         Integer queueRank,
+                                                         String clientIp) {
+        ScoringJob job = requireJobAccess(principal, jobId, null, clientIp);
+        if (queueRank == null || queueRank < 1) {
+            recordIdorAndThrow(principal, job.getCaptureId(), jobId, null, "invalid_queue_rank", clientIp);
+        }
+        IncidentQueueItem item = zeekadReadMapper.findIncidentQueueItemByJobAndRank(jobId, queueRank);
+        if (item == null) {
+            recordIdorAndThrow(principal, job.getCaptureId(), jobId, null, "incident_rank_not_found", clientIp);
+        }
+        return item;
+    }
+
     public void recordUnmaskedViewIfPrivileged(DashboardUserPrincipal principal,
                                                String captureId,
                                                Long jobId,

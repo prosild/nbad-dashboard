@@ -176,3 +176,5 @@ CREATE OR REPLACE VIEW dashboard.slack_summaries AS SELECT * FROM dashboard.raw_
 CREATE OR REPLACE VIEW dashboard.incident_status AS SELECT * FROM dashboard.raw_incident_status;
 CREATE OR REPLACE VIEW dashboard.incident_status_history AS SELECT * FROM dashboard.raw_incident_status_history;
 CREATE OR REPLACE VIEW dashboard.analyst_review_queue AS SELECT * FROM dashboard.raw_analyst_review_queue;
+
+CREATE ALIAS IF NOT EXISTS dashboard.transition_incident FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.transitionIncident";

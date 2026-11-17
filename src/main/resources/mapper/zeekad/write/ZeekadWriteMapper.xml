@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zeekad.dashboard.mapper.zeekad.write.ZeekadWriteMapper">
+
+    <select id="transitionIncident" resultType="string" databaseId="postgresql">
+        SELECT dashboard.transition_incident(
+            p_job => #{jobId,jdbcType=BIGINT},
+            p_incident => #{incidentId,jdbcType=VARCHAR},
+            p_to => #{toStatus,jdbcType=VARCHAR},
+            p_actor => #{loginUser,jdbcType=VARCHAR},
+            p_reason => #{reason,jdbcType=VARCHAR},
+            p_resolution => #{resolution,jdbcType=VARCHAR}
+        )
+    </select>
+
+    <select id="transitionIncident" resultType="string" databaseId="h2">
+        SELECT dashboard.transition_incident(
+            #{jobId,jdbcType=BIGINT},
+            #{incidentId,jdbcType=VARCHAR},
+            #{toStatus,jdbcType=VARCHAR},
+            #{loginUser,jdbcType=VARCHAR},
+            #{reason,jdbcType=VARCHAR},
+            #{resolution,jdbcType=VARCHAR}
+        )
+    </select>
+
+</mapper>
