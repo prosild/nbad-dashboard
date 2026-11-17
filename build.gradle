@@ -45,9 +45,6 @@ dependencies {
         implementation('org.mybatis:mybatis:3.5.19') {
             because 'Use latest MyBatis 3.5.x release'
         }
-        implementation('ognl:ognl:3.4.17') {
-            because 'Fix CVE-2026-113730'
-        }
     }
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
@@ -61,6 +58,9 @@ tasks.named('test') {
 }
 
 tasks.named('cyclonedxBom') {
+    onlyIf {
+        gradle.startParameter.taskNames.any { it.endsWith('cyclonedxBom') }
+    }
     includeConfigs = ['runtimeClasspath']
     projectType = 'application'
     schemaVersion = '1.5'
