@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="'사건 상세 #' + ${detail.incident.queueRank} + ' - zeek_AD Dashboard'">사건 상세</title>
+    <link rel="stylesheet" th:href="@{/css/dashboard.css}">
+</head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('incidents')}"></header>
+
+<main class="container">
+    <div class="detail-breadcrumb">
+        <a th:href="@{/incidents(captureId=${detail.incident.captureId}, jobId=${detail.incident.jobId})}"
+           class="btn btn-secondary btn-sm">← 조사 큐로 돌아가기</a>
+        <a th:href="@{/incidents/{jobId}/rank/{rank}(jobId=${detail.incident.jobId}, rank=${detail.incident.queueRank})}"
+           class="btn btn-secondary btn-sm">새로고침</a>
+    </div>
+
+    <div th:if="${maskedView}" class="alert alert-warn">
+        조회자(VIEWER) 권한으로 접속 중입니다. 호스트 IP, 사용자명, 근거 상대 IP, 가명표, 보고서 내 IP, Slack 페이로드 IP는 마스킹되어 표시됩니다.
+    </div>
+
+    <div th:if="${transitionSuccess}" class="alert alert-success" th:text="${transitionSuccess}"></div>
+    <div th:if="${transitionError}" class="alert alert-danger" th:text="${transitionError}"></div>
+
+    <!-- 1. 사건 기본 정보 및 현재 상태 -->
+    <section class="card">
+        <div class="section-header">
+            <div>
+                <h1>
+                    사건 상세
+                    <span class="badge" th:text="'job #' + ${detail.incident.jobId}"></span>
+                    <span class="badge" th:text="'순위 #' + ${detail.incident.queueRank}"></span>
+                </h1>
+                <div class="muted code-inline" th:text="${detail.incident.incidentId}"></div>
+            </div>
+            <div class="status-pill-group">
+                <span class="badge badge-lg"
+                      th:classappend="${detail.currentStatus == 'closed'} ? ' badge-success' : (${detail.currentStatus == 'investigating'} ? ' badge-warn' : ' badge-info')"
+                      th:text="'현재 상태: ' + ${detail.currentStatus}"></span>
+                <span th:if="${detail.currentResolution != null}"
+                      class="badge badge-lg"
+                      th:text="'결론: ' + ${detail.currentResolution}"></span>
+            </div>
+        </div>
+
+        <div class="detail-grid">
+            <div class="kv-box">
+                <span class="kv-label">캡처 / 번들</span>
+                <span class="kv-value">
+                    <span class="badge" th:text="${detail.incident.captureId}"></span>
+                    <span class="badge" th:text="${detail.incident.bundleId}"></span>
+                </span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">대상 자산 IP</span>
+                <span class="kv-value code-inline" th:text="${detail.incident.hostIp}"></span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">호스트명</span>
+                <span class="kv-value">
+                    <span th:if="${#lists.isEmpty(detail.incident.hostName)}" class="muted">-</span>
+                    <span th:each="hn : ${detail.incident.hostName}" class="badge" th:text="${hn}"></span>
+                </span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">역할 / 연결 수</span>
+                <span class="kv-value">
+                    <span class="badge" th:text="${detail.incident.zeekadRole}"></span>
+                    <strong th:text="${detail.incident.connectionCount} + '건'"></strong>
+                </span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">관측 구간 (UTC)</span>
+                <span class="kv-value muted">
+                    <span th:text="${detail.incident.eventStart}"></span>
+                    <span> ~ </span>
+                    <span th:text="${detail.incident.eventEnd}"></span>
+                </span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">꼽은 모델 / 다중 탐지</span>
+                <span class="kv-value">
+                    <span class="badge badge-info" th:text="${detail.incident.zeekadPickedBy}"></span>
+                    <span th:if="${detail.incident.multiModelFlagged}" class="badge badge-multi">다중 탐지</span>
+                    <span th:each="other : ${detail.incident.zeekadAlsoFlaggedBy}" class="badge" th:text="${other}"></span>
+                </span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. 모델별 창 비율 & 관측 자산 이름 -->
+    <div class="two-col-grid">
+        <section class="card">
+            <h2>모델별 탐지 창 비율</h2>
+            <p class="muted">모델 간 점수 척도가 달라 직접 비교하지 않고, 임계값 이상인 창 수 / 전체 창 수만 표시합니다.</p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>탐지 모델</th>
+                        <th>임계값 이상인 창 수 / 전체 창 수</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="score : ${detail.modelScores}">
+                        <td><strong th:text="${score.zeekadModel}"></strong></td>
+                        <td><span class="badge badge-info" th:text="${score.windowRatioLabel}"></span></td>
+                    </tr>
+                    <tr th:if="${#lists.isEmpty(detail.modelScores)}">
+                        <td colspan="2" class="muted">모델 창 비율 정보가 없습니다.</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>관측된 자산 · 계정 이름 (asset_names)</h2>
+            <div th:if="${#lists.isEmpty(detail.assetNames)}" class="muted">관측된 계정 이름이 없습니다.</div>
+            <div th:unless="${#lists.isEmpty(detail.assetNames)}" class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>호스트 IP</th>
+                        <th>Kerberos 사용자</th>
+                        <th>NTLM 사용자</th>
+                        <th>출처 · 관측 정보</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="asset : ${detail.assetNames}">
+                        <td class="code-inline" th:text="${asset.hostIp}"></td>
+                        <td th:text="${asset.kerberosUser != null ? asset.kerberosUser : '-'}"></td>
+                        <td th:text="${asset.ntlmUser != null ? asset.ntlmUser : '-'}"></td>
+                        <td>
+                            <div th:if="${#maps.isEmpty(asset.extraAttributes)}" class="muted">-</div>
+                            <div th:each="attr : ${asset.extraAttributes}" class="muted">
+                                <strong th:text="${attr.key}"></strong>:
+                                <span th:text="${attr.value != null ? attr.value : '-'}"></span>
+                            </div>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- 3. FastAPI 근거 요약 (evidence.v1) -->
+    <section class="card">
+        <h2>근거 요약 (evidence.v1)</h2>
+        <div th:unless="${detail.evidence.available}" class="alert alert-warn"
+             th:text="${detail.evidence.statusMessage}">근거 API 연결 불가(DB 뷰 정보만 표시)</div>
+
+        <div th:if="${detail.evidence.available}">
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="kv-label">연결 수</div>
+                    <div class="stat-num" th:text="${detail.evidence.connectionCount != null ? detail.evidence.connectionCount : '-'}"></div>
+                </div>
+                <div class="stat-card">
+                    <div class="kv-label">송신 바이트 (orig_bytes)</div>
+                    <div class="stat-num" th:text="${detail.evidence.origBytes != null ? detail.evidence.origBytes : '-'}"></div>
+                </div>
+                <div class="stat-card">
+                    <div class="kv-label">수신 바이트 (resp_bytes)</div>
+                    <div class="stat-num" th:text="${detail.evidence.respBytes != null ? detail.evidence.respBytes : '-'}"></div>
+                </div>
+            </div>
+
+            <div class="two-col-grid">
+                <div>
+                    <h3>전송 계층 · 프로토콜별 수</h3>
+                    <div class="badge-group" th:unless="${#maps.isEmpty(detail.evidence.transportCounts)}">
+                        <span th:each="entry : ${detail.evidence.transportCounts}" class="badge"
+                              th:text="${entry.key} + ': ' + ${entry.value}"></span>
+                    </div>
+                    <p th:if="${#maps.isEmpty(detail.evidence.transportCounts)}" class="muted">정보 없음</p>
+                </div>
+                <div>
+                    <h3>연결 상태별 수 (conn_state)</h3>
+                    <div class="badge-group" th:unless="${#maps.isEmpty(detail.evidence.connStateCounts)}">
+                        <span th:each="entry : ${detail.evidence.connStateCounts}" class="badge"
+                              th:text="${entry.key} + ': ' + ${entry.value}"></span>
+                    </div>
+                    <p th:if="${#maps.isEmpty(detail.evidence.connStateCounts)}" class="muted">정보 없음</p>
+                </div>
+            </div>
+
+            <h3>프로토콜 로그 수치 (9종)</h3>
+            <div class="protocol-grid">
+                <div th:each="proto : ${detail.evidence.protocolCounts}" class="protocol-item">
+                    <span class="kv-label" th:text="${proto.protocol}"></span>
+                    <strong th:text="${proto.count}"></strong>
+                </div>
+            </div>
+
+            <div class="two-col-grid">
+                <div>
+                    <h3>상위 상대 IP</h3>
+                    <div class="table-wrap" th:unless="${#lists.isEmpty(detail.evidence.topPeers)}">
+                        <table>
+                            <tbody>
+                            <tr th:each="peer : ${detail.evidence.topPeers}">
+                                <td class="code-inline">
+                                    <span th:each="entry, iter : ${peer}">
+                                        <span th:if="${!iter.first}"> | </span>
+                                        <strong th:text="${entry.key}"></strong>:
+                                        <span th:text="${entry.value}"></span>
+                                    </span>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p th:if="${#lists.isEmpty(detail.evidence.topPeers)}" class="muted">상위 상대 IP 정보 없음</p>
+                </div>
+                <div>
+                    <h3>상위 포트</h3>
+                    <div class="table-wrap" th:unless="${#lists.isEmpty(detail.evidence.topPorts)}">
+                        <table>
+                            <tbody>
+                            <tr th:each="port : ${detail.evidence.topPorts}">
+                                <td class="code-inline">
+                                    <span th:each="entry, iter : ${port}">
+                                        <span th:if="${!iter.first}"> | </span>
+                                        <strong th:text="${entry.key}"></strong>:
+                                        <span th:text="${entry.value}"></span>
+                                    </span>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p th:if="${#lists.isEmpty(detail.evidence.topPorts)}" class="muted">상위 포트 정보 없음</p>
+                </div>
+            </div>
+
+            <h3>대표 연결 (최대 10개)</h3>
+            <div class="table-wrap" th:unless="${#lists.isEmpty(detail.evidence.representativeConnections)}">
+                <table>
+                    <tbody>
+                    <tr th:each="conn, rowStat : ${detail.evidence.representativeConnections}">
+                        <td th:text="'#' + ${rowStat.count}"></td>
+                        <td class="code-inline">
+                            <span th:each="entry, iter : ${conn}">
+                                <span th:if="${!iter.first}"> | </span>
+                                <strong th:text="${entry.key}"></strong>=<span th:text="${entry.value}"></span>
+                            </span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p th:if="${#lists.isEmpty(detail.evidence.representativeConnections)}" class="muted">대표 연결 정보 없음</p>
+
+            <div th:unless="${#lists.isEmpty(detail.evidence.limitations)}">
+                <h3>관측 한계</h3>
+                <ul>
+                    <li th:each="lim : ${detail.evidence.limitations}" th:text="${lim}"></li>
+                </ul>
+            </div>
+
+            <div th:unless="${#maps.isEmpty(detail.evidence.additionalFields)}">
+                <h3>추가 근거 항목</h3>
+                <div class="code-block">
+                    <div th:each="extra : ${detail.evidence.additionalFields}">
+                        <strong th:text="${extra.key}"></strong>: <span th:text="${extra.value}"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4. 사건 보고서 (incident_reports) -->
+    <section class="card">
+        <h2>사건 보고서 (incident_reports)</h2>
+        <div th:unless="${detail.report.present}" class="muted">보고서 없음</div>
+
+        <div th:if="${detail.report.present}">
+            <div class="detail-grid">
+                <div class="kv-box">
+                    <span class="kv-label">보고서 종류 / 버전</span>
+                    <span class="kv-value">
+                        <span class="badge badge-info" th:text="${detail.report.reportKind}"></span>
+                        <span class="badge" th:text="${detail.report.reportVersion}"></span>
+                    </span>
+                </div>
+                <div class="kv-box">
+                    <span class="kv-label">요청 / 응답 모델</span>
+                    <span class="kv-value">
+                        <span th:text="${detail.report.llmModelRequested != null ? detail.report.llmModelRequested : '-'}"></span>
+                        <span> / </span>
+                        <span th:text="${detail.report.llmModelVersion != null ? detail.report.llmModelVersion : '-'}"></span>
+                    </span>
+                </div>
+                <div class="kv-box">
+                    <span class="kv-label">호출 시간 / 토큰</span>
+                    <span class="kv-value muted">
+                        <span th:text="${detail.report.llmSeconds != null ? detail.report.llmSeconds + 's' : '-'}"></span>
+                        <span> (in: </span><span th:text="${detail.report.llmInputTokens != null ? detail.report.llmInputTokens : '-'}"></span>
+                        <span>, out: </span><span th:text="${detail.report.llmOutputTokens != null ? detail.report.llmOutputTokens : '-'}"></span>
+                        <span>, think: </span><span th:text="${detail.report.llmThinkingTokens != null ? detail.report.llmThinkingTokens : '-'}"></span><span>)</span>
+                    </span>
+                </div>
+                <div class="kv-box">
+                    <span class="kv-label">검증 결과</span>
+                    <span class="kv-value">
+                        <span th:if="${detail.report.verificationPassed == true}" class="badge badge-success">검증 통과</span>
+                        <span th:if="${detail.report.verificationPassed == false}" class="badge badge-danger">검증 실패</span>
+                        <span th:if="${detail.report.verificationPassed == null}" class="badge">미검증</span>
+                        <span th:if="${detail.report.verificationReason != null}" class="muted"
+                              th:text="${detail.report.verificationReason}"></span>
+                    </span>
+                </div>
+            </div>
+
+            <div th:if="${detail.report.llmError != null}" class="alert alert-danger">
+                <strong>LLM 호출 오류:</strong>
+                <span th:text="${detail.report.llmError}"></span>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.verificationProblems)}" class="alert alert-warn">
+                <strong>검증 문제 항목</strong>
+                <ul>
+                    <li th:each="prob : ${detail.report.verificationProblems}" th:text="${prob}"></li>
+                </ul>
+            </div>
+
+            <div th:unless="${#maps.isEmpty(detail.report.pseudonyms)}" class="sub-block">
+                <h3>가명표 (zeekad_pseudonyms)</h3>
+                <div class="badge-group">
+                    <span th:each="ps : ${detail.report.pseudonyms}" class="badge code-inline"
+                          th:text="${ps.key} + ' → ' + ${ps.value}"></span>
+                </div>
+            </div>
+
+            <div th:if="${detail.report.observationSummary != null}" class="sub-block">
+                <h3>관측 요약</h3>
+                <p th:text="${detail.report.observationSummary}"></p>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.claims)}" class="sub-block">
+                <h3>주요 주장 및 근거 사실</h3>
+                <ul class="report-list">
+                    <li th:each="c : ${detail.report.claims}">
+                        <div th:text="${c.claim}"></div>
+                        <div th:unless="${#lists.isEmpty(c.facts)}" class="facts-container">
+                            <details th:each="fact : ${c.facts}" class="fact-details">
+                                <summary th:text="${fact.id} + ' (' + ${fact.name} + ')'"></summary>
+                                <div class="fact-value code-inline" th:text="${fact.value}"></div>
+                            </details>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.possibleExplanations)}" class="sub-block">
+                <h3>가능한 설명</h3>
+                <ul class="report-list">
+                    <li th:each="exp : ${detail.report.possibleExplanations}">
+                        <div th:text="${exp.explanation}"></div>
+                        <div th:unless="${#lists.isEmpty(exp.attackIds)}" class="badge-group">
+                            <span th:each="aid : ${exp.attackIds}" class="badge" th:text="${aid}"></span>
+                        </div>
+                        <div th:unless="${#lists.isEmpty(exp.facts)}" class="facts-container">
+                            <details th:each="fact : ${exp.facts}" class="fact-details">
+                                <summary th:text="${fact.id} + ' (' + ${fact.name} + ')'"></summary>
+                                <div class="fact-value code-inline" th:text="${fact.value}"></div>
+                            </details>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <div th:if="${detail.report.sendRecommendation != null}" class="sub-block">
+                <h3>보고서 전송 권고</h3>
+                <p>
+                    <span class="badge badge-info"
+                          th:if="${detail.report.sendRecommendation.choice != null}"
+                          th:text="${detail.report.sendRecommendation.choice}"></span>
+                    <span th:if="${detail.report.sendRecommendation.reason != null}"
+                          th:text="${detail.report.sendRecommendation.reason}"></span>
+                </p>
+                <div th:unless="${#lists.isEmpty(detail.report.sendRecommendation.facts)}" class="facts-container">
+                    <details th:each="fact : ${detail.report.sendRecommendation.facts}" class="fact-details">
+                        <summary th:text="${fact.id} + ' (' + ${fact.name} + ')'"></summary>
+                        <div class="fact-value code-inline" th:text="${fact.value}"></div>
+                    </details>
+                </div>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.limitations)}" class="sub-block">
+                <h3>보고서 한계</h3>
+                <ul>
+                    <li th:each="lim : ${detail.report.limitations}" th:text="${lim}"></li>
+                </ul>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.followUp)}" class="sub-block">
+                <h3>추가 확인 항목</h3>
+                <ul>
+                    <li th:each="fu : ${detail.report.followUp}" th:text="${fu}"></li>
+                </ul>
+            </div>
+
+            <div th:unless="${#lists.isEmpty(detail.report.attackCandidates)}" class="sub-block">
+                <h3>MITRE ATT&amp;CK 후보</h3>
+                <div class="alert alert-warn">
+                    ※ 아래 항목은 공격 정답이 아닌 가설입니다. 실제 공격 여부는 추가 근거를 통해 확인하세요.
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>기법 ID</th>
+                            <th>기법 이름</th>
+                            <th>전술</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="att : ${detail.report.attackCandidates}">
+                            <td><strong class="code-inline" th:text="${att.attackId}"></strong></td>
+                            <td th:text="${att.name}"></td>
+                            <td>
+                                <span th:if="${#lists.isEmpty(att.tactics)}" class="muted">-</span>
+                                <span th:each="tac : ${att.tactics}" class="badge" th:text="${tac}"></span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 5. 전송 판단 (send_decisions) -->
+    <section class="card">
+        <div class="section-header">
+            <h2>전송 판단 (send_decisions)</h2>
+            <div th:if="${detail.sendDecision.present}" class="status-pill-group">
+                <span th:if="${detail.sendDecision.wouldSend}" class="badge badge-danger badge-lg">최종 판단: 전송</span>
+                <span th:unless="${detail.sendDecision.wouldSend}" class="badge badge-lg">최종 판단: 미전송 / 보류</span>
+                <span th:if="${detail.sendDecision.opinionMismatch}" class="badge badge-warn badge-lg">의견 불일치</span>
+            </div>
+        </div>
+
+        <div th:unless="${detail.sendDecision.present}" class="muted">전송 판단 기록 없음</div>
+
+        <div th:if="${detail.sendDecision.present}">
+            <p class="muted">
+                결정 주체: <strong th:text="${detail.sendDecision.decidedBy != null ? detail.sendDecision.decidedBy : '-'}"></strong>
+            </p>
+            <div class="opinion-grid">
+                <div class="opinion-card">
+                    <h3>정책 규칙 의견</h3>
+                    <div class="kv-row">
+                        <span class="kv-label">선택</span>
+                        <span class="badge badge-info"
+                              th:text="${detail.sendDecision.policyChoice != null ? detail.sendDecision.policyChoice : '-'}"></span>
+                    </div>
+                    <div class="kv-row">
+                        <span class="kv-label">정책 ID / 필수 여부</span>
+                        <span>
+                            <span th:text="${detail.sendDecision.policyId != null ? detail.sendDecision.policyId : '-'}"></span>
+                            <span th:if="${detail.sendDecision.policyMandatory == true}" class="badge badge-danger">필수 조건</span>
+                        </span>
+                    </div>
+                    <div th:unless="${#lists.isEmpty(detail.sendDecision.policyReasons)}">
+                        <span class="kv-label">사유</span>
+                        <ul>
+                            <li th:each="pr : ${detail.sendDecision.policyReasons}" th:text="${pr}"></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="opinion-card">
+                    <h3>일반 LLM 의견</h3>
+                    <div class="kv-row">
+                        <span class="kv-label">선택</span>
+                        <span class="badge badge-info"
+                              th:text="${detail.sendDecision.llmChoice != null ? detail.sendDecision.llmChoice : '-'}"></span>
+                    </div>
+                </div>
+
+                <div class="opinion-card">
+                    <h3>판단 모델 의견</h3>
+                    <div class="kv-row">
+                        <span class="kv-label">모델</span>
+                        <span th:text="${detail.sendDecision.decisionModel != null ? detail.sendDecision.decisionModel : '-'}"></span>
+                    </div>
+                    <div class="kv-row">
+                        <span class="kv-label">선택</span>
+                        <span class="badge badge-info"
+                              th:text="${detail.sendDecision.decisionModelChoice != null ? detail.sendDecision.decisionModelChoice : '-'}"></span>
+                    </div>
+                    <div class="kv-row" th:if="${detail.sendDecision.decisionModelConfidence != null}">
+                        <span class="kv-label">선택 확률</span>
+                        <strong th:text="${#numbers.formatDecimal(detail.sendDecision.decisionModelConfidence, 1, 2)}"></strong>
+                    </div>
+                    <div th:unless="${#maps.isEmpty(detail.sendDecision.decisionModelProbabilities)}">
+                        <span class="kv-label">선택지별 선택 확률</span>
+                        <ul class="prob-list">
+                            <li th:each="prob : ${detail.sendDecision.decisionModelProbabilities}">
+                                <span th:text="${prob.key}"></span>:
+                                <strong th:text="${#numbers.formatDecimal(prob.value, 1, 2)}"></strong>
+                            </li>
+                        </ul>
+                    </div>
+                    <div th:if="${detail.sendDecision.decisionModelError != null}" class="alert alert-danger"
+                         th:text="${detail.sendDecision.decisionModelError}"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 6. Slack 전송 기록 (slack_deliveries) -->
+    <section class="card">
+        <h2>Slack 전송 기록 (slack_deliveries)</h2>
+        <div th:if="${#lists.isEmpty(detail.slackDeliveries)}" class="muted">Slack 전송 기록 없음</div>
+        <div th:unless="${#lists.isEmpty(detail.slackDeliveries)}" class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>종류 / 버전</th>
+                    <th>전송 모드 · 상태</th>
+                    <th>시각 (UTC)</th>
+                    <th>페이로드 (slack_payload)</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="del : ${detail.slackDeliveries}">
+                    <td>
+                        <span class="badge" th:text="${del.messageKind}"></span>
+                        <div class="muted" th:text="${del.messageVersion}"></div>
+                    </td>
+                    <td>
+                        <span th:if="${del.dryRunOrRecorded}" class="badge badge-warn">기록만(dry-run)</span>
+                        <span th:unless="${del.dryRunOrRecorded}" class="badge badge-success"
+                              th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></span>
+                        <div class="muted" th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></div>
+                        <div th:if="${del.error != null}" class="alert alert-danger" th:text="${del.error}"></div>
+                    </td>
+                    <td class="muted">
+                        <div th:text="${del.createdAt}"></div>
+                        <div th:if="${del.deliveredAt != null}" th:text="'전송: ' + ${del.deliveredAt}"></div>
+                    </td>
+                    <td>
+                        <pre class="code-block" th:text="${del.payloadJson}"></pre>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- 7. 사건 상태 변경 및 이력 -->
+    <section class="card">
+        <h2>사건 상태 및 변경 이력</h2>
+
+        <div th:if="${detail.canTransition}" class="sub-block">
+            <div th:if="${detail.nextAllowedStatus == 'investigating'}" class="transition-box">
+                <h3>상태 변경: 확인 중(investigating)으로 전환</h3>
+                <form th:action="@{/incidents/{jobId}/rank/{rank}/transition(jobId=${detail.incident.jobId}, rank=${detail.incident.queueRank})}"
+                      method="post">
+                    <input type="hidden" name="toStatus" value="investigating">
+                    <div class="form-group">
+                        <label for="reason-investigating">변경 사유 (필수)</label>
+                        <textarea id="reason-investigating" name="reason" rows="2" class="form-control" required="required"
+                                  placeholder="조사 착수 사유를 입력하세요"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">확인 중으로 변경 (investigating)</button>
+                </form>
+            </div>
+
+            <div th:if="${detail.nextAllowedStatus == 'closed'}" class="transition-box">
+                <h3>상태 변경: 종료(closed) 처리</h3>
+                <form th:action="@{/incidents/{jobId}/rank/{rank}/transition(jobId=${detail.incident.jobId}, rank=${detail.incident.queueRank})}"
+                      method="post">
+                    <input type="hidden" name="toStatus" value="closed">
+                    <div class="form-group">
+                        <label for="resolution-select">결론 선택 (필수)</label>
+                        <select id="resolution-select" name="resolution" class="form-control" required="required">
+                            <option value="">결론을 선택하세요</option>
+                            <option value="true_positive">true_positive (실제 위협)</option>
+                            <option value="false_positive">false_positive (오탐)</option>
+                            <option value="benign">benign (정상 활동)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="reason-closed">종료 사유 (필수)</label>
+                        <textarea id="reason-closed" name="reason" rows="2" class="form-control" required="required"
+                                  placeholder="판단 근거 및 종료 사유를 입력하세요"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">사건 종료 (closed)</button>
+                </form>
+            </div>
+
+            <div th:if="${detail.nextAllowedStatus == null}" class="alert alert-success">
+                이미 종료(closed)된 사건입니다. 종료된 사건은 되돌릴 수 없습니다.
+            </div>
+        </div>
+
+        <div class="sub-block">
+            <h3>상태 변경 이력 (incident_status_history)</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>변경 전 → 후</th>
+                        <th>결론</th>
+                        <th>담당자</th>
+                        <th>사유</th>
+                        <th>변경 시각 (UTC)</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="hist : ${detail.statusHistory}">
+                        <td>
+                            <span class="badge" th:text="${hist.fromStatus != null ? hist.fromStatus : 'open'}"></span>
+                            <span> → </span>
+                            <span class="badge badge-info" th:text="${hist.toStatus}"></span>
+                        </td>
+                        <td th:text="${hist.resolution != null ? hist.resolution : '-'}"></td>
+                        <td th:text="${hist.actorDisplay}"></td>
+                        <td th:text="${hist.reason != null ? hist.reason : '-'}"></td>
+                        <td class="muted" th:text="${hist.changedAt}"></td>
+                    </tr>
+                    <tr th:if="${#lists.isEmpty(detail.statusHistory)}">
+                        <td colspan="5" class="muted">상태 변경 이력이 없습니다.</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</main>
+</body>
+</html>

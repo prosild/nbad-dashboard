@@ -30,7 +30,9 @@ import java.util.regex.Pattern;
 @Service
 public class MaskingService {
 
-    private static final Pattern IPV4_PATTERN = Pattern.compile("\\b(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\b");
+    // Java의 \b는 한글 등 유니코드 문자도 단어 문자로 취급하므로 ASCII 영숫자/밑줄/점 경계를 사용한다.
+    private static final Pattern IPV4_PATTERN =
+            Pattern.compile("(?<![A-Za-z0-9_.])(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})(?![A-Za-z0-9_.])");
 
     private final ObjectMapper objectMapper;
 
@@ -142,7 +144,7 @@ public class MaskingService {
         copy.setCaptureId(item.getCaptureId());
         copy.setBundleId(item.getBundleId());
         copy.setQueueRank(item.getQueueRank());
-        copy.setIncidentId(item.getIncidentId());
+        copy.setIncidentId(maskIpsInText(item.getIncidentId()));
         copy.setHostIp(maskIp(item.getHostIp()));
         copy.setZeekadRole(item.getZeekadRole());
         copy.setEventStart(item.getEventStart());
@@ -150,7 +152,7 @@ public class MaskingService {
         copy.setZeekadPickedBy(item.getZeekadPickedBy());
         copy.setZeekadAlsoFlaggedBy(item.getZeekadAlsoFlaggedBy());
         copy.setConnectionCount(item.getConnectionCount());
-        copy.setHostName(item.getHostName());
+        copy.setHostName(maskStringListIps(item.getHostName()));
         copy.setZeekadStatus(item.getZeekadStatus());
         copy.setZeekadResolution(item.getZeekadResolution());
         copy.setHasReport(item.isHasReport());
@@ -180,7 +182,7 @@ public class MaskingService {
         AnalystReviewItem copy = new AnalystReviewItem();
         copy.setJobId(item.getJobId());
         copy.setCaptureId(item.getCaptureId());
-        copy.setIncidentId(item.getIncidentId());
+        copy.setIncidentId(maskIpsInText(item.getIncidentId()));
         copy.setQueueRank(item.getQueueRank());
         copy.setHostIp(maskIp(item.getHostIp()));
         copy.setZeekadRole(item.getZeekadRole());
@@ -235,7 +237,20 @@ public class MaskingService {
         List<Map<String, Object>> maskedPeers = maskListOfMaps(evidence.getTopPeers());
         List<Map<String, Object>> maskedConnections = maskListOfMaps(evidence.getRepresentativeConnections());
         Map<String, Object> maskedRaw = maskMapValues(evidence.getRawEvidence());
-        return evidence.copyWithMaskedNetworkFields(maskedPeers, maskedConnections, maskedRaw);
+        EvidenceData masked = evidence.copyWithMaskedNetworkFields(maskedPeers, maskedConnections, maskedRaw);
+        masked.setLimitations(maskStringListIps(evidence.getLimitations()));
+        return masked;
+    }
+
+    private List<String> maskStringListIps(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> masked = new ArrayList<>(values.size());
+        for (String v : values) {
+            masked.add(maskIpsInText(v));
+        }
+        return Collections.unmodifiableList(masked);
     }
 
     private List<Map<String, Object>> maskListOfMaps(List<Map<String, Object>> list) {
