@@ -106,4 +106,86 @@ class StaticSecurityAndConfigTest {
                 .startsWith("otpauth://totp/")
                 .contains("secret=" + secret);
     }
+
+    @Test
+    void dockerAndWafConfigFilesExistWithoutSecretsOrPrivateKeys() throws IOException {
+        List<Path> requiredFiles = List.of(
+                Path.of("Dockerfile"),
+                Path.of(".dockerignore"),
+                Path.of("compose.yml"),
+                Path.of("docker/verify/compose.verify.yml"),
+                Path.of(".env.example"),
+                Path.of("docker/nginx-waf/Dockerfile"),
+                Path.of("docker/nginx-waf/templates/conf.d/default.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/location_common.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/cors.conf.template")
+        );
+        for (Path path : requiredFiles) {
+            assertThat(path).as("필수 배포/WAF 파일 %s가 존재해야 합니다", path).exists();
+        }
+
+        String dockerfile = Files.readString(Path.of("Dockerfile"), StandardCharsets.UTF_8);
+        assertThat(dockerfile).contains("USER ").contains("/login").doesNotContain("/actuator/health");
+        assertThat(dockerfile).contains("COPY src/main").doesNotContain("COPY src/test");
+
+        String dockerignore = Files.readString(Path.of(".dockerignore"), StandardCharsets.UTF_8);
+        assertThat(dockerignore).contains(".git", ".env", "*.key", "*.pem", "handoff", "security-reports");
+
+        String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
+        assertThat(compose).contains("dashboard-app:", "nginx-waf:", "host.docker.internal:host-gateway");
+        assertThat(compose).contains("MODSEC_RULE_ENGINE", "PARANOIA", "SERVER_TOKENS");
+        assertThat(compose).doesNotContain("ports:\n      - \"8080:8080\"");
+
+        String wafLocationCommon = Files.readString(
+                Path.of("docker/nginx-waf/templates/includes/location_common.conf.template"),
+                StandardCharsets.UTF_8);
+        assertThat(wafLocationCommon).contains("location ^~ /actuator").contains("return 403");
+
+        String envExample = Files.readString(Path.of(".env.example"), StandardCharsets.UTF_8);
+        for (String requiredVar : List.of(
+                "DASHBOARD_DB_HOST", "DASHBOARD_DB_PORT", "DASHBOARD_DB_NAME",
+                "DASHBOARD_DB_USER", "DASHBOARD_APP_PASSWORD",
+                "ZEEKAD_DB_HOST", "ZEEKAD_DB_PORT", "ZEEKAD_DB_NAME",
+                "ZEEKAD_RO_USER", "ZEEKAD_RO_PASSWORD",
+                "ZEEKAD_RW_USER", "ZEEKAD_RW_PASSWORD",
+                "ZEEKAD_EVIDENCE_API_URL", "DASHBOARD_COOKIE_SECURE",
+                "DASHBOARD_BOOTSTRAP_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET",
+                "WAF_HTTPS_PORT", "WAF_HTTP_PORT")) {
+            assertThat(envExample).contains(requiredVar + "=");
+        }
+
+        Pattern privateKeyPattern = Pattern.compile("BEGIN [A-Z ]*PRIVATE KEY");
+        Pattern hardcodedSecretLine = Pattern.compile(
+                "(?m)^[ \\t]*[A-Z0-9_]*(?:PASSWORD|SECRET)[ \\t]*[:=][ \\t]*(?!$|\\r|\\n|\"\"|\\$\\{|<CHANGE_ME)[^\\s#]+");
+
+        List<Path> inspectTargets = new java.util.ArrayList<>(requiredFiles);
+        try (Stream<Path> initFiles = Files.walk(Path.of("docker/verify/init"))) {
+            initFiles.filter(Files::isRegularFile).forEach(inspectTargets::add);
+        }
+        for (Path target : inspectTargets) {
+            String content = Files.readString(target, StandardCharsets.UTF_8);
+            assertThat(privateKeyPattern.matcher(content).find())
+                    .as("%s에 TLS 개인키가 포함되어서는 안 됩니다", target)
+                    .isFalse();
+            assertThat(hardcodedSecretLine.matcher(content).find())
+                    .as("%s에 평문 비밀번호/시크릿이 하드코딩되어서는 안 됩니다", target)
+                    .isFalse();
+        }
+    }
+
+    @Test
+    void gitignoreExcludesSecretsKeysAndSecurityReports() throws IOException {
+        String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
+        assertThat(gitignore).contains(".env", ".env.*", "!.env.example", "*.key", "*.pem", "security-reports/");
+    }
+
+    @Test
+    void buildGradleConfiguresCycloneDxAndKeepsH2TestOnly() throws IOException {
+        String buildGradle = Files.readString(Path.of("build.gradle"), StandardCharsets.UTF_8);
+        assertThat(buildGradle).contains("org.cyclonedx.bom");
+        assertThat(buildGradle).contains("runtimeOnly 'org.postgresql:postgresql'");
+        assertThat(buildGradle).contains("testImplementation 'com.h2database:h2'");
+        assertThat(buildGradle).doesNotContain("implementation 'com.h2database:h2'");
+        assertThat(buildGradle).doesNotContain("runtimeOnly 'com.h2database:h2'");
+    }
 }

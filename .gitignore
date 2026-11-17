@@ -10,3 +10,11 @@ build/
 Thumbs.db
 out/
 bin/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+security-reports/
+

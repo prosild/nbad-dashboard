@@ -17,7 +17,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.header.writers.CrossOriginEmbedderPolicyHeaderWriter;
+import org.springframework.security.web.header.writers.CrossOriginOpenerPolicyHeaderWriter;
+import org.springframework.security.web.header.writers.CrossOriginResourcePolicyHeaderWriter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 
 /**
  * Spring Security 웹 보안 설정(인증, 세션 고정 방지, CSRF, 보안 응답 헤더, 역할 인가).
@@ -79,6 +83,15 @@ public class SecurityConfig {
                         .frameOptions(frame -> frame.deny())
                         .referrerPolicy(referrer -> referrer.policy(
                                 ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                        .crossOriginOpenerPolicy(coop -> coop.policy(
+                                CrossOriginOpenerPolicyHeaderWriter.CrossOriginOpenerPolicy.SAME_ORIGIN))
+                        .crossOriginEmbedderPolicy(coep -> coep.policy(
+                                CrossOriginEmbedderPolicyHeaderWriter.CrossOriginEmbedderPolicy.REQUIRE_CORP))
+                        .crossOriginResourcePolicy(corp -> corp.policy(
+                                CrossOriginResourcePolicyHeaderWriter.CrossOriginResourcePolicy.SAME_ORIGIN))
+                        .addHeaderWriter(new StaticHeadersWriter(
+                                "Permissions-Policy",
+                                "camera=(), microphone=(), geolocation=(), payment=(), usb=()"))
                 )
                 .exceptionHandling(ex -> ex
                         .accessDeniedPage("/error?forbidden")

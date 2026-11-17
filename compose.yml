@@ -1,0 +1,92 @@
+services:
+  dashboard-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zeek-ad-dashboard-app:local
+    expose:
+      - "8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SERVER_PORT: "8080"
+      DASHBOARD_DB_HOST: ${DASHBOARD_DB_HOST:-host.docker.internal}
+      DASHBOARD_DB_PORT: ${DASHBOARD_DB_PORT:-55432}
+      DASHBOARD_DB_NAME: ${DASHBOARD_DB_NAME:-zeekad_dashboard}
+      DASHBOARD_DB_USER: ${DASHBOARD_DB_USER:-dashboard_app}
+      DASHBOARD_APP_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+      ZEEKAD_DB_HOST: ${ZEEKAD_DB_HOST:-host.docker.internal}
+      ZEEKAD_DB_PORT: ${ZEEKAD_DB_PORT:-55432}
+      ZEEKAD_DB_NAME: ${ZEEKAD_DB_NAME:-zeekad}
+      ZEEKAD_RO_USER: ${ZEEKAD_RO_USER:-dashboard_ro}
+      ZEEKAD_RO_PASSWORD: ${ZEEKAD_RO_PASSWORD:-}
+      ZEEKAD_RW_USER: ${ZEEKAD_RW_USER:-dashboard_rw}
+      ZEEKAD_RW_PASSWORD: ${ZEEKAD_RW_PASSWORD:-}
+      ZEEKAD_EVIDENCE_API_URL: ${ZEEKAD_EVIDENCE_API_URL:-http://host.docker.internal:8000}
+      DASHBOARD_COOKIE_SECURE: ${DASHBOARD_COOKIE_SECURE:-true}
+      DASHBOARD_SESSION_IDLE_TIMEOUT: ${DASHBOARD_SESSION_IDLE_TIMEOUT:-30m}
+      DASHBOARD_MAX_FAILED_ATTEMPTS: ${DASHBOARD_MAX_FAILED_ATTEMPTS:-5}
+      DASHBOARD_LOCKOUT_MINUTES: ${DASHBOARD_LOCKOUT_MINUTES:-15}
+      DASHBOARD_IDLE_TIMEOUT_MINUTES: ${DASHBOARD_IDLE_TIMEOUT_MINUTES:-30}
+      DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES: ${DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES:-480}
+      DASHBOARD_BOOTSTRAP_PASSWORD: ${DASHBOARD_BOOTSTRAP_PASSWORD:-}
+      BOOTSTRAP_VIEWER1_PASSWORD: ${BOOTSTRAP_VIEWER1_PASSWORD:-}
+      BOOTSTRAP_ANALYST1_PASSWORD: ${BOOTSTRAP_ANALYST1_PASSWORD:-}
+      BOOTSTRAP_ANALYST2_PASSWORD: ${BOOTSTRAP_ANALYST2_PASSWORD:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_TOTP_SECRET: ${BOOTSTRAP_ADMIN_TOTP_SECRET:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - dashboard-net
+
+  nginx-waf:
+    build:
+      context: ./docker/nginx-waf
+      dockerfile: Dockerfile
+    image: zeek-ad-dashboard-waf:local
+    depends_on:
+      dashboard-app:
+        condition: service_healthy
+    ports:
+      - "${WAF_HTTP_PORT:-8080}:8080"
+      - "${WAF_HTTPS_PORT:-8443}:8443"
+    environment:
+      BACKEND: "http://dashboard-app:8080"
+      PORT: "8080"
+      SSL_PORT: "8443"
+      SSL_REDIRECT_PORT: ${WAF_HTTPS_PORT:-8443}
+      SERVER_NAME: ${WAF_SERVER_NAME:-localhost}
+      NGINX_ALWAYS_TLS_REDIRECT: "on"
+      SSL_OCSP_STAPLING: "off"
+      SERVER_TOKENS: "off"
+      SERVER_HEADER: ""
+      PROXY_HOST_HEADER: "$$http_host"
+      NGINX_X_FORWARDED_PROTO: "$$scheme"
+      NGINX_X_FORWARDED_PORT: "$$server_port"
+      SET_REAL_IP_FROM: "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      MODSEC_RULE_ENGINE: "on"
+      PARANOIA: "1"
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      ANOMALY_OUTBOUND: "4"
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+      MODSEC_AUDIT_LOG: "/dev/stdout"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - dashboard-net
+
+networks:
+  dashboard-net:
+    driver: bridge

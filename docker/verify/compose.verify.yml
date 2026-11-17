@@ -1,0 +1,29 @@
+services:
+  verify-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${VERIFY_POSTGRES_SUPER_PASSWORD:-}
+      VERIFY_APP_DB_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+      VERIFY_RO_DB_PASSWORD: ${ZEEKAD_RO_PASSWORD:-}
+      VERIFY_RW_DB_PASSWORD: ${ZEEKAD_RW_PASSWORD:-}
+    volumes:
+      - ./docker/verify/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zeekad_dashboard"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - dashboard-net
+
+  dashboard-app:
+    depends_on:
+      verify-postgres:
+        condition: service_healthy
+    environment:
+      DASHBOARD_DB_HOST: verify-postgres
+      DASHBOARD_DB_PORT: "5432"
+      ZEEKAD_DB_HOST: verify-postgres
+      ZEEKAD_DB_PORT: "5432"
