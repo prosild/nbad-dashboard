@@ -157,12 +157,20 @@
                             <span class="badge"
                                   th:classappend="${item.zeekadStatus == 'closed'} ? ' badge-success' : (${item.zeekadStatus == 'investigating'} ? ' badge-warn' : '')"
                                   th:text="${item.zeekadStatus}"></span>
+                            <span th:if="${item.zeekadReviewPending}" class="badge badge-warn">검토 대기</span>
+                            <span th:if="${!item.zeekadReviewPending and item.zeekadReviewAction != null}"
+                                  class="badge badge-info"
+                                  th:text="'검토: ' + ${item.zeekadReviewAction}"></span>
+                            <div th:if="${item.statusUpdatedAt != null}" class="muted" th:text="${item.statusUpdatedAt}"></div>
                         </td>
                         <td>
                             <span th:if="${item.hasReport}" class="badge badge-success">있음</span>
                             <span th:unless="${item.hasReport}" class="badge">보고서 없음</span>
                             <span th:if="${item.zeekadReportKind != null}" class="badge"
                                   th:text="${item.zeekadReportKind}"></span>
+                            <div th:if="${item.zeekadReportJobId != null and item.zeekadReportJobId != item.jobId}"
+                                 class="muted"
+                                 th:text="'보고 작업 #' + ${item.zeekadReportJobId}"></div>
                         </td>
                         <td>
                             <span th:if="${item.zeekadWouldSend}" class="badge badge-danger">전송</span>

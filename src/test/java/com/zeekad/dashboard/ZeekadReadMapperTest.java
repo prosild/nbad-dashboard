@@ -35,10 +35,10 @@ class ZeekadReadMapperTest {
     private IncidentQueryService incidentQueryService;
 
     @Test
-    void queriesAllTwelveContractViewsWithArrayAndJsonbTypeHandlers() {
+    void queriesAllThirteenContractViewsWithArrayAndJsonbTypeHandlers() {
         // v1: scoring_jobs & default latest succeeded job selection
         List<String> captures = zeekadReadMapper.findDistinctCaptureIds();
-        assertThat(captures).containsExactly("cic17-wed", "syn1-tue");
+        assertThat(captures).containsExactly("cic17-wed", "lab-20261118", "syn1-tue");
 
         ScoringJob latestCic17 = zeekadReadMapper.findLatestSucceededJobByCaptureId("cic17-wed");
         assertThat(latestCic17).isNotNull();
@@ -110,13 +110,13 @@ class ZeekadReadMapperTest {
         assertThat(summaries).hasSize(1);
         assertThat(summaries.get(0).isDryRunOrRecorded()).isTrue();
 
-        // v2: incident_status & incident_status_history
+        // v2 · v2.1: incident_status & incident_status_history (incident_id 기준)
         String rank2Id = queue.get(1).getIncidentId();
-        IncidentStatus status = zeekadReadMapper.findIncidentStatus(101L, rank2Id);
+        IncidentStatus status = zeekadReadMapper.findIncidentStatus(rank2Id);
         assertThat(status).isNotNull();
         assertThat(status.getZeekadStatus()).isEqualTo("investigating");
 
-        List<IncidentStatusHistory> history = zeekadReadMapper.findIncidentStatusHistory(101L, rank2Id);
+        List<IncidentStatusHistory> history = zeekadReadMapper.findIncidentStatusHistory(rank2Id);
         assertThat(history).hasSize(1);
         assertThat(history.get(0).getToStatus()).isEqualTo("investigating");
 
@@ -140,5 +140,70 @@ class ZeekadReadMapperTest {
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(3);
         assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, null, null, true))
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(1);
+    }
+
+    @Test
+    void queriesLatestIncidentQueueAndV21LabMultiJobRules() {
+        ScoringJob latestLabJob = zeekadReadMapper.findLatestSucceededJobByCaptureId("lab-20261118");
+        assertThat(latestLabJob).isNotNull();
+        assertThat(latestLabJob.getJobId()).isEqualTo(502L);
+
+        List<IncidentQueueItem> latestLabQueue = zeekadReadMapper.findLatestIncidentQueue(
+                "lab-20261118", null, null, null, null, null);
+        assertThat(latestLabQueue).hasSize(2);
+
+        // rank 1: job 502에서 새로 등장, 보고서 없음
+        IncidentQueueItem labRank1 = latestLabQueue.get(0);
+        assertThat(labRank1.getJobId()).isEqualTo(502L);
+        assertThat(labRank1.getQueueRank()).isEqualTo(1);
+        assertThat(labRank1.getZeekadReportJobId()).isNull();
+        assertThat(labRank1.isHasReport()).isFalse();
+        assertThat(labRank1.getZeekadStatus()).isEqualTo("open");
+        assertThat(labRank1.isZeekadReviewPending()).isFalse();
+
+        // rank 2: job 502에서 재계산, 보고서·판단·Slack·검토대기는 job 501, 상태는 501에서 승계
+        IncidentQueueItem labRank2 = latestLabQueue.get(1);
+        assertThat(labRank2.getJobId()).isEqualTo(502L);
+        assertThat(labRank2.getQueueRank()).isEqualTo(2);
+        assertThat(labRank2.getZeekadReportJobId()).isEqualTo(501L);
+        assertThat(labRank2.isHasReport()).isTrue();
+        assertThat(labRank2.getZeekadReportKind()).isEqualTo("llm");
+        assertThat(labRank2.getZeekadVerificationPassed()).isTrue();
+        assertThat(labRank2.isZeekadWouldSend()).isTrue();
+        assertThat(labRank2.getZeekadStatus()).isEqualTo("investigating");
+        assertThat(labRank2.getStatusUpdatedAt()).isNotNull();
+        assertThat(labRank2.getZeekadReviewAction()).isNull();
+        assertThat(labRank2.isZeekadReviewPending()).isTrue();
+
+        // latest_incident_queue 필터 검증
+        assertThat(zeekadReadMapper.findLatestIncidentQueue("lab-20261118", null, null, null, false, null))
+                .extracting(IncidentQueueItem::getQueueRank).containsExactly(1);
+        assertThat(zeekadReadMapper.findLatestIncidentQueue("lab-20261118", null, null, null, true, null))
+                .extracting(IncidentQueueItem::getQueueRank).containsExactly(2);
+        assertThat(zeekadReadMapper.findLatestIncidentQueue("lab-20261118", null, null, "investigating", null, null))
+                .extracting(IncidentQueueItem::getQueueRank).containsExactly(2);
+        assertThat(zeekadReadMapper.findLatestIncidentQueue("lab-20261118", null, null, null, null, true))
+                .extracting(IncidentQueueItem::getQueueRank).containsExactly(2);
+
+        // (zeekad_report_job_id, incident_id) 조인 규칙 vs 큐 job_id 모델 점수
+        String labIncId = labRank2.getIncidentId();
+        assertThat(zeekadReadMapper.findIncidentReport(502L, labIncId)).isNull();
+        assertThat(zeekadReadMapper.findIncidentReport(501L, labIncId)).isNotNull();
+        assertThat(zeekadReadMapper.findSendDecision(501L, labIncId)).isNotNull();
+        assertThat(zeekadReadMapper.findSlackDeliveries(501L, labIncId)).hasSize(1);
+        assertThat(zeekadReadMapper.findModelScores(502L, labIncId)).hasSize(2);
+
+        // analyst_review_queue가 최신 큐(job 502, rank 2) 링크와 연계됨
+        List<AnalystReviewItem> labReviews = zeekadReadMapper.findAnalystReviewQueue("lab-20261118", true);
+        assertThat(labReviews).hasSize(1);
+        assertThat(labReviews.get(0).getJobId()).isEqualTo(502L);
+        assertThat(labReviews.get(0).getQueueRank()).isEqualTo(2);
+        assertThat(labReviews.get(0).isPending()).isTrue();
+
+        // 과거 실패 작업(job 100) fallback 조회 확인
+        List<IncidentQueueItem> failedJobQueue = zeekadReadMapper.findIncidentQueue(100L, null, null, null, null, null);
+        assertThat(failedJobQueue).hasSize(1);
+        assertThat(failedJobQueue.get(0).isHasReport()).isFalse();
+        assertThat(failedJobQueue.get(0).getZeekadStatus()).isEqualTo("open");
     }
 }

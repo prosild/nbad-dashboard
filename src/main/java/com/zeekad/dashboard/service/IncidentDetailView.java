@@ -139,6 +139,7 @@ public record IncidentDetailView(
     }
 
     public record StatusHistoryItem(
+            Long jobId,
             String fromStatus,
             String toStatus,
             String resolution,

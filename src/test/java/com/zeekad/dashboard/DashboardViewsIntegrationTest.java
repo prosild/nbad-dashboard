@@ -105,6 +105,28 @@ class DashboardViewsIntegrationTest {
     }
 
     @Test
+    void labCaptureUsesLatestSucceededJobQueueAndShowsV21IndicatorsAndReviewLinks() throws Exception {
+        String labAnalyst = "lab_view_analyst";
+        userAdminService.createUser(labAnalyst, "실습화면분석가", "Pass1234!", UserRole.ANALYST,
+                "lab-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
+
+        mockMvc.perform(get("/incidents").param("captureId", "lab-20261118").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("job #502")))
+                .andExpect(content().string(containsString("/incidents/502/rank/1")))
+                .andExpect(content().string(containsString("/incidents/502/rank/2")))
+                .andExpect(content().string(containsString("보고 작업 #501")))
+                .andExpect(content().string(containsString("검토 대기")))
+                .andExpect(content().string(containsString("보고서 없음")));
+
+        mockMvc.perform(get("/reviews").param("captureId", "lab-20261118").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("/incidents/502/rank/2")))
+                .andExpect(content().string(containsString("job #502 / #2")));
+    }
+
+    @Test
     void operationsAndReviewsScreensRenderRequiredIndicatorsAndNavigation() throws Exception {
         String analyst = "ops_analyst_1";
         userAdminService.createUser(analyst, "운영분석가", "Pass1234!", UserRole.ANALYST,

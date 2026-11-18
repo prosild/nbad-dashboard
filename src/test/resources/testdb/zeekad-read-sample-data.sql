@@ -21,7 +21,15 @@ VALUES
     (201, 'syn1-tue', 'zeekad-fusion/1', 'succeeded',
      TIMESTAMP WITH TIME ZONE '2026-11-16 04:00:00Z',
      TIMESTAMP WITH TIME ZONE '2026-11-16 04:05:00Z',
-     NULL, 1);
+     NULL, 1),
+    (501, 'lab-20261118', 'zeekad-fusion/1', 'succeeded',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:05:00Z',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:06:00Z',
+     NULL, 1),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 'succeeded',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:10:00Z',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:11:00Z',
+     NULL, 2);
 
 INSERT INTO dashboard.raw_incident_queue (
     job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role,
@@ -51,14 +59,33 @@ INSERT INTO dashboard.raw_incident_queue (
      '10.99.88.77', 'originator',
      TIMESTAMP WITH TIME ZONE '2026-11-16 03:40:00Z',
      TIMESTAMP WITH TIME ZONE '2026-11-16 03:55:00Z',
-     'iforest', ARRAY['autoencoder'], 320, ARRAY['syn-dc01.internal']);
+     'iforest', ARRAY['autoencoder'], 320, ARRAY['syn-dc01.internal']),
+    (501, 'lab-20261118', 'zeekad-fusion/1', 1, 'lab-20261118|10.20.0.15|originator|1763424000',
+     '10.20.0.15', 'originator',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:00:00Z',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:05:00Z',
+     'iforest', ARRAY['autoencoder'], 150, ARRAY['lab-client01.lab.local']),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 1, 'lab-20261118|10.20.0.25|responder|1763424300',
+     '10.20.0.25', 'responder',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:05:00Z',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:10:00Z',
+     'hbos', NULL, 42, ARRAY['lab-srv02.lab.local']),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 2, 'lab-20261118|10.20.0.15|originator|1763424000',
+     '10.20.0.15', 'originator',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:00:00Z',
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:10:00Z',
+     'iforest', ARRAY['autoencoder', 'hbos'], 290, ARRAY['lab-client01.lab.local']);
 
 INSERT INTO dashboard.raw_incident_model_scores (job_id, incident_id, zeekad_model, max_score, candidate_windows, windows)
 VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'iforest', 0.91, 4, 6),
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'autoencoder', 0.94, 3, 6),
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'autoencoder', 0.87, 2, 4),
-    (201, 'syn1-tue|10.99.88.77|originator|1700001000', 'iforest', 0.89, 3, 5);
+    (201, 'syn1-tue|10.99.88.77|originator|1700001000', 'iforest', 0.89, 3, 5),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.86, 2, 4),
+    (502, 'lab-20261118|10.20.0.25|responder|1763424300', 'hbos', 0.79, 1, 3),
+    (502, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.93, 5, 6),
+    (502, 'lab-20261118|10.20.0.15|originator|1763424000', 'autoencoder', 0.88, 4, 6);
 
 INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen)
 VALUES
@@ -67,7 +94,9 @@ VALUES
     ('cic17-wed', '10.20.30.40', 'x', 'backup_op', 'ntlm', 5,
      TIMESTAMP WITH TIME ZONE '2026-11-16 02:18:00Z', TIMESTAMP WITH TIME ZONE '2026-11-16 02:29:00Z'),
     ('syn1-tue', '10.99.88.77', 'synadmin', NULL, 'kerberos', 9,
-     TIMESTAMP WITH TIME ZONE '2026-11-16 03:40:00Z', TIMESTAMP WITH TIME ZONE '2026-11-16 03:54:00Z');
+     TIMESTAMP WITH TIME ZONE '2026-11-16 03:40:00Z', TIMESTAMP WITH TIME ZONE '2026-11-16 03:54:00Z'),
+    ('lab-20261118', '10.20.0.15', 'labuser1', 'lab_ntlm1', 'kerberos', 6,
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:01:00Z', TIMESTAMP WITH TIME ZONE '2026-11-18 00:09:00Z');
 
 INSERT INTO dashboard.raw_incident_reports (
     job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
@@ -98,7 +127,15 @@ INSERT INTO dashboard.raw_incident_reports (
      NULL, '[{"attack_id": "T1021", "name": "Remote Services", "tactics": ["Lateral Movement"]}]' FORMAT JSON,
      'run-201', TIMESTAMP WITH TIME ZONE '2026-11-16 04:06:00Z',
      '[{"id": "F1", "name": "smb_count", "value": "120"}]' FORMAT JSON,
-     '{"H": "10.99.88.77", "I1": "10.99.88.10"}' FORMAT JSON);
+     '{"H": "10.99.88.77", "I1": "10.99.88.10"}' FORMAT JSON),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'llm', 'llm-report.v1', 'evidence.v1',
+     '{"observation_summary": "실습망 H에서 I1로 비정상 인증 시도", "claims": [{"claim": "짧은 시간 내 다수 인증 요청", "fact_ids": ["F1"]}]}' FORMAT JSON,
+     TRUE, 'verified', '[]' FORMAT JSON,
+     'gemini-2.5-pro', 'gemini-2.5-pro-001', 1.9, 1100, 310, 150,
+     NULL, '[{"attack_id": "T1110", "name": "Brute Force", "tactics": ["Credential Access"]}]' FORMAT JSON,
+     'run-501', TIMESTAMP WITH TIME ZONE '2026-11-18 00:06:30Z',
+     '[{"id": "F1", "name": "lab_conn_count", "value": "150"}]' FORMAT JSON,
+     '{"H": "10.20.0.15", "I1": "10.20.0.99"}' FORMAT JSON);
 
 INSERT INTO dashboard.raw_send_decisions (
     job_id, incident_id, zeekad_would_send, zeekad_decided_by, policy_id, policy_choice,
@@ -116,7 +153,11 @@ INSERT INTO dashboard.raw_send_decisions (
     (201, 'syn1-tue|10.99.88.77|originator|1700001000', TRUE, 'policy', 'POL-01', 'send',
      TRUE, '["신규 합성 공격 탐지"]' FORMAT JSON, 'send', 'gemini-decision-1', 'send',
      0.91, '{"send": 0.91, "hold": 0.05, "analyst_review": 0.03, "need_more_evidence": 0.01}' FORMAT JSON,
-     NULL, 'run-201', TIMESTAMP WITH TIME ZONE '2026-11-16 04:07:00Z');
+     NULL, 'run-201', TIMESTAMP WITH TIME ZONE '2026-11-16 04:07:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', TRUE, 'policy', 'POL-01', 'send',
+     TRUE, '["실습망 다중 모델 탐지"]' FORMAT JSON, 'send', 'gemini-decision-1', 'send',
+     0.89, '{"send": 0.89, "hold": 0.06, "analyst_review": 0.03, "need_more_evidence": 0.02}' FORMAT JSON,
+     NULL, 'run-501', TIMESTAMP WITH TIME ZONE '2026-11-18 00:07:00Z');
 
 INSERT INTO dashboard.raw_slack_deliveries (
     job_id, incident_id, zeekad_message_kind, zeekad_message_version, zeekad_delivery_mode,
@@ -124,7 +165,10 @@ INSERT INTO dashboard.raw_slack_deliveries (
 ) VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'incident', 'incident.v1', 'dry_run', 'recorded',
      '{"channel": "#sec-alerts", "text": "경보: 192.168.10.50 -> 203.0.113.45"}' FORMAT JSON,
-     NULL, NULL, NULL, TIMESTAMP WITH TIME ZONE '2026-11-16 03:11:00Z');
+     NULL, NULL, NULL, TIMESTAMP WITH TIME ZONE '2026-11-16 03:11:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'incident', 'incident.v1', 'dry_run', 'recorded',
+     '{"channel": "#lab-alerts", "text": "실습망 경보: 10.20.0.15 -> 10.20.0.99"}' FORMAT JSON,
+     NULL, NULL, NULL, TIMESTAMP WITH TIME ZONE '2026-11-18 00:07:30Z');
 
 INSERT INTO dashboard.raw_slack_summaries (
     job_id, capture_id, zeekad_message_version, zeekad_delivery_mode, zeekad_delivery_status,
@@ -143,12 +187,16 @@ VALUES
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'investigating', NULL,
      TIMESTAMP WITH TIME ZONE '2026-11-16 05:00:00Z', 'analyst1'),
     (101, 'cic17-wed|172.16.5.99|originator|1700000600', 'closed', 'benign',
-     TIMESTAMP WITH TIME ZONE '2026-11-16 05:30:00Z', 'analyst1');
+     TIMESTAMP WITH TIME ZONE '2026-11-16 05:30:00Z', 'analyst1'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'investigating', NULL,
+     TIMESTAMP WITH TIME ZONE '2026-11-18 00:08:00Z', 'admin');
 
 INSERT INTO dashboard.raw_incident_status_history (job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at)
 VALUES
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'open', 'investigating', NULL, 'analyst1',
-     'SMB 응답 패턴 추가 확인 중', TIMESTAMP WITH TIME ZONE '2026-11-16 05:00:00Z');
+     'SMB 응답 패턴 추가 확인 중', TIMESTAMP WITH TIME ZONE '2026-11-16 05:00:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'open', 'investigating', NULL, 'admin',
+     '실습망 초기 조사 시작', TIMESTAMP WITH TIME ZONE '2026-11-18 00:08:00Z');
 
 INSERT INTO dashboard.raw_analyst_review_queue (
     job_id, incident_id, queue_rank, host_ip, zeekad_role, zeekad_review_reason,
@@ -162,4 +210,7 @@ INSERT INTO dashboard.raw_analyst_review_queue (
      'confirm', 'analyst1', TIMESTAMP WITH TIME ZONE '2026-11-16 04:00:00Z'),
     (201, 'syn1-tue|10.99.88.77|originator|1700001000', 1, '10.99.88.77', 'originator',
      '합성 캡처 내 측면 이동 검토 대기', TIMESTAMP WITH TIME ZONE '2026-11-16 04:07:30Z',
+     NULL, NULL, NULL),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 1, '10.20.0.15', 'originator',
+     '실습망 재계산 사건 검토 대기', TIMESTAMP WITH TIME ZONE '2026-11-18 00:07:30Z',
      NULL, NULL, NULL);

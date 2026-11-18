@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS dashboard.raw_incident_status (
     zeekad_resolution VARCHAR(64),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_by VARCHAR(100) NOT NULL,
-    PRIMARY KEY (job_id, incident_id)
+    PRIMARY KEY (incident_id)
 );
 
 CREATE TABLE IF NOT EXISTS dashboard.raw_incident_status_history (
@@ -176,5 +176,59 @@ CREATE OR REPLACE VIEW dashboard.slack_summaries AS SELECT * FROM dashboard.raw_
 CREATE OR REPLACE VIEW dashboard.incident_status AS SELECT * FROM dashboard.raw_incident_status;
 CREATE OR REPLACE VIEW dashboard.incident_status_history AS SELECT * FROM dashboard.raw_incident_status_history;
 CREATE OR REPLACE VIEW dashboard.analyst_review_queue AS SELECT * FROM dashboard.raw_analyst_review_queue;
+
+CREATE OR REPLACE VIEW dashboard.latest_incident_queue AS
+WITH latest_jobs AS (
+    SELECT capture_id, MAX(job_id) AS job_id
+    FROM dashboard.scoring_jobs
+    WHERE status = 'succeeded'
+    GROUP BY capture_id
+),
+first_reports AS (
+    SELECT incident_id, MIN(job_id) AS report_job_id
+    FROM dashboard.incident_reports
+    GROUP BY incident_id
+)
+SELECT q.job_id,
+       q.capture_id,
+       q.bundle_id,
+       q.queue_rank,
+       q.incident_id,
+       q.host_ip,
+       q.zeekad_role,
+       q.event_start,
+       q.event_end,
+       q.zeekad_picked_by,
+       q.zeekad_also_flagged_by,
+       q.connection_count,
+       q.host_name,
+       fr.report_job_id AS zeekad_report_job_id,
+       ir.zeekad_report_kind,
+       sd.zeekad_would_send,
+       COALESCE(ist.zeekad_status, 'open') AS zeekad_status,
+       ist.zeekad_resolution,
+       ist.updated_at AS status_updated_at,
+       arq.zeekad_review_action,
+       CASE
+           WHEN arq.incident_id IS NOT NULL AND arq.zeekad_review_action IS NULL THEN TRUE
+           ELSE FALSE
+       END AS zeekad_review_pending
+FROM dashboard.incident_queue q
+JOIN latest_jobs lj
+  ON lj.capture_id = q.capture_id
+ AND lj.job_id = q.job_id
+LEFT JOIN first_reports fr
+  ON fr.incident_id = q.incident_id
+LEFT JOIN dashboard.incident_reports ir
+  ON ir.job_id = fr.report_job_id
+ AND ir.incident_id = q.incident_id
+LEFT JOIN dashboard.send_decisions sd
+  ON sd.job_id = fr.report_job_id
+ AND sd.incident_id = q.incident_id
+LEFT JOIN dashboard.incident_status ist
+  ON ist.incident_id = q.incident_id
+LEFT JOIN dashboard.analyst_review_queue arq
+  ON arq.job_id = fr.report_job_id
+ AND arq.incident_id = q.incident_id;
 
 CREATE ALIAS IF NOT EXISTS dashboard.transition_incident FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.transitionIncident";

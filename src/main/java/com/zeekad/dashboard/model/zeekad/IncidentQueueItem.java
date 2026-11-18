@@ -25,10 +25,14 @@ public class IncidentQueueItem {
 
     private String zeekadStatus;
     private String zeekadResolution;
+    private OffsetDateTime statusUpdatedAt;
+    private Long zeekadReportJobId;
     private boolean hasReport;
     private String zeekadReportKind;
     private Boolean zeekadVerificationPassed;
     private boolean zeekadWouldSend;
+    private String zeekadReviewAction;
+    private boolean zeekadReviewPending;
 
     public Long getJobId() {
         return jobId;
@@ -150,6 +154,22 @@ public class IncidentQueueItem {
         this.zeekadResolution = zeekadResolution;
     }
 
+    public OffsetDateTime getStatusUpdatedAt() {
+        return statusUpdatedAt;
+    }
+
+    public void setStatusUpdatedAt(OffsetDateTime statusUpdatedAt) {
+        this.statusUpdatedAt = statusUpdatedAt;
+    }
+
+    public Long getZeekadReportJobId() {
+        return zeekadReportJobId;
+    }
+
+    public void setZeekadReportJobId(Long zeekadReportJobId) {
+        this.zeekadReportJobId = zeekadReportJobId;
+    }
+
     public boolean isHasReport() {
         return hasReport;
     }
@@ -180,6 +200,22 @@ public class IncidentQueueItem {
 
     public void setZeekadWouldSend(boolean zeekadWouldSend) {
         this.zeekadWouldSend = zeekadWouldSend;
+    }
+
+    public String getZeekadReviewAction() {
+        return zeekadReviewAction;
+    }
+
+    public void setZeekadReviewAction(String zeekadReviewAction) {
+        this.zeekadReviewAction = zeekadReviewAction;
+    }
+
+    public boolean isZeekadReviewPending() {
+        return zeekadReviewPending;
+    }
+
+    public void setZeekadReviewPending(boolean zeekadReviewPending) {
+        this.zeekadReviewPending = zeekadReviewPending;
     }
 
     public boolean isMultiModelFlagged() {

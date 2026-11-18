@@ -134,6 +134,8 @@ class StaticSecurityAndConfigTest {
         String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
         assertThat(compose).contains("dashboard-app:", "nginx-waf:", "host.docker.internal:host-gateway");
         assertThat(compose).contains("MODSEC_RULE_ENGINE", "PARANOIA", "SERVER_TOKENS");
+        assertThat(compose).contains("WAF_HTTP_PORT:-80", "WAF_HTTPS_PORT:-443", "SSL_CERT_FILE", "SSL_CERT_KEY_FILE");
+        assertThat(compose).contains("./docker/certs:/etc/nginx/ssl:ro");
         assertThat(compose).doesNotContain("ports:\n      - \"8080:8080\"");
 
         String wafLocationCommon = Files.readString(
@@ -150,8 +152,20 @@ class StaticSecurityAndConfigTest {
                 "ZEEKAD_RW_USER", "ZEEKAD_RW_PASSWORD",
                 "ZEEKAD_EVIDENCE_API_URL", "DASHBOARD_COOKIE_SECURE",
                 "DASHBOARD_BOOTSTRAP_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET",
-                "WAF_HTTPS_PORT", "WAF_HTTP_PORT")) {
+                "WAF_HTTPS_PORT", "WAF_HTTP_PORT", "WAF_SERVER_NAME",
+                "SSL_CERT_FILE", "SSL_CERT_KEY_FILE")) {
             assertThat(envExample).contains(requiredVar + "=");
+        }
+
+        Pattern nasLegacyPattern = Pattern.compile("(?i)시놀로지|synology|\\bNAS\\b");
+        for (Path docOrConfig : List.of(
+                Path.of("compose.yml"),
+                Path.of(".env.example"),
+                Path.of("docs/deployment-guide.md"))) {
+            String text = Files.readString(docOrConfig, StandardCharsets.UTF_8);
+            assertThat(nasLegacyPattern.matcher(text).find())
+                    .as("%s에 취소된 NAS 관련 표현이 남아있으면 안 됩니다", docOrConfig)
+                    .isFalse();
         }
 
         Pattern privateKeyPattern = Pattern.compile("BEGIN [A-Z ]*PRIVATE KEY");
@@ -187,5 +201,17 @@ class StaticSecurityAndConfigTest {
         assertThat(buildGradle).contains("testImplementation 'com.h2database:h2'");
         assertThat(buildGradle).doesNotContain("implementation 'com.h2database:h2'");
         assertThat(buildGradle).doesNotContain("runtimeOnly 'com.h2database:h2'");
+    }
+
+    @Test
+    void readMapperIncludesV21LatestIncidentQueue() throws IOException {
+        String mapperJava = Files.readString(
+                Path.of("src/main/java/com/zeekad/dashboard/mapper/zeekad/read/ZeekadReadMapper.java"),
+                StandardCharsets.UTF_8);
+        String mapperXml = Files.readString(
+                Path.of("src/main/resources/mapper/zeekad/read/ZeekadReadMapper.xml"),
+                StandardCharsets.UTF_8);
+        assertThat(mapperJava).contains("findLatestIncidentQueue");
+        assertThat(mapperXml).contains("dashboard.latest_incident_queue").contains("zeekad_report_job_id");
     }
 }

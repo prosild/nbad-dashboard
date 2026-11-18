@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * zeekad 읽기 전용 DataSource(dashboard 스키마 v1·v2 뷰 12종) 조회 MyBatis 매퍼.
+ * zeekad 읽기 전용 DataSource(dashboard 스키마 v1·v2·v2.1 뷰 13종) 조회 MyBatis 매퍼.
  * 모든 파라미터 바인딩에 #{}만 사용한다.
  */
 @Mapper
@@ -37,6 +37,13 @@ public interface ZeekadReadMapper {
     List<ModelBundle> findAllModelBundles();
 
     ModelBundle findModelBundleById(@Param("bundleId") String bundleId);
+
+    List<IncidentQueueItem> findLatestIncidentQueue(@Param("captureId") String captureId,
+                                                    @Param("pickedBy") String pickedBy,
+                                                    @Param("role") String role,
+                                                    @Param("status") String status,
+                                                    @Param("hasReport") Boolean hasReport,
+                                                    @Param("wouldSend") Boolean wouldSend);
 
     List<IncidentQueueItem> findIncidentQueue(@Param("jobId") Long jobId,
                                               @Param("pickedBy") String pickedBy,
@@ -68,11 +75,9 @@ public interface ZeekadReadMapper {
 
     List<SlackSummary> findSlackSummaries(@Param("captureId") String captureId);
 
-    IncidentStatus findIncidentStatus(@Param("jobId") Long jobId,
-                                      @Param("incidentId") String incidentId);
+    IncidentStatus findIncidentStatus(@Param("incidentId") String incidentId);
 
-    List<IncidentStatusHistory> findIncidentStatusHistory(@Param("jobId") Long jobId,
-                                                          @Param("incidentId") String incidentId);
+    List<IncidentStatusHistory> findIncidentStatusHistory(@Param("incidentId") String incidentId);
 
     List<AnalystReviewItem> findAnalystReviewQueue(@Param("captureId") String captureId,
                                                    @Param("pendingOnly") Boolean pendingOnly);

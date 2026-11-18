@@ -155,10 +155,14 @@ public class MaskingService {
         copy.setHostName(maskStringListIps(item.getHostName()));
         copy.setZeekadStatus(item.getZeekadStatus());
         copy.setZeekadResolution(item.getZeekadResolution());
+        copy.setStatusUpdatedAt(item.getStatusUpdatedAt());
+        copy.setZeekadReportJobId(item.getZeekadReportJobId());
         copy.setHasReport(item.isHasReport());
         copy.setZeekadReportKind(item.getZeekadReportKind());
         copy.setZeekadVerificationPassed(item.getZeekadVerificationPassed());
         copy.setZeekadWouldSend(item.isZeekadWouldSend());
+        copy.setZeekadReviewAction(item.getZeekadReviewAction());
+        copy.setZeekadReviewPending(item.isZeekadReviewPending());
         return copy;
     }
 

@@ -42,6 +42,9 @@
                 <span th:if="${detail.currentResolution != null}"
                       class="badge badge-lg"
                       th:text="'결론: ' + ${detail.currentResolution}"></span>
+                <span th:if="${detail.statusUpdatedAt != null}"
+                      class="muted"
+                      th:text="'상태 갱신: ' + ${detail.statusUpdatedAt}"></span>
             </div>
         </div>
 
@@ -276,7 +279,11 @@
 
     <!-- 4. 사건 보고서 (incident_reports) -->
     <section class="card">
-        <h2>사건 보고서 (incident_reports)</h2>
+        <div class="section-header">
+            <h2>사건 보고서 (incident_reports)</h2>
+            <span th:if="${detail.incident.zeekadReportJobId != null}" class="badge"
+                  th:text="'보고 작업 job #' + ${detail.incident.zeekadReportJobId}"></span>
+        </div>
         <div th:unless="${detail.report.present}" class="muted">보고서 없음</div>
 
         <div th:if="${detail.report.present}">
@@ -609,6 +616,7 @@
                 <table>
                     <thead>
                     <tr>
+                        <th>작업 ID</th>
                         <th>변경 전 → 후</th>
                         <th>결론</th>
                         <th>담당자</th>
@@ -618,6 +626,7 @@
                     </thead>
                     <tbody>
                     <tr th:each="hist : ${detail.statusHistory}">
+                        <td th:text="${hist.jobId != null ? 'job #' + hist.jobId : '-'}"></td>
                         <td>
                             <span class="badge" th:text="${hist.fromStatus != null ? hist.fromStatus : 'open'}"></span>
                             <span> → </span>
@@ -629,7 +638,7 @@
                         <td class="muted" th:text="${hist.changedAt}"></td>
                     </tr>
                     <tr th:if="${#lists.isEmpty(detail.statusHistory)}">
-                        <td colspan="5" class="muted">상태 변경 이력이 없습니다.</td>
+                        <td colspan="6" class="muted">상태 변경 이력이 없습니다.</td>
                     </tr>
                     </tbody>
                 </table>

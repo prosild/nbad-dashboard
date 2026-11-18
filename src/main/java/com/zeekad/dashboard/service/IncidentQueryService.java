@@ -48,17 +48,29 @@ public class IncidentQueryService {
 
         ScoringJob selectedJob = null;
         String selectedCaptureId = null;
+        boolean useLatestQueue = false;
 
         if (jobId != null) {
             selectedJob = captureAccessService.requireJobAccess(principal, jobId, cleanCaptureId, clientIp);
             selectedCaptureId = selectedJob.getCaptureId();
+            ScoringJob latestSucceededJob = zeekadReadMapper.findLatestSucceededJobByCaptureId(selectedCaptureId);
+            useLatestQueue = latestSucceededJob != null
+                    && Objects.equals(selectedJob.getJobId(), latestSucceededJob.getJobId());
         } else if (cleanCaptureId != null) {
             captureAccessService.requireCaptureAccess(principal, cleanCaptureId, clientIp);
             selectedCaptureId = cleanCaptureId;
-            selectedJob = resolveDefaultJobForCapture(selectedCaptureId);
+            ScoringJob latestSucceededJob = zeekadReadMapper.findLatestSucceededJobByCaptureId(selectedCaptureId);
+            useLatestQueue = latestSucceededJob != null;
+            selectedJob = latestSucceededJob != null
+                    ? latestSucceededJob
+                    : zeekadReadMapper.findLatestJobByCaptureId(selectedCaptureId);
         } else if (!allowedCaptures.isEmpty()) {
             selectedCaptureId = allowedCaptures.get(0);
-            selectedJob = resolveDefaultJobForCapture(selectedCaptureId);
+            ScoringJob latestSucceededJob = zeekadReadMapper.findLatestSucceededJobByCaptureId(selectedCaptureId);
+            useLatestQueue = latestSucceededJob != null;
+            selectedJob = latestSucceededJob != null
+                    ? latestSucceededJob
+                    : zeekadReadMapper.findLatestJobByCaptureId(selectedCaptureId);
         }
 
         if (selectedJob == null) {
@@ -74,8 +86,8 @@ public class IncidentQueryService {
         }
 
         List<ScoringJob> captureJobs = zeekadReadMapper.findScoringJobs(selectedCaptureId);
-        List<IncidentQueueItem> unfilteredForOptions = zeekadReadMapper.findIncidentQueue(
-                selectedJob.getJobId(), null, null, null, null, null);
+        List<IncidentQueueItem> unfilteredForOptions = fetchQueueItems(
+                useLatestQueue, selectedCaptureId, selectedJob.getJobId(), null, null, null, null, null);
         List<String> availableModels = unfilteredForOptions.stream()
                 .map(IncidentQueueItem::getZeekadPickedBy)
                 .filter(Objects::nonNull)
@@ -93,7 +105,9 @@ public class IncidentQueryService {
         Boolean wouldSend = parseOptionalBoolean(wouldSendParam);
         UserRole userRole = principal != null ? principal.getRole() : UserRole.VIEWER;
 
-        List<IncidentQueueItem> rawItems = zeekadReadMapper.findIncidentQueue(
+        List<IncidentQueueItem> rawItems = fetchQueueItems(
+                useLatestQueue,
+                selectedCaptureId,
                 selectedJob.getJobId(),
                 trimToNull(pickedBy),
                 trimToNull(role),
@@ -169,12 +183,18 @@ public class IncidentQueryService {
                 .toList();
     }
 
-    private ScoringJob resolveDefaultJobForCapture(String captureId) {
-        ScoringJob job = zeekadReadMapper.findLatestSucceededJobByCaptureId(captureId);
-        if (job != null) {
-            return job;
+    private List<IncidentQueueItem> fetchQueueItems(boolean useLatestQueue,
+                                                  String captureId,
+                                                  Long jobId,
+                                                  String pickedBy,
+                                                  String role,
+                                                  String status,
+                                                  Boolean hasReport,
+                                                  Boolean wouldSend) {
+        if (useLatestQueue) {
+            return zeekadReadMapper.findLatestIncidentQueue(captureId, pickedBy, role, status, hasReport, wouldSend);
         }
-        return zeekadReadMapper.findLatestJobByCaptureId(captureId);
+        return zeekadReadMapper.findIncidentQueue(jobId, pickedBy, role, status, hasReport, wouldSend);
     }
 
     private boolean matchesAssetFilter(IncidentQueueItem item, String assetQuery) {

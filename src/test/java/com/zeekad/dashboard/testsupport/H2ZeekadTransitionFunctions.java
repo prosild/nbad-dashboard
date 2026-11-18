@@ -52,7 +52,7 @@ public final class H2ZeekadTransitionFunctions {
             throw new SQLException("요청한 사건을 찾을 수 없습니다.", "02000");
         }
 
-        String currentStatus = findCurrentStatus(conn, jobId, incidentId);
+        String currentStatus = findCurrentStatus(conn, incidentId);
         boolean rowExists = currentStatus != null;
         String effectiveCurrent = rowExists ? currentStatus : "open";
 
@@ -81,12 +81,12 @@ public final class H2ZeekadTransitionFunctions {
             int updated;
             try (PreparedStatement updateStatus = conn.prepareStatement(
                     "UPDATE dashboard.raw_incident_status "
-                            + "SET zeekad_status = ?, zeekad_resolution = ?, updated_at = CURRENT_TIMESTAMP(), updated_by = ? "
-                            + "WHERE job_id = ? AND incident_id = ? AND zeekad_status = ?")) {
-                updateStatus.setString(1, targetStatus);
-                updateStatus.setString(2, cleanResolution);
-                updateStatus.setString(3, actor.trim());
-                updateStatus.setLong(4, jobId);
+                            + "SET job_id = ?, zeekad_status = ?, zeekad_resolution = ?, updated_at = CURRENT_TIMESTAMP(), updated_by = ? "
+                            + "WHERE incident_id = ? AND zeekad_status = ?")) {
+                updateStatus.setLong(1, jobId);
+                updateStatus.setString(2, targetStatus);
+                updateStatus.setString(3, cleanResolution);
+                updateStatus.setString(4, actor.trim());
                 updateStatus.setString(5, incidentId);
                 updateStatus.setString(6, effectiveCurrent);
                 updated = updateStatus.executeUpdate();
@@ -126,11 +126,10 @@ public final class H2ZeekadTransitionFunctions {
         }
     }
 
-    private static String findCurrentStatus(Connection conn, Long jobId, String incidentId) throws SQLException {
+    private static String findCurrentStatus(Connection conn, String incidentId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT zeekad_status FROM dashboard.raw_incident_status WHERE job_id = ? AND incident_id = ?")) {
-            ps.setLong(1, jobId);
-            ps.setString(2, incidentId);
+                "SELECT zeekad_status FROM dashboard.raw_incident_status WHERE incident_id = ? FOR UPDATE")) {
+            ps.setString(1, incidentId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getString(1) : null;
             }

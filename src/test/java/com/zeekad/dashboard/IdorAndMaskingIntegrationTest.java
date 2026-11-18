@@ -124,6 +124,22 @@ class IdorAndMaskingIntegrationTest {
 
         mockMvc.perform(get("/incidents").param("captureId", "syn1-tue").session(analystSession))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(get("/incidents").param("captureId", "lab-20261118").session(analystSession))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/incidents/502/rank/2").session(analystSession))
+                .andExpect(status().isForbidden());
+
+        // lab-* 허용 분석가는 lab-20261118 정상 조회, cic17-wed 차단
+        String labAnalyst = "lab_idor_analyst";
+        userAdminService.createUser(labAnalyst, "실습분석가", "Pass1234!", UserRole.ANALYST,
+                "lab-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession labSession = loginAs(labAnalyst, "Pass1234!");
+        mockMvc.perform(get("/incidents").param("captureId", "lab-20261118").session(labSession))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("10.20.0.15")))
+                .andExpect(content().string(containsString("10.20.0.25")));
+        mockMvc.perform(get("/incidents").param("captureId", "cic17-wed").session(labSession))
+                .andExpect(status().isForbidden());
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {

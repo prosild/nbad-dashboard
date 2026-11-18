@@ -8,10 +8,10 @@
 
 | 항목 | 실행 명령 | 비고 |
 |---|---|---|
-| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, Docker/WAF 설정 정적 검증 |
-| CycloneDX SBOM 생성 | `.\gradlew.bat cyclonedxBom` | `build/reports/bom.json`, `build/reports/bom.xml` 생성 |
-| Docker Compose 유효성 | `docker compose config -q` 및 `docker compose -f compose.yml -f docker/verify/compose.verify.yml config -q` | 운영 및 검증 오버라이드 검증 |
-| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T04/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
+| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, v2.1 `latest_incident_queue`/`lab-*`, Docker/WAF·NAS 제거 정적 검증 |
+| CycloneDX SBOM 생성 | `.\gradlew.bat cyclonedxBom --no-daemon` | `build/reports/bom.json`, `build/reports/bom.xml` 생성 |
+| Docker Compose 유효성 | `docker compose config -q` 및 `docker compose -f compose.yml -f docker/verify/compose.verify.yml config -q` | VMware 통합 운영 기본값 및 검증 오버라이드 검증 |
+| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T05/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E(v2.1 포함) → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
 
 > [!NOTE]
 > 대용량 원본 스캔 리포트(`trivy-*.json`, `zap-baseline.html/json`, `bom.json/xml`)는 `.gitignore`에 등록된 `security-reports/` 경로에 생성되며 Git 저장소에는 포함하지 않습니다.
@@ -44,7 +44,8 @@
 | WAF 경로 탐색 차단 | `GET /incidents?asset=../../etc/passwd` / `GET /../../etc/passwd` | 쿼리 경로 탐색 `403 Forbidden` (URI `/../../etc/passwd`는 Nginx `400 Bad Request` 거부) |
 | Actuator 비노출 | `GET /actuator/health`, `GET /actuator/env` | 모두 앞단 Nginx `location ^~ /actuator`에서 `403 Forbidden` 차단 |
 | `VIEWER` 마스킹·IDOR·전이 차단 | `viewer1`(`cic17-*`) | `cic17-wed` 큐/상세 `200 OK` 및 IP 마스킹(`192.168.*.*`), 미허용 `syn1-tue`(`/incidents/201/rank/1`) `403`, 상태 전이 POST `403` |
-| `ANALYST` 인가·PostgreSQL 전이 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue` `403`, 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 상세 화면에 `investigating` 반영 확인 (`dashboard.transition_incident` 실행 검증) |
+| `ANALYST` 인가·PostgreSQL 전이 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue`·`lab-20261118` 모두 `403`, 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 상세 화면에 `investigating` 반영 확인 (`dashboard.transition_incident` 실행 검증) |
+| `ADMIN` TOTP + v2.1 다중 작업 E2E | `admin`(`*`) + `lab-20261118` (`job 501`/`502`) | TOTP 2차 인증(`302`) 후 `latest_incident_queue` 기본 큐(`job #502`, `보고 작업 #501`, `검토 대기`, `보고서 없음`) `200 OK`, `502/rank/1`(`zeekad_report_job_id=null`) `"보고서 없음"` 확인, `502/rank/2`에서 `501` 보고서·`502` 모델점수(`5 / 6`)·`investigating` 승계 확인 및 `closed(true_positive)` 전이 후 `incident_status_history`에 `job #501`+`job #502` 합산 표시 확인 |
 | 감사 로그 불변 트리거 | `UPDATE audit_logs SET action_type = 'TAMPERED' ...` | PostgreSQL 17 Flyway 트리거가 `ERROR: audit_logs is append-only: UPDATE is forbidden`으로 차단 |
 
 ---

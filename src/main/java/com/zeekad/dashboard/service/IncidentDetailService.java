@@ -105,25 +105,39 @@ public class IncidentDetailService {
         EvidenceApiResponse apiResponse = evidenceApiClient.fetchIncidentEvidence(jobId, queueRank);
         IncidentDetailView.EvidenceView evidenceView = buildEvidenceView(apiResponse, role);
 
-        IncidentReport rawReport = zeekadReadMapper.findIncidentReport(jobId, rawIncident.getIncidentId());
-        IncidentDetailView.ReportView reportView = buildReportView(rawReport, role);
+        Long reportJobId = rawIncident.getZeekadReportJobId();
+        IncidentDetailView.ReportView reportView;
+        IncidentDetailView.SendDecisionView decisionView;
+        List<IncidentDetailView.SlackDeliveryView> deliveryViews;
+        if (reportJobId != null) {
+            IncidentReport rawReport = zeekadReadMapper.findIncidentReport(
+                    reportJobId, rawIncident.getIncidentId());
+            reportView = buildReportView(rawReport, role);
 
-        SendDecision rawDecision = zeekadReadMapper.findSendDecision(jobId, rawIncident.getIncidentId());
-        IncidentDetailView.SendDecisionView decisionView = buildSendDecisionView(rawDecision, role);
+            SendDecision rawDecision = zeekadReadMapper.findSendDecision(
+                    reportJobId, rawIncident.getIncidentId());
+            decisionView = buildSendDecisionView(rawDecision, role);
 
-        List<SlackDelivery> rawDeliveries = zeekadReadMapper.findSlackDeliveries(jobId, rawIncident.getIncidentId());
-        List<IncidentDetailView.SlackDeliveryView> deliveryViews = buildSlackDeliveryViews(rawDeliveries, role);
+            List<SlackDelivery> rawDeliveries = zeekadReadMapper.findSlackDeliveries(
+                    reportJobId, rawIncident.getIncidentId());
+            deliveryViews = buildSlackDeliveryViews(rawDeliveries, role);
+        } else {
+            reportView = IncidentDetailView.ReportView.absent();
+            decisionView = IncidentDetailView.SendDecisionView.absent();
+            deliveryViews = List.of();
+        }
 
-        IncidentStatus status = zeekadReadMapper.findIncidentStatus(jobId, rawIncident.getIncidentId());
+        IncidentStatus status = zeekadReadMapper.findIncidentStatus(rawIncident.getIncidentId());
         String currentStatus = resolveStatus(status, rawIncident);
         String currentResolution = status != null ? status.getZeekadResolution() : rawIncident.getZeekadResolution();
 
         List<IncidentStatusHistory> rawHistory = zeekadReadMapper.findIncidentStatusHistory(
-                jobId, rawIncident.getIncidentId());
+                rawIncident.getIncidentId());
         Map<String, String> userDisplayMap = loadUserDisplayMap();
         String updatedByDisplay = status != null ? formatActorDisplay(status.getUpdatedBy(), userDisplayMap) : null;
         List<IncidentDetailView.StatusHistoryItem> historyItems = rawHistory.stream()
                 .map(h -> new IncidentDetailView.StatusHistoryItem(
+                        h.getJobId(),
                         h.getFromStatus(),
                         h.getToStatus(),
                         h.getZeekadResolution(),
@@ -147,7 +161,7 @@ public class IncidentDetailService {
                 deliveryViews,
                 currentStatus,
                 currentResolution,
-                status != null ? status.getUpdatedAt() : null,
+                status != null ? status.getUpdatedAt() : rawIncident.getStatusUpdatedAt(),
                 updatedByDisplay,
                 historyItems,
                 canTransition,

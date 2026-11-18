@@ -55,11 +55,14 @@ class IncidentDetailAndSecurityIntegrationTest {
 
     private static HttpServer evidenceServer;
     private static final AtomicBoolean evidenceServerShouldFail = new AtomicBoolean(false);
+    private static final java.util.concurrent.atomic.AtomicReference<String> lastEvidencePath =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     @DynamicPropertySource
     static void registerEvidenceApiUrl(DynamicPropertyRegistry registry) throws IOException {
         evidenceServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         evidenceServer.createContext("/api/v1/jobs/", exchange -> {
+            lastEvidencePath.set(exchange.getRequestURI().getPath());
             if (evidenceServerShouldFail.get()) {
                 byte[] err = "{\"detail\":\"backend unavailable\"}".getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -385,6 +388,40 @@ class IncidentDetailAndSecurityIntegrationTest {
         assertThat(html).doesNotContain("<svg onload=");
         assertThat(html).doesNotContain("<!-- injected -->");
         assertThat(html).doesNotContain("style=\"");
+    }
+
+    @Test
+    void labMultiJobDetailJoinsByReportJobIdAndShowsNoReportWhenNull() throws Exception {
+        String labAnalyst = "lab_detail_analyst";
+        userAdminService.createUser(labAnalyst, "실습상세분석가", "Pass1234!", UserRole.ANALYST,
+                "lab-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
+
+        // 1. job 502 rank 1 (zeekad_report_job_id == null -> 보고서 없음, 판단 없음, Slack 없음)
+        mockMvc.perform(get("/incidents/502/rank/1").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("10.20.0.25")))
+                .andExpect(content().string(containsString("1 / 3")))
+                .andExpect(content().string(containsString("보고서 없음")))
+                .andExpect(content().string(containsString("전송 판단 기록 없음")))
+                .andExpect(content().string(containsString("Slack 전송 기록 없음")));
+        assertThat(lastEvidencePath.get()).isEqualTo("/api/v1/jobs/502/incidents/1");
+
+        // 2. job 502 rank 2 (큐·모델점수·근거 API는 502, 보고서·판단·Slack은 501, 상태·이력은 incident_id 기준)
+        mockMvc.perform(get("/incidents/502/rank/2").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("job #502")))
+                .andExpect(content().string(containsString("보고 작업 job #501")))
+                .andExpect(content().string(containsString("5 / 6")))
+                .andExpect(content().string(containsString("4 / 6")))
+                .andExpect(content().string(containsString("실습망 H(10.20.0.15)에서 I1(10.20.0.99)로 비정상 인증 시도")))
+                .andExpect(content().string(containsString("F1 (lab_conn_count)")))
+                .andExpect(content().string(containsString("최종 판단: 전송")))
+                .andExpect(content().string(containsString("기록만(dry-run)")))
+                .andExpect(content().string(containsString("현재 상태: investigating")))
+                .andExpect(content().string(containsString("실습망 초기 조사 시작")))
+                .andExpect(content().string(containsString("job #501")));
+        assertThat(lastEvidencePath.get()).isEqualTo("/api/v1/jobs/502/incidents/2");
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {

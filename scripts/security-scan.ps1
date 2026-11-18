@@ -49,6 +49,38 @@ function New-RandomBase32([int]$Length = 32) {
     return $sb.ToString()
 }
 
+function Get-TotpCode([string]$Base32Secret) {
+    $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    $clean = $Base32Secret.Trim().ToUpperInvariant() -replace '[\s=]+', ''
+    $bytes = New-Object System.Collections.Generic.List[byte]
+    $buffer = 0
+    $bitsLeft = 0
+    foreach ($ch in $clean.ToCharArray()) {
+        $idx = $alphabet.IndexOf($ch)
+        if ($idx -lt 0) { throw "잘못된 Base32 문자: $ch" }
+        $buffer = ($buffer -shl 5) -bor $idx
+        $bitsLeft += 5
+        if ($bitsLeft -ge 8) {
+            [void]$bytes.Add([byte](($buffer -shr ($bitsLeft - 8)) -band 0xFF))
+            $bitsLeft -= 8
+        }
+    }
+    $step = [long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30)
+    $msg = New-Object byte[] 8
+    for ($i = 7; $i -ge 0; $i--) {
+        $msg[$i] = [byte]($step -band 0xFF)
+        $step = $step -shr 8
+    }
+    $hmac = New-Object System.Security.Cryptography.HMACSHA1 -ArgumentList (,($bytes.ToArray()))
+    $hash = $hmac.ComputeHash($msg)
+    $offset = $hash[$hash.Length - 1] -band 0x0F
+    $binary = (($hash[$offset] -band 0x7F) -shl 24) -bor `
+              (($hash[$offset + 1] -band 0xFF) -shl 16) -bor `
+              (($hash[$offset + 2] -band 0xFF) -shl 8) -bor `
+              ($hash[$offset + 3] -band 0xFF)
+    return ($binary % 1000000).ToString("D6")
+}
+
 function Save-Evidence([string]$FileName, [string]$Content) {
     if ($EvidenceFullDir) {
         $dest = Join-Path $EvidenceFullDir $FileName
@@ -130,7 +162,8 @@ if (-not $SkipE2E -or -not $SkipZap) {
     $env:ZEEKAD_RW_PASSWORD = New-RandomToken 24
     $bootstrapPwd = New-RandomToken 20
     $env:DASHBOARD_BOOTSTRAP_PASSWORD = $bootstrapPwd
-    $env:BOOTSTRAP_ADMIN_TOTP_SECRET = New-RandomBase32 32
+    $adminTotpSecret = New-RandomBase32 32
+    $env:BOOTSTRAP_ADMIN_TOTP_SECRET = $adminTotpSecret
     $env:DASHBOARD_COOKIE_SECURE = "true"
     $env:WAF_HTTP_PORT = "$WafHttpPort"
     $env:WAF_HTTPS_PORT = "$WafHttpsPort"
@@ -306,10 +339,79 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     throw "PostgreSQL 17 dashboard.transition_incident 전이 반영 확인 실패"
                 }
 
-                # 6) PostgreSQL audit_logs 불변 트리거 실증 (UPDATE 시도 실패)
+                $analystLabIdor = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents?captureId=lab-20261118")
+                $e2eLogs.Add("[5c] analyst1 IDOR lab-20261118:`n$(($analystLabIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
+                if ($analystLabIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 lab-20261118 IDOR 403 차단 실패" }
+
+                # 6) admin TOTP 로그인 + v2.1 (lab-20261118 다중 작업/보고서 작업 불일치/보고서 없음/incident_id 상태 승계·이력 합산) 실측
+                $adminCookies = Join-Path $tmpDir "admin.cookies"
+                $adminLoginOut = Login-Dashboard "admin" $adminCookies
+                if ($adminLoginOut -notmatch "HTTP/[\d.]+ 302" -or $adminLoginOut -notmatch "/login/totp") {
+                    throw "admin 1차 로그인(TOTP 이동) 실패"
+                }
+                $totpPage = Invoke-CurlRaw @("-i", "-b", $adminCookies, "-c", $adminCookies, "$baseHttps/login/totp")
+                $totpCsrf = Extract-Csrf $totpPage.Output
+                $totpCode = Get-TotpCode $adminTotpSecret
+                $totpPost = Invoke-CurlRaw @(
+                    "-i", "-b", $adminCookies, "-c", $adminCookies,
+                    "-X", "POST", "$baseHttps/login/totp",
+                    "--data-urlencode", "code=$totpCode",
+                    "--data-urlencode", "_csrf=$totpCsrf"
+                )
+                $e2eLogs.Add("[6a] admin TOTP verify:`n$(($totpPost.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
+                if ($totpPost.Output -notmatch "HTTP/[\d.]+ 302" -or $totpPost.Output -match "/login/totp\?error") {
+                    throw "admin TOTP 2차 인증 실패"
+                }
+
+                $labQueue = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents?captureId=lab-20261118")
+                $e2eLogs.Add("[6b] admin GET /incidents?captureId=lab-20261118: HTTP $((($labQueue.Output -split "`r?`n")[0]))")
+                if ($labQueue.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $labQueue.Output -notmatch "job #502" -or
+                    $labQueue.Output -notmatch "보고 작업 #501" -or
+                    $labQueue.Output -notmatch "검토 대기" -or
+                    $labQueue.Output -notmatch "보고서 없음") {
+                    throw "v2.1 lab-20261118 latest_incident_queue 화면 검증 실패"
+                }
+
+                $labRank1 = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/1")
+                if ($labRank1.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $labRank1.Output -notmatch "10\.20\.0\.25" -or
+                    $labRank1.Output -notmatch "보고서 없음") {
+                    throw "v2.1 zeekad_report_job_id NULL 보고서 없음 검증 실패"
+                }
+
+                $labRank2 = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/2")
+                if ($labRank2.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $labRank2.Output -notmatch "보고 작업 job #501" -or
+                    $labRank2.Output -notmatch "5 / 6" -or
+                    $labRank2.Output -notmatch "현재 상태: investigating" -or
+                    $labRank2.Output -notmatch "실습망 초기 조사 시작") {
+                    throw "v2.1 다중 작업 조인 및 상태 승계 검증 실패"
+                }
+
+                $adminCsrf = Extract-Csrf $labRank2.Output
+                $labTransition = Invoke-CurlRaw @(
+                    "-i", "-b", $adminCookies, "-c", $adminCookies,
+                    "-X", "POST", "$baseHttps/incidents/502/rank/2/transition",
+                    "--data-urlencode", "toStatus=closed",
+                    "--data-urlencode", "resolution=true_positive",
+                    "--data-urlencode", "reason=PG17 v2.1 multi-job transition check",
+                    "--data-urlencode", "_csrf=$adminCsrf"
+                )
+                $e2eLogs.Add("[6c] admin POST transition on job 502 rank 2 (investigating -> closed):`n$(($labTransition.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
+                if ($labTransition.Output -notmatch "HTTP/[\d.]+ 302") { throw "admin v2.1 상태 전이 리다이렉트 실패" }
+
+                $labRank2After = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/2")
+                if ($labRank2After.Output -notmatch "현재 상태: closed" -or
+                    $labRank2After.Output -notmatch "job #501" -or
+                    $labRank2After.Output -notmatch "job #502") {
+                    throw "v2.1 incident_id 기준 상태 종료 및 이력 합산(501+502) 확인 실패"
+                }
+
+                # 7) PostgreSQL audit_logs 불변 트리거 실증 (UPDATE 시도 실패)
                 $immutableRes = Invoke-NativeCapture "docker" @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "exec", "-T", "verify-postgres", "psql", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE audit_logs SET action_type = 'TAMPERED' WHERE id = (SELECT MIN(id) FROM audit_logs);") -IgnoreExitCode
                 $immutableCheck = $immutableRes.Output
-                $e2eLogs.Add("[6] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
+                $e2eLogs.Add("[7] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
                 if ($immutableCheck -notmatch "audit_logs is append-only") {
                     throw "PostgreSQL audit_logs 불변 트리거 검증 실패"
                 }

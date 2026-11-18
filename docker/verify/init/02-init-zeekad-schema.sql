@@ -143,7 +143,7 @@ CREATE TABLE dashboard.raw_incident_status (
     zeekad_resolution TEXT,
     updated_at TIMESTAMPTZ NOT NULL,
     updated_by TEXT NOT NULL,
-    PRIMARY KEY (job_id, incident_id)
+    PRIMARY KEY (incident_id)
 );
 
 CREATE TABLE dashboard.raw_incident_status_history (
@@ -184,6 +184,60 @@ CREATE OR REPLACE VIEW dashboard.incident_status AS SELECT * FROM dashboard.raw_
 CREATE OR REPLACE VIEW dashboard.incident_status_history AS SELECT * FROM dashboard.raw_incident_status_history;
 CREATE OR REPLACE VIEW dashboard.analyst_review_queue AS SELECT * FROM dashboard.raw_analyst_review_queue;
 
+CREATE OR REPLACE VIEW dashboard.latest_incident_queue AS
+WITH latest_jobs AS (
+    SELECT capture_id, MAX(job_id) AS job_id
+    FROM dashboard.scoring_jobs
+    WHERE status = 'succeeded'
+    GROUP BY capture_id
+),
+first_reports AS (
+    SELECT incident_id, MIN(job_id) AS report_job_id
+    FROM dashboard.incident_reports
+    GROUP BY incident_id
+)
+SELECT q.job_id,
+       q.capture_id,
+       q.bundle_id,
+       q.queue_rank,
+       q.incident_id,
+       q.host_ip,
+       q.zeekad_role,
+       q.event_start,
+       q.event_end,
+       q.zeekad_picked_by,
+       q.zeekad_also_flagged_by,
+       q.connection_count,
+       q.host_name,
+       fr.report_job_id AS zeekad_report_job_id,
+       ir.zeekad_report_kind,
+       sd.zeekad_would_send,
+       COALESCE(ist.zeekad_status, 'open') AS zeekad_status,
+       ist.zeekad_resolution,
+       ist.updated_at AS status_updated_at,
+       arq.zeekad_review_action,
+       CASE
+           WHEN arq.incident_id IS NOT NULL AND arq.zeekad_review_action IS NULL THEN TRUE
+           ELSE FALSE
+       END AS zeekad_review_pending
+FROM dashboard.incident_queue q
+JOIN latest_jobs lj
+  ON lj.capture_id = q.capture_id
+ AND lj.job_id = q.job_id
+LEFT JOIN first_reports fr
+  ON fr.incident_id = q.incident_id
+LEFT JOIN dashboard.incident_reports ir
+  ON ir.job_id = fr.report_job_id
+ AND ir.incident_id = q.incident_id
+LEFT JOIN dashboard.send_decisions sd
+  ON sd.job_id = fr.report_job_id
+ AND sd.incident_id = q.incident_id
+LEFT JOIN dashboard.incident_status ist
+  ON ist.incident_id = q.incident_id
+LEFT JOIN dashboard.analyst_review_queue arq
+  ON arq.job_id = fr.report_job_id
+ AND arq.incident_id = q.incident_id;
+
 GRANT SELECT ON
     dashboard.scoring_jobs,
     dashboard.model_bundles,
@@ -196,7 +250,8 @@ GRANT SELECT ON
     dashboard.slack_summaries,
     dashboard.incident_status,
     dashboard.incident_status_history,
-    dashboard.analyst_review_queue
+    dashboard.analyst_review_queue,
+    dashboard.latest_incident_queue
 TO dashboard_ro;
 
 CREATE OR REPLACE FUNCTION dashboard.transition_incident(
@@ -257,7 +312,7 @@ BEGIN
 
     SELECT zeekad_status INTO v_current
     FROM dashboard.raw_incident_status
-    WHERE job_id = p_job AND incident_id = p_incident
+    WHERE incident_id = p_incident
     FOR UPDATE;
 
     v_row_exists := FOUND;
@@ -289,11 +344,12 @@ BEGIN
         END;
     ELSE
         UPDATE dashboard.raw_incident_status
-        SET zeekad_status = v_target,
+        SET job_id = p_job,
+            zeekad_status = v_target,
             zeekad_resolution = v_resolution,
             updated_at = NOW(),
             updated_by = v_actor
-        WHERE job_id = p_job AND incident_id = p_incident AND zeekad_status = v_current;
+        WHERE incident_id = p_incident AND zeekad_status = v_current;
         IF NOT FOUND THEN
             RAISE EXCEPTION '다른 사용자가 먼저 사건 상태를 변경했습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.'
                 USING ERRCODE = '22023';
@@ -332,7 +388,13 @@ VALUES
      NULL, 3),
     (201, 'syn1-tue', 'zeekad-fusion/1', 'succeeded',
      TIMESTAMPTZ '2026-11-16 04:00:00Z', TIMESTAMPTZ '2026-11-16 04:05:00Z',
-     NULL, 1);
+     NULL, 1),
+    (501, 'lab-20261118', 'zeekad-fusion/1', 'succeeded',
+     TIMESTAMPTZ '2026-11-18 00:05:00Z', TIMESTAMPTZ '2026-11-18 00:06:00Z',
+     NULL, 1),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 'succeeded',
+     TIMESTAMPTZ '2026-11-18 00:10:00Z', TIMESTAMPTZ '2026-11-18 00:11:00Z',
+     NULL, 2);
 
 INSERT INTO dashboard.raw_incident_queue (
     job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role,
@@ -353,14 +415,30 @@ INSERT INTO dashboard.raw_incident_queue (
     (201, 'syn1-tue', 'zeekad-fusion/1', 1, 'syn1-tue|10.99.88.77|originator|1700001000',
      '10.99.88.77', 'originator',
      TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:55:00Z',
-     'iforest', ARRAY['autoencoder'], 320, ARRAY['syn-dc01.internal']);
+     'iforest', ARRAY['autoencoder'], 320, ARRAY['syn-dc01.internal']),
+    (501, 'lab-20261118', 'zeekad-fusion/1', 1, 'lab-20261118|10.20.0.15|originator|1763424000',
+     '10.20.0.15', 'originator',
+     TIMESTAMPTZ '2026-11-18 00:00:00Z', TIMESTAMPTZ '2026-11-18 00:05:00Z',
+     'iforest', ARRAY['autoencoder'], 150, ARRAY['lab-client01.lab.local']),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 1, 'lab-20261118|10.20.0.25|responder|1763424300',
+     '10.20.0.25', 'responder',
+     TIMESTAMPTZ '2026-11-18 00:05:00Z', TIMESTAMPTZ '2026-11-18 00:10:00Z',
+     'hbos', NULL, 42, ARRAY['lab-srv02.lab.local']),
+    (502, 'lab-20261118', 'zeekad-fusion/1', 2, 'lab-20261118|10.20.0.15|originator|1763424000',
+     '10.20.0.15', 'originator',
+     TIMESTAMPTZ '2026-11-18 00:00:00Z', TIMESTAMPTZ '2026-11-18 00:10:00Z',
+     'iforest', ARRAY['autoencoder', 'hbos'], 290, ARRAY['lab-client01.lab.local']);
 
 INSERT INTO dashboard.raw_incident_model_scores (job_id, incident_id, zeekad_model, max_score, candidate_windows, windows)
 VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'iforest', 0.91, 4, 6),
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'autoencoder', 0.94, 3, 6),
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'autoencoder', 0.87, 2, 4),
-    (201, 'syn1-tue|10.99.88.77|originator|1700001000', 'iforest', 0.89, 3, 5);
+    (201, 'syn1-tue|10.99.88.77|originator|1700001000', 'iforest', 0.89, 3, 5),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.86, 2, 4),
+    (502, 'lab-20261118|10.20.0.25|responder|1763424300', 'hbos', 0.79, 1, 3),
+    (502, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.93, 5, 6),
+    (502, 'lab-20261118|10.20.0.15|originator|1763424000', 'autoencoder', 0.88, 4, 6);
 
 INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen)
 VALUES
@@ -369,7 +447,9 @@ VALUES
     ('cic17-wed', '10.20.30.40', 'x', 'backup_op', 'ntlm', 5,
      TIMESTAMPTZ '2026-11-16 02:18:00Z', TIMESTAMPTZ '2026-11-16 02:29:00Z'),
     ('syn1-tue', '10.99.88.77', 'synadmin', NULL, 'kerberos', 9,
-     TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:54:00Z');
+     TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:54:00Z'),
+    ('lab-20261118', '10.20.0.15', 'labuser1', 'lab_ntlm1', 'kerberos', 6,
+     TIMESTAMPTZ '2026-11-18 00:01:00Z', TIMESTAMPTZ '2026-11-18 00:09:00Z');
 
 INSERT INTO dashboard.raw_incident_reports (
     job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
@@ -400,7 +480,15 @@ INSERT INTO dashboard.raw_incident_reports (
      NULL, '[{"attack_id": "T1021", "name": "Remote Services", "tactics": ["Lateral Movement"]}]'::jsonb,
      'run-201', TIMESTAMPTZ '2026-11-16 04:06:00Z',
      '[{"id": "F1", "name": "smb_count", "value": "120"}]'::jsonb,
-     '{"H": "10.99.88.77", "I1": "10.99.88.10"}'::jsonb);
+     '{"H": "10.99.88.77", "I1": "10.99.88.10"}'::jsonb),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'llm', 'llm-report.v1', 'evidence.v1',
+     '{"observation_summary": "실습망 H에서 I1로 비정상 인증 시도", "claims": [{"claim": "짧은 시간 내 다수 인증 요청", "fact_ids": ["F1"]}]}'::jsonb,
+     TRUE, 'verified', '[]'::jsonb,
+     'gemini-2.5-pro', 'gemini-2.5-pro-001', 1.9, 1100, 310, 150,
+     NULL, '[{"attack_id": "T1110", "name": "Brute Force", "tactics": ["Credential Access"]}]'::jsonb,
+     'run-501', TIMESTAMPTZ '2026-11-18 00:06:30Z',
+     '[{"id": "F1", "name": "lab_conn_count", "value": "150"}]'::jsonb,
+     '{"H": "10.20.0.15", "I1": "10.20.0.99"}'::jsonb);
 
 INSERT INTO dashboard.raw_send_decisions (
     job_id, incident_id, zeekad_would_send, zeekad_decided_by, policy_id, policy_choice,
@@ -418,7 +506,11 @@ INSERT INTO dashboard.raw_send_decisions (
     (201, 'syn1-tue|10.99.88.77|originator|1700001000', TRUE, 'policy', 'POL-01', 'send',
      TRUE, '["신규 합성 공격 탐지"]'::jsonb, 'send', 'gemini-decision-1', 'send',
      0.91, '{"send": 0.91, "hold": 0.05, "analyst_review": 0.03, "need_more_evidence": 0.01}'::jsonb,
-     NULL, 'run-201', TIMESTAMPTZ '2026-11-16 04:07:00Z');
+     NULL, 'run-201', TIMESTAMPTZ '2026-11-16 04:07:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', TRUE, 'policy', 'POL-01', 'send',
+     TRUE, '["실습망 다중 모델 탐지"]'::jsonb, 'send', 'gemini-decision-1', 'send',
+     0.89, '{"send": 0.89, "hold": 0.06, "analyst_review": 0.03, "need_more_evidence": 0.02}'::jsonb,
+     NULL, 'run-501', TIMESTAMPTZ '2026-11-18 00:07:00Z');
 
 INSERT INTO dashboard.raw_slack_deliveries (
     job_id, incident_id, zeekad_message_kind, zeekad_message_version, zeekad_delivery_mode,
@@ -426,7 +518,10 @@ INSERT INTO dashboard.raw_slack_deliveries (
 ) VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'incident', 'incident.v1', 'dry_run', 'recorded',
      '{"channel": "#sec-alerts", "text": "경보: 192.168.10.50 -> 203.0.113.45"}'::jsonb,
-     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-16 03:11:00Z');
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-16 03:11:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'incident', 'incident.v1', 'dry_run', 'recorded',
+     '{"channel": "#lab-alerts", "text": "실습망 경보: 10.20.0.15 -> 10.20.0.99"}'::jsonb,
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-18 00:07:30Z');
 
 INSERT INTO dashboard.raw_slack_summaries (
     job_id, capture_id, zeekad_message_version, zeekad_delivery_mode, zeekad_delivery_status,
@@ -445,12 +540,16 @@ VALUES
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'investigating', NULL,
      TIMESTAMPTZ '2026-11-16 05:00:00Z', 'analyst1'),
     (101, 'cic17-wed|172.16.5.99|originator|1700000600', 'closed', 'benign',
-     TIMESTAMPTZ '2026-11-16 05:30:00Z', 'analyst1');
+     TIMESTAMPTZ '2026-11-16 05:30:00Z', 'analyst1'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'investigating', NULL,
+     TIMESTAMPTZ '2026-11-18 00:08:00Z', 'admin');
 
 INSERT INTO dashboard.raw_incident_status_history (job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at)
 VALUES
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'open', 'investigating', NULL, 'analyst1',
-     'SMB 응답 패턴 추가 확인 중', TIMESTAMPTZ '2026-11-16 05:00:00Z');
+     'SMB 응답 패턴 추가 확인 중', TIMESTAMPTZ '2026-11-16 05:00:00Z'),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'open', 'investigating', NULL, 'admin',
+     '실습망 초기 조사 시작', TIMESTAMPTZ '2026-11-18 00:08:00Z');
 
 INSERT INTO dashboard.raw_analyst_review_queue (
     job_id, incident_id, queue_rank, host_ip, zeekad_role, zeekad_review_reason,
@@ -464,4 +563,7 @@ INSERT INTO dashboard.raw_analyst_review_queue (
      'confirm', 'analyst1', TIMESTAMPTZ '2026-11-16 04:00:00Z'),
     (201, 'syn1-tue|10.99.88.77|originator|1700001000', 1, '10.99.88.77', 'originator',
      '합성 캡처 내 측면 이동 검토 대기', TIMESTAMPTZ '2026-11-16 04:07:30Z',
+     NULL, NULL, NULL),
+    (501, 'lab-20261118|10.20.0.15|originator|1763424000', 1, '10.20.0.15', 'originator',
+     '실습망 재계산 사건 검토 대기', TIMESTAMPTZ '2026-11-18 00:07:30Z',
      NULL, NULL, NULL);

@@ -42,10 +42,14 @@
                 typeHandler="com.zeekad.dashboard.mybatis.StringListTypeHandler"/>
         <result property="zeekadStatus" column="zeekad_status"/>
         <result property="zeekadResolution" column="zeekad_resolution"/>
+        <result property="statusUpdatedAt" column="status_updated_at"/>
+        <result property="zeekadReportJobId" column="zeekad_report_job_id"/>
         <result property="hasReport" column="has_report"/>
         <result property="zeekadReportKind" column="zeekad_report_kind"/>
         <result property="zeekadVerificationPassed" column="zeekad_verification_passed"/>
         <result property="zeekadWouldSend" column="zeekad_would_send"/>
+        <result property="zeekadReviewAction" column="zeekad_review_action"/>
+        <result property="zeekadReviewPending" column="zeekad_review_pending"/>
     </resultMap>
 
     <resultMap id="incidentModelScoreMap" type="com.zeekad.dashboard.model.zeekad.IncidentModelScore">
@@ -222,6 +226,57 @@
         WHERE bundle_id = #{bundleId}
     </select>
 
+    <select id="findLatestIncidentQueue" resultMap="incidentQueueMap">
+        SELECT lq.job_id,
+               lq.capture_id,
+               lq.bundle_id,
+               lq.queue_rank,
+               lq.incident_id,
+               lq.host_ip,
+               lq.zeekad_role,
+               lq.event_start,
+               lq.event_end,
+               lq.zeekad_picked_by,
+               lq.zeekad_also_flagged_by,
+               lq.connection_count,
+               lq.host_name,
+               COALESCE(lq.zeekad_status, 'open') AS zeekad_status,
+               lq.zeekad_resolution,
+               lq.status_updated_at,
+               lq.zeekad_report_job_id,
+               CASE WHEN lq.zeekad_report_job_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_report,
+               lq.zeekad_report_kind,
+               r.zeekad_verification_passed,
+               COALESCE(lq.zeekad_would_send, FALSE) AS zeekad_would_send,
+               lq.zeekad_review_action,
+               COALESCE(lq.zeekad_review_pending, FALSE) AS zeekad_review_pending
+        FROM dashboard.latest_incident_queue lq
+        LEFT JOIN dashboard.incident_reports r
+               ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
+        <where>
+            AND lq.capture_id = #{captureId}
+            <if test="pickedBy != null and pickedBy != ''">
+                AND LOWER(lq.zeekad_picked_by) = LOWER(#{pickedBy})
+            </if>
+            <if test="role != null and role != ''">
+                AND LOWER(lq.zeekad_role) = LOWER(#{role})
+            </if>
+            <if test="status != null and status != ''">
+                AND LOWER(COALESCE(lq.zeekad_status, 'open')) = LOWER(#{status})
+            </if>
+            <if test="hasReport != null and hasReport">
+                AND lq.zeekad_report_job_id IS NOT NULL
+            </if>
+            <if test="hasReport != null and !hasReport">
+                AND lq.zeekad_report_job_id IS NULL
+            </if>
+            <if test="wouldSend != null">
+                AND COALESCE(lq.zeekad_would_send, FALSE) = #{wouldSend}
+            </if>
+        </where>
+        ORDER BY lq.queue_rank ASC
+    </select>
+
     <sql id="incidentQueueSelect">
         SELECT q.job_id,
                q.capture_id,
@@ -236,19 +291,32 @@
                q.zeekad_also_flagged_by,
                q.connection_count,
                q.host_name,
-               COALESCE(s.zeekad_status, 'open') AS zeekad_status,
+               COALESCE(s.zeekad_status, lq.zeekad_status, 'open') AS zeekad_status,
                s.zeekad_resolution,
-               CASE WHEN r.incident_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_report,
-               r.zeekad_report_kind,
+               COALESCE(s.updated_at, lq.status_updated_at) AS status_updated_at,
+               COALESCE(lq.zeekad_report_job_id, self_r.job_id) AS zeekad_report_job_id,
+               CASE WHEN COALESCE(lq.zeekad_report_job_id, self_r.job_id) IS NOT NULL THEN TRUE ELSE FALSE END AS has_report,
+               COALESCE(r.zeekad_report_kind, lq.zeekad_report_kind) AS zeekad_report_kind,
                r.zeekad_verification_passed,
-               COALESCE(d.zeekad_would_send, FALSE) AS zeekad_would_send
+               COALESCE(d.zeekad_would_send, lq.zeekad_would_send, FALSE) AS zeekad_would_send,
+               COALESCE(lq.zeekad_review_action, arq.zeekad_review_action) AS zeekad_review_action,
+               COALESCE(
+                   lq.zeekad_review_pending,
+                   CASE WHEN arq.incident_id IS NOT NULL AND arq.zeekad_review_action IS NULL THEN TRUE ELSE FALSE END
+               ) AS zeekad_review_pending
         FROM dashboard.incident_queue q
+        LEFT JOIN dashboard.latest_incident_queue lq
+               ON lq.incident_id = q.incident_id
         LEFT JOIN dashboard.incident_status s
-               ON s.job_id = q.job_id AND s.incident_id = q.incident_id
+               ON s.incident_id = q.incident_id
+        LEFT JOIN dashboard.incident_reports self_r
+               ON self_r.job_id = q.job_id AND self_r.incident_id = q.incident_id
         LEFT JOIN dashboard.incident_reports r
-               ON r.job_id = q.job_id AND r.incident_id = q.incident_id
+               ON r.job_id = COALESCE(lq.zeekad_report_job_id, self_r.job_id) AND r.incident_id = q.incident_id
         LEFT JOIN dashboard.send_decisions d
-               ON d.job_id = q.job_id AND d.incident_id = q.incident_id
+               ON d.job_id = COALESCE(lq.zeekad_report_job_id, self_r.job_id) AND d.incident_id = q.incident_id
+        LEFT JOIN dashboard.analyst_review_queue arq
+               ON arq.job_id = COALESCE(lq.zeekad_report_job_id, self_r.job_id) AND arq.incident_id = q.incident_id
     </sql>
 
     <select id="findIncidentQueue" resultMap="incidentQueueMap">
@@ -262,16 +330,16 @@
                 AND LOWER(q.zeekad_role) = LOWER(#{role})
             </if>
             <if test="status != null and status != ''">
-                AND LOWER(COALESCE(s.zeekad_status, 'open')) = LOWER(#{status})
+                AND LOWER(COALESCE(s.zeekad_status, lq.zeekad_status, 'open')) = LOWER(#{status})
             </if>
             <if test="hasReport != null and hasReport">
-                AND r.incident_id IS NOT NULL
+                AND COALESCE(lq.zeekad_report_job_id, self_r.job_id) IS NOT NULL
             </if>
             <if test="hasReport != null and !hasReport">
-                AND r.incident_id IS NULL
+                AND COALESCE(lq.zeekad_report_job_id, self_r.job_id) IS NULL
             </if>
             <if test="wouldSend != null">
-                AND COALESCE(d.zeekad_would_send, FALSE) = #{wouldSend}
+                AND COALESCE(d.zeekad_would_send, lq.zeekad_would_send, FALSE) = #{wouldSend}
             </if>
         </where>
         ORDER BY q.queue_rank ASC
@@ -352,41 +420,44 @@
     <select id="findIncidentStatus" resultMap="incidentStatusMap">
         SELECT job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by
         FROM dashboard.incident_status
-        WHERE job_id = #{jobId}
-          AND incident_id = #{incidentId}
+        WHERE incident_id = #{incidentId}
+        ORDER BY updated_at DESC
+        LIMIT 1
     </select>
 
     <select id="findIncidentStatusHistory" resultMap="incidentStatusHistoryMap">
         SELECT job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at
         FROM dashboard.incident_status_history
-        WHERE job_id = #{jobId}
-          AND incident_id = #{incidentId}
+        WHERE incident_id = #{incidentId}
         ORDER BY changed_at DESC
     </select>
 
     <select id="findAnalystReviewQueue" resultMap="analystReviewItemMap">
-        SELECT a.job_id,
-               j.capture_id,
+        SELECT COALESCE(lq.job_id, a.job_id) AS job_id,
+               COALESCE(lq.capture_id, j.capture_id) AS capture_id,
                a.incident_id,
-               a.queue_rank,
-               a.host_ip,
-               a.zeekad_role,
+               COALESCE(lq.queue_rank, a.queue_rank) AS queue_rank,
+               COALESCE(lq.host_ip, a.host_ip) AS host_ip,
+               COALESCE(lq.zeekad_role, a.zeekad_role) AS zeekad_role,
                a.zeekad_review_reason,
                a.requested_at,
                a.zeekad_review_action,
                a.analyst,
                a.decided_at
         FROM dashboard.analyst_review_queue a
-        JOIN dashboard.scoring_jobs j ON j.job_id = a.job_id
+        LEFT JOIN dashboard.latest_incident_queue lq
+               ON lq.zeekad_report_job_id = a.job_id AND lq.incident_id = a.incident_id
+        LEFT JOIN dashboard.scoring_jobs j
+               ON j.job_id = a.job_id
         <where>
             <if test="captureId != null and captureId != ''">
-                AND j.capture_id = #{captureId}
+                AND COALESCE(lq.capture_id, j.capture_id) = #{captureId}
             </if>
             <if test="pendingOnly != null and pendingOnly">
                 AND a.zeekad_review_action IS NULL
             </if>
         </where>
-        ORDER BY a.requested_at DESC, a.job_id DESC, a.queue_rank ASC
+        ORDER BY a.requested_at DESC, COALESCE(lq.job_id, a.job_id) DESC, COALESCE(lq.queue_rank, a.queue_rank) ASC
     </select>
 
 </mapper>

@@ -52,10 +52,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class IncidentTransitionIntegrationTest {
 
     private static final long TEST_JOB_ID = 301L;
+    private static final long MULTI_JOB_A = 311L;
+    private static final long MULTI_JOB_B = 312L;
     private static final String TEST_CAPTURE_ID = "cic17-trans-test";
+    private static final String MULTI_CAPTURE_ID = "lab-20261117";
     private static final String INC_1 = "cic17-trans-test|192.168.50.10|originator|1700003001";
     private static final String INC_2 = "cic17-trans-test|192.168.50.20|originator|1700003002";
     private static final String INC_3 = "cic17-trans-test|192.168.50.30|responder|1700003003";
+    private static final String MULTI_INC = "lab-20261117|10.30.0.10|originator|1763400000";
 
     @Autowired
     private MockMvc mockMvc;
@@ -127,10 +131,16 @@ class IncidentTransitionIntegrationTest {
         if (zeekadJdbc == null) {
             zeekadJdbc = new JdbcTemplate(zeekadReadDataSource);
         }
-        zeekadJdbc.update("DELETE FROM dashboard.raw_incident_status_history WHERE job_id = ?", TEST_JOB_ID);
-        zeekadJdbc.update("DELETE FROM dashboard.raw_incident_status WHERE job_id = ?", TEST_JOB_ID);
-        zeekadJdbc.update("DELETE FROM dashboard.raw_incident_queue WHERE job_id = ?", TEST_JOB_ID);
-        zeekadJdbc.update("DELETE FROM dashboard.raw_scoring_jobs WHERE job_id = ?", TEST_JOB_ID);
+        zeekadJdbc.update(
+                "DELETE FROM dashboard.raw_incident_status_history WHERE incident_id IN (?, ?, ?, ?) OR job_id IN (?, ?, ?)",
+                INC_1, INC_2, INC_3, MULTI_INC, TEST_JOB_ID, MULTI_JOB_A, MULTI_JOB_B);
+        zeekadJdbc.update(
+                "DELETE FROM dashboard.raw_incident_status WHERE incident_id IN (?, ?, ?, ?) OR job_id IN (?, ?, ?)",
+                INC_1, INC_2, INC_3, MULTI_INC, TEST_JOB_ID, MULTI_JOB_A, MULTI_JOB_B);
+        zeekadJdbc.update("DELETE FROM dashboard.raw_incident_queue WHERE job_id IN (?, ?, ?)",
+                TEST_JOB_ID, MULTI_JOB_A, MULTI_JOB_B);
+        zeekadJdbc.update("DELETE FROM dashboard.raw_scoring_jobs WHERE job_id IN (?, ?, ?)",
+                TEST_JOB_ID, MULTI_JOB_A, MULTI_JOB_B);
     }
 
     @Test
@@ -153,7 +163,7 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(redirectedUrl("/incidents/" + TEST_JOB_ID + "/rank/2"))
                 .andExpect(flash().attributeExists("transitionError"));
 
-        assertThat(zeekadReadMapper.findIncidentStatus(TEST_JOB_ID, INC_2)).isNull();
+        assertThat(zeekadReadMapper.findIncidentStatus(INC_2)).isNull();
 
         // 2. open -> investigating 정방향 전이 (위조 actor 파라미터 무시 검증 포함)
         mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
@@ -168,7 +178,7 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(redirectedUrl("/incidents/" + TEST_JOB_ID + "/rank/1"))
                 .andExpect(flash().attributeExists("transitionSuccess"));
 
-        IncidentStatus afterStep1 = zeekadReadMapper.findIncidentStatus(TEST_JOB_ID, INC_1);
+        IncidentStatus afterStep1 = zeekadReadMapper.findIncidentStatus(INC_1);
         assertThat(afterStep1).isNotNull();
         assertThat(afterStep1.getZeekadStatus()).isEqualTo("investigating");
         assertThat(afterStep1.getZeekadResolution()).isNull();
@@ -223,7 +233,7 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(status().is3xxRedirection())
                 .andExpect(flash().attributeExists("transitionSuccess"));
 
-        IncidentStatus afterStep2 = zeekadReadMapper.findIncidentStatus(TEST_JOB_ID, INC_1);
+        IncidentStatus afterStep2 = zeekadReadMapper.findIncidentStatus(INC_1);
         assertThat(afterStep2.getZeekadStatus()).isEqualTo("closed");
         assertThat(afterStep2.getZeekadResolution()).isEqualTo("true_positive");
 
@@ -312,7 +322,7 @@ class IncidentTransitionIntegrationTest {
             assertThat(errorMsg).contains("새로고침");
             assertThat(errorMsg).doesNotContain("java.lang.", "org.h2.", "SELECT ");
 
-            List<IncidentStatusHistory> history = zeekadReadMapper.findIncidentStatusHistory(TEST_JOB_ID, INC_3);
+            List<IncidentStatusHistory> history = zeekadReadMapper.findIncidentStatusHistory(INC_3);
             assertThat(history).hasSize(1);
         } finally {
             pool.shutdownNow();
@@ -336,6 +346,95 @@ class IncidentTransitionIntegrationTest {
                     assertThat((Throwable) found).isNotNull();
                     assertThat(found.getSQLState()).isEqualTo("02000");
                 });
+    }
+
+    @Test
+    void incidentStatusPersistsAcrossJobsAndCombinesHistoryByIncidentId() throws Exception {
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_scoring_jobs
+                (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
+                VALUES
+                (?, ?, 'zeekad-fusion/1', 'succeeded', TIMESTAMP WITH TIME ZONE '2026-11-17 10:00:00Z',
+                 TIMESTAMP WITH TIME ZONE '2026-11-17 10:01:00Z', NULL, 1),
+                (?, ?, 'zeekad-fusion/1', 'succeeded', TIMESTAMP WITH TIME ZONE '2026-11-17 10:05:00Z',
+                 TIMESTAMP WITH TIME ZONE '2026-11-17 10:06:00Z', NULL, 2)
+                """, MULTI_JOB_A, MULTI_CAPTURE_ID, MULTI_JOB_B, MULTI_CAPTURE_ID);
+
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_incident_queue
+                (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role,
+                 event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name)
+                VALUES
+                (?, ?, 'zeekad-fusion/1', 1, ?, '10.30.0.10', 'originator',
+                 TIMESTAMP WITH TIME ZONE '2026-11-17 09:50:00Z', TIMESTAMP WITH TIME ZONE '2026-11-17 10:00:00Z',
+                 'iforest', NULL, 50, NULL),
+                (?, ?, 'zeekad-fusion/1', 1, 'lab-20261117|10.30.0.99|responder|1763400100', '10.30.0.99', 'responder',
+                 TIMESTAMP WITH TIME ZONE '2026-11-17 10:00:00Z', TIMESTAMP WITH TIME ZONE '2026-11-17 10:05:00Z',
+                 'hbos', NULL, 10, NULL),
+                (?, ?, 'zeekad-fusion/1', 2, ?, '10.30.0.10', 'originator',
+                 TIMESTAMP WITH TIME ZONE '2026-11-17 09:50:00Z', TIMESTAMP WITH TIME ZONE '2026-11-17 10:05:00Z',
+                 'iforest', NULL, 90, NULL)
+                """, MULTI_JOB_A, MULTI_CAPTURE_ID, MULTI_INC, MULTI_JOB_B, MULTI_CAPTURE_ID, MULTI_JOB_B, MULTI_CAPTURE_ID, MULTI_INC);
+
+        String labAnalyst = "lab_trans_analyst";
+        userAdminService.createUser(labAnalyst, "실습분석가", "Pass1234!", UserRole.ANALYST,
+                "lab-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
+
+        // 작업 A(311)에서 open -> investigating 전이
+        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
+                        .session(session)
+                        .with(csrf())
+                        .param("toStatus", "investigating")
+                        .param("reason", "작업 A에서 조사 착수"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attributeExists("transitionSuccess"));
+
+        // 최신 작업 B(312)에서도 investigating 승계 확인
+        mockMvc.perform(get("/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("현재 상태: investigating")))
+                .andExpect(content().string(containsString("사건 종료 (closed)")))
+                .andExpect(content().string(containsString("job #" + MULTI_JOB_A)));
+
+        // 최신 작업 B(312)에서 investigating -> closed 전이
+        mockMvc.perform(post("/incidents/{jobId}/rank/2/transition", MULTI_JOB_B)
+                        .session(session)
+                        .with(csrf())
+                        .param("toStatus", "closed")
+                        .param("resolution", "false_positive")
+                        .param("reason", "작업 B에서 오탐 종결"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attributeExists("transitionSuccess"));
+
+        IncidentStatus finalStatus = zeekadReadMapper.findIncidentStatus(MULTI_INC);
+        assertThat(finalStatus).isNotNull();
+        assertThat(finalStatus.getJobId()).isEqualTo(MULTI_JOB_B);
+        assertThat(finalStatus.getZeekadStatus()).isEqualTo("closed");
+        assertThat(finalStatus.getZeekadResolution()).isEqualTo("false_positive");
+
+        List<IncidentStatusHistory> combinedHistory = zeekadReadMapper.findIncidentStatusHistory(MULTI_INC);
+        assertThat(combinedHistory).hasSize(2);
+        assertThat(combinedHistory).extracting(IncidentStatusHistory::getJobId)
+                .containsExactlyInAnyOrder(MULTI_JOB_A, MULTI_JOB_B);
+
+        // 상세 화면에서도 작업 A와 작업 B 이력이 모두 합산 표시됨
+        mockMvc.perform(get("/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("현재 상태: closed")))
+                .andExpect(content().string(containsString("job #" + MULTI_JOB_A)))
+                .andExpect(content().string(containsString("job #" + MULTI_JOB_B)))
+                .andExpect(content().string(containsString("작업 A에서 조사 착수")))
+                .andExpect(content().string(containsString("작업 B에서 오탐 종결")));
+
+        // 종료 후 과거 작업 A에서 재전이 시 SQLSTATE 22023 오류 거부
+        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
+                        .session(session)
+                        .with(csrf())
+                        .param("toStatus", "investigating")
+                        .param("reason", "과거 작업 재전이 시도"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(flash().attributeExists("transitionError"));
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {
