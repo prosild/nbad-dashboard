@@ -133,6 +133,7 @@ class StaticSecurityAndConfigTest {
 
         String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
         assertThat(compose).contains("dashboard-app:", "nginx-waf:", "host.docker.internal:host-gateway");
+        assertThat(compose).contains("http://api:8000").doesNotContain("http://evidence-api:8000");
         assertThat(compose).contains("MODSEC_RULE_ENGINE", "PARANOIA", "SERVER_TOKENS");
         assertThat(compose).contains("WAF_HTTP_PORT:-80", "WAF_HTTPS_PORT:-443", "SSL_CERT_FILE", "SSL_CERT_KEY_FILE");
         assertThat(compose).contains("./docker/certs:/etc/nginx/ssl:ro");
@@ -144,6 +145,8 @@ class StaticSecurityAndConfigTest {
         assertThat(wafLocationCommon).contains("location ^~ /actuator").contains("return 403");
 
         String envExample = Files.readString(Path.of(".env.example"), StandardCharsets.UTF_8);
+        assertThat(envExample).contains("ZEEKAD_EVIDENCE_API_URL=http://api:8000")
+                .doesNotContain("http://evidence-api:8000");
         for (String requiredVar : List.of(
                 "DASHBOARD_DB_HOST", "DASHBOARD_DB_PORT", "DASHBOARD_DB_NAME",
                 "DASHBOARD_DB_USER", "DASHBOARD_APP_PASSWORD",
@@ -204,14 +207,41 @@ class StaticSecurityAndConfigTest {
     }
 
     @Test
-    void readMapperIncludesV21LatestIncidentQueue() throws IOException {
+    void readMapperIncludesV21LatestIncidentQueueAndWriteMapperIncludesDecideReview() throws IOException {
         String mapperJava = Files.readString(
                 Path.of("src/main/java/com/zeekad/dashboard/mapper/zeekad/read/ZeekadReadMapper.java"),
                 StandardCharsets.UTF_8);
         String mapperXml = Files.readString(
                 Path.of("src/main/resources/mapper/zeekad/read/ZeekadReadMapper.xml"),
                 StandardCharsets.UTF_8);
-        assertThat(mapperJava).contains("findLatestIncidentQueue");
+        assertThat(mapperJava).contains("findLatestIncidentQueue").contains("findAnalystReviewByJobAndIncident");
         assertThat(mapperXml).contains("dashboard.latest_incident_queue").contains("zeekad_report_job_id");
+        assertThat(mapperXml).contains("zeekad_thread_parent").contains("zeekad_reply_broadcast");
+        assertThat(mapperXml).contains("zeekad_review_resumed_at").contains("zeekad_review_resume_failed");
+
+        String writeMapperJava = Files.readString(
+                Path.of("src/main/java/com/zeekad/dashboard/mapper/zeekad/write/ZeekadWriteMapper.java"),
+                StandardCharsets.UTF_8);
+        String writeMapperXml = Files.readString(
+                Path.of("src/main/resources/mapper/zeekad/write/ZeekadWriteMapper.xml"),
+                StandardCharsets.UTF_8);
+        assertThat(writeMapperJava).contains("decideReview");
+        assertThat(writeMapperXml).contains("dashboard.decide_review").doesNotContain("${");
+    }
+
+    @Test
+    void appCodeDoesNotHardcodeLab20261119OrTestHostIps() throws IOException {
+        try (Stream<Path> files = Files.walk(Path.of("src/main"))) {
+            List<Path> appFiles = files.filter(Files::isRegularFile).toList();
+            assertThat(appFiles).isNotEmpty();
+            for (Path file : appFiles) {
+                String content = Files.readString(file, StandardCharsets.UTF_8);
+                assertThat(content)
+                        .as("애플리케이션 소스 %s에 시험 날짜/호스트 IP를 하드코딩하면 안 됩니다", file)
+                        .doesNotContain("lab-20261119")
+                        .doesNotContain("10.10.0.50")
+                        .doesNotContain("10.10.0.10");
+            }
+        }
     }
 }

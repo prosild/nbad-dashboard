@@ -20,6 +20,8 @@ public class SlackDelivery {
     private OffsetDateTime deliveredAt;
     private String error;
     private OffsetDateTime createdAt;
+    private String zeekadThreadParent;
+    private Boolean zeekadReplyBroadcast;
 
     public Long getJobId() {
         return jobId;
@@ -107,6 +109,26 @@ public class SlackDelivery {
 
     public void setCreatedAt(OffsetDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getZeekadThreadParent() {
+        return zeekadThreadParent;
+    }
+
+    public void setZeekadThreadParent(String zeekadThreadParent) {
+        this.zeekadThreadParent = zeekadThreadParent;
+    }
+
+    public Boolean getZeekadReplyBroadcast() {
+        return zeekadReplyBroadcast;
+    }
+
+    public void setZeekadReplyBroadcast(Boolean zeekadReplyBroadcast) {
+        this.zeekadReplyBroadcast = zeekadReplyBroadcast;
+    }
+
+    public boolean isReplyBroadcast() {
+        return Boolean.TRUE.equals(zeekadReplyBroadcast);
     }
 
     public boolean isDryRunOrRecorded() {

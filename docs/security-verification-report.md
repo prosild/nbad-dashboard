@@ -8,10 +8,10 @@
 
 | 항목 | 실행 명령 | 비고 |
 |---|---|---|
-| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, v2.1 `latest_incident_queue`/`lab-*`, Docker/WAF·NAS 제거 정적 검증 |
+| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, v2.1·migration 014~016(`slack_deliveries` `incident_id` 단독/스레드, `decide_review`, `zeekad-fusion/3`), Docker/WAF·코드 중립성 정적 검증 |
 | CycloneDX SBOM 생성 | `.\gradlew.bat cyclonedxBom --no-daemon` | `build/reports/bom.json`, `build/reports/bom.xml` 생성 |
-| Docker Compose 유효성 | `docker compose config -q` 및 `docker compose -f compose.yml -f docker/verify/compose.verify.yml config -q` | VMware 통합 운영 기본값 및 검증 오버라이드 검증 |
-| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T05/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E(v2.1 포함) → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
+| Docker Compose 유효성 | `docker compose config -q` 및 `docker compose -f compose.yml -f docker/verify/compose.verify.yml config -q` | VMware 통합 운영 기본값(`http://api:8000`) 및 검증 오버라이드 검증 |
+| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T06/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E(v2.1 + migration 014~016 포함) → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
 
 > [!NOTE]
 > 대용량 원본 스캔 리포트(`trivy-*.json`, `zap-baseline.html/json`, `bom.json/xml`)는 `.gitignore`에 등록된 `security-reports/` 경로에 생성되며 Git 저장소에는 포함하지 않습니다.
@@ -43,9 +43,9 @@
 | WAF XSS 차단 | `GET /incidents?asset=<script>alert(1)</script>` | `403 Forbidden` (ModSecurity CRS 차단) |
 | WAF 경로 탐색 차단 | `GET /incidents?asset=../../etc/passwd` / `GET /../../etc/passwd` | 쿼리 경로 탐색 `403 Forbidden` (URI `/../../etc/passwd`는 Nginx `400 Bad Request` 거부) |
 | Actuator 비노출 | `GET /actuator/health`, `GET /actuator/env` | 모두 앞단 Nginx `location ^~ /actuator`에서 `403 Forbidden` 차단 |
-| `VIEWER` 마스킹·IDOR·전이 차단 | `viewer1`(`cic17-*`) | `cic17-wed` 큐/상세 `200 OK` 및 IP 마스킹(`192.168.*.*`), 미허용 `syn1-tue`(`/incidents/201/rank/1`) `403`, 상태 전이 POST `403` |
-| `ANALYST` 인가·PostgreSQL 전이 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue`·`lab-20261118` 모두 `403`, 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 상세 화면에 `investigating` 반영 확인 (`dashboard.transition_incident` 실행 검증) |
-| `ADMIN` TOTP + v2.1 다중 작업 E2E | `admin`(`*`) + `lab-20261118` (`job 501`/`502`) | TOTP 2차 인증(`302`) 후 `latest_incident_queue` 기본 큐(`job #502`, `보고 작업 #501`, `검토 대기`, `보고서 없음`) `200 OK`, `502/rank/1`(`zeekad_report_job_id=null`) `"보고서 없음"` 확인, `502/rank/2`에서 `501` 보고서·`502` 모델점수(`5 / 6`)·`investigating` 승계 확인 및 `closed(true_positive)` 전이 후 `incident_status_history`에 `job #501`+`job #502` 합산 표시 확인 |
+| `VIEWER` 마스킹·IDOR·전이·검토 결정 차단 | `viewer1`(`cic17-*`) | `cic17-wed` 큐/상세 `200 OK`, IP 마스킹(`192.168.*.*`), Slack 스레드 묶음(`머리 알림`·`머리 사건 후속 답글`·`broadcast` 및 `101/rank/2` `스레드 답글` `zeekad_thread_parent` 마스킹), 미허용 `syn1-tue`(`/incidents/201/rank/1`) `403`, 상태 전이 POST `403`, 검토 결정 POST(`/reviews/decide`, `/incidents/101/rank/2/review-decision`) 모두 `403` |
+| `ANALYST` 인가·PostgreSQL 전이·검토 결정 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue`·`lab-20261118` 조회 및 `job 201` 검토 결정 IDOR 모두 `403`, 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 반영 확인, `101/rank/2` `confirm` 검토 결정 `302` 후 `결정: confirm`·`반영 중` 확인, 중복 결정 재시도 시 `22023` 오류 및 새로고침 안내 확인 |
+| `ADMIN` TOTP + v2.1/`zeekad-fusion/3`/Slack/검토 E2E | `admin`(`*`) + `lab-20261118` · `lab-fusion-v2` | TOTP 2차 인증(`302`) 후 `lab-20261118` 기본 큐·보고서 없음(`502/rank/1`)·이력 합산(`501+502`), `/operations` 및 `602/rank/1`의 `zeekad-fusion/3`(45분 사건)·재생성 보고서(`602`) 뒤에도 `incident_id` 단독 Slack(`job #601`) 조회, `/reviews/decide` `dismiss` 결정 후 중복(`601`) 제거 및 `반영 중`·`반영 실패(운영자 확인)` 표시 확인 |
 | 감사 로그 불변 트리거 | `UPDATE audit_logs SET action_type = 'TAMPERED' ...` | PostgreSQL 17 Flyway 트리거가 `ERROR: audit_logs is append-only: UPDATE is forbidden`으로 차단 |
 
 ---
@@ -68,7 +68,7 @@
 | 저장소 전체 (`trivy fs`) | Dockerfile / Secret | 0 | 0 | 0 | 0 | 오설정 0건, 비밀값 노출 0건 |
 | `zeek-ad-dashboard-app:local` | Alpine 3.24.4 OS | 0 | 0 | 0 | 0 | 초기 1건 → 0건 |
 | `zeek-ad-dashboard-app:local` | `app/app.jar` | 2 | 0 | 1 | 0 | 초기 83건 → 3건 |
-| `zeek-ad-dashboard-waf:local` | Alpine 3.24.4 OS | 0 | 0 | 0 | 0 | 취약점 0건 |
+| `zeek-ad-dashboard-waf:local` | Alpine 3.24.4 OS (`nginx`) | 0 | 5 | 4 | 0 | 기반 이미지 `owasp/modsecurity-crs:nginx-alpine` 내 `nginx 1.30.6-r1` (Fixed: `1.30.7-r0`) |
 
 ### 4.3 잔여 위험 및 수용 근거
 1. **`org.springframework:spring-webmvc 6.2.19` (`CVE-2026-47884`, `CVE-2026-47890` — CRITICAL, Fixed in `7.0.9`)**:
@@ -77,6 +77,8 @@
 2. **`ognl:ognl 3.4.4` (`CVE-2026-113730` — MEDIUM, Fixed in `3.4.13`)**:
    - `mybatis-3.5.19.jar` 내부에 shaded(`org.apache.ibatis.ognl`) 형태로 내장된 라이브러리입니다.
    - 본 애플리케이션은 MyBatis 정적 XML 매퍼(`#{}` 바인딩 전용, `${}` 0건)만 사용하며 외부 사용자 입력을 OGNL 표현식으로 평가하지 않으므로 직접적인 악용 경로가 없습니다.
+3. **`zeek-ad-dashboard-waf:local` 기반 이미지 `nginx 1.30.6-r1` (`CVE-2026-113425` 외 HIGH 5건 · MEDIUM 4건, Fixed in `1.30.7-r0`)**:
+   - 업스트림 `owasp/modsecurity-crs:nginx-alpine` 이미지에 포함된 Alpine `nginx 1.30.6-r1` 패키지 항목입니다(애플리케이션 컨테이너에는 미포함). 업스트림 베이스 이미지 갱신(`1.30.7-r0` 이상 반영) 시 재빌드로 해소 대상이며, 본 WAF 구성은 mail/client-cert/HTTP2 취약 구성 기능을 사용하지 않습니다.
 
 ---
 

@@ -185,6 +185,7 @@ public class MaskingService {
         }
         AnalystReviewItem copy = new AnalystReviewItem();
         copy.setJobId(item.getJobId());
+        copy.setReviewJobId(item.getReviewJobId());
         copy.setCaptureId(item.getCaptureId());
         copy.setIncidentId(maskIpsInText(item.getIncidentId()));
         copy.setQueueRank(item.getQueueRank());
@@ -194,7 +195,10 @@ public class MaskingService {
         copy.setRequestedAt(item.getRequestedAt());
         copy.setZeekadReviewAction(item.getZeekadReviewAction());
         copy.setAnalyst(item.getAnalyst());
+        copy.setAnalystDisplay(item.getAnalystDisplay());
         copy.setDecidedAt(item.getDecidedAt());
+        copy.setZeekadReviewResumedAt(item.getZeekadReviewResumedAt());
+        copy.setZeekadReviewResumeFailed(item.getZeekadReviewResumeFailed());
         return copy;
     }
 
@@ -221,7 +225,7 @@ public class MaskingService {
         }
         SlackDelivery copy = new SlackDelivery();
         copy.setJobId(delivery.getJobId());
-        copy.setIncidentId(delivery.getIncidentId());
+        copy.setIncidentId(maskIpsInText(delivery.getIncidentId()));
         copy.setZeekadMessageKind(delivery.getZeekadMessageKind());
         copy.setZeekadMessageVersion(delivery.getZeekadMessageVersion());
         copy.setZeekadDeliveryMode(delivery.getZeekadDeliveryMode());
@@ -231,6 +235,8 @@ public class MaskingService {
         copy.setDeliveredAt(delivery.getDeliveredAt());
         copy.setError(maskIpsInText(delivery.getError()));
         copy.setCreatedAt(delivery.getCreatedAt());
+        copy.setZeekadThreadParent(maskIpsInText(delivery.getZeekadThreadParent()));
+        copy.setZeekadReplyBroadcast(delivery.getZeekadReplyBroadcast());
         return copy;
     }
 

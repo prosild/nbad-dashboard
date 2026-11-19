@@ -21,6 +21,8 @@ public record IncidentDetailView(
         ReportView report,
         SendDecisionView sendDecision,
         List<SlackDeliveryView> slackDeliveries,
+        List<SlackThreadGroup> slackThreadGroups,
+        AnalystReviewView analystReview,
         String currentStatus,
         String currentResolution,
         OffsetDateTime statusUpdatedAt,
@@ -125,6 +127,7 @@ public record IncidentDetailView(
     }
 
     public record SlackDeliveryView(
+            Long jobId,
             String messageKind,
             String messageVersion,
             String deliveryMode,
@@ -134,8 +137,39 @@ public record IncidentDetailView(
             OffsetDateTime deliveredAt,
             String error,
             OffsetDateTime createdAt,
-            String payloadJson
+            String payloadJson,
+            String threadParent,
+            String threadKey,
+            String threadRoleLabel,
+            boolean replyBroadcast
     ) {
+    }
+
+    public record SlackThreadGroup(
+            String threadKey,
+            List<SlackDeliveryView> deliveries
+    ) {
+    }
+
+    public record AnalystReviewView(
+            boolean present,
+            Long reviewJobId,
+            String reviewReason,
+            OffsetDateTime requestedAt,
+            String reviewAction,
+            String analystDisplay,
+            OffsetDateTime decidedAt,
+            OffsetDateTime resumedAt,
+            boolean resumeFailed,
+            boolean pending,
+            String resumeStatusLabel,
+            boolean canDecide
+    ) {
+        public static AnalystReviewView absent() {
+            return new AnalystReviewView(
+                    false, null, null, null, null, null, null, null, false, false, null, false
+            );
+        }
     }
 
     public record StatusHistoryItem(

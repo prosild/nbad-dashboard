@@ -4,12 +4,13 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.Set;
 
 /**
- * 테스트 프로필(H2)용 dashboard.transition_incident 함수 ALIAS 구현체.
+ * 테스트 프로필(H2)용 dashboard.transition_incident 및 dashboard.decide_review 함수 ALIAS 구현체.
  * PostgreSQL 함수와 동일하게 정방향 1단계 전이(open -> investigating -> closed),
- * SQLSTATE 22023(전이 규칙 위반·동시 충돌·입력 오류) 및 02000(사건 없음)을 재현한다.
+ * 검토 결정(confirm/dismiss), SQLSTATE 22023(규칙 위반·동시 충돌·입력 오류) 및 02000(대상 없음)을 재현한다.
  */
 public final class H2ZeekadTransitionFunctions {
 
@@ -113,6 +114,67 @@ public final class H2ZeekadTransitionFunctions {
         }
 
         return targetStatus;
+    }
+
+    public static String decideReview(Connection conn,
+                                      Long jobId,
+                                      String incidentId,
+                                      String action,
+                                      String analyst,
+                                      String note) throws SQLException {
+        if (jobId == null || isBlank(incidentId) || isBlank(action) || isBlank(analyst)) {
+            throw new SQLException(
+                    "검토 결정 필수 파라미터(p_job, p_incident, p_action, p_analyst)가 누락되었습니다.",
+                    "22023");
+        }
+        String normalizedAction = action.trim().toLowerCase(Locale.ROOT);
+        if (!"confirm".equals(normalizedAction) && !"dismiss".equals(normalizedAction)) {
+            throw new SQLException(
+                    "허용되지 않는 검토 결정입니다: " + normalizedAction + " (confirm 또는 dismiss만 허용)",
+                    "22023");
+        }
+        String cleanAnalyst = analyst.trim();
+
+        String existingAction;
+        try (PreparedStatement selectPs = conn.prepareStatement(
+                "SELECT zeekad_review_action FROM dashboard.raw_analyst_review_queue "
+                        + "WHERE job_id = ? AND incident_id = ? FOR UPDATE")) {
+            selectPs.setLong(1, jobId);
+            selectPs.setString(2, incidentId);
+            try (ResultSet rs = selectPs.executeQuery()) {
+                if (!rs.next()) {
+                    throw new SQLException("요청한 분석가 검토 항목을 찾을 수 없습니다.", "02000");
+                }
+                existingAction = rs.getString(1);
+            }
+        }
+
+        if (!isBlank(existingAction)) {
+            throw new SQLException(
+                    "이미 '" + existingAction + "'(으)로 검토 결정이 완료되었습니다. 화면을 새로고침하여 최신 상태를 확인해 주세요.",
+                    "22023");
+        }
+
+        int updated;
+        try (PreparedStatement updatePs = conn.prepareStatement(
+                "UPDATE dashboard.raw_analyst_review_queue "
+                        + "SET zeekad_review_action = ?, analyst = ?, decided_at = CURRENT_TIMESTAMP(), "
+                        + "zeekad_review_resumed_at = NULL, zeekad_review_resume_failed = FALSE "
+                        + "WHERE job_id = ? AND incident_id = ? "
+                        + "AND (zeekad_review_action IS NULL OR TRIM(zeekad_review_action) = '')")) {
+            updatePs.setString(1, normalizedAction);
+            updatePs.setString(2, cleanAnalyst);
+            updatePs.setLong(3, jobId);
+            updatePs.setString(4, incidentId);
+            updated = updatePs.executeUpdate();
+        }
+        if (updated == 0) {
+            throw new SQLException(
+                    "다른 사용자가 먼저 검토 결정을 완료했습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.",
+                    "22023");
+        }
+
+        return normalizedAction;
     }
 
     private static boolean incidentExists(Connection conn, Long jobId, String incidentId) throws SQLException {

@@ -291,6 +291,16 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 if ($viewerDetail.Output -notmatch "192\.168\.\*\.\*" -or $viewerDetail.Output -match "192\.168\.10\.50") {
                     throw "viewer1 사건 상세 IP 마스킹 확인 실패"
                 }
+                if ($viewerDetail.Output -notmatch "머리 알림" -or $viewerDetail.Output -notmatch "머리 사건 후속 답글" -or $viewerDetail.Output -notmatch "broadcast") {
+                    throw "viewer1 Slack 스레드 묶음/재알림 표시 확인 실패"
+                }
+
+                $viewerDetail2 = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents/101/rank/2")
+                if ($viewerDetail2.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $viewerDetail2.Output -notmatch "스레드 답글" -or
+                    $viewerDetail2.Output -match "192\.168\.10\.50") {
+                    throw "viewer1 Slack thread_parent IP 마스킹 확인 실패"
+                }
 
                 $viewerIdor = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents/201/rank/1")
                 $e2eLogs.Add("[4c] viewer1 IDOR syn1-tue (/incidents/201/rank/1):`n$(($viewerIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
@@ -306,6 +316,26 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 )
                 $e2eLogs.Add("[4d] viewer1 POST transition:`n$(($viewerTransition.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
                 if ($viewerTransition.Output -notmatch "HTTP/[\d.]+ 403") { throw "VIEWER 상태 전이 403 차단 실패" }
+
+                $viewerReviewCsrf = Extract-Csrf $viewerDetail2.Output
+                $viewerReviewPost1 = Invoke-CurlRaw @(
+                    "-i", "-b", $viewerCookies,
+                    "-X", "POST", "$baseHttps/reviews/decide",
+                    "--data-urlencode", "jobId=101",
+                    "--data-urlencode", "incidentId=cic17-wed|10.20.30.40|responder|1700000300",
+                    "--data-urlencode", "action=confirm",
+                    "--data-urlencode", "_csrf=$viewerReviewCsrf"
+                )
+                $viewerReviewPost2 = Invoke-CurlRaw @(
+                    "-i", "-b", $viewerCookies,
+                    "-X", "POST", "$baseHttps/incidents/101/rank/2/review-decision",
+                    "--data-urlencode", "action=confirm",
+                    "--data-urlencode", "_csrf=$viewerReviewCsrf"
+                )
+                $e2eLogs.Add("[4e] viewer1 POST review-decision (/reviews/decide & detail):`n$(($viewerReviewPost1.Output -split "`r?`n" | Select-Object -First 10) -join "`n")`n---`n$(($viewerReviewPost2.Output -split "`r?`n" | Select-Object -First 10) -join "`n")")
+                if ($viewerReviewPost1.Output -notmatch "HTTP/[\d.]+ 403" -or $viewerReviewPost2.Output -notmatch "HTTP/[\d.]+ 403") {
+                    throw "VIEWER 분석가 검토 결정 403 차단 실패"
+                }
 
                 # 5) analyst1 로그인, 원문 조회, IDOR 403(syn1-tue), PostgreSQL transition_incident 정방향 전이 확인
                 $analystCookies = Join-Path $tmpDir "analyst1.cookies"
@@ -342,6 +372,51 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $analystLabIdor = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents?captureId=lab-20261118")
                 $e2eLogs.Add("[5c] analyst1 IDOR lab-20261118:`n$(($analystLabIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
                 if ($analystLabIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 lab-20261118 IDOR 403 차단 실패" }
+
+                $analystRevIdor = Invoke-CurlRaw @(
+                    "-i", "-b", $analystCookies,
+                    "-X", "POST", "$baseHttps/reviews/decide",
+                    "--data-urlencode", "jobId=201",
+                    "--data-urlencode", "incidentId=syn1-tue|10.99.88.77|originator|1700001000",
+                    "--data-urlencode", "action=confirm",
+                    "--data-urlencode", "_csrf=$analystCsrf"
+                )
+                if ($analystRevIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 캡처 검토 결정 IDOR 403 차단 실패" }
+
+                $analystRank2 = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/2")
+                $analystRevCsrf = Extract-Csrf $analystRank2.Output
+                $analystRevConfirm = Invoke-CurlRaw @(
+                    "-i", "-b", $analystCookies, "-c", $analystCookies,
+                    "-X", "POST", "$baseHttps/incidents/101/rank/2/review-decision",
+                    "--data-urlencode", "action=confirm",
+                    "--data-urlencode", "note=PG17 decide_review confirm E2E",
+                    "--data-urlencode", "_csrf=$analystRevCsrf"
+                )
+                $e2eLogs.Add("[5d] analyst1 POST /incidents/101/rank/2/review-decision (confirm):`n$(($analystRevConfirm.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
+                if ($analystRevConfirm.Output -notmatch "HTTP/[\d.]+ 302") { throw "analyst1 검토 결정(confirm) 리다이렉트 실패" }
+
+                $analystRank2After = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/2")
+                if ($analystRank2After.Output -notmatch "결정: confirm" -or $analystRank2After.Output -notmatch "반영 중") {
+                    throw "PostgreSQL 17 dashboard.decide_review confirm 반영 확인 실패"
+                }
+
+                $analystRevDup = Invoke-CurlRaw @(
+                    "-i", "-b", $analystCookies, "-c", $analystCookies,
+                    "-X", "POST", "$baseHttps/reviews/decide",
+                    "--data-urlencode", "jobId=101",
+                    "--data-urlencode", "incidentId=cic17-wed|10.20.30.40|responder|1700000300",
+                    "--data-urlencode", "action=dismiss",
+                    "--data-urlencode", "captureId=cic17-wed",
+                    "--data-urlencode", "_csrf=$analystRevCsrf"
+                )
+                if ($analystRevDup.Output -notmatch "HTTP/[\d.]+ 302") {
+                    throw "analyst1 중복 검토 결정 POST 리다이렉트 확인 실패"
+                }
+                $analystRevDupGet = Invoke-CurlRaw @("-i", "-b", $analystCookies, "-c", $analystCookies, "$baseHttps/reviews?captureId=cic17-wed")
+                $e2eLogs.Add("[5e] analyst1 duplicate review decide (22023 check): HTTP $((($analystRevDupGet.Output -split "`r?`n")[0]))")
+                if ($analystRevDupGet.Output -notmatch "HTTP/[\d.]+ 200" -or $analystRevDupGet.Output -notmatch "새로고침") {
+                    throw "PostgreSQL 17 dashboard.decide_review 중복 결정 SQLSTATE 22023 거부 확인 실패"
+                }
 
                 # 6) admin TOTP 로그인 + v2.1 (lab-20261118 다중 작업/보고서 작업 불일치/보고서 없음/incident_id 상태 승계·이력 합산) 실측
                 $adminCookies = Join-Path $tmpDir "admin.cookies"
@@ -406,6 +481,44 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     $labRank2After.Output -notmatch "job #501" -or
                     $labRank2After.Output -notmatch "job #502") {
                     throw "v2.1 incident_id 기준 상태 종료 및 이력 합산(501+502) 확인 실패"
+                }
+
+                # 6d) zeekad-fusion/3 (45분 사건), 보고서 재생성(602) 뒤에도 Slack(601) 조회, admin dismiss 검토 결정
+                $opsPage = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/operations")
+                if ($opsPage.Output -notmatch "HTTP/[\d.]+ 200" -or $opsPage.Output -notmatch "zeekad-fusion/3") {
+                    throw "운영 상태 화면 zeekad-fusion/3 번들 표시 확인 실패"
+                }
+
+                $fusionDetail = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/602/rank/1")
+                if ($fusionDetail.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $fusionDetail.Output -notmatch "zeekad-fusion/3" -or
+                    $fusionDetail.Output -notmatch "보고 작업 job #602" -or
+                    $fusionDetail.Output -notmatch "2026-11-19T01:45" -or
+                    $fusionDetail.Output -notmatch "job #601") {
+                    throw "zeekad-fusion/3 45분 사건 및 incident_id 단독 Slack(601) 조회 확인 실패"
+                }
+                $fusionCsrf = Extract-Csrf $fusionDetail.Output
+                $adminRevDismiss = Invoke-CurlRaw @(
+                    "-i", "-b", $adminCookies, "-c", $adminCookies,
+                    "-X", "POST", "$baseHttps/reviews/decide",
+                    "--data-urlencode", "jobId=602",
+                    "--data-urlencode", "incidentId=lab-fusion-v2|10.40.0.10|originator|1763514000",
+                    "--data-urlencode", "action=dismiss",
+                    "--data-urlencode", "note=PG17 admin dismiss E2E",
+                    "--data-urlencode", "captureId=lab-fusion-v2",
+                    "--data-urlencode", "_csrf=$fusionCsrf"
+                )
+                if ($adminRevDismiss.Output -notmatch "HTTP/[\d.]+ 302") {
+                    throw "admin /reviews/decide dismiss POST 리다이렉트 실패"
+                }
+                $adminRevAfter = Invoke-CurlRaw @("-i", "-b", $adminCookies, "-c", $adminCookies, "$baseHttps/reviews?captureId=lab-fusion-v2")
+                $e2eLogs.Add("[6d] admin POST /reviews/decide (dismiss) + fusion/3 + Slack(601): HTTP $((($adminRevAfter.Output -split "`r?`n")[0]))")
+                if ($adminRevAfter.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $adminRevAfter.Output -notmatch "dismiss" -or
+                    $adminRevAfter.Output -notmatch "반영 중" -or
+                    $adminRevAfter.Output -notmatch "반영 실패\(운영자 확인\)" -or
+                    $adminRevAfter.Output -match "구 작업\(601\) 중복 검토 요청") {
+                    throw "admin /reviews/decide dismiss 및 중복 제거/반영 상태 확인 실패"
                 }
 
                 # 7) PostgreSQL audit_logs 불변 트리거 실증 (UPDATE 시도 실패)

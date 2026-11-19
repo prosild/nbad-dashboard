@@ -1,6 +1,8 @@
 package com.zeekad.dashboard.service;
 
+import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
+import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
@@ -11,24 +13,29 @@ import com.zeekad.dashboard.model.zeekad.SlackSummary;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /**
- * zeekad v1·v2 읽기 전용 뷰 조회 및 필터링·권한·마스킹 조합 서비스.
+ * zeekad v1·v2·v2.1 읽기 전용 뷰 조회 및 필터링·권한·마스킹 조합 서비스.
  */
 @Service
 public class IncidentQueryService {
 
     private final ZeekadReadMapper zeekadReadMapper;
+    private final UserMapper userMapper;
     private final CaptureAccessService captureAccessService;
     private final MaskingService maskingService;
 
     public IncidentQueryService(ZeekadReadMapper zeekadReadMapper,
+                                UserMapper userMapper,
                                 CaptureAccessService captureAccessService,
                                 MaskingService maskingService) {
         this.zeekadReadMapper = zeekadReadMapper;
+        this.userMapper = userMapper;
         this.captureAccessService = captureAccessService;
         this.maskingService = maskingService;
     }
@@ -168,12 +175,41 @@ public class IncidentQueryService {
         }
 
         UserRole userRole = principal != null ? principal.getRole() : UserRole.VIEWER;
+        Map<String, String> userDisplayMap = loadUserDisplayMap();
         List<AnalystReviewItem> reviews = zeekadReadMapper.findAnalystReviewQueue(cleanCaptureId, pendingOnly).stream()
                 .filter(r -> principal != null && principal.isCaptureAllowed(r.getCaptureId()))
-                .map(r -> maskingService.maskAnalystReviewItem(r, userRole))
+                .map(r -> {
+                    AnalystReviewItem masked = maskingService.maskAnalystReviewItem(r, userRole);
+                    if (masked.getAnalyst() != null && !masked.getAnalyst().isBlank()) {
+                        masked.setAnalystDisplay(formatActorDisplay(masked.getAnalyst(), userDisplayMap));
+                    }
+                    return masked;
+                })
                 .toList();
 
         return new ReviewsViewResult(allowedCaptures, cleanCaptureId, pendingOnly, reviews);
+    }
+
+    public Map<String, String> loadUserDisplayMap() {
+        List<DashboardUser> users = userMapper.findAll();
+        Map<String, String> map = new HashMap<>();
+        for (DashboardUser u : users) {
+            if (u.getUsername() != null && u.getDisplayName() != null && !u.getDisplayName().isBlank()) {
+                map.put(u.getUsername().toLowerCase(Locale.ROOT), u.getDisplayName());
+            }
+        }
+        return map;
+    }
+
+    public String formatActorDisplay(String actor, Map<String, String> userDisplayMap) {
+        if (actor == null || actor.isBlank()) {
+            return "-";
+        }
+        String displayName = userDisplayMap.get(actor.trim().toLowerCase(Locale.ROOT));
+        if (displayName != null && !displayName.isBlank()) {
+            return displayName + " (" + actor + ")";
+        }
+        return actor;
     }
 
     public List<AssetNameRecord> findAssetNames(String captureId, String hostIp, UserRole userRole) {

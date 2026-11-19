@@ -2,6 +2,7 @@ package com.zeekad.dashboard.controller;
 
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
+import com.zeekad.dashboard.service.AnalystReviewDecisionService;
 import com.zeekad.dashboard.service.IncidentDetailService;
 import com.zeekad.dashboard.service.IncidentDetailView;
 import com.zeekad.dashboard.service.IncidentTransitionService;
@@ -27,15 +28,18 @@ public class IncidentDetailController {
 
     private final IncidentDetailService incidentDetailService;
     private final IncidentTransitionService incidentTransitionService;
+    private final AnalystReviewDecisionService analystReviewDecisionService;
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
 
     public IncidentDetailController(IncidentDetailService incidentDetailService,
                                     IncidentTransitionService incidentTransitionService,
+                                    AnalystReviewDecisionService analystReviewDecisionService,
                                     ClientIpResolver clientIpResolver,
                                     MaskingService maskingService) {
         this.incidentDetailService = incidentDetailService;
         this.incidentTransitionService = incidentTransitionService;
+        this.analystReviewDecisionService = analystReviewDecisionService;
         this.clientIpResolver = clientIpResolver;
         this.maskingService = maskingService;
     }
@@ -76,6 +80,28 @@ public class IncidentDetailController {
             redirectAttributes.addFlashAttribute("transitionSuccess", result.message());
         } else {
             redirectAttributes.addFlashAttribute("transitionError", result.message());
+        }
+        return "redirect:/incidents/" + jobId + "/rank/" + queueRank;
+    }
+
+    @PostMapping("/review-decision")
+    public String reviewDecision(@PathVariable("jobId") Long jobId,
+                                 @PathVariable("queueRank") Integer queueRank,
+                                 @RequestParam(name = "action", required = false) String action,
+                                 @RequestParam(name = "note", required = false) String note,
+                                 Authentication authentication,
+                                 HttpServletRequest request,
+                                 RedirectAttributes redirectAttributes) {
+        DashboardUserPrincipal principal = requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+
+        AnalystReviewDecisionService.DecisionResult result = analystReviewDecisionService.decideFromIncidentDetail(
+                principal, jobId, queueRank, action, note, clientIp);
+
+        if (result.succeeded()) {
+            redirectAttributes.addFlashAttribute("reviewSuccess", result.message());
+        } else {
+            redirectAttributes.addFlashAttribute("reviewError", result.message());
         }
         return "redirect:/incidents/" + jobId + "/rank/" + queueRank;
     }

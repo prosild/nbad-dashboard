@@ -70,8 +70,7 @@ public interface ZeekadReadMapper {
     SendDecision findSendDecision(@Param("jobId") Long jobId,
                                   @Param("incidentId") String incidentId);
 
-    List<SlackDelivery> findSlackDeliveries(@Param("jobId") Long jobId,
-                                            @Param("incidentId") String incidentId);
+    List<SlackDelivery> findSlackDeliveries(@Param("incidentId") String incidentId);
 
     List<SlackSummary> findSlackSummaries(@Param("captureId") String captureId);
 
@@ -81,4 +80,7 @@ public interface ZeekadReadMapper {
 
     List<AnalystReviewItem> findAnalystReviewQueue(@Param("captureId") String captureId,
                                                    @Param("pendingOnly") Boolean pendingOnly);
+
+    AnalystReviewItem findAnalystReviewByJobAndIncident(@Param("jobId") Long jobId,
+                                                        @Param("incidentId") String incidentId);
 }

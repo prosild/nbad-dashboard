@@ -27,7 +27,6 @@ public class IncidentTransitionService {
 
     private static final Set<String> ALLOWED_TARGET_STATUSES = Set.of("investigating", "closed");
     private static final Set<String> ALLOWED_RESOLUTIONS = Set.of("true_positive", "false_positive", "benign");
-    private static final String REFRESH_GUIDE = " 화면을 새로고침하여 최신 상태를 확인해 주세요.";
 
     private final ZeekadWriteMapper zeekadWriteMapper;
     private final CaptureAccessService captureAccessService;
@@ -86,27 +85,27 @@ public class IncidentTransitionService {
                     effectiveResolution
             );
         } catch (RuntimeException ex) {
-            SQLException sqlEx = findSqlException(ex);
+            SQLException sqlEx = SqlErrorSanitizer.findSqlException(ex);
             if (sqlEx != null) {
                 String sqlState = sqlEx.getSQLState();
                 if ("22023".equals(sqlState)) {
                     log.warn("사건 상태 전이 거부(SQLSTATE 22023): jobId={}, rank={}, actor={}",
                             jobId, queueRank, actorUsername);
-                    String safeMsg = sanitizeSqlMessage(
+                    String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "상태 변경 규칙에 위배되었거나 다른 사용자가 먼저 상태를 변경했습니다.");
-                    return TransitionResult.failure(safeMsg + REFRESH_GUIDE);
+                    return TransitionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("사건 상태 전이 대상 없음(SQLSTATE 02000): jobId={}, rank={}", jobId, queueRank);
-                    String safeMsg = sanitizeSqlMessage(
+                    String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "대상 사건을 찾을 수 없습니다.");
-                    return TransitionResult.failure(safeMsg + REFRESH_GUIDE);
+                    return TransitionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
             }
             log.error("사건 상태 전이 중 예기치 않은 오류: jobId={}, rank={}", jobId, queueRank, ex);
-            return TransitionResult.failure("상태 변경 처리 중 오류가 발생했습니다." + REFRESH_GUIDE);
+            return TransitionResult.failure("상태 변경 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
 
         Map<String, Object> detail = new LinkedHashMap<>();
@@ -131,74 +130,6 @@ public class IncidentTransitionService {
                 ? "사건이 종료(closed, 결론: " + effectiveResolution + ") 상태로 변경되었습니다."
                 : "사건이 확인 중(investigating) 상태로 변경되었습니다.";
         return TransitionResult.success(successMessage);
-    }
-
-    private SQLException findSqlException(Throwable ex) {
-        SQLException fallback = null;
-        Throwable current = ex;
-        while (current != null) {
-            if (current instanceof SQLException sqlEx) {
-                String state = sqlEx.getSQLState();
-                if ("22023".equals(state) || "02000".equals(state)) {
-                    return sqlEx;
-                }
-                if (fallback == null) {
-                    fallback = sqlEx;
-                }
-                if (sqlEx.getNextException() != null) {
-                    SQLException next = findInChain(sqlEx.getNextException());
-                    if (next != null) {
-                        return next;
-                    }
-                }
-            }
-            current = current.getCause();
-        }
-        return fallback;
-    }
-
-    private SQLException findInChain(SQLException sqlEx) {
-        SQLException current = sqlEx;
-        while (current != null) {
-            if ("22023".equals(current.getSQLState()) || "02000".equals(current.getSQLState())) {
-                return current;
-            }
-            current = current.getNextException();
-        }
-        return null;
-    }
-
-    private String sanitizeSqlMessage(String rawMessage, String fallbackMessage) {
-        if (rawMessage == null || rawMessage.isBlank()) {
-            return fallbackMessage;
-        }
-        String cleaned = rawMessage;
-        int sqlIdx = cleaned.indexOf("; SQL statement:");
-        if (sqlIdx >= 0) {
-            cleaned = cleaned.substring(0, sqlIdx);
-        }
-        int whereIdx = cleaned.indexOf("\n  Where:");
-        if (whereIdx >= 0) {
-            cleaned = cleaned.substring(0, whereIdx);
-        }
-        int lineIdx = cleaned.indexOf('\n');
-        if (lineIdx >= 0) {
-            cleaned = cleaned.substring(0, lineIdx);
-        }
-        cleaned = cleaned.replaceFirst("^ERROR:\\s*", "");
-        cleaned = cleaned.replaceFirst("^Exception calling user-defined function:\\s*\"?[^\"]*\"?:\\s*", "");
-        cleaned = cleaned.replaceFirst("\\s*\\[\\d+-\\d+]\\s*$", "");
-        cleaned = cleaned.trim();
-
-        if (cleaned.isEmpty()
-                || cleaned.contains("java.")
-                || cleaned.contains("org.springframework.")
-                || cleaned.contains("org.h2.")
-                || cleaned.contains("SELECT ")
-                || cleaned.contains("Exception")) {
-            return fallbackMessage;
-        }
-        return cleaned;
     }
 
     public record TransitionResult(boolean succeeded, String message) {

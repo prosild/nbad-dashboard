@@ -1,7 +1,9 @@
 package com.zeekad.dashboard.controller;
 
+import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
+import com.zeekad.dashboard.service.AnalystReviewDecisionService;
 import com.zeekad.dashboard.service.IncidentQueryService;
 import com.zeekad.dashboard.service.MaskingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,7 +12,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
  * 조사 큐(/, /incidents), 운영 상태(/operations), 분석가 승인 대기(/reviews) 화면 컨트롤러.
@@ -19,13 +23,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 public class DashboardController {
 
     private final IncidentQueryService incidentQueryService;
+    private final AnalystReviewDecisionService analystReviewDecisionService;
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
 
     public DashboardController(IncidentQueryService incidentQueryService,
+                               AnalystReviewDecisionService analystReviewDecisionService,
                                ClientIpResolver clientIpResolver,
                                MaskingService maskingService) {
         this.incidentQueryService = incidentQueryService;
+        this.analystReviewDecisionService = analystReviewDecisionService;
         this.clientIpResolver = clientIpResolver;
         this.maskingService = maskingService;
     }
@@ -102,11 +109,43 @@ public class DashboardController {
 
         model.addAttribute("activeMenu", "reviews");
         model.addAttribute("maskedView", maskingService.shouldMask(principal.getRole()));
+        model.addAttribute("canDecideReview",
+                principal.getRole() == UserRole.ANALYST || principal.getRole() == UserRole.ADMIN);
         model.addAttribute("allowedCaptures", view.allowedCaptures());
         model.addAttribute("selectedCaptureId", view.selectedCaptureId() == null ? "" : view.selectedCaptureId());
         model.addAttribute("pendingOnly", view.pendingOnly());
         model.addAttribute("reviews", view.reviews());
         return "reviews/index";
+    }
+
+    @PostMapping("/reviews/decide")
+    public String decideReview(@RequestParam(name = "jobId", required = false) Long jobId,
+                               @RequestParam(name = "incidentId", required = false) String incidentId,
+                               @RequestParam(name = "action", required = false) String action,
+                               @RequestParam(name = "note", required = false) String note,
+                               @RequestParam(name = "captureId", required = false) String captureId,
+                               @RequestParam(name = "pendingOnly", defaultValue = "false") boolean pendingOnly,
+                               Authentication authentication,
+                               HttpServletRequest request,
+                               RedirectAttributes redirectAttributes) {
+        DashboardUserPrincipal principal = requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+
+        AnalystReviewDecisionService.DecisionResult result = analystReviewDecisionService.decideFromReviews(
+                principal, jobId, incidentId, action, note, clientIp);
+
+        if (result.succeeded()) {
+            redirectAttributes.addFlashAttribute("reviewSuccess", result.message());
+        } else {
+            redirectAttributes.addFlashAttribute("reviewError", result.message());
+        }
+        if (captureId != null && !captureId.isBlank()) {
+            redirectAttributes.addAttribute("captureId", captureId.trim());
+        }
+        if (pendingOnly) {
+            redirectAttributes.addAttribute("pendingOnly", "true");
+        }
+        return "redirect:/reviews";
     }
 
     private DashboardUserPrincipal requirePrincipal(Authentication authentication) {

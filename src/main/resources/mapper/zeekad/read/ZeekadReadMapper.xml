@@ -124,6 +124,8 @@
         <result property="deliveredAt" column="delivered_at"/>
         <result property="error" column="error"/>
         <result property="createdAt" column="created_at"/>
+        <result property="zeekadThreadParent" column="zeekad_thread_parent"/>
+        <result property="zeekadReplyBroadcast" column="zeekad_reply_broadcast"/>
     </resultMap>
 
     <resultMap id="slackSummaryMap" type="com.zeekad.dashboard.model.zeekad.SlackSummary">
@@ -161,6 +163,7 @@
 
     <resultMap id="analystReviewItemMap" type="com.zeekad.dashboard.model.zeekad.AnalystReviewItem">
         <result property="jobId" column="job_id"/>
+        <result property="reviewJobId" column="review_job_id"/>
         <result property="captureId" column="capture_id"/>
         <result property="incidentId" column="incident_id"/>
         <result property="queueRank" column="queue_rank"/>
@@ -171,6 +174,8 @@
         <result property="zeekadReviewAction" column="zeekad_review_action"/>
         <result property="analyst" column="analyst"/>
         <result property="decidedAt" column="decided_at"/>
+        <result property="zeekadReviewResumedAt" column="zeekad_review_resumed_at"/>
+        <result property="zeekadReviewResumeFailed" column="zeekad_review_resume_failed"/>
     </resultMap>
 
     <select id="findDistinctCaptureIds" resultType="string">
@@ -398,11 +403,11 @@
     <select id="findSlackDeliveries" resultMap="slackDeliveryMap">
         SELECT job_id, incident_id, zeekad_message_kind, zeekad_message_version,
                zeekad_delivery_mode, zeekad_delivery_status, slack_payload,
-               slack_ts, delivered_at, error, created_at
+               slack_ts, delivered_at, error, created_at,
+               zeekad_thread_parent, zeekad_reply_broadcast
         FROM dashboard.slack_deliveries
-        WHERE job_id = #{jobId}
-          AND incident_id = #{incidentId}
-        ORDER BY created_at DESC
+        WHERE incident_id = #{incidentId}
+        ORDER BY created_at ASC, job_id ASC
     </select>
 
     <select id="findSlackSummaries" resultMap="slackSummaryMap">
@@ -434,6 +439,7 @@
 
     <select id="findAnalystReviewQueue" resultMap="analystReviewItemMap">
         SELECT COALESCE(lq.job_id, a.job_id) AS job_id,
+               a.job_id AS review_job_id,
                COALESCE(lq.capture_id, j.capture_id) AS capture_id,
                a.incident_id,
                COALESCE(lq.queue_rank, a.queue_rank) AS queue_rank,
@@ -443,13 +449,21 @@
                a.requested_at,
                a.zeekad_review_action,
                a.analyst,
-               a.decided_at
+               a.decided_at,
+               a.zeekad_review_resumed_at,
+               a.zeekad_review_resume_failed
         FROM dashboard.analyst_review_queue a
         LEFT JOIN dashboard.latest_incident_queue lq
-               ON lq.zeekad_report_job_id = a.job_id AND lq.incident_id = a.incident_id
+               ON lq.incident_id = a.incident_id
         LEFT JOIN dashboard.scoring_jobs j
                ON j.job_id = a.job_id
         <where>
+            AND (lq.incident_id IS NULL OR a.job_id = lq.zeekad_report_job_id)
+            AND (lq.incident_id IS NOT NULL OR a.job_id = (
+                SELECT MAX(a2.job_id)
+                FROM dashboard.analyst_review_queue a2
+                WHERE a2.incident_id = a.incident_id
+            ))
             <if test="captureId != null and captureId != ''">
                 AND COALESCE(lq.capture_id, j.capture_id) = #{captureId}
             </if>
@@ -458,6 +472,29 @@
             </if>
         </where>
         ORDER BY a.requested_at DESC, COALESCE(lq.job_id, a.job_id) DESC, COALESCE(lq.queue_rank, a.queue_rank) ASC
+    </select>
+
+    <select id="findAnalystReviewByJobAndIncident" resultMap="analystReviewItemMap">
+        SELECT a.job_id AS job_id,
+               a.job_id AS review_job_id,
+               j.capture_id AS capture_id,
+               a.incident_id,
+               a.queue_rank,
+               a.host_ip,
+               a.zeekad_role,
+               a.zeekad_review_reason,
+               a.requested_at,
+               a.zeekad_review_action,
+               a.analyst,
+               a.decided_at,
+               a.zeekad_review_resumed_at,
+               a.zeekad_review_resume_failed
+        FROM dashboard.analyst_review_queue a
+        LEFT JOIN dashboard.scoring_jobs j
+               ON j.job_id = a.job_id
+        WHERE a.job_id = #{jobId}
+          AND a.incident_id = #{incidentId}
+        LIMIT 1
     </select>
 
 </mapper>

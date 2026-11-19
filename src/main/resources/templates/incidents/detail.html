@@ -23,6 +23,8 @@
 
     <div th:if="${transitionSuccess}" class="alert alert-success" th:text="${transitionSuccess}"></div>
     <div th:if="${transitionError}" class="alert alert-danger" th:text="${transitionError}"></div>
+    <div th:if="${reviewSuccess}" class="alert alert-success" th:text="${reviewSuccess}"></div>
+    <div th:if="${reviewError}" class="alert alert-danger" th:text="${reviewError}"></div>
 
     <!-- 1. 사건 기본 정보 및 현재 상태 -->
     <section class="card">
@@ -523,43 +525,128 @@
         </div>
     </section>
 
-    <!-- 6. Slack 전송 기록 (slack_deliveries) -->
+    <!-- 6. Slack 전송 기록 (slack_deliveries, incident_id 단독 스레드 묶음) -->
     <section class="card">
         <h2>Slack 전송 기록 (slack_deliveries)</h2>
-        <div th:if="${#lists.isEmpty(detail.slackDeliveries)}" class="muted">Slack 전송 기록 없음</div>
-        <div th:unless="${#lists.isEmpty(detail.slackDeliveries)}" class="table-wrap">
-            <table>
-                <thead>
-                <tr>
-                    <th>종류 / 버전</th>
-                    <th>전송 모드 · 상태</th>
-                    <th>시각 (UTC)</th>
-                    <th>페이로드 (slack_payload)</th>
-                </tr>
-                </thead>
-                <tbody>
-                <tr th:each="del : ${detail.slackDeliveries}">
-                    <td>
-                        <span class="badge" th:text="${del.messageKind}"></span>
-                        <div class="muted" th:text="${del.messageVersion}"></div>
-                    </td>
-                    <td>
-                        <span th:if="${del.dryRunOrRecorded}" class="badge badge-warn">기록만(dry-run)</span>
-                        <span th:unless="${del.dryRunOrRecorded}" class="badge badge-success"
-                              th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></span>
-                        <div class="muted" th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></div>
-                        <div th:if="${del.error != null}" class="alert alert-danger" th:text="${del.error}"></div>
-                    </td>
-                    <td class="muted">
-                        <div th:text="${del.createdAt}"></div>
-                        <div th:if="${del.deliveredAt != null}" th:text="'전송: ' + ${del.deliveredAt}"></div>
-                    </td>
-                    <td>
-                        <pre class="code-block" th:text="${del.payloadJson}"></pre>
-                    </td>
-                </tr>
-                </tbody>
-            </table>
+        <div th:if="${#lists.isEmpty(detail.slackThreadGroups)}" class="muted">Slack 전송 기록 없음</div>
+        <div th:unless="${#lists.isEmpty(detail.slackThreadGroups)}">
+            <div th:each="group : ${detail.slackThreadGroups}" class="slack-thread-group">
+                <div class="slack-thread-header">
+                    <span class="kv-label">스레드 묶음</span>
+                    <span class="code-inline" th:text="${group.threadKey}"></span>
+                    <span class="badge" th:text="${#lists.size(group.deliveries)} + '건'"></span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>스레드 구분 / 작업</th>
+                            <th>종류 / 버전</th>
+                            <th>전송 모드 · 상태</th>
+                            <th>시각 (UTC)</th>
+                            <th>페이로드 (slack_payload)</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="del : ${group.deliveries}">
+                            <td>
+                                <div class="badge-group">
+                                    <span class="badge badge-info" th:text="${del.threadRoleLabel}"></span>
+                                    <span th:if="${del.replyBroadcast}" class="badge badge-warn">채널 재알림(broadcast)</span>
+                                </div>
+                                <div class="muted" th:if="${del.jobId != null}" th:text="'job #' + ${del.jobId}"></div>
+                                <div class="muted code-inline" th:if="${del.threadParent != null}"
+                                     th:text="'parent: ' + ${del.threadParent}"></div>
+                            </td>
+                            <td>
+                                <span class="badge" th:text="${del.messageKind}"></span>
+                                <div class="muted" th:text="${del.messageVersion}"></div>
+                            </td>
+                            <td>
+                                <span th:if="${del.dryRunOrRecorded}" class="badge badge-warn">기록만(dry-run)</span>
+                                <span th:unless="${del.dryRunOrRecorded}" class="badge badge-success"
+                                      th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></span>
+                                <div class="muted" th:text="${del.deliveryMode} + ' / ' + ${del.deliveryStatus}"></div>
+                                <div th:if="${del.error != null}" class="alert alert-danger" th:text="${del.error}"></div>
+                            </td>
+                            <td class="muted">
+                                <div th:text="${del.createdAt}"></div>
+                                <div th:if="${del.deliveredAt != null}" th:text="'전송: ' + ${del.deliveredAt}"></div>
+                            </td>
+                            <td>
+                                <pre class="code-block" th:text="${del.payloadJson}"></pre>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 7. 분석가 검토 요청 (analyst_review_queue) -->
+    <section th:if="${detail.analystReview.present}" class="card">
+        <div class="section-header">
+            <h2>분석가 검토 요청 (analyst_review_queue)</h2>
+            <div class="status-pill-group">
+                <span th:if="${detail.analystReview.reviewJobId != null}" class="badge"
+                      th:text="'검토 작업 job #' + ${detail.analystReview.reviewJobId}"></span>
+                <span th:if="${detail.analystReview.pending}" class="badge badge-warn">대기 중</span>
+                <span th:unless="${detail.analystReview.pending}" class="badge badge-info"
+                      th:text="'결정: ' + ${detail.analystReview.reviewAction}"></span>
+                <span th:unless="${detail.analystReview.pending}" class="badge"
+                      th:classappend="${detail.analystReview.resumeFailed} ? ' badge-danger' : (${detail.analystReview.resumedAt != null} ? ' badge-success' : ' badge-warn')"
+                      th:text="${detail.analystReview.resumeStatusLabel}"></span>
+            </div>
+        </div>
+
+        <div class="detail-grid">
+            <div class="kv-box">
+                <span class="kv-label">검토 사유</span>
+                <span class="kv-value" th:text="${detail.analystReview.reviewReason}"></span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">요청 시각 (UTC)</span>
+                <span class="kv-value muted" th:text="${detail.analystReview.requestedAt}"></span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">결정 분석가 / 시각</span>
+                <span class="kv-value">
+                    <span th:text="${detail.analystReview.analystDisplay != null ? detail.analystReview.analystDisplay : '-'}"></span>
+                    <div class="muted" th:if="${detail.analystReview.decidedAt != null}"
+                         th:text="${detail.analystReview.decidedAt}"></div>
+                </span>
+            </div>
+            <div class="kv-box">
+                <span class="kv-label">파이프라인 반영 상태</span>
+                <span class="kv-value">
+                    <span th:text="${detail.analystReview.resumeStatusLabel}"></span>
+                    <div class="muted" th:if="${detail.analystReview.resumedAt != null}"
+                         th:text="'반영 시각: ' + ${detail.analystReview.resumedAt}"></div>
+                </span>
+            </div>
+        </div>
+
+        <div th:if="${detail.analystReview.canDecide}" class="sub-block">
+            <div class="transition-box">
+                <h3>검토 결정 제출 (dashboard.decide_review)</h3>
+                <form th:action="@{/incidents/{jobId}/rank/{rank}/review-decision(jobId=${detail.incident.jobId}, rank=${detail.incident.queueRank})}"
+                      method="post">
+                    <div class="form-group">
+                        <label for="detail-review-note">검토 메모 (선택)</label>
+                        <textarea id="detail-review-note" name="note" rows="2" class="form-control"
+                                  placeholder="검토 판단 메모를 입력하세요 (선택)"></textarea>
+                    </div>
+                    <div class="actions-stack">
+                        <button type="submit" name="action" value="confirm" class="btn btn-primary">
+                            조사 진행 (confirm)
+                        </button>
+                        <button type="submit" name="action" value="dismiss" class="btn btn-secondary">
+                            오탐 종료 (dismiss)
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </section>
 

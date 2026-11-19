@@ -6,10 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zeekad.dashboard.client.EvidenceApiClient;
 import com.zeekad.dashboard.client.EvidenceApiResponse;
 import com.zeekad.dashboard.client.EvidenceData;
-import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
-import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
+import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
 import com.zeekad.dashboard.model.zeekad.IncidentModelScore;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
@@ -24,7 +23,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -58,7 +56,6 @@ public class IncidentDetailService {
     );
 
     private final ZeekadReadMapper zeekadReadMapper;
-    private final UserMapper userMapper;
     private final CaptureAccessService captureAccessService;
     private final IncidentQueryService incidentQueryService;
     private final EvidenceApiClient evidenceApiClient;
@@ -67,7 +64,6 @@ public class IncidentDetailService {
     private final ObjectMapper objectMapper;
 
     public IncidentDetailService(ZeekadReadMapper zeekadReadMapper,
-                                 UserMapper userMapper,
                                  CaptureAccessService captureAccessService,
                                  IncidentQueryService incidentQueryService,
                                  EvidenceApiClient evidenceApiClient,
@@ -75,7 +71,6 @@ public class IncidentDetailService {
                                  PseudonymAnnotator pseudonymAnnotator,
                                  ObjectMapper objectMapper) {
         this.zeekadReadMapper = zeekadReadMapper;
-        this.userMapper = userMapper;
         this.captureAccessService = captureAccessService;
         this.incidentQueryService = incidentQueryService;
         this.evidenceApiClient = evidenceApiClient;
@@ -105,10 +100,12 @@ public class IncidentDetailService {
         EvidenceApiResponse apiResponse = evidenceApiClient.fetchIncidentEvidence(jobId, queueRank);
         IncidentDetailView.EvidenceView evidenceView = buildEvidenceView(apiResponse, role);
 
+        Map<String, String> userDisplayMap = incidentQueryService.loadUserDisplayMap();
+
         Long reportJobId = rawIncident.getZeekadReportJobId();
         IncidentDetailView.ReportView reportView;
         IncidentDetailView.SendDecisionView decisionView;
-        List<IncidentDetailView.SlackDeliveryView> deliveryViews;
+        IncidentDetailView.AnalystReviewView analystReviewView;
         if (reportJobId != null) {
             IncidentReport rawReport = zeekadReadMapper.findIncidentReport(
                     reportJobId, rawIncident.getIncidentId());
@@ -118,14 +115,18 @@ public class IncidentDetailService {
                     reportJobId, rawIncident.getIncidentId());
             decisionView = buildSendDecisionView(rawDecision, role);
 
-            List<SlackDelivery> rawDeliveries = zeekadReadMapper.findSlackDeliveries(
+            AnalystReviewItem rawReview = zeekadReadMapper.findAnalystReviewByJobAndIncident(
                     reportJobId, rawIncident.getIncidentId());
-            deliveryViews = buildSlackDeliveryViews(rawDeliveries, role);
+            analystReviewView = buildAnalystReviewView(rawReview, role, userDisplayMap);
         } else {
             reportView = IncidentDetailView.ReportView.absent();
             decisionView = IncidentDetailView.SendDecisionView.absent();
-            deliveryViews = List.of();
+            analystReviewView = IncidentDetailView.AnalystReviewView.absent();
         }
+
+        List<SlackDelivery> rawDeliveries = zeekadReadMapper.findSlackDeliveries(rawIncident.getIncidentId());
+        List<IncidentDetailView.SlackDeliveryView> deliveryViews = buildSlackDeliveryViews(rawDeliveries, role);
+        List<IncidentDetailView.SlackThreadGroup> threadGroups = groupSlackDeliveries(deliveryViews);
 
         IncidentStatus status = zeekadReadMapper.findIncidentStatus(rawIncident.getIncidentId());
         String currentStatus = resolveStatus(status, rawIncident);
@@ -133,15 +134,16 @@ public class IncidentDetailService {
 
         List<IncidentStatusHistory> rawHistory = zeekadReadMapper.findIncidentStatusHistory(
                 rawIncident.getIncidentId());
-        Map<String, String> userDisplayMap = loadUserDisplayMap();
-        String updatedByDisplay = status != null ? formatActorDisplay(status.getUpdatedBy(), userDisplayMap) : null;
+        String updatedByDisplay = status != null
+                ? incidentQueryService.formatActorDisplay(status.getUpdatedBy(), userDisplayMap)
+                : null;
         List<IncidentDetailView.StatusHistoryItem> historyItems = rawHistory.stream()
                 .map(h -> new IncidentDetailView.StatusHistoryItem(
                         h.getJobId(),
                         h.getFromStatus(),
                         h.getToStatus(),
                         h.getZeekadResolution(),
-                        formatActorDisplay(h.getActor(), userDisplayMap),
+                        incidentQueryService.formatActorDisplay(h.getActor(), userDisplayMap),
                         maskingService.shouldMask(role) ? maskingService.maskIpsInText(h.getReason()) : h.getReason(),
                         h.getChangedAt()
                 ))
@@ -159,6 +161,8 @@ public class IncidentDetailService {
                 reportView,
                 decisionView,
                 deliveryViews,
+                threadGroups,
+                analystReviewView,
                 currentStatus,
                 currentResolution,
                 status != null ? status.getUpdatedAt() : rawIncident.getStatusUpdatedAt(),
@@ -471,15 +475,64 @@ public class IncidentDetailService {
         );
     }
 
+    private IncidentDetailView.AnalystReviewView buildAnalystReviewView(AnalystReviewItem review,
+                                                                        UserRole role,
+                                                                        Map<String, String> userDisplayMap) {
+        if (review == null) {
+            return IncidentDetailView.AnalystReviewView.absent();
+        }
+        AnalystReviewItem masked = maskingService.maskAnalystReviewItem(review, role);
+        String analystDisplay = masked.getAnalyst() != null && !masked.getAnalyst().isBlank()
+                ? incidentQueryService.formatActorDisplay(masked.getAnalyst(), userDisplayMap)
+                : null;
+        boolean pending = masked.isPending();
+        boolean canDecide = pending && (role == UserRole.ANALYST || role == UserRole.ADMIN);
+        Long reviewJobId = masked.getReviewJobId() != null ? masked.getReviewJobId() : masked.getJobId();
+        return new IncidentDetailView.AnalystReviewView(
+                true,
+                reviewJobId,
+                masked.getZeekadReviewReason(),
+                masked.getRequestedAt(),
+                masked.getZeekadReviewAction(),
+                analystDisplay,
+                masked.getDecidedAt(),
+                masked.getZeekadReviewResumedAt(),
+                masked.isResumeFailed(),
+                pending,
+                masked.getResumeStatusLabel(),
+                canDecide
+        );
+    }
+
     private List<IncidentDetailView.SlackDeliveryView> buildSlackDeliveryViews(List<SlackDelivery> deliveries,
                                                                                UserRole role) {
         if (deliveries == null || deliveries.isEmpty()) {
             return List.of();
         }
+        boolean mask = maskingService.shouldMask(role);
         List<IncidentDetailView.SlackDeliveryView> views = new ArrayList<>(deliveries.size());
         for (SlackDelivery d : deliveries) {
+            String rawThreadParent = (d.getZeekadThreadParent() != null && !d.getZeekadThreadParent().isBlank())
+                    ? d.getZeekadThreadParent().trim()
+                    : null;
+            String rawIncidentId = d.getIncidentId();
+            String threadRoleLabel;
+            if (rawThreadParent == null) {
+                threadRoleLabel = "머리 알림";
+            } else if (rawThreadParent.equals(rawIncidentId)) {
+                threadRoleLabel = "머리 사건 후속 답글";
+            } else {
+                threadRoleLabel = "스레드 답글";
+            }
+            String rawThreadKey = rawThreadParent != null ? rawThreadParent : rawIncidentId;
+            String displayThreadKey = mask ? maskingService.maskIpsInText(rawThreadKey) : rawThreadKey;
+
             SlackDelivery masked = maskingService.maskSlackDelivery(d, role);
+            String displayThreadParent = (masked.getZeekadThreadParent() != null && !masked.getZeekadThreadParent().isBlank())
+                    ? masked.getZeekadThreadParent()
+                    : null;
             views.add(new IncidentDetailView.SlackDeliveryView(
+                    masked.getJobId(),
                     masked.getZeekadMessageKind(),
                     masked.getZeekadMessageVersion(),
                     masked.getZeekadDeliveryMode(),
@@ -489,32 +542,34 @@ public class IncidentDetailService {
                     masked.getDeliveredAt(),
                     masked.getError(),
                     masked.getCreatedAt(),
-                    prettyJson(masked.getSlackPayload())
+                    prettyJson(masked.getSlackPayload()),
+                    displayThreadParent,
+                    displayThreadKey,
+                    threadRoleLabel,
+                    masked.isReplyBroadcast()
             ));
         }
         return Collections.unmodifiableList(views);
     }
 
-    private Map<String, String> loadUserDisplayMap() {
-        List<DashboardUser> users = userMapper.findAll();
-        Map<String, String> map = new HashMap<>();
-        for (DashboardUser u : users) {
-            if (u.getUsername() != null && u.getDisplayName() != null && !u.getDisplayName().isBlank()) {
-                map.put(u.getUsername().toLowerCase(Locale.ROOT), u.getDisplayName());
-            }
+    private List<IncidentDetailView.SlackThreadGroup> groupSlackDeliveries(
+            List<IncidentDetailView.SlackDeliveryView> deliveries) {
+        if (deliveries == null || deliveries.isEmpty()) {
+            return List.of();
         }
-        return map;
-    }
-
-    private String formatActorDisplay(String actor, Map<String, String> userDisplayMap) {
-        if (actor == null || actor.isBlank()) {
-            return "-";
+        Map<String, List<IncidentDetailView.SlackDeliveryView>> grouped = new LinkedHashMap<>();
+        for (IncidentDetailView.SlackDeliveryView item : deliveries) {
+            String key = item.threadKey() != null ? item.threadKey() : "-";
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
         }
-        String displayName = userDisplayMap.get(actor.trim().toLowerCase(Locale.ROOT));
-        if (displayName != null && !displayName.isBlank()) {
-            return displayName + " (" + actor + ")";
+        List<IncidentDetailView.SlackThreadGroup> result = new ArrayList<>(grouped.size());
+        for (Map.Entry<String, List<IncidentDetailView.SlackDeliveryView>> entry : grouped.entrySet()) {
+            result.add(new IncidentDetailView.SlackThreadGroup(
+                    entry.getKey(),
+                    Collections.unmodifiableList(entry.getValue())
+            ));
         }
-        return actor;
+        return Collections.unmodifiableList(result);
     }
 
     private String resolveStatus(IncidentStatus status, IncidentQueueItem queueItem) {

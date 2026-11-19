@@ -26,4 +26,24 @@
         )
     </select>
 
+    <select id="decideReview" resultType="string" databaseId="postgresql">
+        SELECT dashboard.decide_review(
+            p_job => #{jobId,jdbcType=BIGINT},
+            p_incident => #{incidentId,jdbcType=VARCHAR},
+            p_action => #{action,jdbcType=VARCHAR},
+            p_analyst => #{analyst,jdbcType=VARCHAR},
+            p_note => #{note,jdbcType=VARCHAR}
+        )
+    </select>
+
+    <select id="decideReview" resultType="string" databaseId="h2">
+        SELECT dashboard.decide_review(
+            #{jobId,jdbcType=BIGINT},
+            #{incidentId,jdbcType=VARCHAR},
+            #{action,jdbcType=VARCHAR},
+            #{analyst,jdbcType=VARCHAR},
+            #{note,jdbcType=VARCHAR}
+        )
+    </select>
+
 </mapper>

@@ -192,6 +192,11 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(not(containsString("정확도"))))
                 .andExpect(content().string(not(containsString("신뢰도 %"))))
                 .andExpect(content().string(containsString("기록만(dry-run)")))
+                .andExpect(content().string(containsString("머리 알림")))
+                .andExpect(content().string(containsString("머리 사건 후속 답글")))
+                .andExpect(content().string(containsString("채널 재알림(broadcast)")))
+                .andExpect(content().string(containsString("분석가 검토 요청 (analyst_review_queue)")))
+                .andExpect(content().string(containsString("반영됨")))
                 .andReturn();
         String rank1Html = rank1Res.getResponse().getContentAsString();
         assertThat(rank1Html).doesNotContain("<script>");
@@ -266,8 +271,17 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(not(containsString("10.20.30.99"))))
                 .andExpect(content().string(not(containsString("svc_ad_sync"))))
                 .andExpect(content().string(not(containsString("/transition"))))
+                .andExpect(content().string(not(containsString("/review-decision"))))
                 .andReturn();
         assertThat(viewerRes.getResponse().getContentAsString()).doesNotContain(">admin<");
+
+        // VIEWER가 다른 사건의 thread_parent에 포함된 원문 IP도 마스킹되는지 확인 (101/rank/2 -> 스레드 답글)
+        mockMvc.perform(get("/incidents/101/rank/2").session(viewerSession))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("스레드 답글")))
+                .andExpect(content().string(containsString("192.168.*.*")))
+                .andExpect(content().string(not(containsString("192.168.10.50"))))
+                .andExpect(content().string(not(containsString("/review-decision"))));
 
         // VIEWER는 INCIDENT_VIEW_UNMASKED 로그가 남지 않아야 함
         assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_VIEW_UNMASKED.name(), viewer, 10))
@@ -422,6 +436,47 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(containsString("실습망 초기 조사 시작")))
                 .andExpect(content().string(containsString("job #501")));
         assertThat(lastEvidencePath.get()).isEqualTo("/api/v1/jobs/502/incidents/2");
+    }
+
+    @Test
+    void fusionV3Over30MinutesAndSlackLookupWithoutReportJobIdRenderCorrectly() throws Exception {
+        String labAnalyst = "fusion_detail_analyst";
+        userAdminService.createUser(labAnalyst, "결합분석가", "Pass1234!", UserRole.ANALYST,
+                "lab-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
+
+        // 1. zeekad-fusion/3 45분 사건 + 보고서 재생성(602) 뒤에도 처음 작업(601) Slack 기록 조회
+        mockMvc.perform(get("/incidents/602/rank/1").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("zeekad-fusion/3")))
+                .andExpect(content().string(containsString("보고 작업 job #602")))
+                .andExpect(content().string(containsString("2026-11-19T01:00")))
+                .andExpect(content().string(containsString("2026-11-19T01:45")))
+                .andExpect(content().string(containsString("결합 v2 경보: 10.40.0.10 -&gt; 10.40.0.99")))
+                .andExpect(content().string(containsString("job #601")));
+
+        // 2. reportJobId == null 이더라도 incident_id 단독으로 Slack 기록 조회
+        String noReportIncident = "lab-20261118|10.20.0.25|responder|1763424300";
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_slack_deliveries (
+                    job_id, incident_id, zeekad_message_kind, zeekad_message_version, zeekad_delivery_mode,
+                    zeekad_delivery_status, slack_payload, slack_ts, delivered_at, error, created_at,
+                    zeekad_thread_parent, zeekad_reply_broadcast
+                ) VALUES (
+                    502, ?, 'status', 'status.v1', 'dry_run', 'recorded',
+                    '{"channel": "#lab-alerts", "text": "보고서 없는 사건 상태 Slack 알림: 10.20.0.25"}' FORMAT JSON,
+                    NULL, NULL, NULL, TIMESTAMP WITH TIME ZONE '2026-11-18 00:12:00Z',
+                    NULL, FALSE
+                )
+                """, noReportIncident);
+        try {
+            mockMvc.perform(get("/incidents/502/rank/1").session(session))
+                    .andExpect(status().isOk())
+                    .andExpect(content().string(containsString("보고서 없음")))
+                    .andExpect(content().string(containsString("보고서 없는 사건 상태 Slack 알림: 10.20.0.25")));
+        } finally {
+            zeekadJdbc.update("DELETE FROM dashboard.raw_slack_deliveries WHERE incident_id = ?", noReportIncident);
+        }
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {

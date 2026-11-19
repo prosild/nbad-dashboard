@@ -38,7 +38,7 @@ class ZeekadReadMapperTest {
     void queriesAllThirteenContractViewsWithArrayAndJsonbTypeHandlers() {
         // v1: scoring_jobs & default latest succeeded job selection
         List<String> captures = zeekadReadMapper.findDistinctCaptureIds();
-        assertThat(captures).containsExactly("cic17-wed", "lab-20261118", "syn1-tue");
+        assertThat(captures).containsExactly("cic17-wed", "lab-20261118", "lab-fusion-v2", "syn1-tue");
 
         ScoringJob latestCic17 = zeekadReadMapper.findLatestSucceededJobByCaptureId("cic17-wed");
         assertThat(latestCic17).isNotNull();
@@ -47,9 +47,12 @@ class ZeekadReadMapperTest {
 
         // v1: model_bundles (jsonb thresholds)
         List<ModelBundle> bundles = zeekadReadMapper.findAllModelBundles();
-        assertThat(bundles).hasSize(1);
-        assertThat(bundles.get(0).getThresholds().get("iforest").asDouble()).isEqualTo(0.72);
-        assertThat(bundles.get(0).getThresholdEntries()).containsEntry("autoencoder", "0.85");
+        assertThat(bundles).hasSize(3);
+        assertThat(bundles).extracting(ModelBundle::getBundleId)
+                .containsExactly("zeekad-fusion/3", "zeekad-fusion/2", "zeekad-fusion/1");
+        ModelBundle fusion1 = zeekadReadMapper.findModelBundleById("zeekad-fusion/1");
+        assertThat(fusion1.getThresholds().get("iforest").asDouble()).isEqualTo(0.72);
+        assertThat(fusion1.getThresholdEntries()).containsEntry("autoencoder", "0.85");
 
         // v1: incident_queue + LEFT JOIN v2 (incident_status, incident_reports, send_decisions)
         List<IncidentQueueItem> queue = zeekadReadMapper.findIncidentQueue(101L, null, null, null, null, null);
@@ -100,11 +103,15 @@ class ZeekadReadMapperTest {
         assertThat(decision.getPolicyReasons().get(0).asText()).contains("다중 모델");
         assertThat(decision.getDecisionModelProbabilities().get("send").asDouble()).isEqualTo(0.84);
 
-        // v2: slack_deliveries & slack_summaries
-        List<SlackDelivery> deliveries = zeekadReadMapper.findSlackDeliveries(101L, rank1.getIncidentId());
-        assertThat(deliveries).hasSize(1);
+        // v2 + migration 014~016: slack_deliveries (incident_id 단독 + 스레드 열) & slack_summaries
+        List<SlackDelivery> deliveries = zeekadReadMapper.findSlackDeliveries(rank1.getIncidentId());
+        assertThat(deliveries).hasSize(2);
         assertThat(deliveries.get(0).isDryRunOrRecorded()).isTrue();
+        assertThat(deliveries.get(0).getZeekadThreadParent()).isNull();
+        assertThat(deliveries.get(0).isReplyBroadcast()).isFalse();
         assertThat(deliveries.get(0).getSlackPayload().get("channel").asText()).isEqualTo("#sec-alerts");
+        assertThat(deliveries.get(1).getZeekadThreadParent()).isEqualTo(rank1.getIncidentId());
+        assertThat(deliveries.get(1).isReplyBroadcast()).isTrue();
 
         List<SlackSummary> summaries = zeekadReadMapper.findSlackSummaries("cic17-wed");
         assertThat(summaries).hasSize(1);
@@ -185,20 +192,44 @@ class ZeekadReadMapperTest {
         assertThat(zeekadReadMapper.findLatestIncidentQueue("lab-20261118", null, null, null, null, true))
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(2);
 
-        // (zeekad_report_job_id, incident_id) 조인 규칙 vs 큐 job_id 모델 점수
+        // (zeekad_report_job_id, incident_id) 조인 규칙 vs 큐 job_id 모델 점수 vs incident_id 단독 Slack 조회
         String labIncId = labRank2.getIncidentId();
         assertThat(zeekadReadMapper.findIncidentReport(502L, labIncId)).isNull();
         assertThat(zeekadReadMapper.findIncidentReport(501L, labIncId)).isNotNull();
         assertThat(zeekadReadMapper.findSendDecision(501L, labIncId)).isNotNull();
-        assertThat(zeekadReadMapper.findSlackDeliveries(501L, labIncId)).hasSize(1);
+        assertThat(zeekadReadMapper.findSlackDeliveries(labIncId)).hasSize(1);
         assertThat(zeekadReadMapper.findModelScores(502L, labIncId)).hasSize(2);
 
-        // analyst_review_queue가 최신 큐(job 502, rank 2) 링크와 연계됨
+        // analyst_review_queue가 최신 큐(job 502, rank 2) 링크 및 reviewJobId(501)와 연계됨
         List<AnalystReviewItem> labReviews = zeekadReadMapper.findAnalystReviewQueue("lab-20261118", true);
         assertThat(labReviews).hasSize(1);
         assertThat(labReviews.get(0).getJobId()).isEqualTo(502L);
+        assertThat(labReviews.get(0).getReviewJobId()).isEqualTo(501L);
         assertThat(labReviews.get(0).getQueueRank()).isEqualTo(2);
         assertThat(labReviews.get(0).isPending()).isTrue();
+
+        // 결합 v2(zeekad-fusion/3, 45분 사건, 보고서 재생성 601->602, Slack은 601 단독, 검토는 602만 노출)
+        List<IncidentQueueItem> fusionQueue = zeekadReadMapper.findLatestIncidentQueue(
+                "lab-fusion-v2", null, null, null, null, null);
+        assertThat(fusionQueue).hasSize(3);
+        IncidentQueueItem fusionRank1 = fusionQueue.get(0);
+        assertThat(fusionRank1.getJobId()).isEqualTo(602L);
+        assertThat(fusionRank1.getBundleId()).isEqualTo("zeekad-fusion/3");
+        assertThat(fusionRank1.getZeekadReportJobId()).isEqualTo(602L);
+        assertThat(zeekadReadMapper.findSlackDeliveries(fusionRank1.getIncidentId()))
+                .hasSize(1)
+                .extracting(SlackDelivery::getJobId)
+                .containsExactly(601L);
+
+        List<AnalystReviewItem> fusionReviews = zeekadReadMapper.findAnalystReviewQueue("lab-fusion-v2", false);
+        assertThat(fusionReviews).hasSize(3);
+        assertThat(fusionReviews).extracting(AnalystReviewItem::getReviewJobId).containsOnly(602L);
+        assertThat(fusionReviews).extracting(AnalystReviewItem::getResumeStatusLabel)
+                .containsExactlyInAnyOrder("대기 중", "반영 중", "반영 실패(운영자 확인)");
+        AnalystReviewItem singleReview = zeekadReadMapper.findAnalystReviewByJobAndIncident(
+                602L, fusionRank1.getIncidentId());
+        assertThat(singleReview).isNotNull();
+        assertThat(singleReview.getReviewJobId()).isEqualTo(602L);
 
         // 과거 실패 작업(job 100) fallback 조회 확인
         List<IncidentQueueItem> failedJobQueue = zeekadReadMapper.findIncidentQueue(100L, null, null, null, null, null);

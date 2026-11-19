@@ -497,3 +497,28 @@ pre.code-block {
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+.slack-thread-group {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 0.9rem;
+    margin-bottom: 0.9rem;
+    background-color: #fbfcfe;
+}
+
+.slack-thread-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px dashed var(--border);
+}
+
+.review-decision-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 210px;
+}

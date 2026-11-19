@@ -133,10 +133,11 @@ class DashboardViewsIntegrationTest {
                 "*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        // 운영 상태 화면
+        // 운영 상태 화면 (zeekad-fusion/1..3 포함)
         mockMvc.perform(get("/operations").session(session))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("zeekad-fusion/1")))
+                .andExpect(content().string(containsString("zeekad-fusion/3")))
                 .andExpect(content().string(containsString("iforest: 0.72")))
                 .andExpect(content().string(containsString("기록만(dry-run)")))
                 .andExpect(content().string(containsString("조사 큐")))
@@ -144,11 +145,18 @@ class DashboardViewsIntegrationTest {
                 .andExpect(content().string(containsString("승인 대기")))
                 .andExpect(content().string(not(containsString("/admin/users"))));
 
-        // 분석가 승인 대기 목록 (전체 vs 대기 건만)
+        // 분석가 승인 대기 목록 (전체 vs 대기 건만, 결정 폼 및 반영 상태 3종)
         mockMvc.perform(get("/reviews").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("Python 에이전트 재개 API 연결 예정")))
-                .andExpect(content().string(containsString("disabled=\"disabled\"")))
+                .andExpect(content().string(not(containsString("Python 에이전트 재개 API 연결 예정"))))
+                .andExpect(content().string(not(containsString("disabled=\"disabled\""))))
+                .andExpect(content().string(containsString("/reviews/decide")))
+                .andExpect(content().string(containsString("조사 진행 (confirm)")))
+                .andExpect(content().string(containsString("오탐 종료 (dismiss)")))
+                .andExpect(content().string(containsString("반영됨")))
+                .andExpect(content().string(containsString("반영 중")))
+                .andExpect(content().string(containsString("반영 실패(운영자 확인)")))
+                .andExpect(content().string(not(containsString("구 작업(601) 중복 검토 요청"))))
                 .andExpect(content().string(containsString("confirm")));
 
         mockMvc.perform(get("/reviews").param("pendingOnly", "true").session(session))
