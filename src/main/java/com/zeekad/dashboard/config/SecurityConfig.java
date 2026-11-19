@@ -1,30 +1,48 @@
 package com.zeekad.dashboard.config;
 
-import com.zeekad.dashboard.security.DashboardAuthFailureHandler;
-import com.zeekad.dashboard.security.DashboardAuthSuccessHandler;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zeekad.dashboard.security.ApiRequestUtils;
 import com.zeekad.dashboard.security.DashboardAuthenticationProvider;
 import com.zeekad.dashboard.security.SessionTimeoutFilter;
+import com.zeekad.dashboard.security.SpaCsrfTokenRequestHandler;
 import com.zeekad.dashboard.security.TotpEnforcementFilter;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.CompositeSessionAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
+import org.springframework.security.web.header.HeaderWriterFilter;
 import org.springframework.security.web.header.writers.CrossOriginEmbedderPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.CrossOriginOpenerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.CrossOriginResourcePolicyHeaderWriter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.util.matcher.AnyRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+
+import java.util.List;
 
 /**
- * Spring Security 웹 보안 설정(인증, 세션 고정 방지, CSRF, 보안 응답 헤더, 역할 인가).
+ * Spring Security 웹 보안 설정(JSON API + SPA 폴백, 세션 고정 방지, SPA CSRF, 보안 응답 헤더, 역할 인가).
  */
 @Configuration
 @EnableWebSecurity
@@ -47,36 +65,83 @@ public class SecurityConfig {
     }
 
     @Bean
+    public CookieCsrfTokenRepository csrfTokenRepository(ServerProperties serverProperties) {
+        CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        Boolean secureProp = serverProperties.getServlet().getSession().getCookie().getSecure();
+        boolean cookieSecure = secureProp != null ? secureProp : true;
+        repository.setCookieCustomizer(cookie -> cookie
+                .sameSite("Lax")
+                .secure(cookieSecure));
+        return repository;
+    }
+
+    @Bean
+    public SpaCsrfTokenRequestHandler spaCsrfTokenRequestHandler() {
+        return new SpaCsrfTokenRequestHandler();
+    }
+
+    @Bean
+    public SessionAuthenticationStrategy sessionAuthenticationStrategy(
+            CookieCsrfTokenRepository csrfTokenRepository,
+            SpaCsrfTokenRequestHandler spaCsrfTokenRequestHandler) {
+        CsrfAuthenticationStrategy csrfStrategy = new CsrfAuthenticationStrategy(csrfTokenRepository);
+        csrfStrategy.setRequestHandler(spaCsrfTokenRequestHandler);
+        return new CompositeSessionAuthenticationStrategy(List.of(
+                new ChangeSessionIdAuthenticationStrategy(),
+                csrfStrategy
+        ));
+    }
+
+    @Bean
+    public HttpSessionSecurityContextRepository securityContextRepository() {
+        return new HttpSessionSecurityContextRepository();
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                   DashboardAuthSuccessHandler successHandler,
-                                                   DashboardAuthFailureHandler failureHandler,
+                                                   CookieCsrfTokenRepository csrfTokenRepository,
+                                                   SpaCsrfTokenRequestHandler spaCsrfTokenRequestHandler,
+                                                   HttpSessionSecurityContextRepository securityContextRepository,
                                                    SessionTimeoutFilter sessionTimeoutFilter,
-                                                   TotpEnforcementFilter totpEnforcementFilter) throws Exception {
+                                                   TotpEnforcementFilter totpEnforcementFilter,
+                                                   ObjectMapper objectMapper) throws Exception {
+        RequestMatcher apiRequestMatcher = ApiRequestUtils::isApiRequest;
+        AuthenticationEntryPoint apiEntryPoint = (request, response, authException) ->
+                ApiRequestUtils.writeJsonError(
+                        response,
+                        objectMapper,
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "UNAUTHENTICATED",
+                        "인증이 필요합니다. 로그인해 주세요.");
+        AccessDeniedHandler jsonAccessDeniedHandler = (request, response, accessDeniedException) ->
+                ApiRequestUtils.writeJsonError(
+                        response,
+                        objectMapper,
+                        HttpServletResponse.SC_FORBIDDEN,
+                        "FORBIDDEN",
+                        "요청하신 기능을 수행할 권한이 없습니다.");
+
         http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/login", "/css/**", "/js/**", "/images/**", "/favicon.ico", "/error").permitAll()
-                        .requestMatchers("/login/totp/**").hasRole("ADMIN")
-                        .requestMatchers("/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/index.html", "/assets/**", "/favicon.ico", "/error").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/login", "/api/auth/csrf", "/api/auth/me").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/logout").permitAll()
+                        .requestMatchers("/api/auth/totp/**", "/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET,
+                                "/login/totp", "/login/totp/setup", "/admin/users", "/admin/audit-logs")
+                        .hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
-                .formLogin(form -> form
-                        .loginPage("/login")
-                        .loginProcessingUrl("/login")
-                        .successHandler(successHandler)
-                        .failureHandler(failureHandler)
-                        .permitAll()
-                )
-                .logout(logout -> logout
-                        .logoutUrl("/logout")
-                        .logoutSuccessUrl("/login?logout")
-                        .invalidateHttpSession(true)
-                        .deleteCookies("ZEEKAD_SESSION")
-                        .permitAll()
-                )
+                .formLogin(AbstractHttpConfigurer::disable)
+                .logout(AbstractHttpConfigurer::disable)
+                .securityContext(ctx -> ctx.securityContextRepository(securityContextRepository))
                 .sessionManagement(session -> session
                         .sessionFixation(fixation -> fixation.changeSessionId())
                 )
-                .csrf(Customizer.withDefaults())
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(csrfTokenRepository)
+                        .csrfTokenRequestHandler(spaCsrfTokenRequestHandler)
+                )
                 .headers(headers -> headers
                         .contentSecurityPolicy(csp -> csp.policyDirectives(CSP_POLICY))
                         .contentTypeOptions(Customizer.withDefaults())
@@ -94,9 +159,13 @@ public class SecurityConfig {
                                 "camera=(), microphone=(), geolocation=(), payment=(), usb=()"))
                 )
                 .exceptionHandling(ex -> ex
-                        .accessDeniedPage("/error?forbidden")
+                        .defaultAuthenticationEntryPointFor(apiEntryPoint, apiRequestMatcher)
+                        .defaultAuthenticationEntryPointFor(
+                                new LoginUrlAuthenticationEntryPoint("/login"), AnyRequestMatcher.INSTANCE)
+                        .defaultAccessDeniedHandlerFor(jsonAccessDeniedHandler, apiRequestMatcher)
+                        .defaultAccessDeniedHandlerFor(jsonAccessDeniedHandler, AnyRequestMatcher.INSTANCE)
                 )
-                .addFilterAfter(sessionTimeoutFilter, SecurityContextHolderFilter.class)
+                .addFilterAfter(sessionTimeoutFilter, HeaderWriterFilter.class)
                 .addFilterAfter(totpEnforcementFilter, SessionTimeoutFilter.class);
 
         return http.build();

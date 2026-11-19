@@ -1,5 +1,7 @@
 package com.zeekad.dashboard.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -11,8 +13,10 @@ public class DashboardUser {
     private Long id;
     private String username;
     private String displayName;
+    @JsonIgnore
     private String passwordHash;
     private UserRole role;
+    @JsonIgnore
     private String totpSecret;
     private boolean totpEnabled;
     private int failedAttempts;

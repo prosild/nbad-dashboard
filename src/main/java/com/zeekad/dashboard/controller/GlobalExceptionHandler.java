@@ -1,62 +1,63 @@
 package com.zeekad.dashboard.controller;
 
-import jakarta.servlet.http.HttpServletResponse;
+import com.zeekad.dashboard.dto.ApiErrorResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
-import org.springframework.ui.Model;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
-import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
- * 예외 발생 시 스택 트레이스와 내부 클래스명을 숨기고 안전한 오류 화면을 반환한다.
+ * 예외 발생 시 스택 트레이스와 내부 클래스명을 숨기고 일관된 JSON 오류 응답을 반환한다.
  */
-@ControllerAdvice
+@RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(AccessDeniedException.class)
-    public String handleAccessDenied(AccessDeniedException ex, HttpServletResponse response, Model model) {
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException ex) {
         log.warn("접근 거부: {}", ex.getMessage());
-        response.setStatus(HttpStatus.FORBIDDEN.value());
-        model.addAttribute("statusCode", 403);
-        model.addAttribute("errorTitle", "접근 권한이 없습니다");
-        model.addAttribute("errorMessage", "요청하신 기능을 수행할 권한이 없습니다.");
-        return "error";
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(new ApiErrorResponse(403, "FORBIDDEN", "요청하신 기능을 수행할 권한이 없습니다."));
     }
 
     @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
-    public String handleNotFound(Exception ex, HttpServletResponse response, Model model) {
-        response.setStatus(HttpStatus.NOT_FOUND.value());
-        model.addAttribute("statusCode", 404);
-        model.addAttribute("errorTitle", "페이지를 찾을 수 없습니다");
-        model.addAttribute("errorMessage", "요청하신 경로가 존재하지 않습니다.");
-        return "error";
+    public ResponseEntity<ApiErrorResponse> handleNotFound(Exception ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiErrorResponse(404, "NOT_FOUND", "요청하신 경로를 찾을 수 없습니다."));
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    public String handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex,
-                                         HttpServletResponse response,
-                                         Model model) {
-        response.setStatus(HttpStatus.METHOD_NOT_ALLOWED.value());
-        model.addAttribute("statusCode", 405);
-        model.addAttribute("errorTitle", "허용되지 않은 요청 방식입니다");
-        model.addAttribute("errorMessage", "지원되지 않는 HTTP 메서드입니다.");
-        return "error";
+    public ResponseEntity<ApiErrorResponse> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(new ApiErrorResponse(405, "METHOD_NOT_ALLOWED", "지원되지 않는 HTTP 메서드입니다."));
+    }
+
+    @ExceptionHandler({
+            HttpMessageNotReadableException.class,
+            MethodArgumentTypeMismatchException.class,
+            MissingServletRequestParameterException.class,
+            MethodArgumentNotValidException.class
+    })
+    public ResponseEntity<ApiErrorResponse> handleBadRequest(Exception ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(400, "INVALID_REQUEST", "요청 형식이 올바르지 않습니다."));
     }
 
     @ExceptionHandler(Exception.class)
-    public String handleUnexpectedException(Exception ex, HttpServletResponse response, Model model) {
+    public ResponseEntity<ApiErrorResponse> handleUnexpectedException(Exception ex) {
         log.error("처리되지 않은 서버 오류", ex);
-        response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
-        model.addAttribute("statusCode", 500);
-        model.addAttribute("errorTitle", "요청을 처리할 수 없습니다");
-        model.addAttribute("errorMessage", "일시적인 오류가 발생했습니다. 잠시 후 다시 시도하세요.");
-        return "error";
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ApiErrorResponse(500, "INTERNAL_ERROR", "일시적인 오류가 발생했습니다. 잠시 후 다시 시도하세요."));
     }
 }

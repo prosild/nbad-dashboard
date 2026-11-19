@@ -22,6 +22,10 @@ public enum UserRole {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("역할 값이 비어 있습니다.");
         }
-        return UserRole.valueOf(value.trim().toUpperCase());
+        try {
+            return UserRole.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("올바르지 않은 역할 값입니다. (VIEWER, ANALYST, ADMIN 중 선택)");
+        }
     }
 }

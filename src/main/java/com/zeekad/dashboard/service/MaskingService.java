@@ -9,6 +9,7 @@ import com.zeekad.dashboard.client.EvidenceData;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
+import com.zeekad.dashboard.model.zeekad.IncidentModelScore;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
@@ -163,6 +164,20 @@ public class MaskingService {
         copy.setZeekadWouldSend(item.isZeekadWouldSend());
         copy.setZeekadReviewAction(item.getZeekadReviewAction());
         copy.setZeekadReviewPending(item.isZeekadReviewPending());
+        return copy;
+    }
+
+    public IncidentModelScore maskIncidentModelScore(IncidentModelScore score, UserRole role) {
+        if (score == null || !shouldMask(role)) {
+            return score;
+        }
+        IncidentModelScore copy = new IncidentModelScore();
+        copy.setJobId(score.getJobId());
+        copy.setIncidentId(maskIpsInText(score.getIncidentId()));
+        copy.setZeekadModel(score.getZeekadModel());
+        copy.setMaxScore(score.getMaxScore());
+        copy.setCandidateWindows(score.getCandidateWindows());
+        copy.setWindows(score.getWindows());
         return copy;
     }
 

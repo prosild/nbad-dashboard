@@ -91,7 +91,10 @@ public class IncidentDetailService {
                 principal, rawIncident.getCaptureId(), jobId, rawIncident.getIncidentId(), clientIp);
 
         ScoringJob job = zeekadReadMapper.findScoringJobById(jobId);
-        List<IncidentModelScore> modelScores = zeekadReadMapper.findModelScores(jobId, rawIncident.getIncidentId());
+        List<IncidentModelScore> modelScores = zeekadReadMapper.findModelScores(jobId, rawIncident.getIncidentId())
+                .stream()
+                .map(score -> maskingService.maskIncidentModelScore(score, role))
+                .toList();
         List<AssetNameRecord> assetNames = incidentQueryService.findAssetNames(
                 rawIncident.getCaptureId(), rawIncident.getHostIp(), role);
 

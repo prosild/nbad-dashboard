@@ -1,5 +1,7 @@
 package com.zeekad.dashboard.model.zeekad;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 /**
  * dashboard.incident_model_scores 뷰 DTO.
  */
@@ -8,6 +10,7 @@ public class IncidentModelScore {
     private Long jobId;
     private String incidentId;
     private String zeekadModel;
+    @JsonIgnore
     private Double maxScore;
     private Integer candidateWindows;
     private Integer windows;

@@ -3,8 +3,6 @@ spring:
     name: zeek_ad_dashboard
   flyway:
     enabled: false
-  thymeleaf:
-    cache: true
   web:
     resources:
       add-mappings: true

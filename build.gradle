@@ -10,7 +10,6 @@ version = '0.1.0-SNAPSHOT'
 
 ext {
     set('tomcat.version', '10.1.62')
-    set('thymeleaf.version', '3.1.7.RELEASE')
     set('spring-security.version', '6.5.11')
     set('spring-framework.version', '6.2.19')
     set('jackson-bom.version', '2.22.4')
@@ -32,9 +31,7 @@ repositories {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'
-    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.thymeleaf.extras:thymeleaf-extras-springsecurity6'
     implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.5'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'

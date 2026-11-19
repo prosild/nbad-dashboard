@@ -1,5 +1,6 @@
 package com.zeekad.dashboard.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zeekad.dashboard.config.DashboardProperties;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -23,10 +24,12 @@ public class SessionTimeoutFilter extends OncePerRequestFilter {
 
     private final DashboardProperties properties;
     private final Clock clock;
+    private final ObjectMapper objectMapper;
 
-    public SessionTimeoutFilter(DashboardProperties properties, Clock clock) {
+    public SessionTimeoutFilter(DashboardProperties properties, Clock clock, ObjectMapper objectMapper) {
         this.properties = properties;
         this.clock = clock;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -59,6 +62,15 @@ public class SessionTimeoutFilter extends OncePerRequestFilter {
             if (idleExpired || absoluteExpired) {
                 session.invalidate();
                 SecurityContextHolder.clearContext();
+                if (ApiRequestUtils.isApiRequest(request)) {
+                    ApiRequestUtils.writeJsonError(
+                            response,
+                            objectMapper,
+                            HttpServletResponse.SC_UNAUTHORIZED,
+                            "SESSION_EXPIRED",
+                            "세션이 만료되었습니다. 다시 로그인해 주세요.");
+                    return;
+                }
                 response.sendRedirect(request.getContextPath() + "/login?expired");
                 return;
             }

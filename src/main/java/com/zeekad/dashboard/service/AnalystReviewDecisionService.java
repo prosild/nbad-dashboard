@@ -50,7 +50,8 @@ public class AnalystReviewDecisionService {
 
         String cleanIncidentId = incidentId == null ? "" : incidentId.trim();
         if (cleanIncidentId.isEmpty()) {
-            return DecisionResult.failure("검토 대상 사건 ID가 누락되었습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
+            return DecisionResult.failure(400, "INVALID_REQUEST",
+                    "검토 대상 사건 ID가 누락되었습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
         return executeDecision(principal, job.getCaptureId(), reviewJobId, cleanIncidentId, action, note, clientIp);
     }
@@ -68,6 +69,8 @@ public class AnalystReviewDecisionService {
         Long reportJobId = rawIncident.getZeekadReportJobId();
         if (reportJobId == null) {
             return DecisionResult.failure(
+                    404,
+                    "NOT_FOUND",
                     "이 사건에는 연결된 분석가 검토 작업이 없습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
         captureAccessService.requireJobAccess(principal, reportJobId, rawIncident.getCaptureId(), clientIp);
@@ -97,7 +100,8 @@ public class AnalystReviewDecisionService {
                                            String clientIp) {
         String normalizedAction = action == null ? "" : action.trim().toLowerCase(Locale.ROOT);
         if (!ALLOWED_ACTIONS.contains(normalizedAction)) {
-            return DecisionResult.failure("허용되지 않는 검토 결정 값입니다. (confirm 또는 dismiss만 허용)");
+            return DecisionResult.failure(400, "INVALID_REQUEST",
+                    "허용되지 않는 검토 결정 값입니다. (confirm 또는 dismiss만 허용)");
         }
 
         String cleanNote = (note == null || note.trim().isEmpty()) ? null : note.trim();
@@ -115,7 +119,7 @@ public class AnalystReviewDecisionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "검토 결정 규칙에 위배되었거나 이미 다른 분석가가 결정했습니다.");
-                    return DecisionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return DecisionResult.failure(409, "CONFLICT", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("분석가 검토 대상 없음(SQLSTATE 02000): reviewJobId={}, incidentId={}",
@@ -123,12 +127,13 @@ public class AnalystReviewDecisionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "요청한 분석가 검토 항목을 찾을 수 없습니다.");
-                    return DecisionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return DecisionResult.failure(404, "NOT_FOUND", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
             }
             log.error("분석가 검토 결정 중 예기치 않은 오류: reviewJobId={}, incidentId={}",
                     reviewJobId, incidentId, ex);
-            return DecisionResult.failure("검토 결정 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
+            return DecisionResult.failure(500, "INTERNAL_ERROR",
+                    "검토 결정 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
 
         Map<String, Object> detail = new LinkedHashMap<>();
@@ -154,13 +159,13 @@ public class AnalystReviewDecisionService {
         return DecisionResult.success(successMessage);
     }
 
-    public record DecisionResult(boolean succeeded, String message) {
+    public record DecisionResult(boolean succeeded, int httpStatus, String code, String message) {
         public static DecisionResult success(String message) {
-            return new DecisionResult(true, message);
+            return new DecisionResult(true, 200, "OK", message);
         }
 
-        public static DecisionResult failure(String message) {
-            return new DecisionResult(false, message);
+        public static DecisionResult failure(int httpStatus, String code, String message) {
+            return new DecisionResult(false, httpStatus, code, message);
         }
     }
 }

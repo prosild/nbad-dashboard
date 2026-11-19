@@ -117,13 +117,13 @@ public class UserAdminService {
     }
 
     @Transactional
-    public void updateUserAccess(Long userId,
-                                 String displayName,
-                                 UserRole role,
-                                 String rawCapturePatterns,
-                                 String actorUsername,
-                                 String actorRole,
-                                 String clientIp) {
+    public DashboardUser updateUserAccess(Long userId,
+                                          String displayName,
+                                          UserRole role,
+                                          String rawCapturePatterns,
+                                          String actorUsername,
+                                          String actorRole,
+                                          String clientIp) {
         DashboardUser target = requireUser(userId);
         String cleanDisplayName = displayName == null ? "" : displayName.trim();
         if (cleanDisplayName.isEmpty() || cleanDisplayName.length() > 150) {
@@ -149,13 +149,14 @@ public class UserAdminService {
                         "role", role.name(),
                         "capturePatterns", patterns),
                 clientIp);
+        return requireUserWithPatterns(userId);
     }
 
     @Transactional
-    public void toggleEnabled(Long userId,
-                              String actorUsername,
-                              String actorRole,
-                              String clientIp) {
+    public DashboardUser toggleEnabled(Long userId,
+                                       String actorUsername,
+                                       String actorRole,
+                                       String clientIp) {
         DashboardUser target = requireUser(userId);
         if (target.isEnabled() && target.getUsername().equalsIgnoreCase(actorUsername)) {
             throw new IllegalArgumentException("현재 로그인된 자신의 계정은 비활성화할 수 없습니다.");
@@ -170,13 +171,14 @@ public class UserAdminService {
                         "targetUsername", target.getUsername(),
                         "enabled", nextEnabled),
                 clientIp);
+        return requireUserWithPatterns(userId);
     }
 
     @Transactional
-    public void unlockUser(Long userId,
-                           String actorUsername,
-                           String actorRole,
-                           String clientIp) {
+    public DashboardUser unlockUser(Long userId,
+                                    String actorUsername,
+                                    String actorRole,
+                                    String clientIp) {
         DashboardUser target = requireUser(userId);
         OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         userMapper.resetLoginFailure(userId, now);
@@ -186,13 +188,14 @@ public class UserAdminService {
                 Map.of("operation", "UNLOCK_ACCOUNT",
                         "targetUsername", target.getUsername()),
                 clientIp);
+        return requireUserWithPatterns(userId);
     }
 
     @Transactional
-    public void resetTotp(Long userId,
-                          String actorUsername,
-                          String actorRole,
-                          String clientIp) {
+    public DashboardUser resetTotp(Long userId,
+                                   String actorUsername,
+                                   String actorRole,
+                                   String clientIp) {
         DashboardUser target = requireUser(userId);
         OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         String nextSecret = target.getRole() == UserRole.ADMIN ? totpService.generateSecret() : null;
@@ -203,6 +206,13 @@ public class UserAdminService {
                 Map.of("operation", "RESET_TOTP",
                         "targetUsername", target.getUsername()),
                 clientIp);
+        return requireUserWithPatterns(userId);
+    }
+
+    private DashboardUser requireUserWithPatterns(Long userId) {
+        DashboardUser updated = requireUser(userId);
+        updated.setCapturePatterns(userMapper.findCapturePatternsByUserId(userId));
+        return updated;
     }
 
     private DashboardUser requireUser(Long userId) {

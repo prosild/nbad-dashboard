@@ -56,12 +56,12 @@ public class IncidentTransitionService {
 
         String normalizedTarget = toStatus == null ? "" : toStatus.trim().toLowerCase(Locale.ROOT);
         if (!ALLOWED_TARGET_STATUSES.contains(normalizedTarget)) {
-            return TransitionResult.failure("허용되지 않는 상태 변경 요청입니다.");
+            return TransitionResult.failure(400, "INVALID_REQUEST", "허용되지 않는 상태 변경 요청입니다.");
         }
 
         String cleanReason = reason == null ? "" : reason.trim();
         if (cleanReason.isEmpty()) {
-            return TransitionResult.failure("상태 변경 사유를 입력해 주세요.");
+            return TransitionResult.failure(400, "INVALID_REQUEST", "상태 변경 사유를 입력해 주세요.");
         }
 
         String effectiveResolution = null;
@@ -69,6 +69,8 @@ public class IncidentTransitionService {
             String normalizedResolution = resolution == null ? "" : resolution.trim().toLowerCase(Locale.ROOT);
             if (!ALLOWED_RESOLUTIONS.contains(normalizedResolution)) {
                 return TransitionResult.failure(
+                        400,
+                        "INVALID_REQUEST",
                         "사건 종료(closed) 시 결론(true_positive, false_positive, benign)을 선택해야 합니다.");
             }
             effectiveResolution = normalizedResolution;
@@ -94,18 +96,19 @@ public class IncidentTransitionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "상태 변경 규칙에 위배되었거나 다른 사용자가 먼저 상태를 변경했습니다.");
-                    return TransitionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return TransitionResult.failure(409, "CONFLICT", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("사건 상태 전이 대상 없음(SQLSTATE 02000): jobId={}, rank={}", jobId, queueRank);
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "대상 사건을 찾을 수 없습니다.");
-                    return TransitionResult.failure(safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return TransitionResult.failure(404, "NOT_FOUND", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
                 }
             }
             log.error("사건 상태 전이 중 예기치 않은 오류: jobId={}, rank={}", jobId, queueRank, ex);
-            return TransitionResult.failure("상태 변경 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
+            return TransitionResult.failure(500, "INTERNAL_ERROR",
+                    "상태 변경 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
 
         Map<String, Object> detail = new LinkedHashMap<>();
@@ -132,13 +135,13 @@ public class IncidentTransitionService {
         return TransitionResult.success(successMessage);
     }
 
-    public record TransitionResult(boolean succeeded, String message) {
+    public record TransitionResult(boolean succeeded, int httpStatus, String code, String message) {
         public static TransitionResult success(String message) {
-            return new TransitionResult(true, message);
+            return new TransitionResult(true, 200, "OK", message);
         }
 
-        public static TransitionResult failure(String message) {
-            return new TransitionResult(false, message);
+        public static TransitionResult failure(int httpStatus, String code, String message) {
+            return new TransitionResult(false, httpStatus, code, message);
         }
     }
 }

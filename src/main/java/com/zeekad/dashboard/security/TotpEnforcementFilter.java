@@ -1,5 +1,6 @@
 package com.zeekad.dashboard.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.DashboardUser;
 import jakarta.servlet.FilterChain;
@@ -17,15 +18,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * ADMIN 계정이 TOTP 2단계 인증을 완료하기 전에는 TOTP/로그아웃/정적 리소스 외 접근을 차단한다.
+ * ADMIN 계정이 TOTP 2단계 인증을 완료하기 전에는 허용된 인증/정적 리소스 외 접근을 차단한다.
  */
 @Component
 public class TotpEnforcementFilter extends OncePerRequestFilter {
 
     private final UserMapper userMapper;
+    private final ObjectMapper objectMapper;
 
-    public TotpEnforcementFilter(UserMapper userMapper) {
+    public TotpEnforcementFilter(UserMapper userMapper, ObjectMapper objectMapper) {
         this.userMapper = userMapper;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -39,12 +42,20 @@ public class TotpEnforcementFilter extends OncePerRequestFilter {
                     && Boolean.TRUE.equals(session.getAttribute(SessionAttributes.TOTP_VERIFIED));
 
             if (!totpVerified && !isAllowedDuringTotp(request)) {
-                String path = extractRelativePath(request);
-                if (path.startsWith("/api/")) {
-                    response.sendError(HttpServletResponse.SC_FORBIDDEN, "TOTP verification required");
+                boolean totpEnabled = resolveTotpEnabled(auth.getName());
+                if (ApiRequestUtils.isApiRequest(request)) {
+                    String code = totpEnabled ? "TOTP_VERIFICATION_REQUIRED" : "TOTP_SETUP_REQUIRED";
+                    String message = totpEnabled
+                            ? "TOTP 2단계 인증이 필요합니다."
+                            : "TOTP 2단계 인증 등록이 필요합니다.";
+                    ApiRequestUtils.writeJsonError(
+                            response,
+                            objectMapper,
+                            HttpServletResponse.SC_FORBIDDEN,
+                            code,
+                            message);
                     return;
                 }
-                boolean totpEnabled = resolveTotpEnabled(auth.getName());
                 String target = totpEnabled ? "/login/totp" : "/login/totp/setup";
                 response.sendRedirect(request.getContextPath() + target);
                 return;
@@ -64,24 +75,19 @@ public class TotpEnforcementFilter extends OncePerRequestFilter {
     }
 
     private boolean isAllowedDuringTotp(HttpServletRequest request) {
-        String path = extractRelativePath(request);
-        return path.equals("/login/totp")
+        String path = ApiRequestUtils.extractRelativePath(request);
+        return path.equals("/api/auth/me")
+                || path.equals("/api/auth/csrf")
+                || path.equals("/api/auth/logout")
+                || path.equals("/api/auth/totp")
+                || path.startsWith("/api/auth/totp/")
+                || path.equals("/login")
+                || path.equals("/login/totp")
                 || path.startsWith("/login/totp/")
-                || path.equals("/logout")
-                || path.equals("/error")
-                || path.startsWith("/css/")
-                || path.startsWith("/js/")
-                || path.startsWith("/images/")
-                || path.equals("/favicon.ico");
-    }
-
-    private String extractRelativePath(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        String ctx = request.getContextPath();
-        if (ctx != null && !ctx.isEmpty() && uri.startsWith(ctx)) {
-            return uri.substring(ctx.length());
-        }
-        return uri;
+                || path.startsWith("/assets/")
+                || path.equals("/index.html")
+                || path.equals("/favicon.ico")
+                || path.equals("/error");
     }
 
     private boolean resolveTotpEnabled(String username) {
