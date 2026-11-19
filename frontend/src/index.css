@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: #070b14;
+    color: #e2e8f0;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0b1120;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #27354f;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b4f75;
+  }
+}
+
+@layer components {
+  .soc-card {
+    @apply rounded-xl border border-slate-800/90 bg-[#0d1424]/95 shadow-lg shadow-black/30;
+  }
+
+  .soc-panel {
+    @apply rounded-lg border border-slate-800 bg-[#111a2e]/85;
+  }
+
+  .soc-input {
+    @apply w-full rounded-lg border border-slate-700/80 bg-[#090f1d] px-3 py-2 text-sm text-slate-100 placeholder-slate-500 transition focus:border-cyan-400/80 focus:outline-none focus:ring-2 focus:ring-cyan-500/20;
+  }
+
+  .soc-select {
+    @apply rounded-lg border border-slate-700/80 bg-[#090f1d] px-3 py-2 text-sm text-slate-100 transition focus:border-cyan-400/80 focus:outline-none focus:ring-2 focus:ring-cyan-500/20;
+  }
+
+  .soc-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-sm shadow-cyan-500/20 transition hover:bg-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .soc-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700/80 focus:outline-none focus:ring-2 focus:ring-slate-500/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .soc-btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/15 px-3.5 py-2 text-sm font-medium text-rose-200 transition hover:bg-rose-500/25 focus:outline-none focus:ring-2 focus:ring-rose-500/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .soc-btn-emerald {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3.5 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/25 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .soc-th {
+    @apply whitespace-nowrap border-b border-slate-800 bg-[#0a101d] px-3.5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .soc-td {
+    @apply border-b border-slate-800/70 px-3.5 py-3 text-sm text-slate-200 align-top;
+  }
+}

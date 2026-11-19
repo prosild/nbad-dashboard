@@ -1,0 +1,218 @@
+import { useCallback, useEffect, useState } from 'react';
+import { ChevronDown, ChevronUp, FileSearch, Filter } from 'lucide-react';
+import { ApiError } from '../api/client';
+import { adminApi } from '../api/endpoints';
+import { AppShell } from '../components/AppShell';
+import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { SocBadge } from '../components/StatusBadge';
+import type { AdminAuditLogsResponse, AuditLog } from '../types/api';
+import { formatDateTime } from '../utils/format';
+
+function AuditLogRow({ log }: { log: AuditLog }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const tone =
+    log.actionType.includes('DENIED') || log.actionType.includes('LOCKED') || log.actionType.includes('FAILURE')
+      ? 'rose'
+      : log.actionType.includes('TRANSITION') || log.actionType.includes('REVIEW')
+        ? 'amber'
+        : 'cyan';
+
+  return (
+    <>
+      <tr className="hover:bg-slate-800/35">
+        <td className="soc-td font-mono text-xs tabular-nums text-slate-300">
+          {formatDateTime(log.occurredAt)}
+        </td>
+        <td className="soc-td text-xs">
+          <div className="font-mono font-semibold text-slate-100">{log.actorUsername ?? '-'}</div>
+          {log.actorRole && <div className="text-[11px] text-slate-400">{log.actorRole}</div>}
+        </td>
+        <td className="soc-td">
+          <SocBadge tone={tone}>{log.actionType}</SocBadge>
+        </td>
+        <td className="soc-td font-mono text-xs text-slate-300">
+          <div>{log.targetCaptureId ?? '-'}</div>
+          {log.targetIncidentId && (
+            <div className="mt-0.5 break-all text-[11px] text-slate-400">
+              {log.targetIncidentId}
+            </div>
+          )}
+        </td>
+        <td className="soc-td font-mono text-xs text-slate-400">{log.clientIp ?? '-'}</td>
+        <td className="soc-td text-right text-xs">
+          {log.detailJson ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((prev) => !prev)}
+              className="soc-btn-secondary inline-flex py-1 px-2.5 text-xs"
+            >
+              {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {expanded ? '접기' : 'JSON 보기'}
+            </button>
+          ) : (
+            <span className="text-slate-500">-</span>
+          )}
+        </td>
+      </tr>
+      {expanded && log.detailJson && (
+        <tr>
+          <td colSpan={6} className="border-b border-slate-800 bg-[#080d1a] px-4 py-3">
+            <pre className="max-h-56 overflow-auto rounded border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-300">
+              {log.detailJson}
+            </pre>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+export function AdminAuditLogsPage() {
+  const [data, setData] = useState<AdminAuditLogsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [actionType, setActionType] = useState('');
+  const [actorUsername, setActorUsername] = useState('');
+  const [limit, setLimit] = useState(100);
+
+  const loadLogs = useCallback(async (params?: { actionType?: string; actorUsername?: string; limit?: number }) => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await adminApi.listAuditLogs(params);
+      setData(res);
+    } catch (err) {
+      setErrorMsg(err instanceof ApiError ? err.message : '감사 로그를 불러오지 못했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLogs({ limit: 100 });
+  }, [loadLogs]);
+
+  function handleFilterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    void loadLogs({
+      actionType: actionType || undefined,
+      actorUsername: actorUsername.trim() || undefined,
+      limit,
+    });
+  }
+
+  return (
+    <AppShell
+      title="관리자 · 불변 감사 로그"
+      subtitle="DB UPDATE/DELETE 차단 트리거로 보호되는 보안 및 업무 감사 이력"
+    >
+      <div className="space-y-5">
+        <section className="soc-card p-4">
+          <form onSubmit={handleFilterSubmit} className="flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="audit-action-type" className="mb-1 block text-[11px] font-medium text-slate-400">
+                행위 유형 (actionType)
+              </label>
+              <select
+                id="audit-action-type"
+                value={actionType}
+                onChange={(e) => setActionType(e.target.value)}
+                className="soc-select font-mono text-xs"
+              >
+                <option value="">전체 유형</option>
+                {(data?.actionTypes ?? []).map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="audit-actor" className="mb-1 block text-[11px] font-medium text-slate-400">
+                행위자 아이디 (actorUsername)
+              </label>
+              <input
+                id="audit-actor"
+                type="text"
+                value={actorUsername}
+                onChange={(e) => setActorUsername(e.target.value)}
+                placeholder="예: analyst1"
+                className="soc-input font-mono text-xs"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="audit-limit" className="mb-1 block text-[11px] font-medium text-slate-400">
+                조회 건수 (limit)
+              </label>
+              <select
+                id="audit-limit"
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value))}
+                className="soc-select font-mono text-xs"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={250}>250</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+
+            <button type="submit" className="soc-btn-primary py-2 text-xs">
+              <Filter className="h-3.5 w-3.5" />
+              조회
+            </button>
+          </form>
+        </section>
+
+        {errorMsg && (
+          <ErrorAlert
+            message={errorMsg}
+            onRetry={() => void loadLogs({ actionType, actorUsername, limit })}
+          />
+        )}
+
+        {loading && !data ? (
+          <LoadingPanel label="감사 로그를 불러오는 중..." />
+        ) : (
+          <div className="soc-card overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-xs text-slate-400">
+              <div className="flex items-center gap-2 font-semibold text-slate-200">
+                <FileSearch className="h-4 w-4 text-cyan-400" />
+                감사 로그 ({data?.logs.length ?? 0}건)
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr>
+                    <th className="soc-th">발생 시각</th>
+                    <th className="soc-th">행위자</th>
+                    <th className="soc-th">행위 유형</th>
+                    <th className="soc-th">대상 캡처 / 사건</th>
+                    <th className="soc-th">클라이언트 IP</th>
+                    <th className="soc-th text-right">상세 JSON</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data?.logs ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">
+                        조회된 감사 로그가 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    (data?.logs ?? []).map((log) => <AuditLogRow key={log.id} log={log} />)
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </AppShell>
+  );
+}

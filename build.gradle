@@ -54,6 +54,16 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+tasks.named('processResources') {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    from({
+        def distDir = file('frontend/dist')
+        distDir.exists() ? fileTree(distDir) : []
+    }) {
+        into 'static'
+    }
+}
+
 tasks.named('cyclonedxBom') {
     onlyIf {
         gradle.startParameter.taskNames.any { it.endsWith('cyclonedxBom') }

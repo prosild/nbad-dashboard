@@ -17,4 +17,7 @@ bin/
 *.pem
 *.crt
 security-reports/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
