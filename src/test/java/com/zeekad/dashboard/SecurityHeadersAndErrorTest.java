@@ -26,7 +26,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -86,11 +89,10 @@ class SecurityHeadersAndErrorTest {
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("Referrer-Policy", "strict-origin-when-cross-origin"));
 
-        mockMvc.perform(get("/index.html"))
+        MvcResult indexResult = mockMvc.perform(get("/index.html"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("<div id=\"root\"></div>")))
-                .andExpect(content().string(not(containsString("<script"))))
-                .andExpect(content().string(not(containsString("style="))));
+                .andReturn();
+        assertSafeSpaHtml(indexResult.getResponse().getContentAsString());
 
         // 비인증 브라우저 SPA 경로는 /login 리다이렉트, 비인증 API는 401 JSON 반환
         mockMvc.perform(get("/incidents"))
@@ -164,5 +166,36 @@ class SecurityHeadersAndErrorTest {
     private Cookie fetchCsrfCookie() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
         return res.getResponse().getCookie("XSRF-TOKEN");
+    }
+
+    private void assertSafeSpaHtml(String html) {
+        assertThat(html).contains("<div id=\"root\"></div>");
+        assertThat(html).doesNotContain("style=").doesNotContain("<style");
+
+        Pattern scriptTagOpen = Pattern.compile("(?i)<script\\b");
+        Pattern scriptElement = Pattern.compile("(?is)<script\\b([^>]*)>(.*?)</script>");
+        Pattern localAssetSrc = Pattern.compile("(?i)\\bsrc\\s*=\\s*\"/assets/[^\"]+\"");
+
+        Matcher openMatcher = scriptTagOpen.matcher(html);
+        int openCount = 0;
+        while (openMatcher.find()) {
+            openCount++;
+        }
+
+        Matcher elemMatcher = scriptElement.matcher(html);
+        int matchedCount = 0;
+        while (elemMatcher.find()) {
+            matchedCount++;
+            String attrs = elemMatcher.group(1);
+            String body = elemMatcher.group(2);
+            assertThat(localAssetSrc.matcher(attrs).find())
+                    .as("SPA <script> 태그는 /assets/ 동일 Origin 경로만 허용해야 합니다: %s", attrs)
+                    .isTrue();
+            assertThat(attrs).doesNotContain("http://").doesNotContain("https://").doesNotContain("//");
+            assertThat(body.trim())
+                    .as("SPA <script> 태그는 인라인 본문을 가질 수 없습니다")
+                    .isEmpty();
+        }
+        assertThat(matchedCount).isEqualTo(openCount);
     }
 }

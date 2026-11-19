@@ -193,7 +193,80 @@ class StaticSecurityAndConfigTest {
     @Test
     void gitignoreExcludesSecretsKeysAndSecurityReports() throws IOException {
         String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
-        assertThat(gitignore).contains(".env", ".env.*", "!.env.example", "*.key", "*.pem", "security-reports/");
+        assertThat(gitignore).contains(
+                ".env", ".env.*", "!.env.example", "*.key", "*.pem", "security-reports/",
+                "frontend/node_modules/", "frontend/dist/");
+    }
+
+    @Test
+    void frontendProductionSourcesComplyWithStrictCspAndNoHardcodedLabData() throws IOException {
+        Path frontendIndex = Path.of("frontend/index.html");
+        assertThat(frontendIndex).exists();
+        Path frontendSrc = Path.of("frontend/src");
+        assertThat(frontendSrc).exists();
+
+        List<Path> targets = new java.util.ArrayList<>();
+        targets.add(frontendIndex);
+        try (Stream<Path> files = Files.walk(frontendSrc)) {
+            files.filter(Files::isRegularFile)
+                    .filter(StaticSecurityAndConfigTest::isFrontendProductionSource)
+                    .forEach(targets::add);
+        }
+
+        assertThat(targets.size()).isGreaterThan(1);
+        for (Path file : targets) {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            assertThat(content)
+                    .as("프론트엔드 프로덕션 파일 %s는 엄격한 CSP/XSS/도메인 규칙을 준수해야 합니다", file)
+                    .doesNotContain("dangerouslySetInnerHTML")
+                    .doesNotContain("innerHTML")
+                    .doesNotContain("eval(")
+                    .doesNotContain("new Function")
+                    .doesNotContain("style={{")
+                    .doesNotContain("style=\"")
+                    .doesNotContain("정확도")
+                    .doesNotContain("lab-20261119")
+                    .doesNotContain("10.10.0.50")
+                    .doesNotContain("10.10.0.10")
+                    .doesNotContain("https://fonts.googleapis.com")
+                    .doesNotContain("https://cdn.jsdelivr.net")
+                    .doesNotContain("https://unpkg.com");
+        }
+
+        Path distIndex = Path.of("frontend/dist/index.html");
+        if (Files.exists(distIndex)) {
+            String distHtml = Files.readString(distIndex, StandardCharsets.UTF_8);
+            assertThat(distHtml)
+                    .contains("<div id=\"root\"></div>")
+                    .doesNotContain("style=")
+                    .doesNotContain("<style")
+                    .doesNotContain("https://fonts.googleapis.com")
+                    .doesNotContain("https://cdn.jsdelivr.net")
+                    .doesNotContain("https://unpkg.com");
+
+            Pattern scriptElement = Pattern.compile("(?is)<script\\b([^>]*)>(.*?)</script>");
+            Pattern localAssetSrc = Pattern.compile("(?i)\\bsrc\\s*=\\s*\"/assets/[^\"]+\"");
+            var matcher = scriptElement.matcher(distHtml);
+            while (matcher.find()) {
+                assertThat(localAssetSrc.matcher(matcher.group(1)).find())
+                        .as("빌드된 index.html의 <script>는 /assets/ 경로만 허용해야 합니다")
+                        .isTrue();
+                assertThat(matcher.group(2).trim())
+                        .as("빌드된 index.html에 인라인 <script> 본문이 없어야 합니다")
+                        .isEmpty();
+            }
+        }
+    }
+
+    private static boolean isFrontendProductionSource(Path path) {
+        String normalized = path.toString().replace('\\', '/');
+        if (normalized.contains("/__tests__/") || normalized.contains("/test/")) {
+            return false;
+        }
+        return !normalized.endsWith(".test.ts")
+                && !normalized.endsWith(".test.tsx")
+                && !normalized.endsWith(".spec.ts")
+                && !normalized.endsWith(".spec.tsx");
     }
 
     @Test
