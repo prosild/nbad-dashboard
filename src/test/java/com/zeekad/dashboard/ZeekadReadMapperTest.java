@@ -1,9 +1,11 @@
 package com.zeekad.dashboard;
 
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
+import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
+import com.zeekad.dashboard.model.zeekad.FeedbackSummaryRecord;
 import com.zeekad.dashboard.model.zeekad.IncidentModelScore;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.IncidentReport;
@@ -14,12 +16,17 @@ import com.zeekad.dashboard.model.zeekad.ScoringJob;
 import com.zeekad.dashboard.model.zeekad.SendDecision;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
+import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.IncidentQueryService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import javax.sql.DataSource;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +40,10 @@ class ZeekadReadMapperTest {
 
     @Autowired
     private IncidentQueryService incidentQueryService;
+
+    @Autowired
+    @Qualifier("zeekadReadDataSource")
+    private DataSource zeekadReadDataSource;
 
     @Test
     void queriesAllThirteenContractViewsWithArrayAndJsonbTypeHandlers() {
@@ -236,5 +247,143 @@ class ZeekadReadMapperTest {
         assertThat(failedJobQueue).hasSize(1);
         assertThat(failedJobQueue.get(0).isHasReport()).isFalse();
         assertThat(failedJobQueue.get(0).getZeekadStatus()).isEqualTo("open");
+    }
+
+    @Test
+    void queriesFeedbackSummaryViewWithAllAndPerModelAggregation() {
+        List<FeedbackSummaryRecord> cic17Summaries = zeekadReadMapper.findRawFeedbackSummaries("cic17-wed")
+                .stream()
+                .map(FeedbackSummaryRecord::fromRawMap)
+                .toList();
+        assertThat(cic17Summaries).hasSize(4);
+
+        FeedbackSummaryRecord cicAll = cic17Summaries.stream()
+                .filter(FeedbackSummaryRecord::isAllModel)
+                .findFirst()
+                .orElseThrow();
+        assertThat(cicAll.getBundleId()).isEqualTo("zeekad-fusion/1");
+        assertThat(cicAll.getIncidents()).isEqualTo(3L);
+        assertThat(cicAll.getAlerted()).isEqualTo(1L);
+        assertThat(cicAll.getResolved()).isEqualTo(1L);
+        assertThat(cicAll.getTruePositive()).isEqualTo(0L);
+        assertThat(cicAll.getFalsePositive()).isEqualTo(0L);
+        assertThat(cicAll.getBenign()).isEqualTo(1L);
+        assertThat(cicAll.getZeekadPrecision()).isEqualTo(0.0d);
+        assertThat(cicAll.getZeekadAlertPrecision()).isNull();
+        assertThat(cicAll.getZeekadAlertResolvedRate()).isEqualTo(0.0d);
+        assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("정밀도 0.00, 결론 1/3 (33.3%)");
+        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("- (결론 0/1 (0.0%))");
+
+        // 결론 0건 캡처(lab-fusion-v2)는 정밀도 null 처리
+        List<FeedbackSummaryRecord> fusionSummaries = zeekadReadMapper.findRawFeedbackSummaries("lab-fusion-v2")
+                .stream()
+                .map(FeedbackSummaryRecord::fromRawMap)
+                .toList();
+        FeedbackSummaryRecord fusionAll = fusionSummaries.stream()
+                .filter(FeedbackSummaryRecord::isAllModel)
+                .findFirst()
+                .orElseThrow();
+        assertThat(fusionAll.getBundleId()).isEqualTo("zeekad-fusion/3");
+        assertThat(fusionAll.getIncidents()).isEqualTo(3L);
+        assertThat(fusionAll.getAlerted()).isEqualTo(1L);
+        assertThat(fusionAll.getResolved()).isEqualTo(0L);
+        assertThat(fusionAll.getZeekadPrecision()).isNull();
+        assertThat(fusionAll.getZeekadAlertPrecision()).isNull();
+        assertThat(fusionAll.getPrecisionSummaryText()).isEqualTo("- (결론 0/3, 0.0%)");
+
+        // IncidentQueryService 정렬('all' 최우선) 및 IDOR 필터 확인
+        DashboardUser cicUser = new DashboardUser();
+        cicUser.setId(1L);
+        cicUser.setUsername("cic_viewer");
+        cicUser.setDisplayName("조회자");
+        cicUser.setRole(UserRole.VIEWER);
+        cicUser.setEnabled(true);
+        DashboardUserPrincipal cicPrincipal = new DashboardUserPrincipal(
+                cicUser, List.of("cic17-*"), Instant.now());
+        IncidentQueryService.OperationsViewResult cicOps =
+                incidentQueryService.loadOperationsView(cicPrincipal, null, "127.0.0.1");
+        assertThat(cicOps.feedbackSummaries()).hasSize(4);
+        assertThat(cicOps.feedbackSummaries())
+                .extracting(FeedbackSummaryRecord::getCaptureId)
+                .containsOnly("cic17-wed");
+        assertThat(cicOps.feedbackSummaries().get(0).isAllModel()).isTrue();
+        assertThat(cicOps.feedbackSummaries())
+                .extracting(FeedbackSummaryRecord::getZeekadPickedBy)
+                .containsExactly("all", "autoencoder", "hbos", "iforest");
+
+        // 임시 true_positive 결론 시드로 alerted_precision 및 alerted_resolved_rate 식 검증
+        JdbcTemplate jdbc = new JdbcTemplate(zeekadReadDataSource);
+        long tmpJobId = 9901L;
+        String tmpCapture = "cic17-fb-calc";
+        String tmpInc1 = tmpCapture + "|192.168.90.10|originator|1700009001";
+        String tmpInc2 = tmpCapture + "|192.168.90.20|responder|1700009002";
+        try {
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_scoring_jobs
+                    (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
+                    VALUES (?, ?, 'zeekad-fusion/3', 'succeeded',
+                            TIMESTAMP WITH TIME ZONE '2026-11-19 03:00:00Z',
+                            TIMESTAMP WITH TIME ZONE '2026-11-19 03:01:00Z', NULL, 2)
+                    """, tmpJobId, tmpCapture);
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_incident_queue
+                    (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role,
+                     event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name)
+                    VALUES
+                    (?, ?, 'zeekad-fusion/3', 1, ?, '192.168.90.10', 'originator',
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 02:50:00Z', TIMESTAMP WITH TIME ZONE '2026-11-19 03:00:00Z',
+                     'iforest', NULL, 100, NULL),
+                    (?, ?, 'zeekad-fusion/3', 2, ?, '192.168.90.20', 'responder',
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 02:50:00Z', TIMESTAMP WITH TIME ZONE '2026-11-19 03:00:00Z',
+                     'hbos', NULL, 50, NULL)
+                    """, tmpJobId, tmpCapture, tmpInc1, tmpJobId, tmpCapture, tmpInc2);
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_incident_reports
+                    (job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
+                     zeekad_report, zeekad_verification_passed, created_at)
+                    VALUES
+                    (?, ?, 'llm', 'llm-report.v1', 'evidence.v1', '{"observation_summary":"s1"}' FORMAT JSON, TRUE,
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 03:01:30Z'),
+                    (?, ?, 'template', 'template.v1', 'evidence.v1', '{"observation_summary":"s2"}' FORMAT JSON, TRUE,
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 03:01:30Z')
+                    """, tmpJobId, tmpInc1, tmpJobId, tmpInc2);
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_send_decisions
+                    (job_id, incident_id, zeekad_would_send, zeekad_decided_by, created_at)
+                    VALUES
+                    (?, ?, TRUE, 'policy', TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:00Z'),
+                    (?, ?, TRUE, 'policy', TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:00Z')
+                    """, tmpJobId, tmpInc1, tmpJobId, tmpInc2);
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_incident_status
+                    (job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by)
+                    VALUES
+                    (?, ?, 'closed', 'true_positive', TIMESTAMP WITH TIME ZONE '2026-11-19 03:05:00Z', 'analyst1')
+                    """, tmpJobId, tmpInc1);
+
+            List<FeedbackSummaryRecord> calcRows = zeekadReadMapper.findRawFeedbackSummaries(tmpCapture)
+                    .stream()
+                    .map(FeedbackSummaryRecord::fromRawMap)
+                    .toList();
+            FeedbackSummaryRecord calcAll = calcRows.stream()
+                    .filter(FeedbackSummaryRecord::isAllModel)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(calcAll.getIncidents()).isEqualTo(2L);
+            assertThat(calcAll.getAlerted()).isEqualTo(2L);
+            assertThat(calcAll.getResolved()).isEqualTo(1L);
+            assertThat(calcAll.getTruePositive()).isEqualTo(1L);
+            assertThat(calcAll.getZeekadPrecision()).isEqualTo(1.0d);
+            assertThat(calcAll.getZeekadAlertPrecision()).isEqualTo(1.0d);
+            assertThat(calcAll.getZeekadAlertResolvedRate()).isEqualTo(0.5d);
+            assertThat(calcAll.getPrecisionSummaryText()).isEqualTo("정밀도 1.00, 결론 1/2 (50.0%)");
+            assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("정밀도 1.00, 결론 1/2 (50.0%)");
+        } finally {
+            jdbc.update("DELETE FROM dashboard.raw_incident_status WHERE incident_id IN (?, ?)", tmpInc1, tmpInc2);
+            jdbc.update("DELETE FROM dashboard.raw_send_decisions WHERE job_id = ?", tmpJobId);
+            jdbc.update("DELETE FROM dashboard.raw_incident_reports WHERE job_id = ?", tmpJobId);
+            jdbc.update("DELETE FROM dashboard.raw_incident_queue WHERE job_id = ?", tmpJobId);
+            jdbc.update("DELETE FROM dashboard.raw_scoring_jobs WHERE job_id = ?", tmpJobId);
+        }
     }
 }

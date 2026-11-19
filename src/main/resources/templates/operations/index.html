@@ -111,6 +111,44 @@
     </div>
 
     <div class="card">
+        <h2>분석가 결론 집계 (feedback_summary)</h2>
+        <p class="muted">결론이 없으면 정밀도는 계산되지 않으며(null), 놓친 공격(재현율)은 이 집계로 알 수 없습니다. 결론 수가 적을 때는 정밀도 해석에 주의하세요.</p>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>캡처</th>
+                    <th>모델 묶음</th>
+                    <th>모델 (zeekad_picked_by)</th>
+                    <th>사건 / 알림 / 결론</th>
+                    <th>결론 분포 (TP / FP / Benign)</th>
+                    <th>전체 정밀도 (결론 수)</th>
+                    <th>알림 정밀도 (결론 수 · 비율)</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="fb : ${feedbackSummaries}"
+                    th:classappend="${fb.allModel} ? 'row-summary' : ''">
+                    <td th:text="${fb.captureId}"></td>
+                    <td th:text="${fb.bundleId}"></td>
+                    <td>
+                        <span th:if="${fb.allModel}" class="badge badge-info">전체 (all)</span>
+                        <span th:unless="${fb.allModel}" th:text="${fb.zeekadPickedBy}"></span>
+                    </td>
+                    <td th:text="${(fb.incidents != null ? fb.incidents : 0) + ' / ' + (fb.alerted != null ? fb.alerted : 0) + ' / ' + (fb.resolved != null ? fb.resolved : 0)}"></td>
+                    <td th:text="${(fb.truePositive != null ? fb.truePositive : 0) + ' / ' + (fb.falsePositive != null ? fb.falsePositive : 0) + ' / ' + (fb.benign != null ? fb.benign : 0)}"></td>
+                    <td th:text="${fb.precisionSummaryText}"></td>
+                    <td th:text="${fb.alertPrecisionSummaryText}"></td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(feedbackSummaries)}">
+                    <td colspan="7" class="muted">표시할 분석가 결론 집계가 없습니다.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>일일 Slack 요약 (slack_summaries)</h2>
         <div class="table-wrap">
             <table>

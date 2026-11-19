@@ -6,6 +6,7 @@ import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
+import com.zeekad.dashboard.model.zeekad.FeedbackSummaryRecord;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.ModelBundle;
 import com.zeekad.dashboard.model.zeekad.ScoringJob;
@@ -13,6 +14,7 @@ import com.zeekad.dashboard.model.zeekad.SlackSummary;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -155,13 +157,25 @@ public class IncidentQueryService {
 
         List<ModelBundle> bundles = zeekadReadMapper.findAllModelBundles();
 
+        Comparator<FeedbackSummaryRecord> summaryOrder = Comparator
+                .comparing(FeedbackSummaryRecord::getCaptureId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(FeedbackSummaryRecord::getBundleId, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(r -> r.isAllModel() ? 0 : 1, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(FeedbackSummaryRecord::getZeekadPickedBy, Comparator.nullsLast(Comparator.naturalOrder()));
+
+        List<FeedbackSummaryRecord> feedbackSummaries = zeekadReadMapper.findRawFeedbackSummaries(cleanCaptureId).stream()
+                .map(FeedbackSummaryRecord::fromRawMap)
+                .filter(r -> principal != null && principal.isCaptureAllowed(r.getCaptureId()))
+                .sorted(summaryOrder)
+                .toList();
+
         UserRole userRole = principal != null ? principal.getRole() : UserRole.VIEWER;
         List<SlackSummary> summaries = zeekadReadMapper.findSlackSummaries(cleanCaptureId).stream()
                 .filter(s -> principal != null && principal.isCaptureAllowed(s.getCaptureId()))
                 .map(s -> maskingService.maskSlackSummary(s, userRole))
                 .toList();
 
-        return new OperationsViewResult(allowedCaptures, cleanCaptureId, jobs, bundles, summaries);
+        return new OperationsViewResult(allowedCaptures, cleanCaptureId, jobs, bundles, feedbackSummaries, summaries);
     }
 
     public ReviewsViewResult loadReviewsView(DashboardUserPrincipal principal,
@@ -289,6 +303,7 @@ public class IncidentQueryService {
             String selectedCaptureId,
             List<ScoringJob> jobs,
             List<ModelBundle> bundles,
+            List<FeedbackSummaryRecord> feedbackSummaries,
             List<SlackSummary> slackSummaries
     ) {
     }

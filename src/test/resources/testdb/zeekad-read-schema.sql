@@ -235,5 +235,57 @@ LEFT JOIN dashboard.analyst_review_queue arq
   ON arq.job_id = lr.report_job_id
  AND arq.incident_id = q.incident_id;
 
+CREATE OR REPLACE VIEW dashboard.feedback_summary AS
+WITH grouped AS (
+    SELECT capture_id,
+           bundle_id,
+           zeekad_picked_by,
+           COUNT(*) AS incidents,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+                         AND zeekad_status = 'closed'
+                         AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+                         AND zeekad_status = 'closed'
+                         AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
+    FROM dashboard.latest_incident_queue
+    GROUP BY capture_id, bundle_id, zeekad_picked_by
+    UNION ALL
+    SELECT capture_id,
+           bundle_id,
+           'all' AS zeekad_picked_by,
+           COUNT(*) AS incidents,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
+           SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+                         AND zeekad_status = 'closed'
+                         AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
+           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+                         AND zeekad_status = 'closed'
+                         AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
+    FROM dashboard.latest_incident_queue
+    GROUP BY capture_id, bundle_id
+)
+SELECT capture_id,
+       bundle_id,
+       zeekad_picked_by,
+       incidents,
+       alerted,
+       resolved,
+       true_positive,
+       false_positive,
+       benign,
+       CASE WHEN resolved > 0 THEN CAST(true_positive AS DOUBLE PRECISION) / resolved ELSE NULL END AS zeekad_precision,
+       CASE WHEN alerted_resolved > 0 THEN CAST(alerted_true_positive AS DOUBLE PRECISION) / alerted_resolved ELSE NULL END AS zeekad_alert_precision,
+       CASE WHEN alerted > 0 THEN CAST(alerted_resolved AS DOUBLE PRECISION) / alerted ELSE NULL END AS zeekad_alert_resolved_rate
+FROM grouped;
+
 CREATE ALIAS IF NOT EXISTS dashboard.transition_incident FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.transitionIncident";
 CREATE ALIAS IF NOT EXISTS dashboard.decide_review FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.decideReview";

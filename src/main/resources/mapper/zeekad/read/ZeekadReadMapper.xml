@@ -497,4 +497,15 @@
         LIMIT 1
     </select>
 
+    <select id="findRawFeedbackSummaries" resultType="map">
+        SELECT *
+        FROM dashboard.feedback_summary
+        <where>
+            <if test="captureId != null and captureId != ''">
+                AND capture_id = #{captureId}
+            </if>
+        </where>
+        ORDER BY capture_id ASC, bundle_id DESC, zeekad_picked_by ASC
+    </select>
+
 </mapper>

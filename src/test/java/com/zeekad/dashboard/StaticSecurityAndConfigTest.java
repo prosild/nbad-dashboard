@@ -214,10 +214,18 @@ class StaticSecurityAndConfigTest {
         String mapperXml = Files.readString(
                 Path.of("src/main/resources/mapper/zeekad/read/ZeekadReadMapper.xml"),
                 StandardCharsets.UTF_8);
-        assertThat(mapperJava).contains("findLatestIncidentQueue").contains("findAnalystReviewByJobAndIncident");
+        assertThat(mapperJava).contains("findLatestIncidentQueue")
+                .contains("findAnalystReviewByJobAndIncident")
+                .contains("findRawFeedbackSummaries");
         assertThat(mapperXml).contains("dashboard.latest_incident_queue").contains("zeekad_report_job_id");
         assertThat(mapperXml).contains("zeekad_thread_parent").contains("zeekad_reply_broadcast");
         assertThat(mapperXml).contains("zeekad_review_resumed_at").contains("zeekad_review_resume_failed");
+        assertThat(mapperXml).contains("dashboard.feedback_summary");
+
+        String operationsHtml = Files.readString(
+                Path.of("src/main/resources/templates/operations/index.html"),
+                StandardCharsets.UTF_8);
+        assertThat(operationsHtml).contains("feedback_summary").doesNotContain("정확도");
 
         String writeMapperJava = Files.readString(
                 Path.of("src/main/java/com/zeekad/dashboard/mapper/zeekad/write/ZeekadWriteMapper.java"),

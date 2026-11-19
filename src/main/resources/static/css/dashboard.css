@@ -522,3 +522,8 @@ pre.code-block {
     gap: 0.4rem;
     min-width: 210px;
 }
+
+tr.row-summary td {
+    background-color: #f0f6ff;
+    font-weight: 600;
+}

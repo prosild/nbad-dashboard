@@ -1,9 +1,12 @@
 package com.zeekad.dashboard;
 
 import com.zeekad.dashboard.mapper.app.AuditLogMapper;
+import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.AuditActionType;
 import com.zeekad.dashboard.model.AuditLog;
+import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
+import com.zeekad.dashboard.security.TotpService;
 import com.zeekad.dashboard.service.UserAdminService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +17,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Clock;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +42,15 @@ class IdorAndMaskingIntegrationTest {
 
     @Autowired
     private AuditLogMapper auditLogMapper;
+
+    @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
+    private TotpService totpService;
+
+    @Autowired
+    private Clock clock;
 
     @Test
     void unauthorizedOrNonExistentCaptureAndJobRequestsReturn403AndRecordIdorAuditLog() throws Exception {
@@ -96,12 +109,16 @@ class IdorAndMaskingIntegrationTest {
                 .andExpect(content().string(not(containsString("10.20.30.40"))))
                 .andExpect(content().string(not(containsString("10.99.88.77"))));
 
-        // 운영 상태: slack_payload 내 IP 마스킹 및 허용되지 않은 syn1-tue 미노출
+        // 운영 상태: slack_payload 내 IP 마스킹 및 feedback_summary 포함 허용되지 않은 캡처 미노출
         mockMvc.perform(get("/operations").session(viewerSession))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("192.168.*.*")))
+                .andExpect(content().string(containsString("분석가 결론 집계 (feedback_summary)")))
+                .andExpect(content().string(containsString("정밀도 0.00, 결론 1/3 (33.3%)")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))))
-                .andExpect(content().string(not(containsString("syn1-tue"))));
+                .andExpect(content().string(not(containsString("syn1-tue"))))
+                .andExpect(content().string(not(containsString("lab-20261118"))))
+                .andExpect(content().string(not(containsString("lab-fusion-v2"))));
 
         // 승인 대기: host_ip 마스킹 및 허용되지 않은 syn1-tue 미노출
         mockMvc.perform(get("/reviews").session(viewerSession))
@@ -110,7 +127,7 @@ class IdorAndMaskingIntegrationTest {
                 .andExpect(content().string(not(containsString("10.20.30.40"))))
                 .andExpect(content().string(not(containsString("syn1-tue"))));
 
-        // ANALYST: 허용된 캡처 원문 IP 노출, 미허용 캡처는 차단
+        // ANALYST: 허용된 캡처 원문 IP 및 cic17-* 집계만 노출, 타 캡처 집계 미노출·차단
         MockHttpSession analystSession = loginAs(analyst, "Pass1234!");
         mockMvc.perform(get("/incidents").session(analystSession))
                 .andExpect(status().isOk())
@@ -120,7 +137,11 @@ class IdorAndMaskingIntegrationTest {
 
         mockMvc.perform(get("/operations").session(analystSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("192.168.10.50")));
+                .andExpect(content().string(containsString("192.168.10.50")))
+                .andExpect(content().string(containsString("cic17-wed")))
+                .andExpect(content().string(not(containsString("syn1-tue"))))
+                .andExpect(content().string(not(containsString("lab-20261118"))))
+                .andExpect(content().string(not(containsString("lab-fusion-v2"))));
 
         mockMvc.perform(get("/incidents").param("captureId", "syn1-tue").session(analystSession))
                 .andExpect(status().isForbidden());
@@ -140,6 +161,26 @@ class IdorAndMaskingIntegrationTest {
                 .andExpect(content().string(containsString("10.20.0.25")));
         mockMvc.perform(get("/incidents").param("captureId", "cic17-wed").session(labSession))
                 .andExpect(status().isForbidden());
+
+        // ADMIN (*): TOTP 인증 후 전체 캡처 feedback_summary 노출
+        String opsAdmin = "idor_ops_admin";
+        userAdminService.createUser(opsAdmin, "전체관리자", "AdminPass!88", UserRole.ADMIN,
+                "*", "seed", "ADMIN", "127.0.0.1");
+        DashboardUser adminUser = userMapper.findByUsername(opsAdmin);
+        MockHttpSession adminSession = loginAs(opsAdmin, "AdminPass!88");
+        String code = totpService.generateCode(adminUser.getTotpSecret(), clock.instant());
+        mockMvc.perform(post("/login/totp/setup")
+                        .session(adminSession)
+                        .with(csrf())
+                        .param("code", code))
+                .andExpect(status().is3xxRedirection());
+
+        mockMvc.perform(get("/operations").session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("cic17-wed")))
+                .andExpect(content().string(containsString("syn1-tue")))
+                .andExpect(content().string(containsString("lab-20261118")))
+                .andExpect(content().string(containsString("lab-fusion-v2")));
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {

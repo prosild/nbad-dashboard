@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * zeekad 읽기 전용 DataSource(dashboard 스키마 v1·v2·v2.1 뷰 13종) 조회 MyBatis 매퍼.
+ * zeekad 읽기 전용 DataSource(dashboard 스키마 v1·v2·v2.1·migration 017 뷰 14종) 조회 MyBatis 매퍼.
  * 모든 파라미터 바인딩에 #{}만 사용한다.
  */
 @Mapper
@@ -83,4 +83,6 @@ public interface ZeekadReadMapper {
 
     AnalystReviewItem findAnalystReviewByJobAndIncident(@Param("jobId") Long jobId,
                                                         @Param("incidentId") String incidentId);
+
+    List<Map<String, Object>> findRawFeedbackSummaries(@Param("captureId") String captureId);
 }

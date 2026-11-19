@@ -91,6 +91,7 @@ public class DashboardController {
         model.addAttribute("selectedCaptureId", view.selectedCaptureId() == null ? "" : view.selectedCaptureId());
         model.addAttribute("jobs", view.jobs());
         model.addAttribute("bundles", view.bundles());
+        model.addAttribute("feedbackSummaries", view.feedbackSummaries());
         model.addAttribute("slackSummaries", view.slackSummaries());
         return "operations/index";
     }

@@ -133,17 +133,30 @@ class DashboardViewsIntegrationTest {
                 "*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        // 운영 상태 화면 (zeekad-fusion/1..3 포함)
+        // 운영 상태 화면 (zeekad-fusion/1..3 및 feedback_summary 포함, "정확도" 미사용)
         mockMvc.perform(get("/operations").session(session))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("zeekad-fusion/1")))
                 .andExpect(content().string(containsString("zeekad-fusion/3")))
                 .andExpect(content().string(containsString("iforest: 0.72")))
+                .andExpect(content().string(containsString("분석가 결론 집계 (feedback_summary)")))
+                .andExpect(content().string(containsString("놓친 공격(재현율)")))
+                .andExpect(content().string(containsString("전체 (all)")))
+                .andExpect(content().string(containsString("정밀도 0.00, 결론 1/3 (33.3%)")))
+                .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
+                .andExpect(content().string(not(containsString("정확도"))))
                 .andExpect(content().string(containsString("기록만(dry-run)")))
                 .andExpect(content().string(containsString("조사 큐")))
                 .andExpect(content().string(containsString("운영 상태")))
                 .andExpect(content().string(containsString("승인 대기")))
                 .andExpect(content().string(not(containsString("/admin/users"))));
+
+        // 운영 상태 캡처 필터 연동 확인
+        mockMvc.perform(get("/operations").param("captureId", "lab-fusion-v2").session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("lab-fusion-v2")))
+                .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
+                .andExpect(content().string(not(containsString("정밀도 0.00, 결론 1/3 (33.3%)"))));
 
         // 분석가 승인 대기 목록 (전체 vs 대기 건만, 결정 폼 및 반영 상태 3종)
         mockMvc.perform(get("/reviews").session(session))
