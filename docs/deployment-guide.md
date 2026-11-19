@@ -32,10 +32,11 @@
    - 대시보드 기동 시 Flyway(`classpath:db/migration/postgresql`)가 자동으로 `users`, `user_capture_access`, `audit_logs` 테이블 및 `audit_logs` `UPDATE`/`DELETE` 차단 트리거(`trg_audit_logs_immutable`)를 생성합니다.
    - `dashboard_app` 계정은 `zeekad_dashboard` 데이터베이스의 DDL/DML 권한만 보유합니다.
 2. **`zeekad` 읽기 전용 계정 (`dashboard_ro`)**
-   - `zeekad` 데이터베이스의 `dashboard` 스키마 내 데이터 계약 **13종 뷰**(v1 5종 · v2 7종 · v2.1 `latest_incident_queue` 1종)에 대한 `SELECT` 권한만 부여합니다.
+   - `zeekad` 데이터베이스의 `dashboard` 스키마 내 데이터 계약 **14종 뷰**(v1 5종 · v2 7종 · v2.1 `latest_incident_queue` 1종 · migration 017 `feedback_summary` 1종)에 대한 `SELECT` 권한만 부여합니다.
      - v1 (5종): `incident_queue`, `incident_model_scores`, `asset_names`, `scoring_jobs`, `model_bundles`
      - v2 (7종): `incident_reports`, `send_decisions`, `slack_deliveries`(`zeekad_thread_parent`, `zeekad_reply_broadcast` 포함), `slack_summaries`, `incident_status`, `incident_status_history`, `analyst_review_queue`(`zeekad_review_resumed_at`, `zeekad_review_resume_failed` 포함)
      - v2.1 (1종): `latest_incident_queue` (캡처별 가장 최근 성공 작업의 사건 큐 + `zeekad_report_job_id`, `zeekad_report_kind`, `zeekad_would_send`, `zeekad_status`, `zeekad_resolution`, `status_updated_at`, `zeekad_review_action`, `zeekad_review_pending`)
+     - migration 017 (1종): `feedback_summary` (캡처 × 모델 묶음 × `zeekad_picked_by`['all' 전체 포함] 분석가 결론 집계 — 사건/알림/결론 수, TP/FP/Benign 분포, `zeekad_precision`, `zeekad_alert_precision`, `zeekad_alert_resolved_rate`)
    - 원본 테이블(`raw_*`) 및 `INSERT`/`UPDATE`/`DELETE` 권한은 부여하지 않습니다.
 3. **`zeekad` 쓰기 함수 전용 계정 (`dashboard_rw`)**
    - `zeekad` 데이터베이스의 `dashboard` 스키마 `USAGE`와 다음 두 함수에 대한 `EXECUTE` 권한만 부여합니다.
@@ -51,6 +52,7 @@
 - **모델 묶음 `zeekad-fusion/3` (결합 v2) 및 30분 초과 사건**: 결합 v2 champion 번들 `zeekad-fusion/3`은 여러 탐지 창을 합쳐 **30분보다 긴 사건**을 생성할 수 있으며, 대시보드는 사건 길이 상한 가정 없이 그대로 조회·표시합니다.
 - **모델 점수·근거 API·상태 변경**: `incident_model_scores`, 근거 API(`GET /api/v1/jobs/{job_id}/incidents/{rank}`), `transition_incident`의 `p_job`은 현재 화면 큐의 `job_id`(최신 작업)를 사용합니다.
 - **사건 상태 및 이력**: 상태는 `incident_id`에 귀속되어 새 채점 작업이 생성되어도 승계되며, `incident_status_history`는 `incident_id` 기준으로 전체 작업의 이력을 모아 시간 역순으로 표시합니다.
+- **운영 상태 분석가 결론 집계(`feedback_summary`)**: `/operations` 화면에서 `dashboard.feedback_summary`를 `SELECT *` 방어 매핑과 허용 캡처 IDOR 필터로 조회하여 표시합니다. 캡처 × 모델 묶음 내에서 `'all'` 요약 행을 최우선 강조 표시하며, 결론이 없으면 정밀도를 `null`로 두어 계산하지 않고 정밀도 옆에 결론 수·결론 비율을 함께 병기해 표본 부족 해석 주의를 돕습니다(놓친 공격/재현율은 이 집계로 산출할 수 없음을 상단 안내 문구로 명시).
 
 ### 2.3 근거 FastAPI (`evidence.v1`) 연동
 - 대시보드 백엔드는 `ZEEKAD_EVIDENCE_API_URL`을 통해 `GET /api/v1/jobs`, `GET /api/v1/captures/{capture_id}/queue`, `GET /api/v1/jobs/{job_id}/incidents/{rank}`를 호출합니다(읽기 전용).

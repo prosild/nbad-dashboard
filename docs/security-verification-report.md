@@ -8,10 +8,10 @@
 
 | 항목 | 실행 명령 | 비고 |
 |---|---|---|
-| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, v2.1·migration 014~016(`slack_deliveries` `incident_id` 단독/스레드, `decide_review`, `zeekad-fusion/3`), Docker/WAF·코드 중립성 정적 검증 |
+| 정적 검사·단위/통합 테스트 | `.\gradlew.bat check --rerun-tasks --no-daemon` | MyBatis `#{}` 전용, 보안 헤더, RBAC/IDOR, v2.1·migration 014~017(`slack_deliveries` `incident_id` 단독/스레드, `decide_review`, `zeekad-fusion/3`, `feedback_summary` 결론 집계), Docker/WAF·코드 중립성 정적 검증 |
 | CycloneDX SBOM 생성 | `.\gradlew.bat cyclonedxBom --no-daemon` | `build/reports/bom.json`, `build/reports/bom.xml` 생성 |
 | Docker Compose 유효성 | `docker compose config -q` 및 `docker compose -f compose.yml -f docker/verify/compose.verify.yml config -q` | VMware 통합 운영 기본값(`http://api:8000`) 및 검증 오버라이드 검증 |
-| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T06/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E(v2.1 + migration 014~016 포함) → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
+| 통합 보안 검증 스크립트 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/T07/evidence"` | SBOM → 이미지 빌드 → Trivy → PG17+WAF E2E(v2.1 + migration 014~017 포함) → OWASP ZAP 일괄 실행 후 `down -v` 정리 |
 
 > [!NOTE]
 > 대용량 원본 스캔 리포트(`trivy-*.json`, `zap-baseline.html/json`, `bom.json/xml`)는 `.gitignore`에 등록된 `security-reports/` 경로에 생성되며 Git 저장소에는 포함하지 않습니다.
@@ -20,8 +20,8 @@
 
 ## 2. 빌드·정적 보안·컨테이너 격리 검증
 
-1. **`.\gradlew.bat check --no-daemon`**: 종료 코드 `0` (전체 단위·통합 테스트 통과).
-   - `StaticSecurityAndConfigTest`: MyBatis XML/인터페이스 `${}` 치환 `0`건, PostgreSQL `audit_logs` 불변 트리거 DDL, `application.yml` 평문 비밀번호 `0`건, `Dockerfile`/`.dockerignore`/`compose.yml`/`.env.example`/`docker/nginx-waf/` 필수 파일 및 평문 비밀번호·TLS 개인키 `0`건, `.gitignore` 제외 규칙, `build.gradle`의 `h2` `testImplementation` 격리를 모두 확인했습니다.
+1. **`.\gradlew.bat check --rerun-tasks --no-daemon`**: 종료 코드 `0` (전체 단위·통합 테스트 통과).
+   - `StaticSecurityAndConfigTest`: MyBatis XML/인터페이스 `${}` 치환 `0`건, `ZeekadReadMapper`의 `findRawFeedbackSummaries`·`dashboard.feedback_summary` 포함 및 `operations/index.html` 내 `"정확도"` 미포함, PostgreSQL `audit_logs` 불변 트리거 DDL, `application.yml` 평문 비밀번호 `0`건, `Dockerfile`/`.dockerignore`/`compose.yml`/`.env.example`/`docker/nginx-waf/` 필수 파일 및 평문 비밀번호·TLS 개인키 `0`건, `.gitignore` 제외 규칙, `build.gradle`의 `h2` `testImplementation` 격리를 모두 확인했습니다.
 2. **프로덕션 `bootJar` 격리 확인**:
    - 실행 중인 `dashboard-app` 컨테이너 내부에서 `unzip -l /app/app.jar | grep -E 'h2-|application-test\.yml'`을 실행한 결과 `NO_H2_OR_TEST_YML`로 확인되었습니다.
 3. **네트워크·권한 격리**:
@@ -43,9 +43,9 @@
 | WAF XSS 차단 | `GET /incidents?asset=<script>alert(1)</script>` | `403 Forbidden` (ModSecurity CRS 차단) |
 | WAF 경로 탐색 차단 | `GET /incidents?asset=../../etc/passwd` / `GET /../../etc/passwd` | 쿼리 경로 탐색 `403 Forbidden` (URI `/../../etc/passwd`는 Nginx `400 Bad Request` 거부) |
 | Actuator 비노출 | `GET /actuator/health`, `GET /actuator/env` | 모두 앞단 Nginx `location ^~ /actuator`에서 `403 Forbidden` 차단 |
-| `VIEWER` 마스킹·IDOR·전이·검토 결정 차단 | `viewer1`(`cic17-*`) | `cic17-wed` 큐/상세 `200 OK`, IP 마스킹(`192.168.*.*`), Slack 스레드 묶음(`머리 알림`·`머리 사건 후속 답글`·`broadcast` 및 `101/rank/2` `스레드 답글` `zeekad_thread_parent` 마스킹), 미허용 `syn1-tue`(`/incidents/201/rank/1`) `403`, 상태 전이 POST `403`, 검토 결정 POST(`/reviews/decide`, `/incidents/101/rank/2/review-decision`) 모두 `403` |
-| `ANALYST` 인가·PostgreSQL 전이·검토 결정 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue`·`lab-20261118` 조회 및 `job 201` 검토 결정 IDOR 모두 `403`, 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 반영 확인, `101/rank/2` `confirm` 검토 결정 `302` 후 `결정: confirm`·`반영 중` 확인, 중복 결정 재시도 시 `22023` 오류 및 새로고침 안내 확인 |
-| `ADMIN` TOTP + v2.1/`zeekad-fusion/3`/Slack/검토 E2E | `admin`(`*`) + `lab-20261118` · `lab-fusion-v2` | TOTP 2차 인증(`302`) 후 `lab-20261118` 기본 큐·보고서 없음(`502/rank/1`)·이력 합산(`501+502`), `/operations` 및 `602/rank/1`의 `zeekad-fusion/3`(45분 사건)·재생성 보고서(`602`) 뒤에도 `incident_id` 단독 Slack(`job #601`) 조회, `/reviews/decide` `dismiss` 결정 후 중복(`601`) 제거 및 `반영 중`·`반영 실패(운영자 확인)` 표시 확인 |
+| `VIEWER` 마스킹·IDOR·전이·검토 결정 차단 | `viewer1`(`cic17-*`) | `cic17-wed` 큐/상세 `200 OK`, IP 마스킹(`192.168.*.*`), Slack 스레드 묶음(`머리 알림`·`머리 사건 후속 답글`·`broadcast` 및 `101/rank/2` `스레드 답글` `zeekad_thread_parent` 마스킹), `/operations` `feedback_summary` 내 `cic17-wed`만 노출(`정밀도 0.00, 결론 1/3 (33.3%)`, `놓친 공격(재현율)` 안내, `syn1-tue`·`lab-20261118`·`lab-fusion-v2` 및 `"정확도"` 미포함), 미허용 `syn1-tue`(`/incidents/201/rank/1`) `403`, 상태 전이 POST `403`, 검토 결정 POST(`/reviews/decide`, `/incidents/101/rank/2/review-decision`) 모두 `403` |
+| `ANALYST` 인가·PostgreSQL 전이·검토 결정 | `analyst1`(`cic17-*`) | 미허용 `syn1-tue`·`lab-20261118` 조회 및 `job 201` 검토 결정 IDOR 모두 `403`, `/operations` `feedback_summary` 내 `cic17-wed`만 노출(타 캡처 미노출), 허용 사건 원문(`192.168.10.50`) 조회 `200 OK`, `open → investigating` `POST /transition` `302` 후 반영 확인, `101/rank/2` `confirm` 검토 결정 `302` 후 `결정: confirm`·`반영 중` 확인, 중복 결정 재시도 시 `22023` 오류 및 새로고침 안내 확인 |
+| `ADMIN` TOTP + v2.1/`zeekad-fusion/3`/Slack/검토/결론 집계 E2E | `admin`(`*`) + `lab-20261118` · `lab-fusion-v2` | TOTP 2차 인증(`302`) 후 `lab-20261118` 기본 큐·보고서 없음(`502/rank/1`)·이력 합산(`501+502`), `502/rank/2` `closed`(`true_positive`) 전이 후 `/operations`에서 `zeekad-fusion/3`·`feedback_summary` 전체 캡처(`cic17-wed`·`syn1-tue`·`lab-20261118`·`lab-fusion-v2`)·`전체 (all)`·`정밀도 1.00, 결론 1/2 (50.0%)`·알림 정밀도 `정밀도 1.00, 결론 1/1 (100.0%)`·재현율 안내 확인, `602/rank/1` `zeekad-fusion/3`(45분 사건)·재생성 보고서(`602`) 뒤에도 `incident_id` 단독 Slack(`job #601`) 조회, `/reviews/decide` `dismiss` 결정 후 중복(`601`) 제거 및 `반영 중`·`반영 실패(운영자 확인)` 표시 확인 |
 | 감사 로그 불변 트리거 | `UPDATE audit_logs SET action_type = 'TAMPERED' ...` | PostgreSQL 17 Flyway 트리거가 `ERROR: audit_logs is append-only: UPDATE is forbidden`으로 차단 |
 
 ---

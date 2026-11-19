@@ -306,6 +306,20 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $e2eLogs.Add("[4c] viewer1 IDOR syn1-tue (/incidents/201/rank/1):`n$(($viewerIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
                 if ($viewerIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "viewer1 미허용 캡처 IDOR 403 차단 실패" }
 
+                $viewerOps = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/operations")
+                $e2eLogs.Add("[4c-ops] viewer1 GET /operations feedback_summary IDOR check: HTTP $((($viewerOps.Output -split "`r?`n")[0]))")
+                if ($viewerOps.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $viewerOps.Output -notmatch "분석가 결론 집계" -or
+                    $viewerOps.Output -notmatch "놓친 공격\(재현율\)" -or
+                    $viewerOps.Output -notmatch "cic17-wed" -or
+                    $viewerOps.Output -notmatch "정밀도 0\.00, 결론 1/3 \(33\.3%\)" -or
+                    $viewerOps.Output -match "syn1-tue" -or
+                    $viewerOps.Output -match "lab-20261118" -or
+                    $viewerOps.Output -match "lab-fusion-v2" -or
+                    $viewerOps.Output -match "정확도") {
+                    throw "viewer1 /operations feedback_summary 허용 캡처 격리 또는 문구 확인 실패"
+                }
+
                 $viewerCsrf = Extract-Csrf $viewerDetail.Output
                 $viewerTransition = Invoke-CurlRaw @(
                     "-i", "-b", $viewerCookies,
@@ -372,6 +386,17 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $analystLabIdor = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents?captureId=lab-20261118")
                 $e2eLogs.Add("[5c] analyst1 IDOR lab-20261118:`n$(($analystLabIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
                 if ($analystLabIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 lab-20261118 IDOR 403 차단 실패" }
+
+                $analystOps = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/operations")
+                $e2eLogs.Add("[5c-ops] analyst1 GET /operations feedback_summary IDOR check: HTTP $((($analystOps.Output -split "`r?`n")[0]))")
+                if ($analystOps.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $analystOps.Output -notmatch "분석가 결론 집계" -or
+                    $analystOps.Output -notmatch "cic17-wed" -or
+                    $analystOps.Output -match "syn1-tue" -or
+                    $analystOps.Output -match "lab-20261118" -or
+                    $analystOps.Output -match "lab-fusion-v2") {
+                    throw "analyst1 /operations feedback_summary 허용 캡처 격리 확인 실패"
+                }
 
                 $analystRevIdor = Invoke-CurlRaw @(
                     "-i", "-b", $analystCookies,
@@ -483,10 +508,22 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     throw "v2.1 incident_id 기준 상태 종료 및 이력 합산(501+502) 확인 실패"
                 }
 
-                # 6d) zeekad-fusion/3 (45분 사건), 보고서 재생성(602) 뒤에도 Slack(601) 조회, admin dismiss 검토 결정
+                # 6d) zeekad-fusion/3 (45분 사건), 보고서 재생성(602) 뒤에도 Slack(601) 조회, admin dismiss 검토 결정 및 /operations feedback_summary 전체 집계 실측
                 $opsPage = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/operations")
-                if ($opsPage.Output -notmatch "HTTP/[\d.]+ 200" -or $opsPage.Output -notmatch "zeekad-fusion/3") {
-                    throw "운영 상태 화면 zeekad-fusion/3 번들 표시 확인 실패"
+                $e2eLogs.Add("[6d-ops] admin GET /operations feedback_summary full check: HTTP $((($opsPage.Output -split "`r?`n")[0]))")
+                if ($opsPage.Output -notmatch "HTTP/[\d.]+ 200" -or
+                    $opsPage.Output -notmatch "zeekad-fusion/3" -or
+                    $opsPage.Output -notmatch "분석가 결론 집계" -or
+                    $opsPage.Output -notmatch "놓친 공격\(재현율\)" -or
+                    $opsPage.Output -notmatch "전체 \(all\)" -or
+                    $opsPage.Output -notmatch "cic17-wed" -or
+                    $opsPage.Output -notmatch "syn1-tue" -or
+                    $opsPage.Output -notmatch "lab-20261118" -or
+                    $opsPage.Output -notmatch "lab-fusion-v2" -or
+                    $opsPage.Output -notmatch "정밀도 1\.00, 결론 1/2 \(50\.0%\)" -or
+                    $opsPage.Output -notmatch "정밀도 1\.00, 결론 1/1 \(100\.0%\)" -or
+                    $opsPage.Output -match "정확도") {
+                    throw "운영 상태 화면 zeekad-fusion/3 및 admin feedback_summary 전체 집계/정밀도 비율/재현율 안내 확인 실패"
                 }
 
                 $fusionDetail = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/602/rank/1")
