@@ -1,6 +1,11 @@
 package com.zeekad.dashboard;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import com.zeekad.dashboard.dto.IncidentTransitionRequest;
+import com.zeekad.dashboard.dto.LoginRequest;
+import com.zeekad.dashboard.dto.TotpCodeRequest;
 import com.zeekad.dashboard.mapper.app.AuditLogMapper;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.AuditActionType;
@@ -9,6 +14,7 @@ import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.TotpService;
 import com.zeekad.dashboard.service.UserAdminService;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
@@ -37,11 +44,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -114,6 +121,9 @@ class IncidentDetailAndSecurityIntegrationTest {
     private MockMvc mockMvc;
 
     @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
     private UserAdminService userAdminService;
 
     @Autowired
@@ -168,38 +178,36 @@ class IncidentDetailAndSecurityIntegrationTest {
         MockHttpSession analystSession = loginAs(analyst, "Pass1234!");
 
         // 1. job 101 rank 1 (LLM 보고서 + 만장일치 전송 판단 + Slack dry_run + evidence.v1 정상)
-        MvcResult rank1Res = mockMvc.perform(get("/incidents/101/rank/1").session(analystSession))
+        MvcResult rank1Res = mockMvc.perform(get("/api/incidents/101/rank/1").session(analystSession))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Security-Policy", containsString("script-src 'self'")))
                 .andExpect(header().string("Content-Security-Policy", containsString("frame-ancestors 'none'")))
-                .andExpect(content().string(containsString("192.168.10.50")))
-                .andExpect(content().string(containsString("4 / 6")))
-                .andExpect(content().string(containsString("3 / 6")))
+                .andExpect(jsonPath("$.maskedView").value(false))
+                .andExpect(jsonPath("$.canDecideReview").value(true))
+                .andExpect(jsonPath("$.detail.incident.hostIp").value("192.168.10.50"))
+                .andExpect(jsonPath("$.detail.modelScores[0].windowRatioLabel").value("3 / 6"))
+                .andExpect(jsonPath("$.detail.modelScores[1].windowRatioLabel").value("4 / 6"))
                 .andExpect(content().string(not(containsString("0.91")))) // max_score 직접 비교/노출 금지
                 .andExpect(content().string(containsString("admin")))
                 .andExpect(content().string(containsString("svc_ad_sync")))
                 .andExpect(content().string(containsString("source_log")))
-                .andExpect(content().string(containsString("412")))
+                .andExpect(jsonPath("$.detail.evidence.connectionCount").value(412))
                 .andExpect(content().string(containsString("203.0.113.45")))
                 .andExpect(content().string(containsString("dce_rpc")))
-                .andExpect(content().string(containsString("gemini-2.5-pro-001")))
+                .andExpect(jsonPath("$.detail.report.llmModelVersion").value("gemini-2.5-pro-001"))
                 .andExpect(content().string(containsString("H(192.168.10.50)에서 X1(203.0.113.45)로")))
-                .andExpect(content().string(containsString("<details class=\"fact-details\">")))
-                .andExpect(content().string(containsString("F1 (connection_count)")))
                 .andExpect(content().string(containsString("T1558")))
-                .andExpect(content().string(containsString("공격 정답이 아닌 가설")))
-                .andExpect(content().string(containsString("선택 확률")))
+                .andExpect(jsonPath("$.detail.sendDecision.decisionModelConfidence").value(0.84))
                 .andExpect(content().string(not(containsString("정확도"))))
                 .andExpect(content().string(not(containsString("신뢰도 %"))))
-                .andExpect(content().string(containsString("기록만(dry-run)")))
-                .andExpect(content().string(containsString("머리 알림")))
-                .andExpect(content().string(containsString("머리 사건 후속 답글")))
-                .andExpect(content().string(containsString("채널 재알림(broadcast)")))
-                .andExpect(content().string(containsString("분석가 검토 요청 (analyst_review_queue)")))
-                .andExpect(content().string(containsString("반영됨")))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].dryRunOrRecorded").value(true))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("머리 알림"))
+                .andExpect(jsonPath("$.detail.slackDeliveries[1].threadRoleLabel").value("머리 사건 후속 답글"))
+                .andExpect(jsonPath("$.detail.slackDeliveries[1].replyBroadcast").value(true))
+                .andExpect(jsonPath("$.detail.analystReview.present").value(true))
+                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영됨"))
                 .andReturn();
-        String rank1Html = rank1Res.getResponse().getContentAsString();
-        assertThat(rank1Html).doesNotContain("<script>");
+        assertThat(rank1Res.getResponse().getContentAsString()).doesNotContain("<script>");
 
         // INCIDENT_VIEW_UNMASKED 감사 로그 확인
         List<AuditLog> unmaskedLogs = auditLogMapper.findFiltered(
@@ -208,25 +216,24 @@ class IncidentDetailAndSecurityIntegrationTest {
         assertThat(unmaskedLogs.get(0).getTargetJobId()).isEqualTo(101L);
 
         // 2. job 101 rank 2 (템플릿 보고서 null 안전 + 세 의견 불일치 + 이력 display_name)
-        mockMvc.perform(get("/incidents/101/rank/2").session(analystSession))
+        mockMvc.perform(get("/api/incidents/101/rank/2").session(analystSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("template.v1")))
+                .andExpect(jsonPath("$.detail.report.reportVersion").value("template.v1"))
                 .andExpect(content().string(containsString("H(10.20.30.40)의 SMB 응답 트래픽 증가")))
-                .andExpect(content().string(containsString("의견 불일치")))
-                .andExpect(content().string(containsString("선택 확률")))
-                .andExpect(content().string(not(containsString("정확도"))))
-                .andExpect(content().string(not(containsString("보고서 전송 권고"))));
+                .andExpect(jsonPath("$.detail.sendDecision.opinionMismatch").value(true))
+                .andExpect(jsonPath("$.detail.report.sendRecommendation").doesNotExist());
 
         // 3. job 101 rank 3 (보고서 없음)
-        mockMvc.perform(get("/incidents/101/rank/3").session(analystSession))
+        mockMvc.perform(get("/api/incidents/101/rank/3").session(analystSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("보고서 없음")));
+                .andExpect(jsonPath("$.detail.report.present").value(false));
 
-        // 4. FastAPI 장애 시 폴백 배너 + DB 뷰 정보 정상 표시
+        // 4. FastAPI 장애 시 폴백 배너 + DB 뷰 정보 정상 반환
         evidenceServerShouldFail.set(true);
-        mockMvc.perform(get("/incidents/101/rank/1").session(analystSession))
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(analystSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("근거 API 연결 불가(DB 뷰 정보만 표시)")))
+                .andExpect(jsonPath("$.detail.evidence.available").value(false))
+                .andExpect(jsonPath("$.detail.evidence.statusMessage").value("근거 API 연결 불가(DB 뷰 정보만 표시)"))
                 .andExpect(content().string(containsString("H(192.168.10.50)에서 X1(203.0.113.45)로")))
                 .andExpect(content().string(containsString("gemini-2.5-pro")));
 
@@ -237,15 +244,18 @@ class IncidentDetailAndSecurityIntegrationTest {
         DashboardUser admin = userMapper.findByUsername(adminUser);
         MockHttpSession adminSession = loginAs(adminUser, "AdminPass!99");
         String totpCode = totpService.generateCode(admin.getTotpSecret(), clock.instant());
-        mockMvc.perform(post("/login/totp/setup")
+        Cookie csrfCookie = fetchCsrfCookie();
+        mockMvc.perform(post("/api/auth/totp/setup")
                         .session(adminSession)
-                        .with(csrf())
-                        .param("code", totpCode))
-                .andExpect(status().is3xxRedirection());
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new TotpCodeRequest(totpCode))))
+                .andExpect(status().isOk());
 
-        mockMvc.perform(get("/incidents/201/rank/1").session(adminSession))
+        mockMvc.perform(get("/api/incidents/201/rank/1").session(adminSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("10.99.88.77")));
+                .andExpect(jsonPath("$.detail.incident.hostIp").value("10.99.88.77"));
         assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_VIEW_UNMASKED.name(), adminUser, 10))
                 .hasSize(1);
     }
@@ -258,57 +268,63 @@ class IncidentDetailAndSecurityIntegrationTest {
         MockHttpSession viewerSession = loginAs(viewer, "Pass1234!");
 
         // VIEWER 상세 조회: 모든 IP 및 계정명 마스킹 확인
-        MvcResult viewerRes = mockMvc.perform(get("/incidents/101/rank/1").session(viewerSession))
+        MvcResult viewerRes = mockMvc.perform(get("/api/incidents/101/rank/1").session(viewerSession))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maskedView").value(true))
+                .andExpect(jsonPath("$.canDecideReview").value(false))
+                .andExpect(jsonPath("$.detail.canTransition").value(false))
+                .andExpect(jsonPath("$.detail.analystReview.canDecide").value(false))
                 .andExpect(content().string(containsString("192.168.*.*")))
                 .andExpect(content().string(containsString("203.0.*.*")))
                 .andExpect(content().string(containsString("10.20.*.*")))
-                .andExpect(content().string(containsString("a***")))
-                .andExpect(content().string(containsString("s***")))
+                .andExpect(jsonPath("$.detail.assetNames[0].kerberosUser").value("a***"))
+                .andExpect(jsonPath("$.detail.assetNames[0].ntlmUser").value("s***"))
                 .andExpect(content().string(containsString("H(192.168.*.*)에서 X1(203.0.*.*)로")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))))
                 .andExpect(content().string(not(containsString("203.0.113.45"))))
                 .andExpect(content().string(not(containsString("10.20.30.99"))))
                 .andExpect(content().string(not(containsString("svc_ad_sync"))))
-                .andExpect(content().string(not(containsString("/transition"))))
-                .andExpect(content().string(not(containsString("/review-decision"))))
                 .andReturn();
-        assertThat(viewerRes.getResponse().getContentAsString()).doesNotContain(">admin<");
+        assertThat(viewerRes.getResponse().getContentAsString()).doesNotContain("\"admin\"");
 
         // VIEWER가 다른 사건의 thread_parent에 포함된 원문 IP도 마스킹되는지 확인 (101/rank/2 -> 스레드 답글)
-        mockMvc.perform(get("/incidents/101/rank/2").session(viewerSession))
+        mockMvc.perform(get("/api/incidents/101/rank/2").session(viewerSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("스레드 답글")))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("스레드 답글"))
                 .andExpect(content().string(containsString("192.168.*.*")))
-                .andExpect(content().string(not(containsString("192.168.10.50"))))
-                .andExpect(content().string(not(containsString("/review-decision"))));
+                .andExpect(content().string(not(containsString("192.168.10.50"))));
 
         // VIEWER는 INCIDENT_VIEW_UNMASKED 로그가 남지 않아야 함
         assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_VIEW_UNMASKED.name(), viewer, 10))
                 .isEmpty();
 
         // VIEWER가 허용된 캡처의 상태 변경 POST 시도 -> 403 Forbidden
-        mockMvc.perform(post("/incidents/101/rank/1/transition")
+        Cookie csrfCookie = fetchCsrfCookie();
+        mockMvc.perform(post("/api/incidents/101/rank/1/transition")
                         .session(viewerSession)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "권한 없는 변경 시도"))
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "권한 없는 변경 시도"))))
                 .andExpect(status().isForbidden());
 
         // 미허용 캡처(job 201, syn1-tue) 상세 조회 및 상태 변경 시도 -> 403 + ACCESS_DENIED_IDOR
-        mockMvc.perform(get("/incidents/201/rank/1").session(viewerSession))
+        mockMvc.perform(get("/api/incidents/201/rank/1").session(viewerSession))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(post("/incidents/201/rank/1/transition")
+        mockMvc.perform(post("/api/incidents/201/rank/1/transition")
                         .session(viewerSession)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "타 캡처 변경 시도"))
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "타 캡처 변경 시도"))))
                 .andExpect(status().isForbidden());
 
         // 존재하지 않는 queueRank / jobId 접근 -> 403 + ACCESS_DENIED_IDOR
-        mockMvc.perform(get("/incidents/101/rank/999").session(viewerSession))
+        mockMvc.perform(get("/api/incidents/101/rank/999").session(viewerSession))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(get("/incidents/999999/rank/1").session(viewerSession))
+        mockMvc.perform(get("/api/incidents/999999/rank/1").session(viewerSession))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> idorLogs = auditLogMapper.findFiltered(
@@ -317,7 +333,7 @@ class IncidentDetailAndSecurityIntegrationTest {
     }
 
     @Test
-    void untrustedReportAndLogInputsAreHtmlEscapedWithSinglePassPseudonymAnnotation() throws Exception {
+    void untrustedReportAndLogInputsSerializeSafelyAsJsonWithNoSniffAndSinglePassPseudonyms() throws Exception {
         zeekadJdbc.update("""
                 INSERT INTO dashboard.raw_scoring_jobs
                 (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
@@ -386,22 +402,22 @@ class IncidentDetailAndSecurityIntegrationTest {
                 "cic17-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        MvcResult result = mockMvc.perform(get("/incidents/{jobId}/rank/1", XSS_JOB_ID).session(session))
+        MvcResult result = mockMvc.perform(get("/api/incidents/{jobId}/rank/1", XSS_JOB_ID).session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("H(192.168.77.10)가 X1(203.0.113.99)로 HTTP 요청 전송")))
-                .andExpect(content().string(containsString("&lt;script&gt;alert(1)&lt;/script&gt;")))
-                .andExpect(content().string(containsString("&lt;img src=x onerror=alert(2)&gt;")))
-                .andExpect(content().string(containsString("&lt;svg onload=alert(&quot;ntlm&quot;)&gt;")))
-                .andExpect(content().string(containsString("&lt;script&gt;alert(&quot;host&quot;)&lt;/script&gt;")))
-                .andExpect(content().string(containsString("검증 실패")))
+                .andExpect(header().string("Content-Type", containsString("application/json")))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Content-Security-Policy", containsString("script-src 'self'")))
+                .andExpect(jsonPath("$.detail.report.verificationPassed").value(false))
                 .andReturn();
 
-        String html = result.getResponse().getContentAsString();
-        assertThat(html).doesNotContain("<script>");
-        assertThat(html).doesNotContain("<img src=x");
-        assertThat(html).doesNotContain("<svg onload=");
-        assertThat(html).doesNotContain("<!-- injected -->");
-        assertThat(html).doesNotContain("style=\"");
+        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
+        JsonNode detail = root.get("detail");
+        assertThat(detail.get("incident").get("hostName").get(0).asText())
+                .isEqualTo("<script>alert(\"host\")</script>");
+        assertThat(detail.get("assetNames").get(0).get("ntlmUser").asText())
+                .isEqualTo("<svg onload=alert(\"ntlm\")>");
+        assertThat(detail.get("report").get("observationSummary").asText())
+                .isEqualTo("<script>alert(1)</script> H(192.168.77.10)가 X1(203.0.113.99)로 HTTP 요청 전송");
     }
 
     @Test
@@ -412,48 +428,47 @@ class IncidentDetailAndSecurityIntegrationTest {
         MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
 
         // 1. job 502 rank 1 (zeekad_report_job_id == null -> 보고서 없음, 판단 없음, Slack 없음)
-        mockMvc.perform(get("/incidents/502/rank/1").session(session))
+        mockMvc.perform(get("/api/incidents/502/rank/1").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("10.20.0.25")))
-                .andExpect(content().string(containsString("1 / 3")))
-                .andExpect(content().string(containsString("보고서 없음")))
-                .andExpect(content().string(containsString("전송 판단 기록 없음")))
-                .andExpect(content().string(containsString("Slack 전송 기록 없음")));
+                .andExpect(jsonPath("$.detail.incident.hostIp").value("10.20.0.25"))
+                .andExpect(jsonPath("$.detail.modelScores[0].windowRatioLabel").value("1 / 3"))
+                .andExpect(jsonPath("$.detail.report.present").value(false))
+                .andExpect(jsonPath("$.detail.sendDecision.present").value(false))
+                .andExpect(jsonPath("$.detail.slackDeliveries.length()").value(0));
         assertThat(lastEvidencePath.get()).isEqualTo("/api/v1/jobs/502/incidents/1");
 
         // 2. job 502 rank 2 (큐·모델점수·근거 API는 502, 보고서·판단·Slack은 501, 상태·이력은 incident_id 기준)
-        mockMvc.perform(get("/incidents/502/rank/2").session(session))
+        mockMvc.perform(get("/api/incidents/502/rank/2").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("job #502")))
-                .andExpect(content().string(containsString("보고 작업 job #501")))
-                .andExpect(content().string(containsString("5 / 6")))
-                .andExpect(content().string(containsString("4 / 6")))
+                .andExpect(jsonPath("$.detail.incident.jobId").value(502))
+                .andExpect(jsonPath("$.detail.incident.zeekadReportJobId").value(501))
+                .andExpect(jsonPath("$.detail.modelScores[0].windowRatioLabel").value("4 / 6"))
+                .andExpect(jsonPath("$.detail.modelScores[1].windowRatioLabel").value("5 / 6"))
                 .andExpect(content().string(containsString("실습망 H(10.20.0.15)에서 I1(10.20.0.99)로 비정상 인증 시도")))
-                .andExpect(content().string(containsString("F1 (lab_conn_count)")))
-                .andExpect(content().string(containsString("최종 판단: 전송")))
-                .andExpect(content().string(containsString("기록만(dry-run)")))
-                .andExpect(content().string(containsString("현재 상태: investigating")))
-                .andExpect(content().string(containsString("실습망 초기 조사 시작")))
-                .andExpect(content().string(containsString("job #501")));
+                .andExpect(jsonPath("$.detail.sendDecision.wouldSend").value(true))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].dryRunOrRecorded").value(true))
+                .andExpect(jsonPath("$.detail.currentStatus").value("investigating"))
+                .andExpect(jsonPath("$.detail.statusHistory[0].jobId").value(501))
+                .andExpect(jsonPath("$.detail.statusHistory[0].reason").value("실습망 초기 조사 시작"));
         assertThat(lastEvidencePath.get()).isEqualTo("/api/v1/jobs/502/incidents/2");
     }
 
     @Test
-    void fusionV3Over30MinutesAndSlackLookupWithoutReportJobIdRenderCorrectly() throws Exception {
+    void fusionV3Over30MinutesAndSlackLookupWithoutReportJobIdReturnCorrectJson() throws Exception {
         String labAnalyst = "fusion_detail_analyst";
         userAdminService.createUser(labAnalyst, "결합분석가", "Pass1234!", UserRole.ANALYST,
                 "lab-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
 
         // 1. zeekad-fusion/3 45분 사건 + 보고서 재생성(602) 뒤에도 처음 작업(601) Slack 기록 조회
-        mockMvc.perform(get("/incidents/602/rank/1").session(session))
+        mockMvc.perform(get("/api/incidents/602/rank/1").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("zeekad-fusion/3")))
-                .andExpect(content().string(containsString("보고 작업 job #602")))
+                .andExpect(jsonPath("$.detail.incident.bundleId").value("zeekad-fusion/3"))
+                .andExpect(jsonPath("$.detail.incident.zeekadReportJobId").value(602))
                 .andExpect(content().string(containsString("2026-11-19T01:00")))
                 .andExpect(content().string(containsString("2026-11-19T01:45")))
-                .andExpect(content().string(containsString("결합 v2 경보: 10.40.0.10 -&gt; 10.40.0.99")))
-                .andExpect(content().string(containsString("job #601")));
+                .andExpect(content().string(containsString("결합 v2 경보: 10.40.0.10 -> 10.40.0.99")))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].jobId").value(601));
 
         // 2. reportJobId == null 이더라도 incident_id 단독으로 Slack 기록 조회
         String noReportIncident = "lab-20261118|10.20.0.25|responder|1763424300";
@@ -470,21 +485,28 @@ class IncidentDetailAndSecurityIntegrationTest {
                 )
                 """, noReportIncident);
         try {
-            mockMvc.perform(get("/incidents/502/rank/1").session(session))
+            mockMvc.perform(get("/api/incidents/502/rank/1").session(session))
                     .andExpect(status().isOk())
-                    .andExpect(content().string(containsString("보고서 없음")))
+                    .andExpect(jsonPath("$.detail.report.present").value(false))
                     .andExpect(content().string(containsString("보고서 없는 사건 상태 Slack 알림: 10.20.0.25")));
         } finally {
             zeekadJdbc.update("DELETE FROM dashboard.raw_slack_deliveries WHERE incident_id = ?", noReportIncident);
         }
     }
 
+    private Cookie fetchCsrfCookie() throws Exception {
+        MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
+        return res.getResponse().getCookie("XSRF-TOKEN");
+    }
+
     private MockHttpSession loginAs(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/login")
-                        .with(csrf())
-                        .param("username", username)
-                        .param("password", password))
-                .andExpect(status().is3xxRedirection())
+        Cookie csrfCookie = fetchCsrfCookie();
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, password))))
+                .andExpect(status().isOk())
                 .andReturn();
         return (MockHttpSession) result.getRequest().getSession(false);
     }

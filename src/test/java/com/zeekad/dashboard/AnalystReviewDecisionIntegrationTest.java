@@ -1,5 +1,11 @@
 package com.zeekad.dashboard;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zeekad.dashboard.dto.IncidentReviewDecisionRequest;
+import com.zeekad.dashboard.dto.LoginRequest;
+import com.zeekad.dashboard.dto.ReviewDecideRequest;
+import com.zeekad.dashboard.dto.TotpCodeRequest;
 import com.zeekad.dashboard.mapper.app.AuditLogMapper;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
@@ -11,6 +17,7 @@ import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.security.TotpService;
 import com.zeekad.dashboard.service.UserAdminService;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,17 +25,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import javax.sql.DataSource;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -40,12 +50,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -65,6 +73,9 @@ class AnalystReviewDecisionIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private UserAdminService userAdminService;
@@ -217,39 +228,42 @@ class AnalystReviewDecisionIntegrationTest {
         MockHttpSession viewerSession = loginAs(viewer, "Pass1234!");
         MockHttpSession analystSession = loginAs(analyst, "Pass1234!");
 
-        // VIEWER는 /reviews에서 버튼 폼이 보이지 않고, 직접 POST 호출 시 403
-        mockMvc.perform(get("/reviews").param("captureId", CAPTURE_CIC).session(viewerSession))
+        // VIEWER는 /api/reviews 에서 canDecideReview=false 이고 직접 POST 호출 시 403
+        mockMvc.perform(get("/api/reviews").param("captureId", CAPTURE_CIC).session(viewerSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(not(containsString("/reviews/decide"))))
-                .andExpect(content().string(containsString("분석가 이상 결정 가능")));
+                .andExpect(jsonPath("$.canDecideReview").value(false));
 
-        mockMvc.perform(post("/reviews/decide")
+        mockMvc.perform(post("/api/reviews/decide")
                         .session(viewerSession)
-                        .with(csrf())
-                        .param("jobId", String.valueOf(JOB_LATEST))
-                        .param("incidentId", INC_1)
-                        .param("action", "confirm"))
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ReviewDecideRequest(JOB_LATEST, INC_1, "confirm", null))))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/review-decision", JOB_LATEST)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/review-decision", JOB_LATEST)
                         .session(viewerSession)
-                        .with(csrf())
-                        .param("action", "confirm"))
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentReviewDecisionRequest("confirm", null))))
                 .andExpect(status().isForbidden());
 
         // ANALYST가 미허용 캡처(syn1-rev-test) 결정 시도 -> 403 + ACCESS_DENIED_IDOR 감사 로그
-        mockMvc.perform(post("/reviews/decide")
+        mockMvc.perform(post("/api/reviews/decide")
                         .session(analystSession)
-                        .with(csrf())
-                        .param("jobId", String.valueOf(JOB_OTHER_CAPTURE))
-                        .param("incidentId", INC_OTHER)
-                        .param("action", "confirm"))
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ReviewDecideRequest(JOB_OTHER_CAPTURE, INC_OTHER, "confirm", null))))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/review-decision", JOB_OTHER_CAPTURE)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/review-decision", JOB_OTHER_CAPTURE)
                         .session(analystSession)
-                        .with(csrf())
-                        .param("action", "dismiss"))
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentReviewDecisionRequest("dismiss", null))))
                 .andExpect(status().isForbidden());
 
         List<AuditLog> idorLogs = auditLogMapper.findFiltered(
@@ -268,27 +282,29 @@ class AnalystReviewDecisionIntegrationTest {
 
         MockHttpSession analystSession = loginAs(analyst, "Pass1234!");
 
-        // 1. /reviews에서 중복 구 작업(701)은 숨겨지고 최신 reportJobId(702)만 노출됨
-        mockMvc.perform(get("/reviews").param("captureId", CAPTURE_CIC).session(analystSession))
+        // 1. /api/reviews 에서 중복 구 작업(701)은 숨겨지고 최신 reportJobId(702)만 노출됨
+        mockMvc.perform(get("/api/reviews").param("captureId", CAPTURE_CIC).session(analystSession))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("최신 보고 작업(702) 검토 대기 1")))
                 .andExpect(content().string(not(containsString("구 작업 중복 요청"))));
 
-        // 2. ANALYST가 /reviews/decide로 confirm 결정 (위조 analyst/p_analyst 무시 확인)
-        mockMvc.perform(post("/reviews/decide")
+        // 2. ANALYST가 /api/reviews/decide 로 confirm 결정 (위조 analyst/p_analyst 무시 확인)
+        String spoofedPayload = objectMapper.writeValueAsString(Map.of(
+                "jobId", JOB_LATEST,
+                "incidentId", INC_1,
+                "action", "confirm",
+                "note", "정밀 조사 필요",
+                "analyst", "spoofed_admin",
+                "p_analyst", "spoofed_admin"
+        ));
+        mockMvc.perform(post("/api/reviews/decide")
                         .session(analystSession)
-                        .with(csrf())
-                        .param("jobId", String.valueOf(JOB_LATEST))
-                        .param("incidentId", INC_1)
-                        .param("action", "confirm")
-                        .param("note", "정밀 조사 필요")
-                        .param("analyst", "spoofed_admin")
-                        .param("p_analyst", "spoofed_admin")
-                        .param("captureId", CAPTURE_CIC)
-                        .param("pendingOnly", "false"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/reviews?captureId=" + CAPTURE_CIC))
-                .andExpect(flash().attributeExists("reviewSuccess"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(spoofedPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true))
+                .andExpect(jsonPath("$.code").value("OK"));
 
         AnalystReviewItem decided1 = zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_1);
         assertThat(decided1).isNotNull();
@@ -299,63 +315,63 @@ class AnalystReviewDecisionIntegrationTest {
         assertThat(decided1.isResumeFailed()).isFalse();
         assertThat(decided1.getResumeStatusLabel()).isEqualTo("반영 중");
 
-        // /reviews 화면에서 '반영 중' 및 '김검토 (rev_analyst_1)' 표시, 위조 이름 미노출 확인
-        mockMvc.perform(get("/reviews").param("captureId", CAPTURE_CIC).session(analystSession))
+        // /api/reviews 에서 '반영 중' 및 '김검토 (rev_analyst_1)' 표시, 위조 이름 미노출 확인
+        mockMvc.perform(get("/api/reviews").param("captureId", CAPTURE_CIC).session(analystSession))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("반영 중")))
                 .andExpect(content().string(containsString("김검토 (" + analyst + ")")))
                 .andExpect(content().string(not(containsString("spoofed_admin"))));
 
-        // 3. 이미 결정된 항목 재결정 시도 -> SQLSTATE 22023 오류 메시지 + 새로고침 안내
-        MvcResult dupRes = mockMvc.perform(post("/reviews/decide")
+        // 3. 이미 결정된 항목 재결정 시도 -> 409 CONFLICT + 새로고침 안내
+        mockMvc.perform(post("/api/reviews/decide")
                         .session(analystSession)
-                        .with(csrf())
-                        .param("jobId", String.valueOf(JOB_LATEST))
-                        .param("incidentId", INC_1)
-                        .param("action", "dismiss")
-                        .param("captureId", CAPTURE_CIC))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("reviewError"))
-                .andReturn();
-        assertThat(dupRes.getFlashMap().get("reviewError").toString()).contains("새로고침");
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ReviewDecideRequest(JOB_LATEST, INC_1, "dismiss", null))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.succeeded").value(false))
+                .andExpect(jsonPath("$.code").value("CONFLICT"))
+                .andExpect(jsonPath("$.message").value(containsString("새로고침")));
 
-        // 4. 잘못된 action 값 거부
-        mockMvc.perform(post("/reviews/decide")
+        // 4. 잘못된 action 값 -> 400 INVALID_REQUEST 거부
+        mockMvc.perform(post("/api/reviews/decide")
                         .session(analystSession)
-                        .with(csrf())
-                        .param("jobId", String.valueOf(JOB_LATEST))
-                        .param("incidentId", INC_2)
-                        .param("action", "invalid_action"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("reviewError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ReviewDecideRequest(JOB_LATEST, INC_2, "invalid_action", null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
-        // 5. ADMIN(TOTP 완료)이 사건 상세(/incidents/702/rank/2/review-decision)에서 dismiss 결정
+        // 5. ADMIN(TOTP 완료)이 사건 상세(/api/incidents/702/rank/2/review-decision)에서 dismiss 결정
         DashboardUser admin = userMapper.findByUsername(adminUser);
         MockHttpSession adminSession = loginAs(adminUser, "AdminPass!88");
         String code = totpService.generateCode(admin.getTotpSecret(), clock.instant());
-        mockMvc.perform(post("/login/totp/setup")
+        mockMvc.perform(post("/api/auth/totp/setup")
                         .session(adminSession)
-                        .with(csrf())
-                        .param("code", code))
-                .andExpect(status().is3xxRedirection());
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new TotpCodeRequest(code))))
+                .andExpect(status().isOk());
 
-        mockMvc.perform(post("/incidents/{jobId}/rank/2/review-decision", JOB_LATEST)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/2/review-decision", JOB_LATEST)
                         .session(adminSession)
-                        .with(csrf())
-                        .param("action", "dismiss")
-                        .param("note", "정상 백업 트래픽 확인"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/incidents/" + JOB_LATEST + "/rank/2"))
-                .andExpect(flash().attributeExists("reviewSuccess"));
-
-        mockMvc.perform(get("/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentReviewDecisionRequest("dismiss", "정상 백업 트래픽 확인"))))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("결정: dismiss")))
-                .andExpect(content().string(containsString("반영 중")))
-                .andExpect(content().string(containsString("박관리 (" + adminUser + ")")))
-                .andExpect(content().string(not(containsString("/review-decision"))));
+                .andExpect(jsonPath("$.succeeded").value(true));
 
-        // 6. 파이프라인 재개 반영 완료('반영됨') 및 실패('반영 실패(운영자 확인)') 상태 렌더링 검증
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.analystReview.reviewAction").value("dismiss"))
+                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영 중"))
+                .andExpect(jsonPath("$.detail.analystReview.analystDisplay").value("박관리 (" + adminUser + ")"))
+                .andExpect(jsonPath("$.detail.analystReview.canDecide").value(false));
+
+        // 6. 파이프라인 재개 반영 완료('반영됨') 및 실패('반영 실패(운영자 확인)') 상태 응답 검증
         zeekadJdbc.update("""
                 UPDATE dashboard.raw_analyst_review_queue
                 SET zeekad_review_resumed_at = TIMESTAMP WITH TIME ZONE '2026-11-19 03:09:30Z',
@@ -369,12 +385,12 @@ class AnalystReviewDecisionIntegrationTest {
                 WHERE job_id = ? AND incident_id = ?
                 """, JOB_LATEST, INC_2);
 
-        mockMvc.perform(get("/incidents/{jobId}/rank/1", JOB_LATEST).session(analystSession))
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/1", JOB_LATEST).session(analystSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("반영됨")));
-        mockMvc.perform(get("/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
+                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영됨"));
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("반영 실패(운영자 확인)")));
+                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영 실패(운영자 확인)"));
 
         // 7. 감사 로그 ANALYST_REVIEW_DECISION 검증
         List<AuditLog> analystAudit = auditLogMapper.findFiltered(
@@ -408,25 +424,23 @@ class AnalystReviewDecisionIntegrationTest {
                     () -> {
                         ready.countDown();
                         start.await(5, TimeUnit.SECONDS);
-                        return mockMvc.perform(post("/reviews/decide")
+                        return mockMvc.perform(post("/api/reviews/decide")
                                         .session(sessionA)
-                                        .with(csrf())
-                                        .param("jobId", String.valueOf(JOB_LATEST))
-                                        .param("incidentId", INC_CONC)
-                                        .param("action", "confirm"))
-                                .andExpect(status().is3xxRedirection())
+                                        .with(xsrf())
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(
+                                                new ReviewDecideRequest(JOB_LATEST, INC_CONC, "confirm", null))))
                                 .andReturn();
                     },
                     () -> {
                         ready.countDown();
                         start.await(5, TimeUnit.SECONDS);
-                        return mockMvc.perform(post("/reviews/decide")
+                        return mockMvc.perform(post("/api/reviews/decide")
                                         .session(sessionB)
-                                        .with(csrf())
-                                        .param("jobId", String.valueOf(JOB_LATEST))
-                                        .param("incidentId", INC_CONC)
-                                        .param("action", "dismiss"))
-                                .andExpect(status().is3xxRedirection())
+                                        .with(xsrf())
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(
+                                                new ReviewDecideRequest(JOB_LATEST, INC_CONC, "dismiss", null))))
                                 .andReturn();
                     }
             );
@@ -438,19 +452,20 @@ class AnalystReviewDecisionIntegrationTest {
             start.countDown();
 
             int successCount = 0;
-            int errorCount = 0;
+            int conflictCount = 0;
             String errorMsg = null;
             for (Future<MvcResult> f : futures) {
                 MvcResult res = f.get(10, TimeUnit.SECONDS);
-                if (res.getFlashMap().containsKey("reviewSuccess")) {
+                JsonNode json = objectMapper.readTree(res.getResponse().getContentAsString());
+                if (res.getResponse().getStatus() == 200 && json.get("succeeded").asBoolean()) {
                     successCount++;
-                } else if (res.getFlashMap().containsKey("reviewError")) {
-                    errorCount++;
-                    errorMsg = String.valueOf(res.getFlashMap().get("reviewError"));
+                } else if (res.getResponse().getStatus() == 409) {
+                    conflictCount++;
+                    errorMsg = json.get("message").asText();
                 }
             }
             assertThat(successCount).isEqualTo(1);
-            assertThat(errorCount).isEqualTo(1);
+            assertThat(conflictCount).isEqualTo(1);
             assertThat(errorMsg).contains("새로고침");
             assertThat(errorMsg).doesNotContain("java.lang.", "org.h2.", "SELECT ");
         } finally {
@@ -475,12 +490,22 @@ class AnalystReviewDecisionIntegrationTest {
                 });
     }
 
+    private RequestPostProcessor xsrf() throws Exception {
+        MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
+        Cookie csrfCookie = res.getResponse().getCookie("XSRF-TOKEN");
+        return req -> {
+            req.setCookies(csrfCookie);
+            req.addHeader("X-XSRF-TOKEN", csrfCookie.getValue());
+            return req;
+        };
+    }
+
     private MockHttpSession loginAs(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/login")
-                        .with(csrf())
-                        .param("username", username)
-                        .param("password", password))
-                .andExpect(status().is3xxRedirection())
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, password))))
+                .andExpect(status().isOk())
                 .andReturn();
         return (MockHttpSession) result.getRequest().getSession(false);
     }

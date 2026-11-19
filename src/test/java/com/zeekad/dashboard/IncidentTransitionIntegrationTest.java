@@ -1,5 +1,9 @@
 package com.zeekad.dashboard;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zeekad.dashboard.dto.IncidentTransitionRequest;
+import com.zeekad.dashboard.dto.LoginRequest;
 import com.zeekad.dashboard.mapper.app.AuditLogMapper;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.mapper.zeekad.write.ZeekadWriteMapper;
@@ -9,6 +13,7 @@ import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.IncidentStatus;
 import com.zeekad.dashboard.model.zeekad.IncidentStatusHistory;
 import com.zeekad.dashboard.service.UserAdminService;
+import jakarta.servlet.http.Cookie;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,16 +22,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import javax.sql.DataSource;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -38,12 +46,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -63,6 +69,9 @@ class IncidentTransitionIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private UserAdminService userAdminService;
@@ -117,7 +126,6 @@ class IncidentTransitionIntegrationTest {
                 TEST_JOB_ID, TEST_CAPTURE_ID, INC_2,
                 TEST_JOB_ID, TEST_CAPTURE_ID, INC_3);
 
-        // 미등록 actor 표기 검증을 위해 rank 1에 사전 이력 1건(external_bot) 추가
         zeekadJdbc.update("""
                 INSERT INTO dashboard.raw_incident_status_history
                 (job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at)
@@ -152,31 +160,35 @@ class IncidentTransitionIntegrationTest {
                 "cic17-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        // 1. 건너뛰기 (open -> closed) 거부 확인 (rank 2)
-        mockMvc.perform(post("/incidents/{jobId}/rank/2/transition", TEST_JOB_ID)
+        // 1. 건너뛰기 (open -> closed) 409 CONFLICT 거부 확인 (rank 2)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/2/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "closed")
-                        .param("resolution", "benign")
-                        .param("reason", "건너뛰기 시도"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/incidents/" + TEST_JOB_ID + "/rank/2"))
-                .andExpect(flash().attributeExists("transitionError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("closed", "benign", "건너뛰기 시도"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.succeeded").value(false))
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
 
         assertThat(zeekadReadMapper.findIncidentStatus(INC_2)).isNull();
 
-        // 2. open -> investigating 정방향 전이 (위조 actor 파라미터 무시 검증 포함)
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        // 2. open -> investigating 정방향 전이 (위조 actor 필드 무시 검증 포함)
+        String spoofedPayload = objectMapper.writeValueAsString(Map.of(
+                "toStatus", "investigating",
+                "actor", "spoofed_admin",
+                "p_actor", "spoofed_admin",
+                "resolution", "benign",
+                "reason", "초기 이상 징후 조사 시작"
+        ));
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("actor", "spoofed_admin")
-                        .param("p_actor", "spoofed_admin")
-                        .param("resolution", "benign")
-                        .param("reason", "초기 이상 징후 조사 시작"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/incidents/" + TEST_JOB_ID + "/rank/1"))
-                .andExpect(flash().attributeExists("transitionSuccess"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(spoofedPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true))
+                .andExpect(jsonPath("$.code").value("OK"));
 
         IncidentStatus afterStep1 = zeekadReadMapper.findIncidentStatus(INC_1);
         assertThat(afterStep1).isNotNull();
@@ -184,73 +196,75 @@ class IncidentTransitionIntegrationTest {
         assertThat(afterStep1.getZeekadResolution()).isNull();
         assertThat(afterStep1.getUpdatedBy()).isEqualTo(analyst);
 
-        // 상세 화면에서 investigating 상태, closed 폼 노출, display_name (actor) 및 미등록 actor 표기 확인
-        mockMvc.perform(get("/incidents/{jobId}/rank/1", TEST_JOB_ID).session(session))
+        // 상세 API에서 investigating 상태, nextAllowedStatus=closed, display_name (actor) 및 미등록 actor 표기 확인
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/1", TEST_JOB_ID).session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("현재 상태: investigating")))
+                .andExpect(jsonPath("$.detail.currentStatus").value("investigating"))
+                .andExpect(jsonPath("$.detail.nextAllowedStatus").value("closed"))
                 .andExpect(content().string(containsString("박분석 (trans_analyst_1)")))
                 .andExpect(content().string(containsString("external_bot")))
-                .andExpect(content().string(not(containsString("spoofed_admin"))))
-                .andExpect(content().string(containsString("사건 종료 (closed)")));
+                .andExpect(content().string(not(containsString("spoofed_admin"))));
 
-        // 3. 이미 investigating 상태에서 investigating 재요청 -> SQLSTATE 22023 충돌 안내
-        MvcResult dupResult = mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        // 3. 이미 investigating 상태에서 investigating 재요청 -> 409 CONFLICT + 새로고침 안내
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "중복 전이 시도"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionError"))
-                .andReturn();
-        assertThat(dupResult.getFlashMap().get("transitionError").toString()).contains("새로고침");
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "중복 전이 시도"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.succeeded").value(false))
+                .andExpect(jsonPath("$.code").value("CONFLICT"))
+                .andExpect(jsonPath("$.message").value(containsString("새로고침")));
 
-        // 4. closed 시 결론 누락 / 잘못된 결론 / 사유 공백 거부
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        // 4. closed 시 잘못된 결론 / 사유 공백 -> 400 INVALID_REQUEST 거부
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "closed")
-                        .param("resolution", "unknown_value")
-                        .param("reason", "잘못된 결론"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("closed", "unknown_value", "잘못된 결론"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "closed")
-                        .param("resolution", "true_positive")
-                        .param("reason", "   "))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("closed", "true_positive", "   "))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
         // 5. investigating -> closed 정방향 완료
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "closed")
-                        .param("resolution", "true_positive")
-                        .param("reason", "Kerberos 티켓 탈취 정탐 확정"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionSuccess"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("closed", "true_positive", "Kerberos 티켓 탈취 정탐 확정"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
 
         IncidentStatus afterStep2 = zeekadReadMapper.findIncidentStatus(INC_1);
         assertThat(afterStep2.getZeekadStatus()).isEqualTo("closed");
         assertThat(afterStep2.getZeekadResolution()).isEqualTo("true_positive");
 
-        // 종료 후 상세 화면에서는 상태 변경 폼이 숨겨짐
-        mockMvc.perform(get("/incidents/{jobId}/rank/1", TEST_JOB_ID).session(session))
+        // 종료 후 상세 API에서는 nextAllowedStatus가 null
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/1", TEST_JOB_ID).session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("이미 종료(closed)된 사건입니다")))
-                .andExpect(content().string(not(containsString("/transition"))));
+                .andExpect(jsonPath("$.detail.currentStatus").value("closed"))
+                .andExpect(jsonPath("$.detail.nextAllowedStatus").doesNotExist());
 
-        // 6. closed -> investigating 역방향 시도 거부
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        // 6. closed -> investigating 역방향 시도 -> 409 CONFLICT 거부
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "되돌리기 시도"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "되돌리기 시도"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
 
         // 감사 로그 INCIDENT_STATUS_TRANSITION 2건 확인
         List<AuditLog> logs = auditLogMapper.findFiltered(
@@ -277,23 +291,23 @@ class IncidentTransitionIntegrationTest {
                     () -> {
                         ready.countDown();
                         start.await(5, TimeUnit.SECONDS);
-                        return mockMvc.perform(post("/incidents/{jobId}/rank/3/transition", TEST_JOB_ID)
+                        return mockMvc.perform(post("/api/incidents/{jobId}/rank/3/transition", TEST_JOB_ID)
                                         .session(sessionA)
-                                        .with(csrf())
-                                        .param("toStatus", "investigating")
-                                        .param("reason", "동시 요청 A"))
-                                .andExpect(status().is3xxRedirection())
+                                        .with(xsrf())
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(
+                                                new IncidentTransitionRequest("investigating", null, "동시 요청 A"))))
                                 .andReturn();
                     },
                     () -> {
                         ready.countDown();
                         start.await(5, TimeUnit.SECONDS);
-                        return mockMvc.perform(post("/incidents/{jobId}/rank/3/transition", TEST_JOB_ID)
+                        return mockMvc.perform(post("/api/incidents/{jobId}/rank/3/transition", TEST_JOB_ID)
                                         .session(sessionB)
-                                        .with(csrf())
-                                        .param("toStatus", "investigating")
-                                        .param("reason", "동시 요청 B"))
-                                .andExpect(status().is3xxRedirection())
+                                        .with(xsrf())
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(objectMapper.writeValueAsString(
+                                                new IncidentTransitionRequest("investigating", null, "동시 요청 B"))))
                                 .andReturn();
                     }
             );
@@ -305,20 +319,21 @@ class IncidentTransitionIntegrationTest {
             start.countDown();
 
             int successCount = 0;
-            int errorCount = 0;
+            int conflictCount = 0;
             String errorMsg = null;
             for (Future<MvcResult> f : futures) {
                 MvcResult res = f.get(10, TimeUnit.SECONDS);
-                if (res.getFlashMap().containsKey("transitionSuccess")) {
+                JsonNode json = objectMapper.readTree(res.getResponse().getContentAsString());
+                if (res.getResponse().getStatus() == 200 && json.get("succeeded").asBoolean()) {
                     successCount++;
-                } else if (res.getFlashMap().containsKey("transitionError")) {
-                    errorCount++;
-                    errorMsg = String.valueOf(res.getFlashMap().get("transitionError"));
+                } else if (res.getResponse().getStatus() == 409) {
+                    conflictCount++;
+                    errorMsg = json.get("message").asText();
                 }
             }
 
             assertThat(successCount).isEqualTo(1);
-            assertThat(errorCount).isEqualTo(1);
+            assertThat(conflictCount).isEqualTo(1);
             assertThat(errorMsg).contains("새로고침");
             assertThat(errorMsg).doesNotContain("java.lang.", "org.h2.", "SELECT ");
 
@@ -382,30 +397,31 @@ class IncidentTransitionIntegrationTest {
         MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
 
         // 작업 A(311)에서 open -> investigating 전이
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "작업 A에서 조사 착수"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionSuccess"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "작업 A에서 조사 착수"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
 
         // 최신 작업 B(312)에서도 investigating 승계 확인
-        mockMvc.perform(get("/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("현재 상태: investigating")))
-                .andExpect(content().string(containsString("사건 종료 (closed)")))
-                .andExpect(content().string(containsString("job #" + MULTI_JOB_A)));
+                .andExpect(jsonPath("$.detail.currentStatus").value("investigating"))
+                .andExpect(jsonPath("$.detail.nextAllowedStatus").value("closed"))
+                .andExpect(jsonPath("$.detail.statusHistory[0].jobId").value(MULTI_JOB_A));
 
         // 최신 작업 B(312)에서 investigating -> closed 전이
-        mockMvc.perform(post("/incidents/{jobId}/rank/2/transition", MULTI_JOB_B)
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/2/transition", MULTI_JOB_B)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "closed")
-                        .param("resolution", "false_positive")
-                        .param("reason", "작업 B에서 오탐 종결"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionSuccess"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("closed", "false_positive", "작업 B에서 오탐 종결"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
 
         IncidentStatus finalStatus = zeekadReadMapper.findIncidentStatus(MULTI_INC);
         assertThat(finalStatus).isNotNull();
@@ -418,31 +434,41 @@ class IncidentTransitionIntegrationTest {
         assertThat(combinedHistory).extracting(IncidentStatusHistory::getJobId)
                 .containsExactlyInAnyOrder(MULTI_JOB_A, MULTI_JOB_B);
 
-        // 상세 화면에서도 작업 A와 작업 B 이력이 모두 합산 표시됨
-        mockMvc.perform(get("/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
+        // 상세 API에서도 작업 A와 작업 B 이력이 모두 합산 반환됨
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/2", MULTI_JOB_B).session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("현재 상태: closed")))
-                .andExpect(content().string(containsString("job #" + MULTI_JOB_A)))
-                .andExpect(content().string(containsString("job #" + MULTI_JOB_B)))
+                .andExpect(jsonPath("$.detail.currentStatus").value("closed"))
+                .andExpect(jsonPath("$.detail.statusHistory.length()").value(2))
                 .andExpect(content().string(containsString("작업 A에서 조사 착수")))
                 .andExpect(content().string(containsString("작업 B에서 오탐 종결")));
 
-        // 종료 후 과거 작업 A에서 재전이 시 SQLSTATE 22023 오류 거부
-        mockMvc.perform(post("/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
+        // 종료 후 과거 작업 A에서 재전이 시 409 CONFLICT 거부
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", MULTI_JOB_A)
                         .session(session)
-                        .with(csrf())
-                        .param("toStatus", "investigating")
-                        .param("reason", "과거 작업 재전이 시도"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(flash().attributeExists("transitionError"));
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new IncidentTransitionRequest("investigating", null, "과거 작업 재전이 시도"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+    }
+
+    private RequestPostProcessor xsrf() throws Exception {
+        MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
+        Cookie csrfCookie = res.getResponse().getCookie("XSRF-TOKEN");
+        return req -> {
+            req.setCookies(csrfCookie);
+            req.addHeader("X-XSRF-TOKEN", csrfCookie.getValue());
+            return req;
+        };
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/login")
-                        .with(csrf())
-                        .param("username", username)
-                        .param("password", password))
-                .andExpect(status().is3xxRedirection())
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, password))))
+                .andExpect(status().isOk())
                 .andReturn();
         return (MockHttpSession) result.getRequest().getSession(false);
     }

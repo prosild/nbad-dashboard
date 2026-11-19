@@ -222,11 +222,6 @@ class StaticSecurityAndConfigTest {
         assertThat(mapperXml).contains("zeekad_review_resumed_at").contains("zeekad_review_resume_failed");
         assertThat(mapperXml).contains("dashboard.feedback_summary");
 
-        String operationsHtml = Files.readString(
-                Path.of("src/main/resources/templates/operations/index.html"),
-                StandardCharsets.UTF_8);
-        assertThat(operationsHtml).contains("feedback_summary").doesNotContain("정확도");
-
         String writeMapperJava = Files.readString(
                 Path.of("src/main/java/com/zeekad/dashboard/mapper/zeekad/write/ZeekadWriteMapper.java"),
                 StandardCharsets.UTF_8);
@@ -235,6 +230,48 @@ class StaticSecurityAndConfigTest {
                 StandardCharsets.UTF_8);
         assertThat(writeMapperJava).contains("decideReview");
         assertThat(writeMapperXml).contains("dashboard.decide_review").doesNotContain("${");
+    }
+
+    @Test
+    void thymeleafIsCompletelyRemovedSpaShellExistsAndSensitiveModelFieldsAreJsonIgnored() throws IOException {
+        String buildGradle = Files.readString(Path.of("build.gradle"), StandardCharsets.UTF_8);
+        assertThat(buildGradle)
+                .doesNotContain("spring-boot-starter-thymeleaf")
+                .doesNotContain("thymeleaf-extras-springsecurity6")
+                .doesNotContain("thymeleaf.version");
+
+        String appYml = Files.readString(Path.of("src/main/resources/application.yml"), StandardCharsets.UTF_8);
+        String testYml = Files.readString(Path.of("src/test/resources/application-test.yml"), StandardCharsets.UTF_8);
+        assertThat(appYml).doesNotContain("thymeleaf");
+        assertThat(testYml).doesNotContain("thymeleaf");
+
+        assertThat(Path.of("src/main/resources/templates")).doesNotExist();
+        assertThat(Path.of("src/main/resources/static/css/dashboard.css")).doesNotExist();
+        assertThat(Path.of("src/main/java/com/zeekad/dashboard/security/DashboardAuthSuccessHandler.java"))
+                .doesNotExist();
+        assertThat(Path.of("src/main/java/com/zeekad/dashboard/security/DashboardAuthFailureHandler.java"))
+                .doesNotExist();
+
+        Path indexHtml = Path.of("src/main/resources/static/index.html");
+        assertThat(indexHtml).exists();
+        String indexContent = Files.readString(indexHtml, StandardCharsets.UTF_8);
+        assertThat(indexContent)
+                .contains("<div id=\"root\"></div>")
+                .doesNotContain("<script")
+                .doesNotContain("style=");
+
+        String dashboardUserJava = Files.readString(
+                Path.of("src/main/java/com/zeekad/dashboard/model/DashboardUser.java"),
+                StandardCharsets.UTF_8);
+        assertThat(dashboardUserJava)
+                .containsPattern("@JsonIgnore\\s+private String passwordHash;")
+                .containsPattern("@JsonIgnore\\s+private String totpSecret;");
+
+        String modelScoreJava = Files.readString(
+                Path.of("src/main/java/com/zeekad/dashboard/model/zeekad/IncidentModelScore.java"),
+                StandardCharsets.UTF_8);
+        assertThat(modelScoreJava)
+                .containsPattern("@JsonIgnore\\s+private Double maxScore;");
     }
 
     @Test

@@ -1,14 +1,20 @@
 package com.zeekad.dashboard;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zeekad.dashboard.dto.LoginRequest;
+import com.zeekad.dashboard.dto.TotpCodeRequest;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.TotpService;
 import com.zeekad.dashboard.service.UserAdminService;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -16,12 +22,14 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Clock;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -31,6 +39,9 @@ class DashboardViewsIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private UserAdminService userAdminService;
@@ -45,63 +56,71 @@ class DashboardViewsIntegrationTest {
     private Clock clock;
 
     @Test
-    void incidentQueueRendersOnRootAndIncidentsWithFiltersMultiModelBadgeAndDetailLink() throws Exception {
+    void incidentQueueApiAndSpaRoutesSupportFiltersMultiModelBadgeAndDetailData() throws Exception {
         String analyst = "view_analyst_1";
         userAdminService.createUser(analyst, "화면분석가", "Pass1234!", UserRole.ANALYST,
                 "cic17-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        // GET / 및 GET /incidents 모두 리다이렉트 없이 200 OK 렌더링
+        // GET / 및 GET /incidents 는 SPA index.html 로 포워딩
         mockMvc.perform(get("/").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("이상탐지 조사 큐")))
-                .andExpect(content().string(containsString("다중 탐지")))
-                .andExpect(content().string(containsString("autoencoder")))
-                .andExpect(content().string(containsString("hbos")))
-                .andExpect(content().string(containsString("/incidents/101/rank/1")))
-                .andExpect(content().string(containsString("보고서 없음")));
+                .andExpect(forwardedUrl("/index.html"));
+        mockMvc.perform(get("/incidents").session(session))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+
+        // GET /api/incidents 기본 조회
+        mockMvc.perform(get("/api/incidents").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maskedView").value(false))
+                .andExpect(jsonPath("$.selectedCaptureId").value("cic17-wed"))
+                .andExpect(jsonPath("$.selectedJob.jobId").value(101))
+                .andExpect(jsonPath("$.incidents.length()").value(3))
+                .andExpect(jsonPath("$.incidents[0].zeekadAlsoFlaggedBy[0]").value("autoencoder"))
+                .andExpect(jsonPath("$.incidents[0].zeekadAlsoFlaggedBy[1]").value("hbos"))
+                .andExpect(jsonPath("$.incidents[2].hasReport").value(false));
 
         // 모델 필터
-        mockMvc.perform(get("/incidents").param("pickedBy", "iforest").session(session))
+        mockMvc.perform(get("/api/incidents").param("pickedBy", "iforest").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("192.168.10.50")))
-                .andExpect(content().string(not(containsString("10.20.30.40"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("192.168.10.50"));
 
         // 역할 필터
-        mockMvc.perform(get("/incidents").param("role", "responder").session(session))
+        mockMvc.perform(get("/api/incidents").param("role", "responder").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("10.20.30.40")))
-                .andExpect(content().string(not(containsString("192.168.10.50"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("10.20.30.40"));
 
         // 자산 호스트명 부분 일치 필터 (Java 계층)
-        mockMvc.perform(get("/incidents").param("asset", "filesrv02").session(session))
+        mockMvc.perform(get("/api/incidents").param("asset", "filesrv02").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("10.20.30.40")))
-                .andExpect(content().string(not(containsString("192.168.10.50"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("10.20.30.40"));
 
         // 상태 필터
-        mockMvc.perform(get("/incidents").param("status", "closed").session(session))
+        mockMvc.perform(get("/api/incidents").param("status", "closed").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("172.16.5.99")))
-                .andExpect(content().string(not(containsString("192.168.10.50"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("172.16.5.99"));
 
         // 보고서 유무 필터
-        mockMvc.perform(get("/incidents").param("hasReport", "false").session(session))
+        mockMvc.perform(get("/api/incidents").param("hasReport", "false").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("172.16.5.99")))
-                .andExpect(content().string(not(containsString("192.168.10.50"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("172.16.5.99"));
 
         // 실제 전송 여부 필터
-        mockMvc.perform(get("/incidents").param("wouldSend", "true").session(session))
+        mockMvc.perform(get("/api/incidents").param("wouldSend", "true").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("192.168.10.50")))
-                .andExpect(content().string(not(containsString("10.20.30.40"))));
+                .andExpect(jsonPath("$.incidents.length()").value(1))
+                .andExpect(jsonPath("$.incidents[0].hostIp").value("192.168.10.50"));
 
-        // XSS 입력 이스케이프 확인
-        mockMvc.perform(get("/incidents").param("asset", "<script>alert(1)</script>").session(session))
+        // 비정상 asset 입력 시 빈 결과 정상 JSON 응답
+        mockMvc.perform(get("/api/incidents").param("asset", "<script>alert(1)</script>").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("&lt;script&gt;alert(1)&lt;/script&gt;")))
-                .andExpect(content().string(not(containsString("<script>alert(1)</script>"))));
+                .andExpect(jsonPath("$.incidents.length()").value(0));
     }
 
     @Test
@@ -111,124 +130,126 @@ class DashboardViewsIntegrationTest {
                 "lab-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(labAnalyst, "Pass1234!");
 
-        mockMvc.perform(get("/incidents").param("captureId", "lab-20261118").session(session))
+        mockMvc.perform(get("/api/incidents").param("captureId", "lab-20261118").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("job #502")))
-                .andExpect(content().string(containsString("/incidents/502/rank/1")))
-                .andExpect(content().string(containsString("/incidents/502/rank/2")))
-                .andExpect(content().string(containsString("보고 작업 #501")))
-                .andExpect(content().string(containsString("검토 대기")))
-                .andExpect(content().string(containsString("보고서 없음")));
+                .andExpect(jsonPath("$.selectedJob.jobId").value(502))
+                .andExpect(jsonPath("$.incidents.length()").value(2))
+                .andExpect(jsonPath("$.incidents[0].jobId").value(502))
+                .andExpect(jsonPath("$.incidents[0].queueRank").value(1))
+                .andExpect(jsonPath("$.incidents[0].hasReport").value(false))
+                .andExpect(jsonPath("$.incidents[1].jobId").value(502))
+                .andExpect(jsonPath("$.incidents[1].queueRank").value(2))
+                .andExpect(jsonPath("$.incidents[1].zeekadReportJobId").value(501))
+                .andExpect(jsonPath("$.incidents[1].zeekadReviewPending").value(true));
 
-        mockMvc.perform(get("/reviews").param("captureId", "lab-20261118").session(session))
+        mockMvc.perform(get("/api/reviews").param("captureId", "lab-20261118").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("/incidents/502/rank/2")))
-                .andExpect(content().string(containsString("job #502 / #2")));
+                .andExpect(jsonPath("$.reviews.length()").value(1))
+                .andExpect(jsonPath("$.reviews[0].jobId").value(502))
+                .andExpect(jsonPath("$.reviews[0].queueRank").value(2))
+                .andExpect(jsonPath("$.reviews[0].reviewJobId").value(501));
     }
 
     @Test
-    void operationsAndReviewsScreensRenderRequiredIndicatorsAndNavigation() throws Exception {
+    void operationsAndReviewsApisReturnRequiredIndicatorsWithoutAccuracyWording() throws Exception {
         String analyst = "ops_analyst_1";
         userAdminService.createUser(analyst, "운영분석가", "Pass1234!", UserRole.ANALYST,
                 "*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession session = loginAs(analyst, "Pass1234!");
 
-        // 운영 상태 화면 (zeekad-fusion/1..3 및 feedback_summary 포함, "정확도" 미사용)
-        mockMvc.perform(get("/operations").session(session))
+        // 운영 상태 API (zeekad-fusion/1..3 및 feedback_summary 포함, "정확도" 미사용)
+        MvcResult opsRes = mockMvc.perform(get("/api/operations").session(session))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("zeekad-fusion/1")))
                 .andExpect(content().string(containsString("zeekad-fusion/3")))
-                .andExpect(content().string(containsString("iforest: 0.72")))
-                .andExpect(content().string(containsString("분석가 결론 집계 (feedback_summary)")))
-                .andExpect(content().string(containsString("놓친 공격(재현율)")))
-                .andExpect(content().string(containsString("전체 (all)")))
                 .andExpect(content().string(containsString("정밀도 0.00, 결론 1/3 (33.3%)")))
                 .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
                 .andExpect(content().string(not(containsString("정확도"))))
-                .andExpect(content().string(containsString("기록만(dry-run)")))
-                .andExpect(content().string(containsString("조사 큐")))
-                .andExpect(content().string(containsString("운영 상태")))
-                .andExpect(content().string(containsString("승인 대기")))
-                .andExpect(content().string(not(containsString("/admin/users"))));
+                .andExpect(jsonPath("$.slackSummaries[1].dryRunOrRecorded").value(true))
+                .andReturn();
+
+        JsonNode opsJson = objectMapper.readTree(opsRes.getResponse().getContentAsString());
+        assertThat(opsJson.get("feedbackSummaries").get(0).get("allModel").asBoolean()).isTrue();
 
         // 운영 상태 캡처 필터 연동 확인
-        mockMvc.perform(get("/operations").param("captureId", "lab-fusion-v2").session(session))
+        mockMvc.perform(get("/api/operations").param("captureId", "lab-fusion-v2").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("lab-fusion-v2")))
+                .andExpect(jsonPath("$.selectedCaptureId").value("lab-fusion-v2"))
                 .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
                 .andExpect(content().string(not(containsString("정밀도 0.00, 결론 1/3 (33.3%)"))));
 
-        // 분석가 승인 대기 목록 (전체 vs 대기 건만, 결정 폼 및 반영 상태 3종)
-        mockMvc.perform(get("/reviews").session(session))
+        // 분석가 승인 대기 목록 API (전체 vs 대기 건만, 반영 상태 3종)
+        mockMvc.perform(get("/api/reviews").session(session))
                 .andExpect(status().isOk())
-                .andExpect(content().string(not(containsString("Python 에이전트 재개 API 연결 예정"))))
-                .andExpect(content().string(not(containsString("disabled=\"disabled\""))))
-                .andExpect(content().string(containsString("/reviews/decide")))
-                .andExpect(content().string(containsString("조사 진행 (confirm)")))
-                .andExpect(content().string(containsString("오탐 종료 (dismiss)")))
+                .andExpect(jsonPath("$.canDecideReview").value(true))
                 .andExpect(content().string(containsString("반영됨")))
                 .andExpect(content().string(containsString("반영 중")))
                 .andExpect(content().string(containsString("반영 실패(운영자 확인)")))
-                .andExpect(content().string(not(containsString("구 작업(601) 중복 검토 요청"))))
-                .andExpect(content().string(containsString("confirm")));
+                .andExpect(content().string(not(containsString("구 작업(601) 중복 검토 요청"))));
 
-        mockMvc.perform(get("/reviews").param("pendingOnly", "true").session(session))
+        mockMvc.perform(get("/api/reviews").param("pendingOnly", "true").session(session))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("10.20.30.40")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))));
     }
 
     @Test
-    void userWithNoMatchingCapturesGets200EmptyStateAndAdminSeesFullNav() throws Exception {
+    void userWithNoMatchingCapturesGets200EmptyStateAndAdminCanAccessAllSpaRoutes() throws Exception {
         String noCapUser = "nocap_viewer_1";
         userAdminService.createUser(noCapUser, "무캡처사용자", "Pass1234!", UserRole.VIEWER,
                 "unmatched-*", "seed", "ADMIN", "127.0.0.1");
         MockHttpSession noCapSession = loginAs(noCapUser, "Pass1234!");
 
-        mockMvc.perform(get("/incidents").session(noCapSession))
+        mockMvc.perform(get("/api/incidents").session(noCapSession))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("허용된 캡처 데이터가 없거나")));
-        mockMvc.perform(get("/operations").session(noCapSession))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/reviews").session(noCapSession))
-                .andExpect(status().isOk());
+                .andExpect(jsonPath("$.allowedCaptures.length()").value(0))
+                .andExpect(jsonPath("$.incidents.length()").value(0));
+        mockMvc.perform(get("/api/operations").session(noCapSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobs.length()").value(0));
+        mockMvc.perform(get("/api/reviews").session(noCapSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviews.length()").value(0));
 
-        // ADMIN은 TOTP 인증 후 공통 네비게이션에서 관리자 메뉴까지 모두 표시
+        // ADMIN은 TOTP 인증 후 모든 SPA 클라이언트 라우트가 index.html 로 포워딩됨
         String adminUser = "nav_admin_1";
         userAdminService.createUser(adminUser, "네비관리자", "AdminPass!88", UserRole.ADMIN,
                 "*", "seed", "ADMIN", "127.0.0.1");
         DashboardUser admin = userMapper.findByUsername(adminUser);
 
-        MvcResult loginResult = mockMvc.perform(post("/login")
-                        .with(csrf())
-                        .param("username", adminUser)
-                        .param("password", "AdminPass!88"))
-                .andExpect(status().is3xxRedirection())
-                .andReturn();
-        MockHttpSession adminSession = (MockHttpSession) loginResult.getRequest().getSession(false);
+        MockHttpSession adminSession = loginAs(adminUser, "AdminPass!88");
 
         String code = totpService.generateCode(admin.getTotpSecret(), clock.instant());
-        mockMvc.perform(post("/login/totp/setup")
+        Cookie csrfCookie = fetchCsrfCookie();
+        mockMvc.perform(post("/api/auth/totp/setup")
                         .session(adminSession)
-                        .with(csrf())
-                        .param("code", code))
-                .andExpect(status().is3xxRedirection());
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new TotpCodeRequest(code))))
+                .andExpect(status().isOk());
 
-        mockMvc.perform(get("/admin/users").session(adminSession))
-                .andExpect(status().isOk())
-                .andExpect(content().string(containsString("/incidents")))
-                .andExpect(content().string(containsString("/operations")))
-                .andExpect(content().string(containsString("/reviews")))
-                .andExpect(content().string(containsString("/admin/users")))
-                .andExpect(content().string(containsString("/admin/audit-logs")));
+        for (String spaRoute : new String[]{
+                "/incidents", "/operations", "/reviews", "/admin/users", "/admin/audit-logs"}) {
+            mockMvc.perform(get(spaRoute).session(adminSession))
+                    .andExpect(status().isOk())
+                    .andExpect(forwardedUrl("/index.html"));
+        }
+    }
+
+    private Cookie fetchCsrfCookie() throws Exception {
+        MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
+        return res.getResponse().getCookie("XSRF-TOKEN");
     }
 
     private MockHttpSession loginAs(String username, String password) throws Exception {
-        MvcResult result = mockMvc.perform(post("/login")
-                        .with(csrf())
-                        .param("username", username)
-                        .param("password", password))
-                .andExpect(status().is3xxRedirection())
+        Cookie csrfCookie = fetchCsrfCookie();
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .cookie(csrfCookie)
+                        .header("X-XSRF-TOKEN", csrfCookie.getValue())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginRequest(username, password))))
+                .andExpect(status().isOk())
                 .andReturn();
         return (MockHttpSession) result.getRequest().getSession(false);
     }
