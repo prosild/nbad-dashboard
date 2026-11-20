@@ -4,7 +4,7 @@
 `https://soc.<DDNS 이름>.synology.me`에서 공개 데모 계정 `demo`(읽기 전용 `VIEWER`, 마스킹 적용)로 로그인해 실제 `zeek_AD` 스냅샷 데이터를 보게 한다.
 
 - 역할 분담: **이 PC**(이미지·스냅샷 준비, 리허설) → **NAS**(작업자가 SSH로 기동) → **DSM**(사용자가 인증서·역방향 프록시 설정) → 공개 주소 확인.
-- "확인 필요"라고 적은 항목은 이 문서를 쓸 때 실제로 확인하지 못한 것이다. 배포(`T13`) 때 확인하고 결과를 기록한다.
+- 처음에 "확인 필요"로 두었던 항목(DSM 메뉴·헤더 동작, `scp`, `docker compose` 등)은 NAS 배포(`T13`)에서 확인해 결과를 해당 절에 적었다.
 - 기존 VMware 스택(`compose.yml`, `docs/deployment-guide.md`)과는 별개다. 두 파일을 병합하지 않는다.
 
 ## 1. 구성
@@ -207,8 +207,7 @@ cd /volume1/docker/zeekad-portfolio
 # snapshot/은 chmod 700 이전에 만들어져 /volume1/docker의 Synology ACL을 상속받는다(psdev93만 허용).
 # 그러면 컨테이너 안 postgres(uid 999)가 덤프를 읽지 못해 복원이 'zeekad.dump ... is missing'으로 실패한다(T13에서 겪음).
 # 755/644로 바꾸면 Linux 권한 모드가 된다. 덤프는 공개 데모 데이터이고 상위 폴더가 700이라 다른 NAS 사용자는 들어올 수 없다.
-chmod 755 snapshot && chmod 644 snapshot/*
-docker run --rm --network none --user 999:999 -v /volume1/docker/zeekad-portfolio/snapshot:/snapshot:ro --entrypoint sh pgvector/pgvector:0.8.1-pg17 -c 'cd /snapshot && sha256sum -c zeekad.dump.sha256'   # 3.3 적재 뒤에 실행. zeekad.dump: OK
+chmod 755 snapshot && chmod 644 snapshot/*   # 컨테이너에서 읽히는지는 3.3 끝에서 확인한다
 (cd snapshot && sha256sum -c zeekad.dump.sha256)
 (cd images && sha256sum -c images.sha256)
 ls -l docker/portfolio/initdb/*.sh && head -1 docker/portfolio/initdb/01-roles-databases.sh | od -c | head -2   # \r 이 없어야 한다
@@ -223,6 +222,8 @@ for f in zeek-ad-dashboard-app.tar zeek-ad-dashboard-waf.tar zeekad-pipeline.tar
 for t in zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-pipeline:dev pgvector/pgvector:0.8.1-pg17; do
   printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' "$t")" "$t"
 done | diff - image-ids.txt && echo "image IDs match"
+# 컨테이너 안 postgres(uid 999)가 스냅샷을 읽을 수 있는지(3.2의 권한 변경 확인). zeekad.dump: OK 가 나와야 한다
+docker run --rm --network none --user 999:999 -v /volume1/docker/zeekad-portfolio/snapshot:/snapshot:ro --entrypoint sh pgvector/pgvector:0.8.1-pg17 -c 'cd /snapshot && sha256sum -c zeekad.dump.sha256'
 ```
 
 이미지 적재가 끝나면 `images/*.tar`는 지워도 된다(롤백용으로 남겨도 된다).
@@ -347,12 +348,12 @@ docker image rm zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-p
 
 ## 4. DSM 설정 (사용자)
 
-DSM 7.3 기준 메뉴 경로다. 이 문서를 쓸 때 실제 화면으로 확인하지 못했으므로 메뉴 이름이 조금 다를 수 있다(확인 필요).
+DSM 7.3 기준 메뉴 경로다. `T13`에서 사용자가 이 절의 메뉴 경로와 값 그대로 설정했다.
 
 ### 4.1 하위 도메인 인증서
 
-1. **제어판 > 보안 > 인증서 > 추가 > 새 인증서 추가 > Let's Encrypt에서 인증서 얻기**: 도메인 이름 `soc.<DDNS 이름>.synology.me`(하위 도메인 전용 인증서).
-   - 와일드카드(`*.<DDNS 이름>.synology.me`)는 DSM이 "잘못된 도메인"으로 거부했다(`T13`). 하위 도메인 전용 인증서로 충분하다.
+1. **제어판 > 보안 > 인증서 > 추가 > 새 인증서 추가 > Let's Encrypt에서 인증서 얻기**: 도메인 이름에 `soc.<DDNS 이름>.synology.me`를 넣어 발급한다(하위 도메인 전용 인증서).
+   - DSM이 `*.<DDNS 이름>.synology.me` SAN을 "잘못된 도메인"으로 거부한 사례가 있다(`T13`). 하위 도메인 전용 인증서로 충분하다.
    - `T13` 발급 결과: `CN=soc.<DDNS 이름>.synology.me`, SAN `DNS:soc.<DDNS 이름>.synology.me`, Let's Encrypt `YE1`, 유효 90일(DSM이 자동 갱신).
 2. `soc.<DDNS 이름>.synology.me`가 NAS 공인 IP로 풀리는지 확인한다: 이 PC에서 `nslookup soc.<DDNS 이름>.synology.me`. Synology DDNS의 와일드카드 레코드로 하위 도메인이 같은 IP를 가리킨다(`T13` 확인).
 
