@@ -154,8 +154,8 @@ public class AnalystReviewDecisionService {
         );
 
         String successMessage = "confirm".equals(normalizedAction)
-                ? "검토 결정이 '조사 진행 (confirm)'으로 저장되었습니다. 파이프라인이 30초 주기로 후속 반영을 진행합니다."
-                : "검토 결정이 '오탐 종료 (dismiss)'로 저장되었습니다. 파이프라인이 30초 주기로 후속 반영을 진행합니다.";
+                ? "판단을 '조사 진행'으로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다."
+                : "판단을 '오탐으로 종료'로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다.";
         return DecisionResult.success(successMessage);
     }
 

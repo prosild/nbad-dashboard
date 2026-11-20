@@ -153,10 +153,10 @@ public class AnalystReviewItem {
 
     public String getResumeStatusLabel() {
         if (isPending()) {
-            return "대기 중";
+            return "판단 대기";
         }
         if (Boolean.TRUE.equals(zeekadReviewResumeFailed)) {
-            return "반영 실패(운영자 확인)";
+            return "반영 실패(관리자 확인 필요)";
         }
         if (zeekadReviewResumedAt != null) {
             return "반영됨";

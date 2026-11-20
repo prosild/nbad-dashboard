@@ -376,7 +376,7 @@ class AnalystReviewDecisionIntegrationTest {
                 .andExpect(jsonPath("$.detail.analystReview.analystDisplay").value("박관리 (" + adminUser + ")"))
                 .andExpect(jsonPath("$.detail.analystReview.canDecide").value(false));
 
-        // 6. 파이프라인 재개 반영 완료('반영됨') 및 실패('반영 실패(운영자 확인)') 상태 응답 검증
+        // 6. 파이프라인 재개 반영 완료('반영됨') 및 실패('반영 실패(관리자 확인 필요)') 상태 응답 검증
         zeekadJdbc.update("""
                 UPDATE dashboard.raw_analyst_review_queue
                 SET zeekad_review_resumed_at = TIMESTAMP WITH TIME ZONE '2026-11-19 03:09:30Z',
@@ -395,7 +395,7 @@ class AnalystReviewDecisionIntegrationTest {
                 .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영됨"));
         mockMvc.perform(get("/api/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영 실패(운영자 확인)"));
+                .andExpect(jsonPath("$.detail.analystReview.resumeStatusLabel").value("반영 실패(관리자 확인 필요)"));
 
         // 7. 감사 로그 ANALYST_REVIEW_DECISION 검증
         List<AuditLog> analystAudit = auditLogMapper.findFiltered(

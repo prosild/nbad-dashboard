@@ -71,7 +71,7 @@ public class IncidentTransitionService {
                 return TransitionResult.failure(
                         400,
                         "INVALID_REQUEST",
-                        "사건 종료(closed) 시 결론(true_positive, false_positive, benign)을 선택해야 합니다.");
+                        "사건을 종료하려면 판정(정탐·오탐·정상 행위)을 선택해야 합니다.");
             }
             effectiveResolution = normalizedResolution;
         }
@@ -130,9 +130,19 @@ public class IncidentTransitionService {
         );
 
         String successMessage = "closed".equals(normalizedTarget)
-                ? "사건이 종료(closed, 결론: " + effectiveResolution + ") 상태로 변경되었습니다."
-                : "사건이 확인 중(investigating) 상태로 변경되었습니다.";
+                ? "사건을 종료했습니다. 판정: " + resolutionDisplayName(effectiveResolution)
+                : "사건을 조사 중으로 바꿨습니다.";
         return TransitionResult.success(successMessage);
+    }
+
+    /** 화면 표시용 판정 이름(docs/ui-terminology.md 표시 이름 사전과 같다). */
+    static String resolutionDisplayName(String resolution) {
+        return switch (resolution == null ? "" : resolution) {
+            case "true_positive" -> "정탐";
+            case "false_positive" -> "오탐";
+            case "benign" -> "정상 행위";
+            default -> resolution;
+        };
     }
 
     public record TransitionResult(boolean succeeded, int httpStatus, String code, String message) {

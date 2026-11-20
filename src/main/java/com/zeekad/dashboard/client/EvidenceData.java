@@ -10,8 +10,8 @@ import java.util.Map;
  */
 public class EvidenceData {
 
-    public static final String FALLBACK_MESSAGE = "근거 API 연결 불가(DB 뷰 정보만 표시)";
-    public static final String NO_EVIDENCE_MESSAGE = "이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음)";
+    public static final String FALLBACK_MESSAGE = "상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.";
+    public static final String NO_EVIDENCE_MESSAGE = "이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.";
 
     private boolean available;
     private String statusMessage;

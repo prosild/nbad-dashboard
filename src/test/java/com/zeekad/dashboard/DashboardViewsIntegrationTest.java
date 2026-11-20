@@ -184,7 +184,7 @@ class DashboardViewsIntegrationTest {
                 .andExpect(jsonPath("$.canDecideReview").value(true))
                 .andExpect(content().string(containsString("반영됨")))
                 .andExpect(content().string(containsString("반영 중")))
-                .andExpect(content().string(containsString("반영 실패(운영자 확인)")))
+                .andExpect(content().string(containsString("반영 실패(관리자 확인 필요)")))
                 .andExpect(content().string(not(containsString("구 작업(601) 중복 검토 요청"))));
 
         mockMvc.perform(get("/api/reviews").param("pendingOnly", "true").session(session))
