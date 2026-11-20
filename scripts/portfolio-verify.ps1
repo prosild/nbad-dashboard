@@ -419,6 +419,8 @@ try {
     $withReport = @($queueByCapture.Values | ForEach-Object { $_ } | Where-Object { $_.hasReport }) | Select-Object -First 3
     foreach ($r in $withReport) { $detailTargets.Add($r) }
     $evidenceOk = 0; $reportOk = 0; $slackCount = 0; $sendDecisionCount = 0
+    $evidenceStructuredOk = 0
+    $expectedProtocolLogKeys = @("dns", "ftp", "smb", "ssh", "tls", "http", "ntlm", "dce_rpc", "kerberos")
     foreach ($t in $detailTargets) {
         $d = Invoke-Http -Path "/api/incidents/$($t.jobId)/rank/$($t.queueRank)" -Client $demo
         Assert-Status $d 200 "demo 사건 상세 $($t.jobId)/rank/$($t.queueRank)"
@@ -429,8 +431,24 @@ try {
         $slackCount += @($dd.slackDeliveries).Count
         if ($null -ne $dd.sendDecision) { $sendDecisionCount++ }
         $e2eLogs.Add("[3b] demo GET /api/incidents/$($t.jobId)/rank/$($t.queueRank) ($($t.captureId)) -> HTTP $($d.Status) maskedView=$($d.Json.maskedView) evidence.available=$($dd.evidence.available) connectionCount=$($dd.evidence.connectionCount) topPeers=$(@($dd.evidence.topPeers).Count) report.present=$($dd.report.present) sendDecision=$([bool]$dd.sendDecision) slackDeliveries=$(@($dd.slackDeliveries).Count) hostIp=$($dd.incident.hostIp)")
+        if ($dd.evidence.available -eq $true) {
+            # T16: 근거 요약 정형 칸(evidence.v1 실제 키 매핑)이 채워졌는지 본다.
+            $ev = $dd.evidence
+            $transportN = @($ev.transportCounts.PSObject.Properties).Count
+            $connStateN = @($ev.connStateCounts.PSObject.Properties).Count
+            $topPortsN = @($ev.topPorts).Count
+            $limitsN = @($ev.limits).Count
+            $protoKeys = @($ev.protocolLogs | Where-Object { $null -ne $_.metrics } | ForEach-Object { $_.protocol } | Sort-Object)
+            $protoOk = (($protoKeys -join ',') -eq ((@($expectedProtocolLogKeys) | Sort-Object) -join ','))
+            $e2eLogs.Add("[3b-evidence] $($t.jobId)/rank/$($t.queueRank) bytesSent=$($ev.bytesSent) bytesReceived=$($ev.bytesReceived) connectionCount=$($ev.connectionCount) transport=$transportN connState=$connStateN topPorts=$topPortsN limits=$limitsN protocolLogs=[$($protoKeys -join ',')] uniquePeers=$($ev.uniquePeers) uniquePorts=$($ev.uniquePorts)")
+            Assert-True (($null -ne $ev.bytesSent) -and ($null -ne $ev.bytesReceived) -and ($null -ne $ev.connectionCount)) "근거 바이트·연결 수 정형 칸 채워짐 $($t.jobId)/rank/$($t.queueRank)" $d
+            Assert-True (($transportN -ge 1) -and ($connStateN -ge 1) -and ($topPortsN -ge 1) -and ($limitsN -ge 1)) "근거 전송 계층·연결 상태·상위 포트·관측 한계 1개 이상 $($t.jobId)/rank/$($t.queueRank)" $d
+            Assert-True $protoOk "근거 프로토콜 로그 키 9개($($expectedProtocolLogKeys -join ',')) $($t.jobId)/rank/$($t.queueRank)" $d
+            $evidenceStructuredOk++
+        }
     }
     Assert-True ($evidenceOk -ge 1) "사건 상세 근거 available=true 1건 이상(근거 API 동작)"
+    Assert-True ($evidenceStructuredOk -eq $evidenceOk) "근거 available=true 상세 모두 정형 칸 채워짐($evidenceStructuredOk/$evidenceOk)"
     Assert-True ($reportOk -ge 1) "보고서가 있는 사건 상세에서 보고서 표시 1건 이상"
     $ops = Invoke-Http -Path "/api/operations" -Client $demo
     Assert-Status $ops 200 "demo /api/operations"
