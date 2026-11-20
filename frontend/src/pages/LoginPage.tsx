@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, Lock, Shield } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { authApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
+import { PRODUCT_NAME } from '../components/AppShell';
 
 export function LoginPage() {
   const { user, sessionExpired, setAuthenticatedUser } = useAuth();
@@ -57,12 +58,8 @@ export function LoginPage() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-500/40 bg-cyan-500/10 text-cyan-300 shadow-lg shadow-cyan-500/10">
             <Shield className="h-7 w-7" />
           </div>
-          <h1 className="font-mono text-2xl font-bold tracking-tight text-slate-100">
-            zeek_AD SOC Console
-          </h1>
-          <p className="mt-1.5 text-sm text-slate-400">
-            이상탐지 조사·사건 근거·검토 승인 보안 관제실
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-100">{PRODUCT_NAME}</h1>
+          <p className="mt-1.5 text-sm text-slate-400">네트워크 이상탐지 사건을 조사하고 판단하는 관제 화면</p>
         </div>
 
         <div className="soc-card p-6 sm:p-8">
@@ -89,16 +86,16 @@ export function LoginPage() {
           {errorMsg && (
             <div
               role="alert"
-              className="mb-5 flex items-start gap-2.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-200"
+              className="mb-5 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-200"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
             <div>
-              <label htmlFor="login-username" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300">
+              <label htmlFor="login-username" className="mb-1.5 block text-xs font-semibold text-slate-300">
                 아이디
               </label>
               <input
@@ -109,13 +106,13 @@ export function LoginPage() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="예: analyst1"
-                className="soc-input font-mono"
+                placeholder="아이디 입력"
+                className="soc-input"
               />
             </div>
 
             <div>
-              <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300">
+              <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold text-slate-300">
                 비밀번호
               </label>
               <input
@@ -142,7 +139,7 @@ export function LoginPage() {
           </form>
 
           <p className="mt-5 border-t border-slate-800/80 pt-4 text-center text-xs text-slate-500">
-            연속 5회 로그인 실패 시 계정이 15분간 잠깁니다. 관리자(ADMIN) 계정은 로그인 후 TOTP 2단계 인증이 필요합니다.
+            로그인을 여러 번 실패하면 잠시 로그인이 제한될 수 있습니다. 관리자 계정은 2단계 인증을 거칩니다.
           </p>
         </div>
       </div>

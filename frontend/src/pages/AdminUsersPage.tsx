@@ -12,10 +12,11 @@ import { ApiError } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
-import { SocBadge } from '../components/StatusBadge';
+import { SocBadge, UserRoleBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AdminUserDto, AdminUsersListResponse, UserRole } from '../types/api';
 import { formatDateTime } from '../utils/format';
+import { labelText } from '../utils/labels';
 
 function parsePatterns(input: string): string[] {
   return input
@@ -125,8 +126,8 @@ export function AdminUsersPage() {
 
   return (
     <AppShell
-      title="관리자 · 사용자 및 접근 권한 관리"
-      subtitle="역할(VIEWER/ANALYST/ADMIN), 캡처 패턴(IDOR 경계), 잠금 해제 및 TOTP 초기화"
+      title="사용자 관리"
+      subtitle="계정 권한, 열람 허용 수집 구간, 잠금 해제, 2단계 인증 초기화를 관리합니다"
       actions={
         <button
           type="button"
@@ -143,7 +144,7 @@ export function AdminUsersPage() {
           <section className="soc-card p-5">
             <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                <UserPlus className="h-4 w-4 text-cyan-400" />
+                <UserPlus className="h-4 w-4 text-slate-400" />
                 신규 사용자 계정 생성
               </div>
               <button
@@ -159,7 +160,7 @@ export function AdminUsersPage() {
             <form onSubmit={(e) => void handleCreateUser(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label htmlFor="create-username" className="mb-1 block text-xs font-medium text-slate-300">
-                  아이디 (username)
+                  아이디
                 </label>
                 <input
                   id="create-username"
@@ -167,14 +168,14 @@ export function AdminUsersPage() {
                   required
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
-                  placeholder="예: analyst3"
+                  placeholder="영문·숫자 3~64자"
                   className="soc-input font-mono text-xs"
                 />
               </div>
 
               <div>
                 <label htmlFor="create-displayName" className="mb-1 block text-xs font-medium text-slate-300">
-                  표시 이름 (displayName)
+                  표시 이름
                 </label>
                 <input
                   id="create-displayName"
@@ -204,17 +205,17 @@ export function AdminUsersPage() {
 
               <div>
                 <label htmlFor="create-role" className="mb-1 block text-xs font-medium text-slate-300">
-                  역할 (Role)
+                  역할
                 </label>
                 <select
                   id="create-role"
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as UserRole)}
-                  className="soc-select w-full font-mono text-xs"
+                  className="soc-select w-full text-xs"
                 >
                   {(data?.roles ?? ['VIEWER', 'ANALYST', 'ADMIN']).map((r) => (
                     <option key={r} value={r}>
-                      {r}
+                      {labelText('userRole', r)}
                     </option>
                   ))}
                 </select>
@@ -222,7 +223,7 @@ export function AdminUsersPage() {
 
               <div className="md:col-span-2">
                 <label htmlFor="create-patterns" className="mb-1 block text-xs font-medium text-slate-300">
-                  허용 캡처 패턴 (줄바꿈 또는 쉼표 구분, 예: cic17-*, syn1-*, *)
+                  열람 허용 수집 구간 (줄바꿈이나 쉼표로 구분, 예: cic17-*, syn1-*, 전체는 *)
                 </label>
                 <textarea
                   id="create-patterns"
@@ -254,8 +255,8 @@ export function AdminUsersPage() {
           <section className="soc-card border-cyan-500/40 p-5">
             <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
-                <Edit3 className="h-4 w-4 text-cyan-400" />
-                사용자 정보/권한 수정: <span className="font-mono">{editingUser.username}</span>
+                <Edit3 className="h-4 w-4 text-slate-400" />
+                사용자 정보·권한 수정: <span className="font-mono">{editingUser.username}</span>
               </div>
               <button
                 type="button"
@@ -290,11 +291,11 @@ export function AdminUsersPage() {
                   id="edit-role"
                   value={editRole}
                   onChange={(e) => setEditRole(e.target.value as UserRole)}
-                  className="soc-select w-full font-mono text-xs"
+                  className="soc-select w-full text-xs"
                 >
                   {(data?.roles ?? ['VIEWER', 'ANALYST', 'ADMIN']).map((r) => (
                     <option key={r} value={r}>
-                      {r}
+                      {labelText('userRole', r)}
                     </option>
                   ))}
                 </select>
@@ -302,7 +303,7 @@ export function AdminUsersPage() {
 
               <div className="md:col-span-2">
                 <label htmlFor="edit-patterns" className="mb-1 block text-xs font-medium text-slate-300">
-                  허용 캡처 패턴 (줄바꿈 또는 쉼표 구분)
+                  열람 허용 수집 구간 (줄바꿈이나 쉼표로 구분)
                 </label>
                 <textarea
                   id="edit-patterns"
@@ -338,7 +339,7 @@ export function AdminUsersPage() {
           <div className="soc-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-xs text-slate-400">
               <div className="flex items-center gap-2 font-semibold text-slate-200">
-                <Users className="h-4 w-4 text-cyan-400" />
+                <Users className="h-4 w-4 text-slate-400" />
                 등록 사용자 ({data?.users.length ?? 0}명)
               </div>
             </div>
@@ -346,12 +347,12 @@ export function AdminUsersPage() {
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr>
-                    <th className="soc-th">아이디 / 표시명</th>
+                    <th className="soc-th">아이디 · 표시 이름</th>
                     <th className="soc-th">역할</th>
-                    <th className="soc-th">허용 캡처 패턴</th>
-                    <th className="soc-th">계정 / TOTP 상태</th>
+                    <th className="soc-th">열람 허용 수집 구간</th>
+                    <th className="soc-th">계정 · 2단계 인증 상태</th>
                     <th className="soc-th">수정 시각</th>
-                    <th className="soc-th text-right">관리 작업</th>
+                    <th className="soc-th text-right">관리</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -362,42 +363,38 @@ export function AdminUsersPage() {
                         <div className="mt-0.5 text-slate-400">{u.displayName}</div>
                       </td>
                       <td className="soc-td">
-                        <SocBadge
-                          tone={u.role === 'ADMIN' ? 'purple' : u.role === 'ANALYST' ? 'cyan' : 'slate'}
-                        >
-                          {u.role}
-                        </SocBadge>
+                        <UserRoleBadge role={u.role} />
                       </td>
                       <td className="soc-td">
                         <div className="flex flex-wrap gap-1">
                           {u.capturePatterns.map((p) => (
-                            <SocBadge key={p} tone="slate">
-                              {p}
+                            <SocBadge key={p} tone="neutral">
+                              <span className="font-mono">{p}</span>
                             </SocBadge>
                           ))}
                         </div>
                       </td>
                       <td className="soc-td text-xs">
                         <div className="flex flex-wrap gap-1">
-                          <SocBadge tone={u.enabled ? 'emerald' : 'rose'}>
-                            {u.enabled ? '활성' : '비활성'}
-                          </SocBadge>
+                          <SocBadge tone={u.enabled ? 'neutral' : 'muted'}>{u.enabled ? '활성' : '비활성'}</SocBadge>
                           {u.lockedUntil && (
-                            <SocBadge tone="rose">잠금 ({formatDateTime(u.lockedUntil)})</SocBadge>
+                            <SocBadge tone="attention">
+                              잠김 · <span className="tabular-nums">{formatDateTime(u.lockedUntil)}</span>까지
+                            </SocBadge>
                           )}
                           {u.role === 'ADMIN' && (
-                            <SocBadge tone={u.totpEnabled ? 'cyan' : 'amber'}>
-                              {u.totpEnabled ? 'TOTP 등록됨' : 'TOTP 미등록'}
+                            <SocBadge tone={u.totpEnabled ? 'neutral' : 'attention'}>
+                              {u.totpEnabled ? '2단계 인증 등록됨' : '2단계 인증 미등록'}
                             </SocBadge>
                           )}
                         </div>
                         {u.failedAttempts > 0 && (
-                          <div className="mt-1 font-mono text-[11px] text-amber-300">
-                            실패 횟수: {u.failedAttempts}
+                          <div className="mt-1 text-[11px] tabular-nums text-amber-300">
+                            로그인 실패 {u.failedAttempts}회
                           </div>
                         )}
                       </td>
-                      <td className="soc-td font-mono text-xs tabular-nums text-slate-400">
+                      <td className="soc-td whitespace-nowrap text-xs tabular-nums text-slate-400">
                         {formatDateTime(u.updatedAt ?? u.createdAt)}
                       </td>
                       <td className="soc-td text-right">
@@ -430,10 +427,10 @@ export function AdminUsersPage() {
                             <button
                               type="button"
                               onClick={() => void runRowAction(() => adminApi.resetTotp(u.id))}
-                              className="soc-btn-danger px-2.5 py-1 text-xs"
+                              className="soc-btn-caution px-2.5 py-1 text-xs"
                             >
                               <KeyRound className="h-3 w-3" />
-                              TOTP 초기화
+                              2단계 인증 초기화
                             </button>
                           )}
                         </div>

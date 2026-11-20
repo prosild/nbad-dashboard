@@ -1,3 +1,19 @@
+/** 화면의 모든 날짜·시각은 방문자 브라우저 시간대와 상관없이 한국 표준시로 보여 준다. */
+export const DISPLAY_TIME_ZONE = 'Asia/Seoul';
+export const DISPLAY_TIME_ZONE_LABEL = 'KST';
+
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: DISPLAY_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** 날짜·시각 표준 형식: `YYYY-MM-DD HH:mm:ss` (한국 표준시). 값이 없으면 '-', 해석할 수 없으면 원래 값. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) {
     return '-';
@@ -6,15 +22,45 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
-  return new Intl.DateTimeFormat('ko-KR', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(date);
+  const parts: Record<string, string> = {};
+  for (const part of DATE_TIME_FORMATTER.formatToParts(date)) {
+    parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+/** 시작~끝 구간: 같은 날이면 끝은 시각만 쓴다. 예: `2017-07-05 22:45:00 ~ 23:15:00` */
+export function formatDateTimeRange(startIso: string | null | undefined, endIso: string | null | undefined): string {
+  const start = formatDateTime(startIso);
+  const end = formatDateTime(endIso);
+  if (start === '-' && end === '-') {
+    return '-';
+  }
+  if (start.length === 19 && end.length === 19 && start.slice(0, 10) === end.slice(0, 10)) {
+    return `${start} ~ ${end.slice(11)}`;
+  }
+  return `${start} ~ ${end}`;
+}
+
+/** 기간(지속 시간) 표준 형식: `45분`, `1시간 5분`, `30초`, `1.4초`(1분 미만 소수). */
+export function formatSeconds(totalSecondsInput: number | null | undefined): string {
+  if (totalSecondsInput === null || totalSecondsInput === undefined || !Number.isFinite(totalSecondsInput) || totalSecondsInput < 0) {
+    return '-';
+  }
+  if (totalSecondsInput < 60) {
+    const rounded = Math.round(totalSecondsInput * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded}초` : `${rounded.toFixed(1)}초`;
+  }
+  const totalSeconds = Math.round(totalSecondsInput);
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const remSeconds = totalSeconds % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  const remMinutes = totalMinutes % 60;
+
+  if (hours > 0) {
+    return remMinutes > 0 ? `${hours}시간 ${remMinutes}분` : `${hours}시간`;
+  }
+  return remSeconds > 0 ? `${totalMinutes}분 ${remSeconds}초` : `${totalMinutes}분`;
 }
 
 export function formatDuration(startIso: string | null | undefined, endIso: string | null | undefined): string {
@@ -26,19 +72,7 @@ export function formatDuration(startIso: string | null | undefined, endIso: stri
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
     return '-';
   }
-  const totalSeconds = Math.round((end - start) / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}초`;
-  }
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const remSeconds = totalSeconds % 60;
-  const hours = Math.floor(totalMinutes / 60);
-  const remMinutes = totalMinutes % 60;
-
-  if (hours > 0) {
-    return remMinutes > 0 ? `${hours}시간 ${remMinutes}분` : `${hours}시간`;
-  }
-  return remSeconds > 0 ? `${totalMinutes}분 ${remSeconds}초` : `${totalMinutes}분`;
+  return formatSeconds(Math.round((end - start) / 1000));
 }
 
 export function formatBytes(bytes: number | null | undefined): string {
@@ -58,6 +92,7 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIdx]}`;
 }
 
+/** 숫자 표준 형식: 천 단위 구분. */
 export function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return '-';
@@ -70,58 +105,4 @@ export function formatPercent(ratio: number | null | undefined, decimals = 1): s
     return '-';
   }
   return `${(ratio * 100).toFixed(decimals)}%`;
-}
-
-export function statusLabel(status: string | null | undefined): string {
-  switch ((status ?? '').toLowerCase()) {
-    case 'open':
-      return '미해결 (open)';
-    case 'investigating':
-      return '확인 중 (investigating)';
-    case 'closed':
-      return '종료 (closed)';
-    default:
-      return status || '-';
-  }
-}
-
-export function resolutionLabel(resolution: string | null | undefined): string {
-  switch ((resolution ?? '').toLowerCase()) {
-    case 'true_positive':
-      return '실제 공격 (true_positive)';
-    case 'false_positive':
-      return '오탐 (false_positive)';
-    case 'benign':
-      return '정상 행위 (benign)';
-    default:
-      return resolution || '-';
-  }
-}
-
-export function decisionChoiceLabel(choice: string | null | undefined): string {
-  switch ((choice ?? '').toLowerCase()) {
-    case 'send':
-      return '전송 (send)';
-    case 'hold':
-      return '보류 (hold)';
-    case 'analyst_review':
-      return '분석가 검토 (analyst_review)';
-    case 'need_more_evidence':
-      return '추가 근거 필요 (need_more_evidence)';
-    default:
-      return choice || '-';
-  }
-}
-
-export function roleLabel(role: string | null | undefined): string {
-  switch ((role ?? '').toUpperCase()) {
-    case 'ADMIN':
-      return '관리자 (ADMIN)';
-    case 'ANALYST':
-      return '분석가 (ANALYST)';
-    case 'VIEWER':
-      return '조회자 (VIEWER)';
-    default:
-      return role || '-';
-  }
 }

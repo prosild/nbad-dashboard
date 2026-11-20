@@ -4,37 +4,44 @@ import { ApiError } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
-import { SocBadge } from '../components/StatusBadge';
+import { CodeLabel, SocBadge } from '../components/StatusBadge';
 import type { AdminAuditLogsResponse, AuditLog } from '../types/api';
 import { formatDateTime } from '../utils/format';
+import { labelText } from '../utils/labels';
+
+/** 보안상 확인이 필요한 동작(실패·잠김·거부)만 주의 색으로 강조하고 나머지는 중립색 */
+function isSecurityAttention(actionType: string): boolean {
+  return actionType.includes('DENIED') || actionType.includes('LOCKED') || actionType.includes('FAILURE');
+}
 
 function AuditLogRow({ log }: { log: AuditLog }) {
   const [expanded, setExpanded] = useState(false);
 
-  const tone =
-    log.actionType.includes('DENIED') || log.actionType.includes('LOCKED') || log.actionType.includes('FAILURE')
-      ? 'rose'
-      : log.actionType.includes('TRANSITION') || log.actionType.includes('REVIEW')
-        ? 'amber'
-        : 'cyan';
+  const tone = isSecurityAttention(log.actionType) ? 'attention' : 'neutral';
 
   return (
     <>
       <tr className="hover:bg-slate-800/35">
-        <td className="soc-td font-mono text-xs tabular-nums text-slate-300">
+        <td className="soc-td whitespace-nowrap text-xs tabular-nums text-slate-300">
           {formatDateTime(log.occurredAt)}
         </td>
         <td className="soc-td text-xs">
           <div className="font-mono font-semibold text-slate-100">{log.actorUsername ?? '-'}</div>
-          {log.actorRole && <div className="text-[11px] text-slate-400">{log.actorRole}</div>}
+          {log.actorRole && (
+            <div className="text-[11px] text-slate-400">
+              <CodeLabel dict="userRole" value={log.actorRole} />
+            </div>
+          )}
         </td>
         <td className="soc-td">
-          <SocBadge tone={tone}>{log.actionType}</SocBadge>
+          <SocBadge tone={tone}>
+            <CodeLabel dict="auditAction" value={log.actionType} />
+          </SocBadge>
         </td>
-        <td className="soc-td font-mono text-xs text-slate-300">
-          <div>{log.targetCaptureId ?? '-'}</div>
+        <td className="soc-td text-xs text-slate-300">
+          <div className="font-mono">{log.targetCaptureId ?? '-'}</div>
           {log.targetIncidentId && (
-            <div className="mt-0.5 break-all text-[11px] text-slate-400">
+            <div className="mt-0.5 break-all font-mono text-[11px] text-slate-400" data-raw="">
               {log.targetIncidentId}
             </div>
           )}
@@ -48,7 +55,7 @@ function AuditLogRow({ log }: { log: AuditLog }) {
               className="soc-btn-secondary inline-flex py-1 px-2.5 text-xs"
             >
               {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              {expanded ? '접기' : 'JSON 보기'}
+              {expanded ? '접기' : '상세 보기'}
             </button>
           ) : (
             <span className="text-slate-500">-</span>
@@ -58,7 +65,10 @@ function AuditLogRow({ log }: { log: AuditLog }) {
       {expanded && log.detailJson && (
         <tr>
           <td colSpan={6} className="border-b border-slate-800 bg-[#080d1a] px-4 py-3">
-            <pre className="max-h-56 overflow-auto rounded border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-300">
+            <pre
+              className="max-h-56 overflow-auto rounded border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-300"
+              data-raw=""
+            >
               {log.detailJson}
             </pre>
           </td>
@@ -105,26 +115,26 @@ export function AdminAuditLogsPage() {
 
   return (
     <AppShell
-      title="관리자 · 불변 감사 로그"
-      subtitle="DB UPDATE/DELETE 차단 트리거로 보호되는 보안 및 업무 감사 이력"
+      title="감사 로그"
+      subtitle="로그인·열람·상태 변경 기록입니다. 기록은 수정하거나 지울 수 없습니다"
     >
       <div className="space-y-5">
         <section className="soc-card p-4">
           <form onSubmit={handleFilterSubmit} className="flex flex-wrap items-end gap-3">
             <div>
               <label htmlFor="audit-action-type" className="mb-1 block text-[11px] font-medium text-slate-400">
-                행위 유형 (actionType)
+                동작 유형
               </label>
               <select
                 id="audit-action-type"
                 value={actionType}
                 onChange={(e) => setActionType(e.target.value)}
-                className="soc-select font-mono text-xs"
+                className="soc-select text-xs"
               >
-                <option value="">전체 유형</option>
+                <option value="">모든 유형</option>
                 {(data?.actionTypes ?? []).map((type) => (
                   <option key={type} value={type}>
-                    {type}
+                    {labelText('auditAction', type)}
                   </option>
                 ))}
               </select>
@@ -132,27 +142,27 @@ export function AdminAuditLogsPage() {
 
             <div>
               <label htmlFor="audit-actor" className="mb-1 block text-[11px] font-medium text-slate-400">
-                행위자 아이디 (actorUsername)
+                사용자 아이디
               </label>
               <input
                 id="audit-actor"
                 type="text"
                 value={actorUsername}
                 onChange={(e) => setActorUsername(e.target.value)}
-                placeholder="예: analyst1"
-                className="soc-input font-mono text-xs"
+                placeholder="찾을 사용자 아이디"
+                className="soc-input text-xs"
               />
             </div>
 
             <div>
               <label htmlFor="audit-limit" className="mb-1 block text-[11px] font-medium text-slate-400">
-                조회 건수 (limit)
+                조회 건수
               </label>
               <select
                 id="audit-limit"
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value))}
-                className="soc-select font-mono text-xs"
+                className="soc-select text-xs tabular-nums"
               >
                 <option value={50}>50</option>
                 <option value={100}>100</option>
@@ -181,7 +191,7 @@ export function AdminAuditLogsPage() {
           <div className="soc-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-xs text-slate-400">
               <div className="flex items-center gap-2 font-semibold text-slate-200">
-                <FileSearch className="h-4 w-4 text-cyan-400" />
+                <FileSearch className="h-4 w-4 text-slate-400" />
                 감사 로그 ({data?.logs.length ?? 0}건)
               </div>
             </div>
@@ -190,11 +200,11 @@ export function AdminAuditLogsPage() {
                 <thead>
                   <tr>
                     <th className="soc-th">발생 시각</th>
-                    <th className="soc-th">행위자</th>
-                    <th className="soc-th">행위 유형</th>
-                    <th className="soc-th">대상 캡처 / 사건</th>
-                    <th className="soc-th">클라이언트 IP</th>
-                    <th className="soc-th text-right">상세 JSON</th>
+                    <th className="soc-th">사용자</th>
+                    <th className="soc-th">동작 유형</th>
+                    <th className="soc-th">대상 수집 구간 · 사건</th>
+                    <th className="soc-th">접속 IP</th>
+                    <th className="soc-th text-right">상세</th>
                   </tr>
                 </thead>
                 <tbody>

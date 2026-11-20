@@ -1,29 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ClipboardCheck, ExternalLink, ShieldAlert, XCircle } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, ExternalLink, Info, XCircle } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
-import { ReviewActionBadge, SocBadge } from '../components/StatusBadge';
+import { CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
 import { formatDateTime } from '../utils/format';
+import { labelText, reviewReasonText } from '../utils/labels';
 
-function ReviewRowActions({
-  item,
-  onSubmitted,
-}: {
-  item: AnalystReviewItem;
-  onSubmitted: () => Promise<void>;
-}) {
+function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSubmitted: () => Promise<void> }) {
   const { notify } = useToast();
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const targetJobId = item.reviewJobId ?? item.jobId;
   if (!targetJobId) {
-    return <span className="text-xs text-slate-500">작업 ID 없음</span>;
+    return <span className="text-xs text-slate-500">판단 요청 정보가 없어 결정할 수 없습니다</span>;
   }
 
   async function decide(action: 'confirm' | 'dismiss') {
@@ -35,11 +30,11 @@ function ReviewRowActions({
         action,
         note: note.trim() || undefined,
       });
-      notify(res.message || '검토 결정이 저장되었습니다.', 'success');
+      notify(res.message || '판단을 저장했습니다.', 'success');
       setNote('');
       await onSubmitted();
     } catch (err) {
-      notify(err instanceof ApiError ? err.message : '검토 결정 저장에 실패했습니다.', 'error');
+      notify(err instanceof ApiError ? err.message : '판단을 저장하지 못했습니다.', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -49,10 +44,10 @@ function ReviewRowActions({
     <div className="min-w-[230px] space-y-2">
       <input
         type="text"
-        aria-label={`${item.incidentId} 검토 메모`}
+        aria-label={`${item.incidentId} 판단 메모`}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="검토 메모 (선택)"
+        placeholder="판단 메모 (선택)"
         className="soc-input py-1 text-xs"
       />
       <div className="flex gap-1.5">
@@ -60,19 +55,19 @@ function ReviewRowActions({
           type="button"
           disabled={submitting}
           onClick={() => void decide('confirm')}
-          className="soc-btn-emerald flex-1 py-1 px-2 text-xs"
+          className="soc-btn-emerald flex-1 px-2 py-1 text-xs"
         >
           <CheckCircle2 className="h-3.5 w-3.5" />
-          confirm
+          {labelText('reviewAction', 'confirm')}
         </button>
         <button
           type="button"
           disabled={submitting}
           onClick={() => void decide('dismiss')}
-          className="soc-btn-danger flex-1 py-1 px-2 text-xs"
+          className="soc-btn-secondary flex-1 px-2 py-1 text-xs"
         >
           <XCircle className="h-3.5 w-3.5" />
-          dismiss
+          {labelText('reviewAction', 'dismiss')}
         </button>
       </div>
     </div>
@@ -95,7 +90,7 @@ export function ReviewsPage() {
       const res = await reviewsApi.list(captureId || undefined, pendingOnly);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '승인 대기 목록을 불러오지 못했습니다.');
+      setErrorMsg(err instanceof ApiError ? err.message : '판단 요청 목록을 불러오지 못했습니다.');
     } finally {
       setLoading(false);
     }
@@ -121,16 +116,14 @@ export function ReviewsPage() {
 
   return (
     <AppShell
-      title="분석가 승인 대기 목록"
-      subtitle="dashboard.analyst_review_queue · (zeekad_report_job_id, incident_id) 연계 및 decide_review 결정"
+      title="판단 요청"
+      subtitle="자동 판단이 엇갈려 분석가 판단을 기다리는 사건입니다. 조사를 진행할지 오탐으로 종료할지 정해 주세요"
     >
       <div className="space-y-5">
-        {data?.maskedView && (
-          <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200">
-            <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />
-            <span>
-              조회자(VIEWER) 권한은 검토 목록을 조회할 수 있으나 결정(confirm/dismiss)은 분석가(ANALYST) 이상만 가능합니다.
-            </span>
+        {data && !data.canDecideReview && (
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>읽기 전용 계정입니다. 판단은 분석가 계정에서 할 수 있습니다.</span>
           </div>
         )}
 
@@ -138,15 +131,15 @@ export function ReviewsPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div>
               <label htmlFor="reviews-capture" className="mb-1 block text-[11px] font-medium text-slate-400">
-                캡처 필터
+                수집 구간
               </label>
               <select
                 id="reviews-capture"
                 value={captureId}
                 onChange={(e) => updateCapture(e.target.value)}
-                className="soc-select font-mono text-xs"
+                className="soc-select text-xs"
               >
-                <option value="">전체 허용 캡처</option>
+                <option value="">열람 허용 수집 구간 전체</option>
                 {(data?.allowedCaptures ?? []).map((cap) => (
                   <option key={cap} value={cap}>
                     {cap}
@@ -162,95 +155,92 @@ export function ReviewsPage() {
                 onChange={(e) => togglePendingOnly(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-500/30"
               />
-              <span>미결정만 보기 (pendingOnly)</span>
+              <span>판단 대기만 보기</span>
             </label>
           </div>
 
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <ClipboardCheck className="h-4 w-4 text-cyan-400" />
-            <span>총 {data?.reviews.length ?? 0}건</span>
+            <ClipboardCheck className="h-4 w-4 text-slate-400" />
+            <span className="tabular-nums">총 {data?.reviews.length ?? 0}건</span>
           </div>
         </section>
 
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadReviews()} />}
 
         {loading && !data ? (
-          <LoadingPanel label="승인 대기 목록을 불러오는 중..." />
+          <LoadingPanel label="판단 요청 목록을 불러오는 중..." />
         ) : (
           <div className="soc-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr>
-                    <th className="soc-th">캡처 · 작업</th>
+                    <th className="soc-th">수집 구간</th>
                     <th className="soc-th">사건 · 호스트</th>
-                    <th className="soc-th">검토 사유</th>
+                    <th className="soc-th">요청 사유</th>
                     <th className="soc-th">요청 시각</th>
-                    <th className="soc-th">결정 · 반영 상태</th>
-                    <th className="soc-th">결정 / 상세</th>
+                    <th className="soc-th">판단 · 반영 상태</th>
+                    <th className="soc-th">판단 · 상세</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(data?.reviews ?? []).length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">
-                        조건에 해당하는 검토 요청이 없습니다.
+                        판단을 기다리는 사건이 없습니다.
                       </td>
                     </tr>
                   ) : (
                     (data?.reviews ?? []).map((item) => {
                       const isPending = item.zeekadReviewAction === null || item.zeekadReviewAction === '';
-                      const resumeTone = item.zeekadReviewResumeFailed
-                        ? 'rose'
-                        : item.zeekadReviewResumedAt
-                          ? 'emerald'
-                          : isPending
-                            ? 'amber'
-                            : 'cyan';
+                      const resumeFailed = item.zeekadReviewResumeFailed === true;
+                      const resumed = item.zeekadReviewResumedAt !== null;
                       const resumeText =
                         item.resumeStatusLabel ||
                         (isPending
-                          ? '대기 중'
-                          : item.zeekadReviewResumeFailed
-                            ? '반영 실패(운영자 확인)'
-                            : item.zeekadReviewResumedAt
+                          ? '판단 대기'
+                          : resumeFailed
+                            ? '반영 실패(관리자 확인 필요)'
+                            : resumed
                               ? '반영됨'
                               : '반영 중');
 
                       return (
-                        <tr
-                          key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`}
-                          className="hover:bg-slate-800/35"
-                        >
-                          <td className="soc-td font-mono text-xs">
-                            <div className="font-semibold text-cyan-200">{item.captureId ?? '-'}</div>
-                            <div className="mt-0.5 text-[11px] text-slate-400">
-                              검토 #{item.reviewJobId ?? item.jobId ?? '-'}
-                            </div>
+                        <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
+                          <td
+                            className="soc-td font-mono text-xs font-semibold text-slate-200"
+                            title={`판단 요청 실행 #${item.reviewJobId ?? item.jobId ?? '-'}`}
+                          >
+                            {item.captureId ?? '-'}
                           </td>
                           <td className="soc-td text-xs">
-                            <div className="font-mono font-semibold text-slate-100">
-                              {item.hostIp ?? '-'} ({item.zeekadRole ?? '-'})
+                            <div className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="font-mono font-semibold text-slate-100">{item.hostIp ?? '-'}</span>
+                              <CodeLabel dict="hostRole" value={item.zeekadRole} className="text-slate-400" />
                             </div>
-                            <div className="mt-0.5 break-all font-mono text-[11px] text-slate-400">
+                            <div className="mt-0.5 break-all font-mono text-[11px] text-slate-500" data-raw="">
                               {item.incidentId}
                             </div>
                           </td>
                           <td className="soc-td max-w-sm text-xs text-slate-200">
-                            {item.zeekadReviewReason || '-'}
+                            <LookupText label={reviewReasonText(item.zeekadReviewReason)} />
                           </td>
-                          <td className="soc-td font-mono text-xs tabular-nums text-slate-300">
+                          <td className="soc-td whitespace-nowrap text-xs tabular-nums text-slate-300">
                             {formatDateTime(item.requestedAt)}
                           </td>
                           <td className="soc-td text-xs">
                             <div className="flex flex-col items-start gap-1">
-                              <ReviewActionBadge
-                                action={item.zeekadReviewAction}
-                                pending={isPending}
-                              />
-                              <SocBadge tone={resumeTone}>{resumeText}</SocBadge>
+                              <ReviewActionBadge action={item.zeekadReviewAction} pending={isPending} />
+                              {!isPending && (
+                                <ResumeStatusBadge
+                                  label={resumeText}
+                                  failed={resumeFailed}
+                                  resumed={resumed}
+                                  pending={false}
+                                />
+                              )}
                               {item.analystDisplay && (
-                                <span className="font-mono text-[11px] text-slate-400">
+                                <span className="text-[11px] text-slate-400" data-raw="">
                                   {item.analystDisplay}
                                 </span>
                               )}

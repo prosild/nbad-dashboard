@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   Activity,
   ClipboardCheck,
+  Clock,
   EyeOff,
   FileSearch,
   Lock,
@@ -14,8 +15,11 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
-import { roleLabel } from '../utils/format';
-import { SocBadge } from './StatusBadge';
+import { DISPLAY_TIME_ZONE_LABEL } from '../utils/format';
+import { labelText } from '../utils/labels';
+import { SocBadge, UserRoleBadge } from './StatusBadge';
+
+export const PRODUCT_NAME = 'zeek_AD 보안 관제';
 
 interface NavItem {
   to: string;
@@ -26,9 +30,9 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/incidents', label: '이상탐지 조사 큐', icon: Radar, matchPrefix: '/incidents' },
-  { to: '/reviews', label: '분석가 승인 대기', icon: ClipboardCheck, matchPrefix: '/reviews' },
-  { to: '/operations', label: '운영 상태 · 결론 집계', icon: Activity, matchPrefix: '/operations' },
+  { to: '/incidents', label: '탐지 사건', icon: Radar, matchPrefix: '/incidents' },
+  { to: '/reviews', label: '판단 요청', icon: ClipboardCheck, matchPrefix: '/reviews' },
+  { to: '/operations', label: '운영 현황', icon: Activity, matchPrefix: '/operations' },
   { to: '/admin/users', label: '사용자 관리', icon: Users, matchPrefix: '/admin/users', adminOnly: true },
   { to: '/admin/audit-logs', label: '감사 로그', icon: FileSearch, matchPrefix: '/admin/audit-logs', adminOnly: true },
 ];
@@ -63,10 +67,7 @@ export function AppShell({
         <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-cyan-500/40 bg-cyan-500/10 text-cyan-300">
           <Shield className="h-5 w-5" />
         </div>
-        <div>
-          <div className="font-mono text-sm font-bold tracking-wide text-slate-100">zeek_AD SOC</div>
-          <div className="text-[11px] text-slate-400">관제·조사 콘솔</div>
-        </div>
+        <div className="text-sm font-bold tracking-tight text-slate-100">{PRODUCT_NAME}</div>
       </div>
 
       <nav aria-label="주 메뉴" className="flex-1 space-y-1 px-3 py-4">
@@ -96,18 +97,18 @@ export function AppShell({
           <div className="rounded-lg border border-slate-800 bg-[#090f1d] p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="truncate font-semibold text-slate-100">{user.displayName}</span>
-              <SocBadge tone={user.role === 'ADMIN' ? 'purple' : user.role === 'ANALYST' ? 'cyan' : 'slate'}>
-                {user.role}
-              </SocBadge>
+              <UserRoleBadge role={user.role} />
             </div>
             <div className="mt-1 font-mono text-[11px] text-slate-400">@{user.username}</div>
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 text-[11px] text-slate-400">열람 허용 수집 구간</div>
+            <div className="mt-1 flex flex-wrap gap-1">
               {user.allowedCapturePatterns.map((pattern) => (
                 <span
                   key={pattern}
-                  className="rounded border border-slate-800 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
+                  title={pattern === '*' ? '모든 수집 구간' : undefined}
+                  className="rounded border border-slate-800 bg-slate-900 px-1.5 py-0.5 font-mono text-[11px] text-slate-400"
                 >
-                  {pattern}
+                  {pattern === '*' ? '전체' : pattern}
                 </span>
               ))}
             </div>
@@ -115,7 +116,7 @@ export function AppShell({
           <button
             type="button"
             onClick={() => void logout()}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-200"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700/70 hover:text-slate-100"
           >
             <LogOut className="h-3.5 w-3.5" />
             로그아웃
@@ -172,17 +173,28 @@ export function AppShell({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {user?.maskedView && (
-                <SocBadge tone="amber">
-                  <EyeOff className="h-3.5 w-3.5" />
-                  VIEWER 마스킹 적용 중
+              <span
+                className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-slate-400"
+                title="화면의 모든 날짜·시각은 한국 표준시(UTC+9)로 표시합니다."
+              >
+                <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                시각 기준 {DISPLAY_TIME_ZONE_LABEL}
+              </span>
+              {user?.maskedView ? (
+                <SocBadge
+                  tone="neutral"
+                  title={`${labelText('userRole', user.role)} 계정입니다. 조회만 할 수 있고, IP 주소와 계정 이름 일부가 서버에서 가려져 보입니다.`}
+                >
+                  <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                  읽기 전용 · 개인정보 가림
                 </SocBadge>
-              )}
-              {user && (
-                <SocBadge tone="slate">
-                  <Lock className="h-3 w-3 text-cyan-400" />
-                  {roleLabel(user.role)}
-                </SocBadge>
+              ) : (
+                user && (
+                  <SocBadge tone="neutral" title="현재 계정의 권한">
+                    <Lock className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                    {labelText('userRole', user.role)}
+                  </SocBadge>
+                )
               )}
               {actions}
             </div>

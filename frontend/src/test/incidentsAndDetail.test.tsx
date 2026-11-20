@@ -136,9 +136,9 @@ describe('조사 큐 및 사건 상세 화면', () => {
 
     expect(await screen.findByText('192.168.10.5')).toBeInTheDocument();
     expect(screen.getByText('지속 45분')).toBeInTheDocument();
-    expect(screen.getByText('중복 탐지 +1')).toBeInTheDocument();
+    expect(screen.getByText('함께 탐지한 모델 +1')).toBeInTheDocument();
     expect(screen.getAllByText('보고서 없음').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('보고 작업 #40')).toBeInTheDocument();
+    expect(screen.getByTitle('보고서 실행 #40')).toBeInTheDocument();
     expect(screen.getByText('전체 사건 수')).toBeInTheDocument();
   });
 
@@ -200,7 +200,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
               ],
               evidence: {
                 available: false,
-                statusMessage: '근거 API 연결 불가(DB 뷰 정보만 표시)',
+                statusMessage: '상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,
@@ -291,7 +291,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
                       payloadJson: '{"text":"hello"}',
                       threadParent: null,
                       threadKey: 'cic17-wed|192.168.10.5|originator|100',
-                      threadRoleLabel: '머리 알림',
+                      threadRoleLabel: '첫 알림',
                       replyBroadcast: true,
                     },
                   ],
@@ -308,7 +308,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
                 resumedAt: null,
                 resumeFailed: false,
                 pending: true,
-                resumeStatusLabel: '대기 중',
+                resumeStatusLabel: '판단 대기',
                 canDecide: true,
               },
               currentStatus: 'investigating',
@@ -344,12 +344,12 @@ describe('조사 큐 및 사건 상세 화면', () => {
       fetchMock as unknown as typeof fetch,
     );
 
-    expect(await screen.findByText('근거 API 연결 불가(DB 뷰 정보만 표시)')).toBeInTheDocument();
+    expect(await screen.findByText('상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
     expect(screen.getByText('6 / 9')).toBeInTheDocument();
     expect(screen.getByText('선택 확률')).toBeInTheDocument();
-    expect(screen.getByText('공격 정답이 아닌 가설')).toBeInTheDocument();
-    expect(screen.getByText('채널 재알림')).toBeInTheDocument();
-    expect(screen.getByText('기록만(dry-run)')).toBeInTheDocument();
+    expect(screen.getByText('확정이 아닌 가설')).toBeInTheDocument();
+    expect(screen.getByText('채널에도 표시')).toBeInTheDocument();
+    expect(screen.getByText('시험 모드(실제 전송 안 함)')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('정확도');
 
     // XSS 무해화 확인: 텍스트로만 출력되고 <script>/<img> 요소가 생성되지 않아야 함
@@ -364,7 +364,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
 
     // 상태 전이 제출
     await user.type(screen.getByLabelText('변경 사유 (필수)'), '실제 공격 확인');
-    await user.click(screen.getByRole('button', { name: '종료 처리 (closed)' }));
+    await user.click(screen.getByRole('button', { name: '종료 처리' }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([u]) => u === '/api/incidents/42/rank/1/transition');
@@ -377,8 +377,8 @@ describe('조사 큐 및 사건 상세 화면', () => {
     });
 
     // 검토 결정 제출
-    await user.type(screen.getByLabelText('검토 메모 (선택)'), '진행 승인');
-    await user.click(screen.getByRole('button', { name: /confirm \(조사 진행\)/ }));
+    await user.type(screen.getByLabelText('판단 메모 (선택)'), '진행 승인');
+    await user.click(screen.getByRole('button', { name: '조사 진행' }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
@@ -432,7 +432,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
               assetNames: [],
               evidence: {
                 available: false,
-                statusMessage: '근거 API 연결 불가(DB 뷰 정보만 표시)',
+                statusMessage: '상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,
@@ -525,6 +525,6 @@ describe('조사 큐 및 사건 상세 화면', () => {
     renderWithAnalyst('/incidents/10/rank/1', fetchMock as unknown as typeof fetch);
 
     expect(await screen.findByText('보고서 없음')).toBeInTheDocument();
-    expect(screen.getByText('전송 판단 없음')).toBeInTheDocument();
+    expect(screen.getByText('이 사건은 알림 전송 판단 대상이 아닙니다.')).toBeInTheDocument();
   });
 });

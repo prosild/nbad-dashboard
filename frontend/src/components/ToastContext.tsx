@@ -42,7 +42,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             toast.tone === 'success'
               ? 'border-emerald-500/40 bg-emerald-950/90 text-emerald-100'
               : toast.tone === 'error'
-                ? 'border-rose-500/40 bg-rose-950/90 text-rose-100'
+                ? 'border-amber-500/40 bg-amber-950/90 text-amber-100'
                 : 'border-cyan-500/40 bg-slate-900/95 text-slate-100';
 
           return (
@@ -53,7 +53,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               {toast.tone === 'success' ? (
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
               ) : toast.tone === 'error' ? (
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               ) : (
                 <Info className="mt-0.5 h-4 w-4 shrink-0 text-cyan-400" />
               )}

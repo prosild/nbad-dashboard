@@ -1,7 +1,8 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
+/** 요청 실패 안내. 사람이 다시 시도하거나 관리자에게 알려야 하므로 주의(주황) 색을 쓴다. */
 export function ErrorAlert({
-  title = '요청 처리 중 오류가 발생했습니다',
+  title = '요청을 처리하지 못했습니다',
   message,
   onRetry,
 }: {
@@ -12,26 +13,27 @@ export function ErrorAlert({
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-950/35 px-4 py-3.5 text-sm text-rose-100"
+      className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3.5 text-sm text-amber-100"
     >
       <div className="flex items-start gap-2.5">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
         <div>
-          <div className="font-semibold text-rose-200">{title}</div>
-          <div className="mt-0.5 text-rose-100/90">{message}</div>
+          <div className="font-semibold text-amber-200">{title}</div>
+          <div className="mt-0.5 text-amber-100/90">{message}</div>
+          <div className="mt-1 text-xs text-amber-100/70">잠시 후 다시 시도하세요. 계속되면 관리자에게 알려 주세요.</div>
         </div>
       </div>
       {onRetry && (
         <button type="button" onClick={onRetry} className="soc-btn-secondary py-1.5 text-xs">
           <RefreshCw className="h-3.5 w-3.5" />
-          새로고침
+          다시 시도
         </button>
       )}
     </div>
   );
 }
 
-export function LoadingPanel({ label = '데이터를 불러오는 중...' }: { label?: string }) {
+export function LoadingPanel({ label = '불러오는 중...' }: { label?: string }) {
   return (
     <div className="soc-card flex items-center justify-center gap-3 p-10 text-sm text-slate-400">
       <RefreshCw className="h-4 w-4 animate-spin text-cyan-400" />

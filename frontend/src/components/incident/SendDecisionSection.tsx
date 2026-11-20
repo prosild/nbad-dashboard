@@ -1,7 +1,8 @@
 import { AlertTriangle, Cpu, GitCompare, Scale, Sparkles } from 'lucide-react';
 import type { SendDecisionView } from '../../types/api';
-import { decisionChoiceLabel, formatPercent } from '../../utils/format';
-import { SocBadge } from '../StatusBadge';
+import { formatPercent } from '../../utils/format';
+import { labelText, policyReasonText } from '../../utils/labels';
+import { CodeLabel, LookupText, SocBadge, WouldSendBadge } from '../StatusBadge';
 import { SvgProgressBar } from '../SvgProgressBar';
 
 export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisionView }) {
@@ -9,32 +10,33 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
     return (
       <section className="soc-card p-5">
         <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-100">
-          <GitCompare className="h-4 w-4 text-cyan-400" />
-          3자 전송 판단 비교
+          <GitCompare className="h-4 w-4 text-slate-400" />
+          알림 전송 판단
         </div>
-        <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">전송 판단 없음</div>
+        <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
+          이 사건은 알림 전송 판단 대상이 아닙니다.
+        </div>
       </section>
     );
   }
 
-  const probEntries = Object.entries(sendDecision.decisionModelProbabilities ?? {}).sort(
-    (a, b) => b[1] - a[1],
-  );
+  const probEntries = Object.entries(sendDecision.decisionModelProbabilities ?? {}).sort((a, b) => b[1] - a[1]);
 
   return (
     <section className="soc-card space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-          <GitCompare className="h-4 w-4 text-cyan-400" />
-          3자 전송 판단 비교
+          <GitCompare className="h-4 w-4 text-slate-400" />
+          알림 전송 판단
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {sendDecision.wouldSend ? (
-            <SocBadge tone="rose">최종 판단: 전송 대상 (would_send = true)</SocBadge>
-          ) : (
-            <SocBadge tone="slate">최종 판단: 보류 / 미전송 (would_send = false)</SocBadge>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-slate-400">최종</span>
+          <WouldSendBadge wouldSend={sendDecision.wouldSend} />
+          {sendDecision.decidedBy && (
+            <span className="text-slate-400">
+              결정 근거 <CodeLabel dict="decidedBy" value={sendDecision.decidedBy} className="text-slate-200" />
+            </span>
           )}
-          {sendDecision.decidedBy && <SocBadge tone="slate">결정 주체: {sendDecision.decidedBy}</SocBadge>}
         </div>
       </div>
 
@@ -44,7 +46,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
           className="flex items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200"
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-          <span>정책 규칙, 일반 LLM, 판단 모델 간 의견 불일치가 감지되었습니다.</span>
+          <span>규칙, AI 보고서, 판단 모델의 의견이 서로 다릅니다.</span>
         </div>
       )}
 
@@ -52,59 +54,60 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
         <div className="soc-panel flex flex-col justify-between p-4">
           <div>
             <div className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
-                <Scale className="h-3.5 w-3.5 text-cyan-400" />
-                정책 규칙 (Policy)
+              <span
+                className="soc-subhead flex items-center gap-1.5"
+                title={sendDecision.policyId ? `규칙 ID: ${sendDecision.policyId}` : undefined}
+              >
+                <Scale className="h-3.5 w-3.5 text-slate-400" />
+                규칙 의견
               </span>
-              {sendDecision.policyMandatory && <SocBadge tone="rose">필수 규칙</SocBadge>}
+              {sendDecision.policyMandatory && <SocBadge tone="neutral">반드시 적용되는 규칙</SocBadge>}
             </div>
             <div className="mt-3 text-base font-bold text-slate-100">
-              {decisionChoiceLabel(sendDecision.policyChoice)}
+              <CodeLabel dict="sendChoice" value={sendDecision.policyChoice} />
             </div>
-            {sendDecision.policyId && (
-              <div className="mt-1 font-mono text-[11px] text-slate-400">
-                policy_id: {sendDecision.policyId}
-              </div>
-            )}
           </div>
           {sendDecision.policyReasons.length > 0 && (
-            <ul className="mt-3 list-disc space-y-1 border-t border-slate-800 pt-3 pl-4 text-xs text-slate-300">
+            <ul className="mt-3 list-disc space-y-1 border-t border-slate-800 pl-4 pt-3 text-xs text-slate-300">
               {sendDecision.policyReasons.map((reason, idx) => (
-                <li key={idx}>{reason}</li>
+                <li key={idx}>
+                  <LookupText label={policyReasonText(reason)} />
+                </li>
               ))}
             </ul>
           )}
         </div>
 
         <div className="soc-panel p-4">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
-            <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-            일반 LLM 권고
+          <div className="soc-subhead flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-slate-400" />
+            AI 보고서 의견
           </div>
           <div className="mt-3 text-base font-bold text-slate-100">
-            {decisionChoiceLabel(sendDecision.llmChoice)}
+            <CodeLabel dict="sendChoice" value={sendDecision.llmChoice} />
           </div>
-          <p className="mt-2 text-xs text-slate-400">
-            단계 5 보고서 생성 모델이 판단한 권고 선택지입니다.
-          </p>
+          <p className="mt-2 text-xs text-slate-400">AI 분석 보고서를 작성한 모델이 고른 선택지입니다.</p>
         </div>
 
         <div className="soc-panel space-y-3 p-4">
           <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
-              <Cpu className="h-3.5 w-3.5 text-emerald-400" />
-              판단 모델 ({sendDecision.decisionModel ?? 'decision-model'})
+            <span
+              className="soc-subhead flex items-center gap-1.5"
+              title={sendDecision.decisionModel ? `판단 모델: ${sendDecision.decisionModel}` : undefined}
+            >
+              <Cpu className="h-3.5 w-3.5 text-slate-400" />
+              판단 모델 의견
             </span>
           </div>
           <div className="text-base font-bold text-slate-100">
-            {decisionChoiceLabel(sendDecision.decisionModelChoice)}
+            <CodeLabel dict="sendChoice" value={sendDecision.decisionModelChoice} />
           </div>
 
           {sendDecision.decisionModelConfidence !== null && (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-300">선택 확률</span>
-                <span className="font-mono font-semibold tabular-nums text-cyan-300">
+                <span className="soc-num font-semibold text-slate-100">
                   {formatPercent(sendDecision.decisionModelConfidence)}
                 </span>
               </div>
@@ -123,16 +126,14 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
               {probEntries.map(([choice, prob]) => (
                 <div key={choice} className="space-y-1">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-mono text-slate-300">{choice}</span>
-                    <span className="font-mono tabular-nums text-slate-300">
-                      {formatPercent(prob)}
-                    </span>
+                    <CodeLabel dict="sendChoice" value={choice} className="text-slate-300" />
+                    <span className="soc-num text-slate-300">{formatPercent(prob)}</span>
                   </div>
                   <SvgProgressBar
                     value={prob}
                     max={1}
                     tone={choice === sendDecision.decisionModelChoice ? 'emerald' : 'slate'}
-                    label={`${choice} 선택 확률`}
+                    label={`${labelText('sendChoice', choice)} 선택 확률`}
                   />
                 </div>
               ))}
@@ -140,7 +141,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
           )}
 
           {sendDecision.decisionModelError && (
-            <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-200">
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-200">
               {sendDecision.decisionModelError}
             </div>
           )}

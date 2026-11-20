@@ -89,10 +89,10 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(await screen.findByText('경계선 점수 검토')).toBeInTheDocument();
 
     await user.type(
-      screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 검토 메모'),
+      screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 판단 메모'),
       '조사 진행',
     );
-    await user.click(screen.getByRole('button', { name: /confirm/ }));
+    await user.click(screen.getByRole('button', { name: '조사 진행' }));
 
     await waitFor(() => {
       const decideCall = fetchMock.mock.calls.find(([u]) => u === '/api/reviews/decide');
@@ -170,10 +170,10 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
 
     renderWithAdmin('/operations', fetchMock as unknown as typeof fetch);
 
-    expect(await screen.findByText('전체 (all)')).toBeInTheDocument();
+    expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
     expect(screen.getByText('정밀도 0.60, 결론 5/18 (27.8%)')).toBeInTheDocument();
     expect(screen.getByText('- (결론 없음)')).toBeInTheDocument();
-    expect(screen.getByText('놓친 공격(재현율)은 이 집계로 알 수 없습니다.')).toBeInTheDocument();
+    expect(screen.getByText('이 표는 탐지된 사건만 셉니다. 놓친 공격 수는 알 수 없습니다.')).toBeInTheDocument();
   });
 
   it('/admin/users에서 신규 사용자를 생성하고 /admin/audit-logs에서 상세 JSON을 펼친다', async () => {
@@ -258,11 +258,11 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(await screen.findByText('analyst1')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /신규 사용자 생성/ }));
-    await user.type(screen.getByLabelText('아이디 (username)'), 'analyst3');
-    await user.type(screen.getByLabelText('표시 이름 (displayName)'), '분석가3');
+    await user.type(screen.getByLabelText('아이디'), 'analyst3');
+    await user.type(screen.getByLabelText('표시 이름'), '분석가3');
     await user.type(screen.getByLabelText('초기 비밀번호'), 'StrongPass!1');
-    await user.selectOptions(screen.getByLabelText('역할 (Role)'), 'ANALYST');
-    const patternsInput = screen.getByLabelText(/허용 캡처 패턴/);
+    await user.selectOptions(screen.getByLabelText('역할'), 'ANALYST');
+    const patternsInput = screen.getByLabelText(/열람 허용 수집 구간/);
     await user.clear(patternsInput);
     await user.type(patternsInput, 'cic17-*, syn1-*');
     await user.click(screen.getByRole('button', { name: '사용자 생성' }));
@@ -282,9 +282,9 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     });
 
     await user.click(screen.getByRole('link', { name: '감사 로그' }));
-    const badges = await screen.findAllByText('USER_ADMIN_CHANGE');
+    const badges = await screen.findAllByText('사용자 계정 변경');
     expect(badges.length).toBeGreaterThanOrEqual(2);
-    await user.click(screen.getByRole('button', { name: /JSON 보기/ }));
+    await user.click(screen.getByRole('button', { name: /상세 보기/ }));
     expect(screen.getByText('{"created":"analyst3"}')).toBeInTheDocument();
   });
 });

@@ -113,7 +113,7 @@ function AuthLoadingScreen() {
     <div className="flex min-h-screen items-center justify-center bg-[#070b14] text-slate-300">
       <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-[#0d1424] px-6 py-4 shadow-xl">
         <ShieldCheck className="h-5 w-5 animate-pulse text-cyan-400" />
-        <span className="font-mono text-sm">SOC 보안 세션 확인 중...</span>
+        <span className="text-sm">로그인 상태를 확인하는 중...</span>
       </div>
     </div>
   );
@@ -173,11 +173,9 @@ export function RequireAdmin({ children }: { children: React.ReactNode }) {
   if (!user || user.role !== 'ADMIN') {
     return (
       <div className="soc-card p-8 text-center">
-        <ShieldAlert className="mx-auto mb-3 h-10 w-10 text-rose-400" />
+        <ShieldAlert className="mx-auto mb-3 h-10 w-10 text-amber-400" />
         <h2 className="text-lg font-semibold text-slate-100">접근 권한이 없습니다</h2>
-        <p className="mt-1 text-sm text-slate-400">
-          이 메뉴는 관리자(ADMIN) 역할만 접근할 수 있습니다.
-        </p>
+        <p className="mt-1 text-sm text-slate-400">이 메뉴는 관리자만 쓸 수 있습니다.</p>
       </div>
     );
   }

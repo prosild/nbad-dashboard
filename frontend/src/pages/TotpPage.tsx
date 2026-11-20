@@ -57,7 +57,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
     try {
       await navigator.clipboard.writeText(setupInfo.secret);
       setCopied(true);
-      notify('Base32 시크릿 키를 클립보드에 복사했습니다.', 'success');
+      notify('수동 입력용 키를 클립보드에 복사했습니다.', 'success');
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       notify('클립보드 복사에 실패했습니다. 키를 직접 선택해 복사해 주세요.', 'error');
@@ -115,9 +115,9 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
           {errorMsg && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-200"
+              className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-200"
             >
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               <span>{errorMsg}</span>
             </div>
           )}
@@ -131,7 +131,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
               ) : setupInfo ? (
                 <div className="rounded-xl border border-slate-800 bg-[#090f1d] p-4">
                   <p className="mb-3 text-xs leading-relaxed text-slate-300">
-                    Google Authenticator, 1Password, Microsoft Authenticator 등 TOTP 앱으로 아래 QR 코드를 스캔하거나 Base32 시크릿 키를 입력하세요.
+                    Google Authenticator, 1Password, Microsoft Authenticator 같은 TOTP 앱으로 아래 QR 코드를 스캔하거나 수동 입력용 키를 입력하세요.
                   </p>
                   <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
                     <div className="shrink-0">
@@ -139,13 +139,13 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
                     </div>
                     <div className="min-w-0 flex-1 space-y-3 text-xs">
                       <div>
-                        <div className="mb-1 font-semibold text-slate-400">발급자 / 계정</div>
+                        <div className="mb-1 font-semibold text-slate-400">발급자 · 계정</div>
                         <div className="font-mono text-slate-200">
                           {setupInfo.issuer} / {setupInfo.accountName}
                         </div>
                       </div>
                       <div>
-                        <div className="mb-1 font-semibold text-slate-400">Base32 시크릿 키</div>
+                        <div className="mb-1 font-semibold text-slate-400">수동 입력용 키</div>
                         <div className="flex items-center gap-2">
                           <code className="block flex-1 break-all rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-cyan-300">
                             {setupInfo.secret}
@@ -161,7 +161,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
                         </div>
                       </div>
                       <div>
-                        <div className="mb-1 font-semibold text-slate-400">otpauth URI</div>
+                        <div className="mb-1 font-semibold text-slate-400">QR 코드에 담긴 등록 주소</div>
                         <code className="block max-h-20 overflow-y-auto break-all rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 font-mono text-[11px] text-slate-400">
                           {setupInfo.otpauthUri}
                         </code>
@@ -177,7 +177,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
             <div>
               <label
                 htmlFor="totp-code"
-                className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                className="mb-1.5 block text-xs font-semibold text-slate-300"
               >
                 6자리 TOTP 인증 코드
               </label>

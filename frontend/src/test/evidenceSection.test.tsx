@@ -42,10 +42,10 @@ describe('EvidenceSection', () => {
     expect(screen.getByText('udp', { selector: 'td' })).toBeInTheDocument();
 
     const dns = screen.getByTestId('protocol-log-dns');
-    expect(within(dns).getByText('queries').nextSibling).toHaveTextContent('80');
-    expect(within(dns).getByText('nxdomain').nextSibling).toHaveTextContent('0');
+    expect(within(dns).getByText('질의 수').nextSibling).toHaveTextContent('80');
+    expect(within(dns).getByText('없는 도메인 응답').nextSibling).toHaveTextContent('0');
     const dce = screen.getByTestId('protocol-log-dce_rpc');
-    expect(within(dce).getByText('top_operations').nextSibling).toHaveTextContent('NetrShareEnum · 10');
+    expect(within(dce).getByText('주요 호출').nextSibling).toHaveTextContent('NetrShareEnum · 10');
 
     expect(screen.getByText('점수는 정상(월요일) 대비 이상함이다. 공격 확정이 아니다')).toBeInTheDocument();
     expect(container.textContent).not.toContain('[object Object]');
@@ -66,10 +66,10 @@ describe('EvidenceSection', () => {
         evidence={{
           ...baseEvidence,
           available: false,
-          statusMessage: '이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음)',
+          statusMessage: '이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.',
         }}
       />,
     );
-    expect(screen.getByRole('status')).toHaveTextContent('이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음)');
+    expect(screen.getByRole('status')).toHaveTextContent('이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.');
   });
 });
