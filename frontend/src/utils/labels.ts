@@ -11,6 +11,12 @@ export const LABEL_DICTIONARIES = {
     investigating: '조사 중',
     closed: '종료',
   },
+  /** 자동 분류 우선순위 (대시보드 계산 값, utils/triage.ts) */
+  priority: {
+    high: '높음',
+    medium: '중간',
+    low: '낮음',
+  },
   /** 판정 (zeek_AD resolution) */
   resolution: {
     true_positive: '정탐',

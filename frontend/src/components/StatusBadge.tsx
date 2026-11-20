@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Bell,
   BellOff,
   CheckCircle2,
@@ -7,9 +9,11 @@ import {
   CircleDot,
   Clock,
   Loader,
+  Minus,
   ShieldCheck,
 } from 'lucide-react';
-import { lookupLabel, unregisteredTitle, type LabelDictionaryName, type LabelLookup } from '../utils/labels';
+import { labelText, lookupLabel, unregisteredTitle, type LabelDictionaryName, type LabelLookup } from '../utils/labels';
+import type { Priority } from '../utils/triage';
 
 /**
  * 색 체계(docs/ui-terminology.md '색·배지 체계'):
@@ -20,13 +24,25 @@ import { lookupLabel, unregisteredTitle, type LabelDictionaryName, type LabelLoo
  * - positive(초록): 정상 행위 판정·검증 통과
  * - notice(청록): 알림 보냄
  * - violet(보라): 오탐 판정
+ * - emphasis(밝은 회색 테두리): 우선순위 중간처럼 중립이지만 눈에 띄어야 하는 값
+ * - muted(흐린 회색): 우선순위 낮음·종료, 값 없음
  */
-export type BadgeTone = 'danger' | 'attention' | 'neutral' | 'info' | 'positive' | 'notice' | 'violet' | 'muted';
+export type BadgeTone =
+  | 'danger'
+  | 'attention'
+  | 'neutral'
+  | 'emphasis'
+  | 'info'
+  | 'positive'
+  | 'notice'
+  | 'violet'
+  | 'muted';
 
 const TONE_CLASS: Record<BadgeTone, string> = {
   danger: 'border-rose-500/40 bg-rose-500/15 text-rose-200',
   attention: 'border-amber-500/40 bg-amber-500/15 text-amber-200',
   neutral: 'border-slate-700 bg-slate-800/80 text-slate-200',
+  emphasis: 'border-slate-300/70 bg-slate-700/40 text-slate-50',
   info: 'border-sky-500/35 bg-sky-500/10 text-sky-200',
   positive: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-200',
   notice: 'border-cyan-500/35 bg-cyan-500/10 text-cyan-200',
@@ -240,6 +256,33 @@ export function UserRoleBadge({ role }: { role: string | null | undefined }) {
   return (
     <SocBadge tone="neutral">
       <CodeLabel dict="userRole" value={role} />
+    </SocBadge>
+  );
+}
+
+/** 자동 분류 우선순위 툴팁. 분석가 판정이 아니라 화면이 계산한 값임을 알린다. */
+export const PRIORITY_TOOLTIP = '자동 분류 우선순위: 파이프라인 결과로 화면이 계산한 값이며 분석가 판정이 아닙니다';
+export const NO_PRIORITY_TOOLTIP = '종료된 사건은 우선순위를 매기지 않습니다';
+
+/**
+ * 자동 분류 우선순위. 높음 = 빨강(danger), 중간 = 밝은 회색 테두리(emphasis), 낮음 = 흐린 회색(muted),
+ * 종료(우선순위 없음) = 흐린 '-'. 주황은 "사람 손 필요" 전용이라 쓰지 않는다.
+ */
+export function PriorityBadge({ priority }: { priority: Priority | null }) {
+  if (priority === null) {
+    return (
+      <SocBadge tone="muted" title={NO_PRIORITY_TOOLTIP}>
+        <span aria-hidden="true">-</span>
+        <span className="sr-only">우선순위 없음</span>
+      </SocBadge>
+    );
+  }
+  const tone: BadgeTone = priority === 'high' ? 'danger' : priority === 'medium' ? 'emphasis' : 'muted';
+  const Icon = priority === 'high' ? ArrowUp : priority === 'medium' ? Minus : ArrowDown;
+  return (
+    <SocBadge tone={tone} title={PRIORITY_TOOLTIP}>
+      <Icon className="h-3 w-3" aria-hidden="true" />
+      {labelText('priority', priority)}
     </SocBadge>
   );
 }

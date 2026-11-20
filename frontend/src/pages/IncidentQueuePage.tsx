@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  BellRing,
-  CheckCircle2,
-  Clock,
-  ExternalLink,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Bell,
+  BellOff,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  FileX,
   Filter,
-  Layers,
+  Info,
   RotateCcw,
+  ShieldCheck,
+  X,
 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
@@ -16,15 +24,29 @@ import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
   CodeLabel,
   IncidentStatusBadge,
+  PRIORITY_TOOLTIP,
+  PriorityBadge,
   ResolutionBadge,
   ReviewActionBadge,
-  SocBadge,
-  VerificationBadge,
-  WouldSendBadge,
 } from '../components/StatusBadge';
-import type { IncidentQueueResponse, ScoringJob } from '../types/api';
-import { formatDateTime, formatDuration, formatNumber } from '../utils/format';
+import type { IncidentQueueItem, IncidentQueueResponse, ScoringJob } from '../types/api';
+import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
 import { labelText } from '../utils/labels';
+import {
+  computePriority,
+  DEFAULT_SORT,
+  DEFAULT_SORT_DIR,
+  PAGE_SIZES,
+  pageWindow,
+  parsePageSize,
+  parseSortDir,
+  parseSortKey,
+  PRIORITY_VALUES,
+  sortIncidents,
+  type Priority,
+  type SortDir,
+  type SortKey,
+} from '../utils/triage';
 
 /** 분석 실행은 날짜·시각으로 보여 주고 실행 번호는 툴팁에만 둔다. */
 function jobTimeLabel(job: ScoringJob | null | undefined): string {
@@ -35,11 +57,25 @@ function jobTimeLabel(job: ScoringJob | null | undefined): string {
   return when ? formatDateTime(when) : '시각 미기록';
 }
 
+/** 서버로 보내는 필터(API 파라미터). 응답 incidents는 서버가 이미 거른 집합이다. */
+const SERVER_FILTER_KEYS = ['pickedBy', 'role', 'status', 'hasReport', 'wouldSend', 'asset'] as const;
+/** 응답 집합 위에서 화면이 거르는 필터 */
+const CLIENT_FILTER_KEYS = ['priority', 'reviewPending', 'alerted'] as const;
+/** 필터·정렬·쪽 크기 변경 때 지우는 쪽 번호 키 */
+const PAGE_KEY = 'page';
+
+type RowItem = { item: IncidentQueueItem; priority: Priority | null };
+
+function detailUrl(item: IncidentQueueItem): string {
+  return `/incidents/${item.jobId}/rank/${item.queueRank}`;
+}
+
 export function IncidentQueuePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<IncidentQueueResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const captureId = searchParams.get('captureId') ?? '';
   const jobId = searchParams.get('jobId') ?? '';
@@ -49,6 +85,20 @@ export function IncidentQueuePage() {
   const status = searchParams.get('status') ?? '';
   const hasReport = searchParams.get('hasReport') ?? '';
   const wouldSend = searchParams.get('wouldSend') ?? '';
+
+  const priorityRaw = searchParams.get('priority');
+  const priorityFilter: Priority | null = PRIORITY_VALUES.includes(priorityRaw as Priority)
+    ? (priorityRaw as Priority)
+    : null;
+  const reviewPendingFilter = searchParams.get('reviewPending') === 'true';
+  const alertedFilter = searchParams.get('alerted') === 'true';
+
+  const sortKey: SortKey = parseSortKey(searchParams.get('sort')) ?? DEFAULT_SORT.key;
+  const sortDir: SortDir =
+    parseSortDir(searchParams.get('dir')) ??
+    (parseSortKey(searchParams.get('sort')) ? DEFAULT_SORT_DIR[sortKey] : DEFAULT_SORT.dir);
+  const pageSize = parsePageSize(searchParams.get('size'));
+  const rawPage = searchParams.get(PAGE_KEY);
 
   const [assetDraft, setAssetDraft] = useState(asset);
 
@@ -82,23 +132,38 @@ export function IncidentQueuePage() {
     void loadQueue();
   }, [loadQueue]);
 
-  function updateParam(key: string, value: string, clearJobId = false) {
+  /** URL 쿼리를 바꾼다. 기본은 쪽 번호를 지운다(1쪽으로). */
+  function updateParams(changes: Record<string, string | null>, opts: { keepPage?: boolean; clearJobId?: boolean } = {}) {
     const next = new URLSearchParams(searchParams);
-    if (value) {
-      next.set(key, value);
-    } else {
-      next.delete(key);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
     }
-    if (clearJobId) {
+    if (opts.clearJobId) {
       next.delete('jobId');
+    }
+    if (!opts.keepPage && !(PAGE_KEY in changes)) {
+      next.delete(PAGE_KEY);
     }
     setSearchParams(next);
   }
 
+  function updateParam(key: string, value: string, clearJobId = false) {
+    updateParams({ [key]: value || null }, { clearJobId });
+  }
+
+  /** 수집 구간·분석 실행을 뺀 나머지를 모두 지운다. */
   function handleResetFilters() {
     const next = new URLSearchParams();
-    if (data?.selectedCaptureId) {
-      next.set('captureId', data.selectedCaptureId);
+    const cap = captureId || data?.selectedCaptureId || '';
+    if (cap) {
+      next.set('captureId', cap);
+    }
+    if (jobId) {
+      next.set('jobId', jobId);
     }
     setAssetDraft('');
     setSearchParams(next);
@@ -109,127 +174,111 @@ export function IncidentQueuePage() {
     updateParam('asset', assetDraft.trim());
   }
 
-  const kpis = useMemo(() => {
-    const list = data?.incidents ?? [];
-    let openCount = 0;
-    let investigatingCount = 0;
-    let closedCount = 0;
-    let reviewPendingCount = 0;
-    let wouldSendCount = 0;
+  function handleSort(key: SortKey) {
+    const dir: SortDir = key === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : DEFAULT_SORT_DIR[key];
+    updateParams({ sort: key, dir });
+  }
 
-    for (const item of list) {
-      const st = (item.zeekadStatus ?? 'open').toLowerCase();
-      if (st === 'open') openCount += 1;
-      else if (st === 'investigating') investigatingCount += 1;
-      else if (st === 'closed') closedCount += 1;
+  const rows: RowItem[] = useMemo(
+    () => (data?.incidents ?? []).map((item) => ({ item, priority: computePriority(item) })),
+    [data],
+  );
 
-      if (item.zeekadReviewPending) reviewPendingCount += 1;
-      if (item.zeekadWouldSend) wouldSendCount += 1;
+  /** 요약 띠 건수: 서버 응답 집합(서버 필터 적용 뒤, 화면 필터 적용 전) 기준 */
+  const summary = useMemo(() => {
+    const counts = { total: rows.length, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0 };
+    for (const { item, priority } of rows) {
+      if (priority) counts[priority] += 1;
+      if (item.zeekadReviewPending) counts.reviewPending += 1;
+      if (item.zeekadWouldSend) counts.alerted += 1;
     }
+    return counts;
+  }, [rows]);
 
-    return {
-      total: list.length,
-      openCount,
-      investigatingCount,
-      closedCount,
-      reviewPendingCount,
-      wouldSendCount,
-    };
-  }, [data]);
+  const filteredSorted = useMemo(() => {
+    const priorityById = new Map(rows.map((r) => [r.item, r.priority]));
+    const filtered = rows
+      .filter(({ item, priority }) => {
+        if (priorityFilter && priority !== priorityFilter) return false;
+        if (reviewPendingFilter && !item.zeekadReviewPending) return false;
+        if (alertedFilter && !item.zeekadWouldSend) return false;
+        return true;
+      })
+      .map((r) => r.item);
+    return sortIncidents(filtered, sortKey, sortDir).map((item) => ({
+      item,
+      priority: priorityById.get(item) ?? null,
+    }));
+  }, [rows, priorityFilter, reviewPendingFilter, alertedFilter, sortKey, sortDir]);
+
+  const win = pageWindow(filteredSorted.length, rawPage, pageSize);
+  const pageRows = filteredSorted.slice(win.startIndex, win.endIndex);
+
+  // 범위 밖 page는 마지막 쪽으로, 허용 밖 size는 50으로 URL을 고친다(응답을 받은 뒤에만).
+  useEffect(() => {
+    if (loading || !data) return;
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    if (rawPage !== null && rawPage !== String(win.page)) {
+      if (win.page === 1) next.delete(PAGE_KEY);
+      else next.set(PAGE_KEY, String(win.page));
+      changed = true;
+    }
+    const rawSize = searchParams.get('size');
+    if (rawSize !== null && rawSize !== String(pageSize)) {
+      next.delete('size');
+      changed = true;
+    }
+    if (changed) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [loading, data, rawPage, win.page, pageSize, searchParams, setSearchParams]);
+
+  const chips = useMemo(() => {
+    const list: { key: string; label: string; raw?: string }[] = [];
+    if (pickedBy) list.push({ key: 'pickedBy', label: '주 탐지 모델', raw: pickedBy });
+    if (role) list.push({ key: 'role', label: `통신 방향: ${labelText('hostRole', role)}` });
+    if (status) list.push({ key: 'status', label: `사건 상태: ${labelText('incidentStatus', status)}` });
+    if (hasReport)
+      list.push({ key: 'hasReport', label: `AI 분석 보고서: ${hasReport === 'true' ? '보고서 있음' : '보고서 없음'}` });
+    if (wouldSend)
+      list.push({ key: 'wouldSend', label: `알림 전송 판단: ${wouldSend === 'true' ? '알림 보냄' : '알림 보류'}` });
+    if (asset) list.push({ key: 'asset', label: '자산 검색', raw: asset });
+    if (priorityFilter) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', priorityFilter)}` });
+    if (reviewPendingFilter) list.push({ key: 'reviewPending', label: '판단 대기만' });
+    if (alertedFilter) list.push({ key: 'alerted', label: '알림 보냄만' });
+    return list;
+  }, [pickedBy, role, status, hasReport, wouldSend, asset, priorityFilter, reviewPendingFilter, alertedFilter]);
+
+  function toggleClientFilter(key: (typeof CLIENT_FILTER_KEYS)[number], value: string) {
+    const current = searchParams.get(key);
+    updateParams({ [key]: current === value ? null : value });
+  }
+
+  const serverFilterCount = SERVER_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
 
   return (
     <AppShell title="탐지 사건" subtitle="탐지 모델이 올린 사건을 우선순위 순으로 확인하고 조사합니다">
-      <div className="space-y-5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="soc-card p-4">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-              <span>전체 사건 수</span>
-              <Layers className="h-4 w-4 text-slate-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold tabular-nums text-slate-100">{formatNumber(kpis.total)}</div>
-            <div className="mt-1 text-[11px] text-slate-400">
-              수집 구간 <span className="font-mono">{data?.selectedCaptureId ?? '-'}</span> · 분석 실행{' '}
-              <span
-                className="tabular-nums"
-                title={data?.selectedJob ? `분석 실행 #${data.selectedJob.jobId}` : undefined}
-              >
-                {jobTimeLabel(data?.selectedJob)}
-              </span>
-            </div>
-          </div>
+      <div className="space-y-3">
+        <SummaryStrip
+          summary={summary}
+          priorityFilter={priorityFilter}
+          reviewPendingFilter={reviewPendingFilter}
+          alertedFilter={alertedFilter}
+          onToggle={toggleClientFilter}
+        />
 
-          <div className="soc-card p-4">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-              <span>처리 상태</span>
-              <CheckCircle2 className="h-4 w-4 text-slate-400" />
-            </div>
-            <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-slate-400">
-              <span>
-                {labelText('incidentStatus', 'open')}{' '}
-                <span className="text-xl font-bold tabular-nums text-slate-100">{formatNumber(kpis.openCount)}</span>
-              </span>
-              <span>
-                {labelText('incidentStatus', 'investigating')}{' '}
-                <span className="text-xl font-bold tabular-nums text-sky-200">
-                  {formatNumber(kpis.investigatingCount)}
-                </span>
-              </span>
-              <span>
-                {labelText('incidentStatus', 'closed')}{' '}
-                <span className="text-xl font-bold tabular-nums text-slate-300">{formatNumber(kpis.closedCount)}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="soc-card p-4">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-              <span>분석가 판단 대기</span>
-              <Clock className="h-4 w-4 text-amber-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold tabular-nums text-amber-300">
-              {formatNumber(kpis.reviewPendingCount)}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-400">
-              <Link to="/reviews?pendingOnly=true" className="text-cyan-300 hover:underline">
-                판단 요청 화면으로 이동
-              </Link>
-            </div>
-          </div>
-
-          <div className="soc-card p-4">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-              <span>알림 보냄</span>
-              <BellRing className="h-4 w-4 text-cyan-400" />
-            </div>
-            <div className="mt-2 text-2xl font-bold tabular-nums text-slate-100">
-              {formatNumber(kpis.wouldSendCount)}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-400">알림 전송 판단에서 Slack 알림을 보내기로 한 사건</div>
-          </div>
-        </div>
-
-        <section className="soc-card p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="soc-subhead flex items-center gap-2">
-              <Filter className="h-3.5 w-3.5 text-slate-400" />
-              필터
-            </div>
-            <button type="button" onClick={handleResetFilters} className="soc-btn-secondary py-1 text-xs">
-              <RotateCcw className="h-3.5 w-3.5" />
-              필터 초기화
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label htmlFor="filter-capture" className="mb-1 block text-[11px] font-medium text-slate-400">
+        <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
+              <label htmlFor="filter-capture" className="shrink-0 text-xs font-medium text-slate-400">
                 수집 구간
               </label>
               <select
                 id="filter-capture"
                 value={data?.selectedCaptureId ?? captureId}
                 onChange={(e) => updateParam('captureId', e.target.value, true)}
-                className="soc-select w-full font-mono text-xs"
+                className="soc-select w-full py-1.5 font-mono text-xs sm:w-44"
               >
                 {(data?.allowedCaptures ?? []).map((cap) => (
                   <option key={cap} value={cap}>
@@ -240,15 +289,15 @@ export function IncidentQueuePage() {
               </select>
             </div>
 
-            <div>
-              <label htmlFor="filter-job" className="mb-1 block text-[11px] font-medium text-slate-400">
+            <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
+              <label htmlFor="filter-job" className="shrink-0 text-xs font-medium text-slate-400">
                 분석 실행
               </label>
               <select
                 id="filter-job"
                 value={data?.selectedJob?.jobId ? String(data.selectedJob.jobId) : jobId}
                 onChange={(e) => updateParam('jobId', e.target.value)}
-                className="soc-select w-full text-xs tabular-nums"
+                className="soc-select w-full py-1.5 text-xs tabular-nums sm:w-80"
               >
                 {(data?.captureJobs ?? []).map((job, idx) => (
                   <option key={job.jobId} value={String(job.jobId)} title={`분석 실행 #${job.jobId}`}>
@@ -259,112 +308,171 @@ export function IncidentQueuePage() {
               </select>
             </div>
 
-            <div>
-              <label htmlFor="filter-model" className="mb-1 block text-[11px] font-medium text-slate-400">
-                주 탐지 모델
-              </label>
-              <select
-                id="filter-model"
-                value={pickedBy}
-                onChange={(e) => updateParam('pickedBy', e.target.value)}
-                className="soc-select w-full text-xs"
-              >
-                <option value="">모든 모델</option>
-                {(data?.availableModels ?? []).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
+            <span className="hidden h-5 w-px bg-slate-800 sm:block" aria-hidden="true" />
+
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-controls="queue-filter-panel"
+              className="soc-btn-secondary py-1 text-xs"
+            >
+              <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+              필터
+              {serverFilterCount > 0 && (
+                <span className="rounded bg-cyan-500/20 px-1.5 text-[11px] tabular-nums text-cyan-200">
+                  {serverFilterCount}
+                </span>
+              )}
+            </button>
+
+            {chips.length > 0 && (
+              <ul className="flex flex-wrap items-center gap-1.5" aria-label="적용 중인 필터">
+                {chips.map((chip) => (
+                  <li key={chip.key}>
+                    <button
+                      type="button"
+                      onClick={() => updateParam(chip.key, '')}
+                      aria-label={`${chip.label}${chip.raw ? ` ${chip.raw}` : ''} 필터 지우기`}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-xs text-slate-200 transition hover:border-slate-500"
+                    >
+                      <span>
+                        {chip.label}
+                        {chip.raw && (
+                          <>
+                            : <span className="font-mono" data-raw="">{chip.raw}</span>
+                          </>
+                        )}
+                      </span>
+                      <X className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                    </button>
+                  </li>
                 ))}
-              </select>
-            </div>
+              </ul>
+            )}
 
-            <div>
-              <label htmlFor="filter-role" className="mb-1 block text-[11px] font-medium text-slate-400">
-                통신 방향
-              </label>
-              <select
-                id="filter-role"
-                value={role}
-                onChange={(e) => updateParam('role', e.target.value)}
-                className="soc-select w-full text-xs"
-              >
-                <option value="">모든 방향</option>
-                {(data?.availableRoles ?? []).map((r) => (
-                  <option key={r} value={r}>
-                    {labelText('hostRole', r)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="filter-status" className="mb-1 block text-[11px] font-medium text-slate-400">
-                사건 상태
-              </label>
-              <select
-                id="filter-status"
-                value={status}
-                onChange={(e) => updateParam('status', e.target.value)}
-                className="soc-select w-full text-xs"
-              >
-                <option value="">모든 상태</option>
-                <option value="open">{labelText('incidentStatus', 'open')}</option>
-                <option value="investigating">{labelText('incidentStatus', 'investigating')}</option>
-                <option value="closed">{labelText('incidentStatus', 'closed')}</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="filter-has-report" className="mb-1 block text-[11px] font-medium text-slate-400">
-                AI 분석 보고서
-              </label>
-              <select
-                id="filter-has-report"
-                value={hasReport}
-                onChange={(e) => updateParam('hasReport', e.target.value)}
-                className="soc-select w-full text-xs"
-              >
-                <option value="">전체</option>
-                <option value="true">보고서 있음</option>
-                <option value="false">보고서 없음</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="filter-would-send" className="mb-1 block text-[11px] font-medium text-slate-400">
-                알림 전송 판단
-              </label>
-              <select
-                id="filter-would-send"
-                value={wouldSend}
-                onChange={(e) => updateParam('wouldSend', e.target.value)}
-                className="soc-select w-full text-xs"
-              >
-                <option value="">전체</option>
-                <option value="true">알림 보냄</option>
-                <option value="false">알림 보류</option>
-              </select>
-            </div>
-
-            <form onSubmit={handleAssetSubmit}>
-              <label htmlFor="filter-asset" className="mb-1 block text-[11px] font-medium text-slate-400">
-                자산 IP·호스트 이름 검색
-              </label>
-              <div className="flex gap-1.5">
-                <input
-                  id="filter-asset"
-                  type="text"
-                  value={assetDraft}
-                  onChange={(e) => setAssetDraft(e.target.value)}
-                  placeholder="IP 또는 호스트 이름"
-                  className="soc-input py-1.5 text-xs"
-                />
-                <button type="submit" className="soc-btn-secondary shrink-0 px-3 py-1.5 text-xs">
-                  적용
-                </button>
-              </div>
-            </form>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 transition hover:text-slate-100"
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              필터 초기화
+            </button>
           </div>
+
+          {filtersOpen && (
+            <div
+              id="queue-filter-panel"
+              className="mt-2.5 grid grid-cols-1 gap-3 border-t border-slate-800 pt-2.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6"
+            >
+              <div>
+                <label htmlFor="filter-model" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  주 탐지 모델
+                </label>
+                <select
+                  id="filter-model"
+                  value={pickedBy}
+                  onChange={(e) => updateParam('pickedBy', e.target.value)}
+                  className="soc-select w-full py-1.5 text-xs"
+                >
+                  <option value="">모든 모델</option>
+                  {(data?.availableModels ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="filter-role" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  통신 방향
+                </label>
+                <select
+                  id="filter-role"
+                  value={role}
+                  onChange={(e) => updateParam('role', e.target.value)}
+                  className="soc-select w-full py-1.5 text-xs"
+                >
+                  <option value="">모든 방향</option>
+                  {(data?.availableRoles ?? []).map((r) => (
+                    <option key={r} value={r}>
+                      {labelText('hostRole', r)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="filter-status" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  사건 상태
+                </label>
+                <select
+                  id="filter-status"
+                  value={status}
+                  onChange={(e) => updateParam('status', e.target.value)}
+                  className="soc-select w-full py-1.5 text-xs"
+                >
+                  <option value="">모든 상태</option>
+                  <option value="open">{labelText('incidentStatus', 'open')}</option>
+                  <option value="investigating">{labelText('incidentStatus', 'investigating')}</option>
+                  <option value="closed">{labelText('incidentStatus', 'closed')}</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="filter-has-report" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  AI 분석 보고서
+                </label>
+                <select
+                  id="filter-has-report"
+                  value={hasReport}
+                  onChange={(e) => updateParam('hasReport', e.target.value)}
+                  className="soc-select w-full py-1.5 text-xs"
+                >
+                  <option value="">전체</option>
+                  <option value="true">보고서 있음</option>
+                  <option value="false">보고서 없음</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="filter-would-send" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  알림 전송 판단
+                </label>
+                <select
+                  id="filter-would-send"
+                  value={wouldSend}
+                  onChange={(e) => updateParam('wouldSend', e.target.value)}
+                  className="soc-select w-full py-1.5 text-xs"
+                >
+                  <option value="">전체</option>
+                  <option value="true">알림 보냄</option>
+                  <option value="false">알림 보류</option>
+                </select>
+              </div>
+
+              <form onSubmit={handleAssetSubmit}>
+                <label htmlFor="filter-asset" className="mb-1 block text-[11px] font-medium text-slate-400">
+                  자산 IP·호스트 이름 검색
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    id="filter-asset"
+                    type="text"
+                    value={assetDraft}
+                    onChange={(e) => setAssetDraft(e.target.value)}
+                    placeholder="IP 또는 호스트 이름"
+                    className="soc-input py-1.5 text-xs"
+                  />
+                  <button type="submit" className="soc-btn-secondary shrink-0 px-3 py-1.5 text-xs">
+                    적용
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </section>
 
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadQueue()} />}
@@ -373,119 +481,580 @@ export function IncidentQueuePage() {
           <LoadingPanel label="사건 목록을 불러오는 중..." />
         ) : (
           <div className="soc-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr>
-                    <th className="soc-th text-right">순위</th>
-                    <th className="soc-th">호스트</th>
-                    <th className="soc-th">통신 방향</th>
-                    <th className="soc-th">관측 구간 · 지속 시간</th>
-                    <th className="soc-th">탐지 모델</th>
-                    <th className="soc-th">AI 분석 보고서</th>
-                    <th className="soc-th">알림</th>
-                    <th className="soc-th">상태 · 판정</th>
-                    <th className="soc-th">분석가 판단</th>
-                    <th className="soc-th text-right">상세</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(data?.incidents ?? []).length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center text-sm text-slate-400">
-                        조건에 맞는 사건이 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
-                      </td>
-                    </tr>
-                  ) : (
-                    (data?.incidents ?? []).map((item) => {
-                      const detailUrl = `/incidents/${item.jobId}/rank/${item.queueRank}`;
-                      return (
-                        <tr
-                          key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}
-                          className="transition hover:bg-slate-800/35"
-                        >
-                          <td className="soc-td soc-num font-bold text-slate-100">{item.queueRank}</td>
-                          <td className="soc-td">
-                            <div className="font-mono text-xs font-semibold text-slate-100">{item.hostIp}</div>
-                            {item.hostName.length > 0 && (
-                              <div className="mt-0.5 font-mono text-[11px] text-slate-400">
-                                {item.hostName.join(', ')}
-                              </div>
-                            )}
-                            <div className="mt-1 text-[11px] tabular-nums text-slate-400">
-                              연결 {formatNumber(item.connectionCount)}건
-                            </div>
-                          </td>
-                          <td className="soc-td whitespace-nowrap text-xs text-slate-300">
-                            <CodeLabel dict="hostRole" value={item.zeekadRole} />
-                          </td>
-                          <td className="soc-td whitespace-nowrap text-xs tabular-nums">
-                            <div className="text-slate-200">{formatDateTime(item.eventStart)}</div>
-                            <div className="mt-0.5 text-[11px] text-slate-400">~ {formatDateTime(item.eventEnd)}</div>
-                            <div className="mt-1 text-[11px] text-slate-400">
-                              지속 {formatDuration(item.eventStart, item.eventEnd)}
-                            </div>
-                          </td>
-                          <td className="soc-td text-xs">
-                            <div className="font-mono font-semibold text-slate-100" data-raw="">
-                              {item.zeekadPickedBy ?? '-'}
-                            </div>
-                            {item.zeekadAlsoFlaggedBy.length > 0 && (
-                              <div className="mt-1">
-                                <SocBadge tone="neutral" title={item.zeekadAlsoFlaggedBy.join(', ')}>
-                                  함께 탐지한 모델 +{item.zeekadAlsoFlaggedBy.length}
-                                </SocBadge>
-                              </div>
-                            )}
-                          </td>
-                          <td className="soc-td text-xs">
-                            {item.zeekadReportJobId === null ? (
-                              <span className="whitespace-nowrap text-slate-500">보고서 없음</span>
-                            ) : (
-                              <div
-                                className="flex flex-wrap items-center gap-1"
-                                title={`보고서 실행 #${item.zeekadReportJobId}`}
-                              >
-                                <SocBadge tone="neutral">
-                                  <CodeLabel dict="reportKind" value={item.zeekadReportKind} />
-                                </SocBadge>
-                                <VerificationBadge passed={item.zeekadVerificationPassed} />
-                              </div>
-                            )}
-                          </td>
-                          <td className="soc-td text-xs">
-                            <WouldSendBadge wouldSend={item.zeekadWouldSend} />
-                          </td>
-                          <td className="soc-td text-xs">
-                            <div className="flex flex-col items-start gap-1">
-                              <IncidentStatusBadge status={item.zeekadStatus} />
-                              <ResolutionBadge resolution={item.zeekadResolution} />
-                              {item.statusUpdatedAt && (
-                                <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400">
-                                  갱신 {formatDateTime(item.statusUpdatedAt)}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="soc-td text-xs">
-                            <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />
-                          </td>
-                          <td className="soc-td text-right">
-                            <Link to={detailUrl} className="soc-btn-secondary inline-flex py-1.5 text-xs">
-                              상세
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </Link>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+            {pageRows.length === 0 ? (
+              <p className="px-4 py-12 text-center text-sm text-slate-400">
+                조건에 맞는 사건이 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
+              </p>
+            ) : (
+              <>
+                <QueueTable rows={pageRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <QueueMobileList rows={pageRows} />
+              </>
+            )}
+            <Pagination
+              total={filteredSorted.length}
+              win={win}
+              pageSize={pageSize}
+              onPage={(p) => updateParams({ [PAGE_KEY]: p === 1 ? null : String(p) }, { keepPage: true })}
+              onSize={(s) => updateParams({ size: s === 50 ? null : String(s) })}
+            />
           </div>
         )}
       </div>
     </AppShell>
+  );
+}
+
+/* ───────────────────────── 요약 띠 ───────────────────────── */
+
+function SummaryStrip({
+  summary,
+  priorityFilter,
+  reviewPendingFilter,
+  alertedFilter,
+  onToggle,
+}: {
+  summary: { total: number; high: number; medium: number; low: number; reviewPending: number; alerted: number };
+  priorityFilter: Priority | null;
+  reviewPendingFilter: boolean;
+  alertedFilter: boolean;
+  onToggle: (key: 'priority' | 'reviewPending' | 'alerted', value: string) => void;
+}) {
+  const priorityDot: Record<Priority, string> = {
+    high: 'bg-rose-400',
+    medium: 'bg-slate-200',
+    low: 'bg-slate-600',
+  };
+  const priorityNum: Record<Priority, string> = {
+    high: 'text-rose-200',
+    medium: 'text-slate-50',
+    low: 'text-slate-400',
+  };
+  return (
+    <section
+      aria-label="사건 요약"
+      className="soc-card flex flex-wrap items-center gap-x-1 gap-y-1 px-2 py-1.5 text-xs"
+    >
+      <div className="flex items-baseline gap-2 px-2 py-1">
+        <span className="text-slate-400">전체 사건 수</span>
+        <span className="text-lg font-bold tabular-nums text-slate-100">{formatNumber(summary.total)}</span>
+      </div>
+
+      <span className="mx-1 hidden h-6 w-px bg-slate-800 sm:block" aria-hidden="true" />
+
+      {PRIORITY_VALUES.map((p) => (
+        <StripButton
+          key={p}
+          pressed={priorityFilter === p}
+          onClick={() => onToggle('priority', p)}
+          ariaLabel={`우선순위 ${labelText('priority', p)} ${summary[p]}건만 보기`}
+          title={PRIORITY_TOOLTIP}
+        >
+          <span className={`h-2 w-2 rounded-full ${priorityDot[p]}`} aria-hidden="true" />
+          <span className="text-slate-400">{labelText('priority', p)}</span>
+          <span className={`text-base font-bold tabular-nums ${priorityNum[p]}`}>{formatNumber(summary[p])}</span>
+        </StripButton>
+      ))}
+
+      <span className="mx-1 hidden h-6 w-px bg-slate-800 sm:block" aria-hidden="true" />
+
+      <div className="flex items-center">
+        <StripButton
+          pressed={reviewPendingFilter}
+          onClick={() => onToggle('reviewPending', 'true')}
+          ariaLabel={`판단 대기 ${summary.reviewPending}건만 보기`}
+        >
+          <span className="text-slate-400">판단 대기</span>
+          <span
+            className={`text-base font-bold tabular-nums ${summary.reviewPending > 0 ? 'text-amber-300' : 'text-slate-300'}`}
+          >
+            {formatNumber(summary.reviewPending)}
+          </span>
+        </StripButton>
+        <Link to="/reviews?pendingOnly=true" className="px-1 text-[11px] text-cyan-300 hover:underline">
+          판단 요청 화면
+        </Link>
+      </div>
+
+      <StripButton
+        pressed={alertedFilter}
+        onClick={() => onToggle('alerted', 'true')}
+        ariaLabel={`알림 보냄 ${summary.alerted}건만 보기`}
+      >
+        <Bell className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
+        <span className="text-slate-400">알림 보냄</span>
+        <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(summary.alerted)}</span>
+      </StripButton>
+
+      <details className="relative ml-auto">
+        <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-400 transition hover:text-slate-100 [&::-webkit-details-marker]:hidden">
+          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          자동 분류 기준
+        </summary>
+        <div className="soc-card absolute right-0 top-full z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs leading-relaxed text-slate-300">
+          <p className="mb-2 text-slate-400">
+            우선순위는 파이프라인 결과로 화면이 자동 계산한 값입니다. 분석가 판정이 아닙니다.
+          </p>
+          <ul className="space-y-1">
+            <li>
+              <span className="font-semibold text-rose-200">높음</span>: 알림을 보냈거나 분석가 판단을 기다리는 사건
+            </li>
+            <li>
+              <span className="font-semibold text-slate-50">중간</span>: 2개 이상 모델이 함께 탐지했거나 AI 분석
+              보고서가 있는 사건
+            </li>
+            <li>
+              <span className="font-semibold text-slate-400">낮음</span>: 그 밖의 사건
+            </li>
+            <li className="text-slate-400">종료된 사건은 우선순위를 매기지 않습니다(-).</li>
+          </ul>
+          <p className="mt-2 text-slate-400">기본 정렬은 우선순위, 같으면 탐지 순위 순입니다.</p>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function StripButton({
+  pressed,
+  onClick,
+  ariaLabel,
+  title,
+  children,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  ariaLabel: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={pressed}
+      aria-label={ariaLabel}
+      title={title}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 transition ${
+        pressed
+          ? 'border-cyan-500/60 bg-cyan-500/10'
+          : 'border-transparent hover:border-slate-700 hover:bg-slate-800/50'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ───────────────────────── 표(태블릿·PC) ───────────────────────── */
+
+const SORT_LABEL: Record<SortKey, string> = {
+  priority: '우선순위',
+  rank: '순위',
+  start: '관측 시작',
+  connections: '연결 수',
+  status: '상태',
+};
+
+function SortHeader({
+  column,
+  label,
+  sortKey,
+  sortDir,
+  onSort,
+  className = '',
+  align = 'left',
+  title,
+}: {
+  column: SortKey;
+  label: string;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+  className?: string;
+  align?: 'left' | 'right';
+  title?: string;
+}) {
+  const active = column === sortKey;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  const dirText = sortDir === 'asc' ? '오름차순' : '내림차순';
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={`soc-th-compact ${align === 'right' ? 'text-right' : ''} ${className}`}
+      title={title}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 rounded hover:text-slate-100 ${active ? 'text-slate-100' : ''}`}
+        aria-label={`${SORT_LABEL[column]} 기준 정렬${active ? `, 지금 ${dirText}` : ''}`}
+      >
+        {label}
+        <Icon className={`h-3 w-3 ${active ? 'text-cyan-300' : 'text-slate-600'}`} aria-hidden="true" />
+      </button>
+    </th>
+  );
+}
+
+function hiddenInfoTitle(item: IncidentQueueItem): string {
+  const review = item.zeekadReviewPending
+    ? '판단 대기'
+    : item.zeekadReviewAction
+      ? labelText('reviewAction', item.zeekadReviewAction.toLowerCase())
+      : '-';
+  return `통신 방향 ${labelText('hostRole', item.zeekadRole)} · 연결 ${formatNumber(item.connectionCount)}건 · 분석가 판단 ${review}`;
+}
+
+function QueueTable({
+  rows,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  rows: RowItem[];
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const navigate = useNavigate();
+
+  function open(e: React.MouseEvent<HTMLTableRowElement>, url: string) {
+    // 글자를 끌어 고른 경우(IP 복사 등)는 이동하지 않는다.
+    const selection = window.getSelection?.();
+    if (selection && selection.toString().length > 0) {
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
+    navigate(url);
+  }
+
+  const headerProps = { sortKey, sortDir, onSort };
+  return (
+    <div className="hidden overflow-x-auto md:block">
+      <table className="w-full border-collapse text-left">
+        <caption className="sr-only">탐지 사건 목록. 행을 누르거나 행에서 Enter 키를 누르면 사건 상세로 갑니다.</caption>
+        <thead>
+          <tr>
+            <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
+            <SortHeader column="rank" label="순위" align="right" {...headerProps} />
+            <th scope="col" className="soc-th-compact">
+              호스트
+            </th>
+            <th scope="col" className="soc-th-compact hidden 2xl:table-cell">
+              통신 방향
+            </th>
+            <SortHeader column="start" label="관측 시작 · 지속" {...headerProps} />
+            <th scope="col" className="soc-th-compact">
+              주 탐지 모델
+            </th>
+            <th scope="col" className="soc-th-compact" title="AI 분석 보고서 · 사실 검증 · 알림">
+              보고서·알림
+            </th>
+            <SortHeader column="status" label="상태 · 판정" {...headerProps} />
+            <th scope="col" className="soc-th-compact hidden lg:table-cell">
+              분석가 판단
+            </th>
+            <SortHeader
+              column="connections"
+              label="연결 수"
+              align="right"
+              className="hidden xl:table-cell"
+              {...headerProps}
+            />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ item, priority }) => {
+            const url = detailUrl(item);
+            const firstName = item.hostName[0];
+            const moreNames = item.hostName.length - 1;
+            return (
+              <tr
+                key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}
+                tabIndex={0}
+                title={hiddenInfoTitle(item)}
+                onClick={(e) => open(e, url)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.target === e.currentTarget) {
+                    e.preventDefault();
+                    navigate(url);
+                  }
+                }}
+                className="cursor-pointer transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/70"
+              >
+                <td className="soc-td-compact">
+                  <PriorityBadge priority={priority} />
+                </td>
+                <td className="soc-td-compact soc-num font-semibold text-slate-100">{item.queueRank}</td>
+                <td className="soc-td-compact">
+                  <div className="flex max-w-[17rem] items-baseline gap-2">
+                    <span className="shrink-0 font-mono font-semibold text-slate-100">{item.hostIp}</span>
+                    {firstName !== undefined && (
+                      <span
+                        className="min-w-0 truncate font-mono text-[11px] text-slate-400"
+                        title={item.hostName.join(', ')}
+                      >
+                        {firstName}
+                        {moreNames > 0 && <span className="ml-1 font-sans text-slate-500">외 {moreNames}</span>}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="soc-td-compact hidden text-slate-300 2xl:table-cell">
+                  <CodeLabel dict="hostRole" value={item.zeekadRole} />
+                </td>
+                <td
+                  className="soc-td-compact tabular-nums"
+                  title={`관측 구간 ${formatDateTimeRange(item.eventStart, item.eventEnd)}`}
+                >
+                  <span className="text-slate-200">{formatDateTime(item.eventStart)}</span>
+                  <span className="mx-1.5 text-slate-600" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="text-slate-400">{formatDuration(item.eventStart, item.eventEnd)}</span>
+                </td>
+                <td className="soc-td-compact">
+                  <span className="font-mono font-semibold text-slate-100" data-raw="">
+                    {item.zeekadPickedBy ?? '-'}
+                  </span>
+                  <AlsoFlagged models={item.zeekadAlsoFlaggedBy} />
+                </td>
+                <td className="soc-td-compact">
+                  <SignalChips item={item} />
+                </td>
+                <td
+                  className="soc-td-compact"
+                  title={item.statusUpdatedAt ? `상태 갱신 ${formatDateTime(item.statusUpdatedAt)}` : undefined}
+                >
+                  <div className="flex items-center gap-1">
+                    <IncidentStatusBadge status={item.zeekadStatus} />
+                    <ResolutionBadge resolution={item.zeekadResolution} />
+                  </div>
+                </td>
+                <td className="soc-td-compact hidden lg:table-cell">
+                  <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />
+                </td>
+                <td className="soc-td-compact soc-num hidden text-slate-300 xl:table-cell">
+                  {formatNumber(item.connectionCount)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** 함께 탐지한 모델 수. 화면 글은 +N으로 줄이고 이름은 툴팁, 개수는 읽기 프로그램용 글로 남긴다. */
+function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
+  const list = models ?? [];
+  if (list.length === 0) {
+    return null;
+  }
+  return (
+    <span
+      title={`함께 탐지한 모델: ${list.join(', ')}`}
+      className="ml-1.5 rounded border border-slate-700 bg-slate-800/80 px-1 text-[11px] tabular-nums text-slate-300"
+    >
+      <span aria-hidden="true">+{list.length}</span>
+      <span className="sr-only">함께 탐지한 모델 {list.length}개</span>
+    </span>
+  );
+}
+
+const CHIP_BASE = 'inline-flex h-5 w-5 items-center justify-center rounded border';
+
+/** 보고서·사실 검증·알림을 묶은 아이콘 칩. 각 칩은 접근성 이름과 툴팁을 가진다. */
+function SignalChips({ item }: { item: IncidentQueueItem }) {
+  const hasReport = item.zeekadReportJobId !== null;
+  const kind = labelText('reportKind', item.zeekadReportKind);
+  return (
+    <div className="flex items-center gap-1">
+      {hasReport ? (
+        <span
+          role="img"
+          aria-label={`AI 분석 보고서 있음: ${kind}`}
+          title={`${kind} 보고서 · 보고서 실행 #${item.zeekadReportJobId}`}
+          className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
+        >
+          <FileText className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : (
+        <span role="img" aria-label="보고서 없음" title="보고서 없음" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
+          <FileX className="h-3 w-3" aria-hidden="true" />
+        </span>
+      )}
+      {hasReport && item.zeekadVerificationPassed === true ? (
+        <span
+          role="img"
+          aria-label="사실 검증 통과"
+          title="사실 검증 통과"
+          className={`${CHIP_BASE} border-emerald-500/35 bg-emerald-500/10 text-emerald-300`}
+        >
+          <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : hasReport && item.zeekadVerificationPassed === false ? (
+        <span
+          role="img"
+          aria-label="사실 검증 실패"
+          title="사실 검증 실패"
+          className={`${CHIP_BASE} border-amber-500/40 bg-amber-500/15 text-amber-300`}
+        >
+          <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : (
+        <span className={`${CHIP_BASE} border-transparent`} aria-hidden="true" />
+      )}
+      {item.zeekadWouldSend ? (
+        <span
+          role="img"
+          aria-label="알림 보냄"
+          title="알림 보냄"
+          className={`${CHIP_BASE} border-cyan-500/35 bg-cyan-500/10 text-cyan-300`}
+        >
+          <Bell className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : (
+        <span role="img" aria-label="알림 보류" title="알림 보류" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
+          <BellOff className="h-3 w-3" aria-hidden="true" />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── 휴대폰 목록 ───────────────────────── */
+
+function QueueMobileList({ rows }: { rows: RowItem[] }) {
+  return (
+    <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="탐지 사건 목록">
+      {rows.map(({ item, priority }) => (
+        <li key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}>
+          <Link
+            to={detailUrl(item)}
+            className="block px-3 py-2.5 transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50"
+          >
+            <div className="flex items-center gap-2">
+              <PriorityBadge priority={priority} />
+              <span className="shrink-0 font-mono text-sm font-semibold text-slate-100">{item.hostIp}</span>
+              {item.hostName[0] !== undefined && (
+                <span className="min-w-0 truncate font-mono text-[11px] text-slate-400">{item.hostName[0]}</span>
+              )}
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-500">{item.queueRank}위</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-xs">
+              <span className="tabular-nums text-slate-300">{formatDateTime(item.eventStart)}</span>
+              <span className="text-slate-500">{formatDuration(item.eventStart, item.eventEnd)}</span>
+              <span className="ml-auto">
+                <IncidentStatusBadge status={item.zeekadStatus} />
+              </span>
+            </div>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ───────────────────────── 페이지 나눔 ───────────────────────── */
+
+function pageList(page: number, pageCount: number): (number | 'gap')[] {
+  const set = new Set<number>([1, pageCount, page - 1, page, page + 1]);
+  const pages = [...set].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
+  const out: (number | 'gap')[] = [];
+  pages.forEach((p, i) => {
+    if (i > 0 && p - pages[i - 1] > 1) out.push('gap');
+    out.push(p);
+  });
+  return out;
+}
+
+function Pagination({
+  total,
+  win,
+  pageSize,
+  onPage,
+  onSize,
+}: {
+  total: number;
+  win: ReturnType<typeof pageWindow>;
+  pageSize: number;
+  onPage: (page: number) => void;
+  onSize: (size: number) => void;
+}) {
+  return (
+    <nav
+      aria-label="쪽 이동"
+      className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-3 py-2 text-xs text-slate-400"
+    >
+      <span className="tabular-nums" aria-live="polite">
+        전체 {formatNumber(total)}건 중 {formatNumber(win.from)}–{formatNumber(win.to)}
+      </span>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1.5">
+          <span>쪽당</span>
+          <select
+            value={String(pageSize)}
+            onChange={(e) => onSize(Number(e.target.value))}
+            className="soc-select py-1 pl-2 pr-7 text-xs tabular-nums"
+            aria-label="쪽당 건수"
+          >
+            {PAGE_SIZES.map((s) => (
+              <option key={s} value={String(s)}>
+                {s}건
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => onPage(win.page - 1)}
+            disabled={win.page <= 1}
+            aria-label="이전 쪽"
+            className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+          {pageList(win.page, win.pageCount).map((p, i) =>
+            p === 'gap' ? (
+              <span key={`gap-${i}`} className="px-1 text-slate-600" aria-hidden="true">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onPage(p)}
+                aria-current={p === win.page ? 'page' : undefined}
+                aria-label={`${p}쪽`}
+                className={`min-w-[1.75rem] rounded px-1.5 py-0.5 tabular-nums ${
+                  p === win.page
+                    ? 'bg-cyan-500/15 font-semibold text-cyan-200'
+                    : 'hover:bg-slate-800 hover:text-slate-100'
+                }`}
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            onClick={() => onPage(win.page + 1)}
+            disabled={win.page >= win.pageCount}
+            aria-label="다음 쪽"
+            className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </nav>
   );
 }

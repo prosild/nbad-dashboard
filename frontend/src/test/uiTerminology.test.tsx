@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
@@ -563,9 +563,11 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(screen.getAllByText('읽기 전용 · 개인정보 가림')).toHaveLength(1);
     expect(container.textContent).not.toMatch(/마스킹/);
     expect(screen.getByText('시각 기준 KST')).toBeInTheDocument();
-    expect(screen.getAllByText('2017-07-05 22:45:00').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('연결 수신 측').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('함께 탐지한 모델 +2').length).toBeGreaterThanOrEqual(1);
+    // T18: 표와 휴대폰 목록이 함께 DOM에 있으므로 표 범위로 좁힌다. 함께 탐지 수는 '+2' 글 대신 읽기 프로그램용 글로 같은 값을 단언한다.
+    const table = screen.getByRole('table');
+    expect(within(table).getAllByText('2017-07-05 22:45:00').length).toBeGreaterThanOrEqual(1);
+    expect(within(table).getAllByText('연결 수신 측').length).toBeGreaterThanOrEqual(1);
+    expect(within(table).getAllByText('함께 탐지한 모델 2개').length).toBeGreaterThanOrEqual(1);
     expectCleanText(container);
   });
 

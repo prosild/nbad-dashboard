@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -134,11 +134,23 @@ describe('조사 큐 및 사건 상세 화면', () => {
 
     renderWithAnalyst('/incidents', fetchMock as unknown as typeof fetch);
 
-    expect(await screen.findByText('192.168.10.5')).toBeInTheDocument();
-    expect(screen.getByText('지속 45분')).toBeInTheDocument();
-    expect(screen.getByText('함께 탐지한 모델 +1')).toBeInTheDocument();
-    expect(screen.getAllByText('보고서 없음').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByTitle('보고서 실행 #40')).toBeInTheDocument();
+    await screen.findAllByText('192.168.10.5');
+    // T18: 표(태블릿·PC)와 휴대폰 목록이 함께 DOM에 있으므로 표 범위로 좁혀 같은 값을 단언한다.
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('192.168.10.5')).toBeInTheDocument();
+    // 지속 시간: '지속 45분' → 관측 시작 옆 '45분'
+    const row1 = within(table).getByText('192.168.10.5').closest('tr') as HTMLElement;
+    const row2 = within(table).getByText('192.168.10.8').closest('tr') as HTMLElement;
+    expect(within(row1).getByText('45분')).toBeInTheDocument();
+    // 함께 탐지한 모델: 화면 글 '+1', 개수는 읽기 프로그램용 글, 이름은 툴팁
+    expect(within(row1).getByText('함께 탐지한 모델 1개')).toBeInTheDocument();
+    expect(within(row1).getByTitle('함께 탐지한 모델: iforest_v1')).toBeInTheDocument();
+    // 보고서 없음: 보고서 없는 행(rank 2) 칩의 접근성 이름, 보고서 있는 행(rank 1)에는 없음
+    expect(within(row2).getByRole('img', { name: '보고서 없음' })).toBeInTheDocument();
+    expect(within(row1).queryByRole('img', { name: '보고서 없음' })).toBeNull();
+    // 보고서 실행 번호 툴팁(작성 방식을 앞에 더함)
+    expect(within(row1).getByTitle('AI 작성 보고서 · 보고서 실행 #40')).toBeInTheDocument();
+    expect(within(row1).getByRole('img', { name: 'AI 분석 보고서 있음: AI 작성' })).toBeInTheDocument();
     expect(screen.getByText('전체 사건 수')).toBeInTheDocument();
   });
 
