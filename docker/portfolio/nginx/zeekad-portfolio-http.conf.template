@@ -17,8 +17,10 @@ map $http_x_forwarded_proto $zeekad_forwarded_proto {
     https   https;
 }
 
-# 앱에 넘기는 X-Forwarded-Port: https면 443(앱이 만드는 절대 URL에 내부 포트 8080이 붙지 않게), 아니면 기존 규칙.
-map $zeekad_forwarded_proto $zeekad_forwarded_port {
+# 앱에 넘기는 X-Forwarded-Port: 들어온 X-Forwarded-Proto가 https(DSM 경로)면 443(절대 URL에 내부 포트 8080이 붙지 않게),
+# 아니면 기존 규칙(Host의 포트, 없으면 리스너 포트). 8443 리스너(스택 내부 ZAP 대상, DSM 헤더 없음)는 https + 8443이 되어
+# 리다이렉트가 실제로 열려 있는 https://nginx-waf:8443/...을 가리킨다(443은 이 스택에 없다).
+map $http_x_forwarded_proto $zeekad_forwarded_port {
     https   443;
     default $forwarded_port;
 }
