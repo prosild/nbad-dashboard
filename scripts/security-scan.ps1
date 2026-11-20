@@ -719,7 +719,10 @@ if (-not $SkipE2E -or -not $SkipZap) {
             $zapExit = $zapRes.ExitCode
 
             # ZAP은 정보성 경고만 있어도 exit 2가 되므로 판정은 zap-baseline.json의 위험 등급별 경고 수로 한다.
+            # 유일한 예외(SPEC.md '결정' 2026-11-20): 모든 인스턴스의 param이 정확히 XSRF-TOKEN인 Low 10010(Cookie No HttpOnly Flag)만 허용한다.
+            # SPA 이중 제출 CSRF 방식상 JS가 XSRF-TOKEN 쿠키를 읽어야 한다. ZAP 설정으로 10010을 끄지 않고 여기서 판정한다.
             $riskCounts = [ordered]@{ High = 0; Medium = 0; Low = 0; Informational = 0 }
+            $allowedLines = [System.Collections.Generic.List[string]]::new()
             $alertLines = [System.Collections.Generic.List[string]]::new()
             $zapJsonOk = Test-Path $zapJsonPath
             if ($zapJsonOk) {
@@ -728,13 +731,23 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     foreach ($alert in @($site.alerts)) {
                         if (-not $alert) { continue }
                         $riskName = switch ([string]$alert.riskcode) { "3" { "High" } "2" { "Medium" } "1" { "Low" } default { "Informational" } }
+                        $instances = @($alert.instances | Where-Object { $_ })
+                        $params = @($instances | ForEach-Object { [string]$_.param })
+                        $isAllowed = ($riskName -eq "Low" -and [string]$alert.pluginid -eq "10010" -and $instances.Count -gt 0 -and
+                            @($params | Where-Object { $_ -cne "XSRF-TOKEN" }).Count -eq 0)
+                        if ($isAllowed) {
+                            $allowedLines.Add("ALLOWED: 10010 XSRF-TOKEN (instances=$($instances.Count))")
+                            $alertLines.Add("- [Low, ALLOWED] $($alert.pluginid) $($alert.name) (instances=$($instances.Count), params=[$(($params | Select-Object -Unique) -join ', ')])")
+                            continue
+                        }
                         $riskCounts[$riskName]++
-                        $alertLines.Add("- [$riskName] $($alert.pluginid) $($alert.name) (instances=$(@($alert.instances).Count))")
+                        $alertLines.Add("- [$riskName] $($alert.pluginid) $($alert.name) (instances=$($instances.Count), params=[$(($params | Select-Object -Unique) -join ', ')])")
                     }
                 }
             }
             $riskLine = "ZAP_RISK_COUNTS High=$($riskCounts.High) Medium=$($riskCounts.Medium) Low=$($riskCounts.Low) Informational=$($riskCounts.Informational)"
-            $zapHeader = "ZAP_EXIT_CODE=$zapExit`n$riskLine`nzap-baseline.json parsed=$zapJsonOk`n`nAlerts by risk (zap-baseline.json):`n$(if ($alertLines.Count) { $alertLines -join "`n" } else { '(none)' })"
+            $allowedText = if ($allowedLines.Count) { $allowedLines -join "`n" } else { "ALLOWED: (none)" }
+            $zapHeader = "ZAP_EXIT_CODE=$zapExit`n$riskLine (allowed exceptions excluded)`n$allowedText`nzap-baseline.json parsed=$zapJsonOk`n`nAlerts by risk (zap-baseline.json):`n$(if ($alertLines.Count) { $alertLines -join "`n" } else { '(none)' })"
 
             $zapSummary = "$zapHeader`n`n$($zapOut.Trim())"
             [IO.File]::WriteAllText((Join-Path $ReportFullDir "zap-baseline-output.txt"), $zapSummary, [Text.UTF8Encoding]::new($false))
