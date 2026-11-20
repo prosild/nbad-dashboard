@@ -12,9 +12,11 @@ import org.springframework.web.client.RestClientException;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * zeek_AD 근거 조회 FastAPI(evidence.v1) 클라이언트.
@@ -25,8 +27,14 @@ public class EvidenceApiClient {
 
     private static final Logger log = LoggerFactory.getLogger(EvidenceApiClient.class);
 
-    private static final List<String> PROTOCOL_LOG_KEYS = List.of(
-            "dns", "http", "tls", "ssh", "ftp", "smb", "kerberos", "dce_rpc", "ntlm"
+    /** evidence.v1 최상위 키 중 정형 필드로 옮기는 키. */
+    public static final Set<String> STRUCTURED_EVIDENCE_KEYS = Set.of(
+            "connection_count", "network", "zeek_conn_state", "peers", "destination_ports",
+            "protocol_logs", "representative_connections", "limits"
+    );
+    /** 정형 필드로 옮기지 않고 additionalFields로 남기는 키(version, 그리고 DB 뷰 값과 중복되는 host·event·zeekad_role). */
+    public static final Set<String> ADDITIONAL_EVIDENCE_KEYS = Set.of(
+            "version", "host", "event", "zeekad_role"
     );
     private static final int MAX_REPRESENTATIVE_CONNECTIONS = 10;
 
@@ -121,56 +129,75 @@ public class EvidenceApiClient {
         response.setStatusMessage("정상");
         response.setJobId(jobId);
         response.setRank(rank);
-        response.setRawPayload(toMap(root));
 
-        if (root.has("incident") && root.get("incident").isObject()) {
-            response.setIncident(toMap(root.get("incident")));
+        // 근거 행이 없으면 API가 "evidence": null을 준다. 응답 최상위(detection·관측 이름 등)로 대체하지 않는다.
+        JsonNode evidenceNode = root.get("evidence");
+        if (evidenceNode == null || !evidenceNode.isObject()) {
+            response.setEvidence(EvidenceData.unavailable(EvidenceData.NO_EVIDENCE_MESSAGE));
+            return response;
         }
-        if (root.has("model_scores") && root.get("model_scores").isArray()) {
-            response.setModelScores(toListOfMaps(root.get("model_scores")));
-        }
-        if (root.has("asset_names") && root.get("asset_names").isArray()) {
-            response.setAssetNames(toListOfMaps(root.get("asset_names")));
-        }
-
-        JsonNode evidenceNode = root.has("evidence") && root.get("evidence").isObject()
-                ? root.get("evidence")
-                : root;
         response.setEvidence(parseEvidenceNode(evidenceNode));
         return response;
     }
 
     private EvidenceData parseEvidenceNode(JsonNode node) {
-        if (node == null || !node.isObject()) {
-            return EvidenceData.unavailable();
-        }
         EvidenceData data = new EvidenceData();
         data.setAvailable(true);
         data.setStatusMessage("정상");
-        data.setRawEvidence(toMap(node));
 
-        data.setConnectionCount(extractLong(node, "connection_count", "connections"));
-        data.setOrigBytes(extractLong(node, "orig_bytes", "bytes_sent"));
-        data.setRespBytes(extractLong(node, "resp_bytes", "bytes_received"));
+        data.setConnectionCount(extractLong(node.get("connection_count")));
 
-        data.setTransportCounts(extractMap(node, "transport_counts", "protocols"));
-        data.setConnStateCounts(extractMap(node, "conn_state_counts", "conn_states"));
+        JsonNode network = objectOrNull(node.get("network"));
+        if (network != null) {
+            JsonNode bytes = objectOrNull(network.get("bytes"));
+            if (bytes != null) {
+                data.setBytesSent(extractLong(bytes.get("sent")));
+                data.setBytesReceived(extractLong(bytes.get("received")));
+            }
+            data.setTransportCounts(extractMap(network.get("transport")));
+            data.setServiceProtocolCounts(extractMap(network.get("protocol")));
+            data.setPayloadBytesInflated(extractLong(network.get("zeekad_payload_bytes_inflated")));
+        }
 
-        data.setTopPeers(extractTopList(node, "peers", "top_peers"));
-        data.setTopPorts(extractTopList(node, "ports", "top_ports"));
-        data.setProtocolCounts(extractProtocolCounts(node));
+        data.setConnStateCounts(extractMap(node.get("zeek_conn_state")));
 
-        List<Map<String, Object>> reps = extractListOfMaps(node, "representative_connections");
+        JsonNode peers = objectOrNull(node.get("peers"));
+        if (peers != null) {
+            data.setTopPeers(extractListOfMaps(peers.get("top")));
+            data.setUniquePeers(extractLong(peers.get("unique")));
+        }
+        JsonNode ports = objectOrNull(node.get("destination_ports"));
+        if (ports != null) {
+            data.setTopPorts(extractListOfMaps(ports.get("top")));
+            data.setUniquePorts(extractLong(ports.get("unique")));
+        }
+
+        data.setProtocolLogs(extractMap(node.get("protocol_logs")));
+
+        List<Map<String, Object>> reps = extractListOfMaps(node.get("representative_connections"));
         if (reps.size() > MAX_REPRESENTATIVE_CONNECTIONS) {
             reps = reps.subList(0, MAX_REPRESENTATIVE_CONNECTIONS);
         }
         data.setRepresentativeConnections(reps);
-        data.setLimitations(extractStringList(node, "limitations"));
+        data.setLimits(extractStringList(node.get("limits")));
+
+        Map<String, Object> additional = new LinkedHashMap<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            if (!STRUCTURED_EVIDENCE_KEYS.contains(entry.getKey())) {
+                additional.put(entry.getKey(), objectMapper.convertValue(entry.getValue(), Object.class));
+            }
+        }
+        data.setAdditionalFields(Collections.unmodifiableMap(additional));
         return data;
     }
 
-    private Long extractLong(JsonNode node, String primaryKey, String fallbackKey) {
-        JsonNode target = node.hasNonNull(primaryKey) ? node.get(primaryKey) : node.get(fallbackKey);
+    private JsonNode objectOrNull(JsonNode node) {
+        return node != null && node.isObject() ? node : null;
+    }
+
+    private Long extractLong(JsonNode target) {
         if (target == null || target.isNull()) {
             return null;
         }
@@ -187,56 +214,24 @@ public class EvidenceApiClient {
         return null;
     }
 
-    private Map<String, Object> extractMap(JsonNode node, String primaryKey, String fallbackKey) {
-        JsonNode target = node.has(primaryKey) && node.get(primaryKey).isObject()
-                ? node.get(primaryKey)
-                : node.get(fallbackKey);
+    private Map<String, Object> extractMap(JsonNode target) {
         if (target != null && target.isObject()) {
             return toMap(target);
         }
         return Collections.emptyMap();
     }
 
-    private List<Map<String, Object>> extractTopList(JsonNode node, String nestedParentKey, String directListKey) {
-        if (node.has(nestedParentKey) && node.get(nestedParentKey).isObject()) {
-            JsonNode top = node.get(nestedParentKey).get("top");
-            if (top != null && top.isArray()) {
-                return toListOfMaps(top);
-            }
-        }
-        if (node.has(directListKey) && node.get(directListKey).isArray()) {
-            return toListOfMaps(node.get(directListKey));
+    private List<Map<String, Object>> extractListOfMaps(JsonNode target) {
+        if (target != null && target.isArray()) {
+            return toListOfMaps(target);
         }
         return Collections.emptyList();
     }
 
-    private Map<String, Object> extractProtocolCounts(JsonNode node) {
-        Map<String, Object> counts = new LinkedHashMap<>();
-        JsonNode source = node.has("protocol_counts") && node.get("protocol_counts").isObject()
-                ? node.get("protocol_counts")
-                : node;
-        for (String key : PROTOCOL_LOG_KEYS) {
-            if (source.has(key) && !source.get(key).isNull()) {
-                counts.put(key, objectMapper.convertValue(source.get(key), Object.class));
-            } else if (node.has(key) && !node.get(key).isNull()) {
-                counts.put(key, objectMapper.convertValue(node.get(key), Object.class));
-            }
-        }
-        return Collections.unmodifiableMap(counts);
-    }
-
-    private List<Map<String, Object>> extractListOfMaps(JsonNode node, String key) {
-        if (node.has(key) && node.get(key).isArray()) {
-            return toListOfMaps(node.get(key));
-        }
-        return Collections.emptyList();
-    }
-
-    private List<String> extractStringList(JsonNode node, String key) {
-        if (!node.has(key) || node.get(key).isNull()) {
+    private List<String> extractStringList(JsonNode target) {
+        if (target == null || target.isNull()) {
             return Collections.emptyList();
         }
-        JsonNode target = node.get(key);
         if (target.isArray()) {
             List<String> list = new ArrayList<>();
             for (JsonNode item : target) {

@@ -259,11 +259,12 @@ public class MaskingService {
         if (evidence == null || !shouldMask(role)) {
             return evidence;
         }
-        List<Map<String, Object>> maskedPeers = maskListOfMaps(evidence.getTopPeers());
-        List<Map<String, Object>> maskedConnections = maskListOfMaps(evidence.getRepresentativeConnections());
-        Map<String, Object> maskedRaw = maskMapValues(evidence.getRawEvidence());
-        EvidenceData masked = evidence.copyWithMaskedNetworkFields(maskedPeers, maskedConnections, maskedRaw);
-        masked.setLimitations(maskStringListIps(evidence.getLimitations()));
+        EvidenceData masked = evidence.copy();
+        masked.setTopPeers(maskListOfMaps(evidence.getTopPeers()));
+        masked.setRepresentativeConnections(maskListOfMaps(evidence.getRepresentativeConnections()));
+        masked.setProtocolLogs(maskMapValues(evidence.getProtocolLogs()));
+        masked.setAdditionalFields(maskMapValues(evidence.getAdditionalFields()));
+        masked.setLimits(maskStringListIps(evidence.getLimits()));
         return masked;
     }
 

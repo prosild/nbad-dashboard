@@ -41,20 +41,6 @@ public class IncidentDetailService {
             "dns", "http", "tls", "ssh", "ftp", "smb", "kerberos", "dce_rpc", "ntlm"
     );
 
-    private static final Set<String> STANDARD_EVIDENCE_KEYS = Set.of(
-            "connection_count", "connections",
-            "orig_bytes", "bytes_sent",
-            "resp_bytes", "bytes_received",
-            "transport_counts", "protocols",
-            "conn_state_counts", "conn_states",
-            "peers", "top_peers",
-            "ports", "top_ports",
-            "protocol_counts",
-            "dns", "http", "tls", "ssh", "ftp", "smb", "kerberos", "dce_rpc", "ntlm",
-            "representative_connections",
-            "limitations"
-    );
-
     private final ZeekadReadMapper zeekadReadMapper;
     private final CaptureAccessService captureAccessService;
     private final IncidentQueryService incidentQueryService;
@@ -177,30 +163,26 @@ public class IncidentDetailService {
     }
 
     private IncidentDetailView.EvidenceView buildEvidenceView(EvidenceApiResponse apiResponse, UserRole role) {
-        if (apiResponse == null || !apiResponse.isAvailable() || apiResponse.getEvidence() == null
-                || !apiResponse.getEvidence().isAvailable()) {
-            return new IncidentDetailView.EvidenceView(
-                    false,
-                    EvidenceData.FALLBACK_MESSAGE,
-                    null, null, null,
-                    Map.of(), Map.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()
-            );
+        if (apiResponse == null || !apiResponse.isAvailable()) {
+            return IncidentDetailView.EvidenceView.unavailable(EvidenceData.FALLBACK_MESSAGE);
+        }
+        EvidenceData raw = apiResponse.getEvidence();
+        if (raw == null || !raw.isAvailable()) {
+            // API는 응답했지만 이 사건의 근거 행이 없는 경우 등: 클라이언트가 정한 상태 문구를 그대로 쓴다.
+            String message = raw != null ? raw.getStatusMessage() : null;
+            return IncidentDetailView.EvidenceView.unavailable(
+                    message == null || message.isBlank() ? EvidenceData.FALLBACK_MESSAGE : message);
         }
 
-        EvidenceData data = maskingService.maskEvidence(apiResponse.getEvidence(), role);
-        List<IncidentDetailView.ProtocolCountEntry> protocols = new ArrayList<>(PROTOCOL_LOG_KEYS.size());
-        Map<String, Object> rawProtoCounts = data.getProtocolCounts();
+        EvidenceData data = maskingService.maskEvidence(raw, role);
+        Map<String, Object> logs = data.getProtocolLogs();
+        List<IncidentDetailView.ProtocolLogEntry> protocols = new ArrayList<>();
         for (String key : PROTOCOL_LOG_KEYS) {
-            Object val = rawProtoCounts != null && rawProtoCounts.containsKey(key) ? rawProtoCounts.get(key) : 0;
-            protocols.add(new IncidentDetailView.ProtocolCountEntry(key, val));
+            protocols.add(new IncidentDetailView.ProtocolLogEntry(key, toMetrics(logs.get(key))));
         }
-
-        Map<String, Object> additional = new LinkedHashMap<>();
-        if (data.getRawEvidence() != null) {
-            for (Map.Entry<String, Object> entry : data.getRawEvidence().entrySet()) {
-                if (entry.getKey() != null && !STANDARD_EVIDENCE_KEYS.contains(entry.getKey())) {
-                    additional.put(entry.getKey(), entry.getValue());
-                }
+        for (Map.Entry<String, Object> entry : logs.entrySet()) {
+            if (!PROTOCOL_LOG_KEYS.contains(entry.getKey())) {
+                protocols.add(new IncidentDetailView.ProtocolLogEntry(entry.getKey(), toMetrics(entry.getValue())));
             }
         }
 
@@ -208,17 +190,30 @@ public class IncidentDetailService {
                 true,
                 data.getStatusMessage(),
                 data.getConnectionCount(),
-                data.getOrigBytes(),
-                data.getRespBytes(),
+                data.getBytesSent(),
+                data.getBytesReceived(),
+                data.getPayloadBytesInflated(),
                 data.getTransportCounts(),
+                data.getServiceProtocolCounts(),
                 data.getConnStateCounts(),
                 data.getTopPeers(),
+                data.getUniquePeers(),
                 data.getTopPorts(),
+                data.getUniquePorts(),
                 Collections.unmodifiableList(protocols),
                 data.getRepresentativeConnections(),
-                data.getLimitations(),
-                Collections.unmodifiableMap(additional)
+                data.getLimits(),
+                data.getAdditionalFields()
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> toMetrics(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        // 키가 없거나 객체가 아니면 null(값 없음). 0으로 바꾸지 않는다.
+        return null;
     }
 
     private IncidentDetailView.ReportView buildReportView(IncidentReport report, UserRole role) {

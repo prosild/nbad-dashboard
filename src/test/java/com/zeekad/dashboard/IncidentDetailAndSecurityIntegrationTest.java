@@ -3,6 +3,7 @@ package com.zeekad.dashboard;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import com.zeekad.dashboard.client.EvidenceData;
 import com.zeekad.dashboard.dto.IncidentTransitionRequest;
 import com.zeekad.dashboard.dto.LoginRequest;
 import com.zeekad.dashboard.dto.TotpCodeRequest;
@@ -40,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -64,6 +66,11 @@ class IncidentDetailAndSecurityIntegrationTest {
     private static final AtomicBoolean evidenceServerShouldFail = new AtomicBoolean(false);
     private static final java.util.concurrent.atomic.AtomicReference<String> lastEvidencePath =
             new java.util.concurrent.atomic.AtomicReference<>();
+    /** null이 아니면 가짜 근거 서버가 이 본문을 200으로 준다(실제 표본·근거 없음 응답 시험용). */
+    private static final java.util.concurrent.atomic.AtomicReference<String> evidenceServerBodyOverride =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    /** portfolio-verify.ps1의 IPv4 검사와 같은 패턴(네 옥텟이 모두 숫자). */
+    private static final Pattern UNMASKED_IPV4 = Pattern.compile("(?<![\\d.])(?:\\d{1,3}\\.){3}\\d{1,3}(?![\\d.])");
 
     @DynamicPropertySource
     static void registerEvidenceApiUrl(DynamicPropertyRegistry registry) throws IOException {
@@ -79,22 +86,32 @@ class IncidentDetailAndSecurityIntegrationTest {
                 }
                 return;
             }
-            String payload = """
+            // T16: 옛 가짜 키(orig_bytes·transport_counts·ports·limitations 등)를 zeek_AD evidence.v1 실제 키로 바꿨다.
+            String payload = evidenceServerBodyOverride.get() != null ? evidenceServerBodyOverride.get() : """
                     {
                       "evidence": {
+                        "version": "evidence.v1",
+                        "host": {"ip": "192.168.10.50"},
+                        "zeekad_role": "originator",
                         "connection_count": 412,
-                        "orig_bytes": 98304,
-                        "resp_bytes": 524288,
-                        "transport_counts": {"tcp": 390, "udp": 22},
-                        "conn_state_counts": {"SF": 300, "S0": 112},
-                        "peers": {"top": [{"ip": "203.0.113.45", "count": 210}]},
-                        "ports": {"top": [{"port": 88, "count": 195}]},
-                        "dns": 12, "http": 4, "tls": 18, "ssh": 0, "ftp": 0,
-                        "smb": 11, "kerberos": 195, "dce_rpc": 3, "ntlm": 2,
+                        "network": {
+                          "bytes": {"sent": 98304, "received": 524288},
+                          "transport": {"tcp": 390, "udp": 22},
+                          "protocol": {"krb": 195, "dns": 12},
+                          "zeekad_payload_bytes_inflated": 0
+                        },
+                        "zeek_conn_state": {"SF": 300, "S0": 112},
+                        "peers": {"unique": 1, "top": [{"ip": "203.0.113.45", "connections": 210}]},
+                        "destination_ports": {"unique": 1, "top": [{"port": 88, "transport": "tcp", "connections": 195}]},
+                        "protocol_logs": {
+                          "dns": {"queries": 12, "nxdomain": 0, "max_query_length": 30},
+                          "kerberos": {"requests": 195, "failures": 0},
+                          "dce_rpc": {"calls": 3, "top_operations": [{"operation": "NetrShareEnum", "connections": 3}]}
+                        },
                         "representative_connections": [
-                          {"orig_h": "192.168.10.50", "resp_h": "203.0.113.45", "resp_p": 88, "proto": "tcp"}
+                          {"source": {"ip": "192.168.10.50", "port": 50000}, "destination": {"ip": "203.0.113.45", "port": 88}}
                         ],
-                        "limitations": ["수집 구간 10.20.30.99 일부 패킷 손실"]
+                        "limits": ["수집 구간 10.20.30.99 일부 패킷 손실"]
                       }
                     }
                     """;
@@ -147,6 +164,7 @@ class IncidentDetailAndSecurityIntegrationTest {
     @BeforeEach
     void setUp() {
         evidenceServerShouldFail.set(false);
+        evidenceServerBodyOverride.set(null);
         zeekadJdbc = new JdbcTemplate(zeekadReadDataSource);
         cleanupXssFixture();
     }
@@ -154,6 +172,7 @@ class IncidentDetailAndSecurityIntegrationTest {
     @AfterEach
     void tearDown() {
         evidenceServerShouldFail.set(false);
+        evidenceServerBodyOverride.set(null);
         cleanupXssFixture();
     }
 
@@ -330,6 +349,116 @@ class IncidentDetailAndSecurityIntegrationTest {
         List<AuditLog> idorLogs = auditLogMapper.findFiltered(
                 AuditActionType.ACCESS_DENIED_IDOR.name(), viewer, 20);
         assertThat(idorLogs).hasSize(4);
+    }
+
+    @Test
+    void realEvidenceSampleIsStructuredForAnalystAndFullyMaskedButFilledForViewer() throws Exception {
+        evidenceServerBodyOverride.set(EvidenceApiClientTest.readSample());
+
+        String analyst = "evidence_sample_analyst";
+        userAdminService.createUser(analyst, "근거분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession analystSession = loginAs(analyst, "Pass1234!");
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(analystSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.evidence.available").value(true))
+                .andExpect(jsonPath("$.detail.evidence.bytesSent").value(1791339786L))
+                .andExpect(jsonPath("$.detail.evidence.topPeers[0].ip").value("172.16.0.1"))
+                .andExpect(jsonPath("$.detail.evidence.representativeConnections[0].source.ip").value("172.16.0.1"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.ip").value("192.168.10.50"));
+
+        String viewer = "evidence_sample_viewer";
+        userAdminService.createUser(viewer, "근거조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession viewerSession = loginAs(viewer, "Pass1234!");
+        MvcResult viewerRes = mockMvc.perform(get("/api/incidents/101/rank/1").session(viewerSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maskedView").value(true))
+                .andExpect(jsonPath("$.detail.evidence.available").value(true))
+                .andExpect(jsonPath("$.detail.evidence.connectionCount").value(155261))
+                .andExpect(jsonPath("$.detail.evidence.bytesSent").value(1791339786L))
+                .andExpect(jsonPath("$.detail.evidence.bytesReceived").value(123985880))
+                .andExpect(jsonPath("$.detail.evidence.payloadBytesInflated").value(724))
+                .andExpect(jsonPath("$.detail.evidence.transportCounts.tcp").value(155221))
+                .andExpect(jsonPath("$.detail.evidence.serviceProtocolCounts.http").value(147460))
+                .andExpect(jsonPath("$.detail.evidence.connStateCounts.RSTO").value(91898))
+                .andExpect(jsonPath("$.detail.evidence.uniquePeers").value(12))
+                .andExpect(jsonPath("$.detail.evidence.uniquePorts").value(27))
+                .andExpect(jsonPath("$.detail.evidence.topPorts[2].transport").value("udp"))
+                .andExpect(jsonPath("$.detail.evidence.topPeers[0].ip").value("172.16.*.*"))
+                .andExpect(jsonPath("$.detail.evidence.topPeers[0].connections").value(155111))
+                .andExpect(jsonPath("$.detail.evidence.representativeConnections.length()").value(10))
+                .andExpect(jsonPath("$.detail.evidence.representativeConnections[0].source.ip").value("172.16.*.*"))
+                .andExpect(jsonPath("$.detail.evidence.protocolLogs.length()").value(9))
+                .andExpect(jsonPath("$.detail.evidence.protocolLogs[0].protocol").value("dns"))
+                .andExpect(jsonPath("$.detail.evidence.protocolLogs[0].metrics.queries").value(80))
+                .andExpect(jsonPath("$.detail.evidence.protocolLogs[?(@.protocol == 'dce_rpc')].metrics.top_operations[0].operation")
+                        .value("NetrShareEnum"))
+                .andExpect(jsonPath("$.detail.evidence.limits.length()").value(4))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.version").value("evidence.v1"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.ip").value("192.168.*.*"))
+                .andReturn();
+        assertThat(UNMASKED_IPV4.matcher(viewerRes.getResponse().getContentAsString()).find())
+                .as("VIEWER 상세 응답에 가려지지 않은 IPv4")
+                .isFalse();
+    }
+
+    @Test
+    void evidenceLimitsWithIpv4AreMaskedForViewerAndRawForAnalyst() throws Exception {
+        // 표본의 limits에는 IPv4가 없어 기본 가짜 응답(limits에 10.20.30.99 문장)으로 시험한다.
+        String analyst = "evidence_limits_analyst";
+        userAdminService.createUser(analyst, "한계분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.evidence.limits[0]").value("수집 구간 10.20.30.99 일부 패킷 손실"));
+
+        String viewer = "evidence_limits_viewer";
+        userAdminService.createUser(viewer, "한계조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(viewer, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.evidence.limits[0]").value("수집 구간 10.20.*.* 일부 패킷 손실"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.ip").value("192.168.*.*"));
+    }
+
+    @Test
+    void nullOrMissingEvidenceShowsNoEvidenceWithoutLeakingTopLevelFields() throws Exception {
+        String topLevel = """
+                "zeekad_job_id": 101,
+                "zeekad_rank": 1,
+                "host": {"ip": "198.51.100.77", "name": ["LEAK-HOST-NAME$"]},
+                "zeekad_role": "originator",
+                "detection": {"zeekad_picked_by": "leak_detection_marker", "models": []},
+                "zeekad_asset_observations": [
+                  {"zeekad_name_kind": "kerberos_user", "zeekad_name": "leak_krb_user", "zeekad_source_log": "kerberos.log"}
+                ],
+                "connection_count": 999
+                """;
+        String viewer = "evidence_none_viewer";
+        userAdminService.createUser(viewer, "근거없음조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession viewerSession = loginAs(viewer, "Pass1234!");
+
+        for (String body : List.of("{" + topLevel + ", \"evidence\": null}", "{" + topLevel + "}")) {
+            evidenceServerBodyOverride.set(body);
+            MvcResult res = mockMvc.perform(get("/api/incidents/101/rank/1").session(viewerSession))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.detail.evidence.available").value(false))
+                    .andExpect(jsonPath("$.detail.evidence.statusMessage").value(EvidenceData.NO_EVIDENCE_MESSAGE))
+                    .andExpect(jsonPath("$.detail.evidence.connectionCount").doesNotExist())
+                    .andExpect(jsonPath("$.detail.evidence.additionalFields").isEmpty())
+                    .andReturn();
+            String content = res.getResponse().getContentAsString();
+            assertThat(content)
+                    .doesNotContain("leak_detection_marker")
+                    .doesNotContain("leak_krb_user")
+                    .doesNotContain("LEAK-HOST-NAME$")
+                    .doesNotContain("198.51.100.77")
+                    .doesNotContain("198.51.*.*");
+            assertThat(UNMASKED_IPV4.matcher(content).find()).as("VIEWER 응답에 가려지지 않은 IPv4").isFalse();
+        }
+        assertThat(EvidenceData.NO_EVIDENCE_MESSAGE).isNotEqualTo(EvidenceData.FALLBACK_MESSAGE);
     }
 
     @Test

@@ -32,24 +32,36 @@ public record IncidentDetailView(
         String nextAllowedStatus
 ) {
 
-    public record ProtocolCountEntry(String protocol, Object count) {
+    /** 프로토콜 로그 하위 수치. metrics가 null이면 근거에 그 프로토콜 키가 없었다(0과 구분). */
+    public record ProtocolLogEntry(String protocol, Map<String, Object> metrics) {
     }
 
     public record EvidenceView(
             boolean available,
             String statusMessage,
             Long connectionCount,
-            Long origBytes,
-            Long respBytes,
+            Long bytesSent,
+            Long bytesReceived,
+            Long payloadBytesInflated,
             Map<String, Object> transportCounts,
+            Map<String, Object> serviceProtocolCounts,
             Map<String, Object> connStateCounts,
             List<Map<String, Object>> topPeers,
+            Long uniquePeers,
             List<Map<String, Object>> topPorts,
-            List<ProtocolCountEntry> protocolCounts,
+            Long uniquePorts,
+            List<ProtocolLogEntry> protocolLogs,
             List<Map<String, Object>> representativeConnections,
-            List<String> limitations,
+            List<String> limits,
             Map<String, Object> additionalFields
     ) {
+        public static EvidenceView unavailable(String statusMessage) {
+            return new EvidenceView(
+                    false, statusMessage, null, null, null, null,
+                    Map.of(), Map.of(), Map.of(), List.of(), null, List.of(), null,
+                    List.of(), List.of(), List.of(), Map.of()
+            );
+        }
     }
 
     public record FactItem(String id, String name, String value) {

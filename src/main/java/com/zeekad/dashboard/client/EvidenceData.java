@@ -1,30 +1,37 @@
 package com.zeekad.dashboard.client;
 
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * FastAPI evidence.v1 근거 요약 DTO.
+ * FastAPI evidence.v1 근거 요약 DTO(zeek_AD zeek_ad/evidence.py summarize_incident 스키마).
+ * 숫자 필드는 키가 없거나 null이면 null로 두고 0으로 바꾸지 않는다.
  */
 public class EvidenceData {
 
     public static final String FALLBACK_MESSAGE = "근거 API 연결 불가(DB 뷰 정보만 표시)";
+    public static final String NO_EVIDENCE_MESSAGE = "이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음)";
 
     private boolean available;
     private String statusMessage;
     private Long connectionCount;
-    private Long origBytes;
-    private Long respBytes;
+    /** network.bytes.sent: 자산(사건 대상 호스트) 기준 송신 IP 바이트 */
+    private Long bytesSent;
+    /** network.bytes.received: 자산 기준 수신 IP 바이트 */
+    private Long bytesReceived;
+    private Long payloadBytesInflated;
     private Map<String, Object> transportCounts = Collections.emptyMap();
+    private Map<String, Object> serviceProtocolCounts = Collections.emptyMap();
     private Map<String, Object> connStateCounts = Collections.emptyMap();
     private List<Map<String, Object>> topPeers = Collections.emptyList();
+    private Long uniquePeers;
     private List<Map<String, Object>> topPorts = Collections.emptyList();
-    private Map<String, Object> protocolCounts = Collections.emptyMap();
+    private Long uniquePorts;
+    private Map<String, Object> protocolLogs = Collections.emptyMap();
     private List<Map<String, Object>> representativeConnections = Collections.emptyList();
-    private List<String> limitations = Collections.emptyList();
-    private Map<String, Object> rawEvidence = Collections.emptyMap();
+    private List<String> limits = Collections.emptyList();
+    private Map<String, Object> additionalFields = Collections.emptyMap();
 
     public static EvidenceData unavailable() {
         return unavailable(FALLBACK_MESSAGE);
@@ -61,20 +68,28 @@ public class EvidenceData {
         this.connectionCount = connectionCount;
     }
 
-    public Long getOrigBytes() {
-        return origBytes;
+    public Long getBytesSent() {
+        return bytesSent;
     }
 
-    public void setOrigBytes(Long origBytes) {
-        this.origBytes = origBytes;
+    public void setBytesSent(Long bytesSent) {
+        this.bytesSent = bytesSent;
     }
 
-    public Long getRespBytes() {
-        return respBytes;
+    public Long getBytesReceived() {
+        return bytesReceived;
     }
 
-    public void setRespBytes(Long respBytes) {
-        this.respBytes = respBytes;
+    public void setBytesReceived(Long bytesReceived) {
+        this.bytesReceived = bytesReceived;
+    }
+
+    public Long getPayloadBytesInflated() {
+        return payloadBytesInflated;
+    }
+
+    public void setPayloadBytesInflated(Long payloadBytesInflated) {
+        this.payloadBytesInflated = payloadBytesInflated;
     }
 
     public Map<String, Object> getTransportCounts() {
@@ -83,6 +98,14 @@ public class EvidenceData {
 
     public void setTransportCounts(Map<String, Object> transportCounts) {
         this.transportCounts = transportCounts == null ? Collections.emptyMap() : transportCounts;
+    }
+
+    public Map<String, Object> getServiceProtocolCounts() {
+        return serviceProtocolCounts;
+    }
+
+    public void setServiceProtocolCounts(Map<String, Object> serviceProtocolCounts) {
+        this.serviceProtocolCounts = serviceProtocolCounts == null ? Collections.emptyMap() : serviceProtocolCounts;
     }
 
     public Map<String, Object> getConnStateCounts() {
@@ -101,6 +124,14 @@ public class EvidenceData {
         this.topPeers = topPeers == null ? Collections.emptyList() : topPeers;
     }
 
+    public Long getUniquePeers() {
+        return uniquePeers;
+    }
+
+    public void setUniquePeers(Long uniquePeers) {
+        this.uniquePeers = uniquePeers;
+    }
+
     public List<Map<String, Object>> getTopPorts() {
         return topPorts;
     }
@@ -109,12 +140,21 @@ public class EvidenceData {
         this.topPorts = topPorts == null ? Collections.emptyList() : topPorts;
     }
 
-    public Map<String, Object> getProtocolCounts() {
-        return protocolCounts;
+    public Long getUniquePorts() {
+        return uniquePorts;
     }
 
-    public void setProtocolCounts(Map<String, Object> protocolCounts) {
-        this.protocolCounts = protocolCounts == null ? Collections.emptyMap() : protocolCounts;
+    public void setUniquePorts(Long uniquePorts) {
+        this.uniquePorts = uniquePorts;
+    }
+
+    /** protocol_logs: 프로토콜 이름 → 하위 수치 객체(값은 숫자 또는 배열). 키가 없던 프로토콜은 담지 않는다. */
+    public Map<String, Object> getProtocolLogs() {
+        return protocolLogs;
+    }
+
+    public void setProtocolLogs(Map<String, Object> protocolLogs) {
+        this.protocolLogs = protocolLogs == null ? Collections.emptyMap() : protocolLogs;
     }
 
     public List<Map<String, Object>> getRepresentativeConnections() {
@@ -126,39 +166,43 @@ public class EvidenceData {
                 ? Collections.emptyList() : representativeConnections;
     }
 
-    public List<String> getLimitations() {
-        return limitations;
+    public List<String> getLimits() {
+        return limits;
     }
 
-    public void setLimitations(List<String> limitations) {
-        this.limitations = limitations == null ? Collections.emptyList() : limitations;
+    public void setLimits(List<String> limits) {
+        this.limits = limits == null ? Collections.emptyList() : limits;
     }
 
-    public Map<String, Object> getRawEvidence() {
-        return rawEvidence;
+    /** 정형 필드로 옮기지 않은 evidence 최상위 키(version·host·event·zeekad_role 등). */
+    public Map<String, Object> getAdditionalFields() {
+        return additionalFields;
     }
 
-    public void setRawEvidence(Map<String, Object> rawEvidence) {
-        this.rawEvidence = rawEvidence == null ? Collections.emptyMap() : rawEvidence;
+    public void setAdditionalFields(Map<String, Object> additionalFields) {
+        this.additionalFields = additionalFields == null ? Collections.emptyMap() : additionalFields;
     }
 
-    public EvidenceData copyWithMaskedNetworkFields(List<Map<String, Object>> maskedPeers,
-                                                    List<Map<String, Object>> maskedConnections,
-                                                    Map<String, Object> maskedRaw) {
+    /** 모든 필드를 옮긴 얕은 사본. 마스킹은 호출자가 사본의 해당 필드를 바꿔 끼운다. */
+    public EvidenceData copy() {
         EvidenceData copy = new EvidenceData();
         copy.setAvailable(this.available);
         copy.setStatusMessage(this.statusMessage);
         copy.setConnectionCount(this.connectionCount);
-        copy.setOrigBytes(this.origBytes);
-        copy.setRespBytes(this.respBytes);
-        copy.setTransportCounts(new LinkedHashMap<>(this.transportCounts));
-        copy.setConnStateCounts(new LinkedHashMap<>(this.connStateCounts));
-        copy.setTopPeers(maskedPeers);
+        copy.setBytesSent(this.bytesSent);
+        copy.setBytesReceived(this.bytesReceived);
+        copy.setPayloadBytesInflated(this.payloadBytesInflated);
+        copy.setTransportCounts(this.transportCounts);
+        copy.setServiceProtocolCounts(this.serviceProtocolCounts);
+        copy.setConnStateCounts(this.connStateCounts);
+        copy.setTopPeers(this.topPeers);
+        copy.setUniquePeers(this.uniquePeers);
         copy.setTopPorts(this.topPorts);
-        copy.setProtocolCounts(new LinkedHashMap<>(this.protocolCounts));
-        copy.setRepresentativeConnections(maskedConnections);
-        copy.setLimitations(this.limitations);
-        copy.setRawEvidence(maskedRaw);
+        copy.setUniquePorts(this.uniquePorts);
+        copy.setProtocolLogs(this.protocolLogs);
+        copy.setRepresentativeConnections(this.representativeConnections);
+        copy.setLimits(this.limits);
+        copy.setAdditionalFields(this.additionalFields);
         return copy;
     }
 }
