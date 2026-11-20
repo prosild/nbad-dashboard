@@ -1,0 +1,34 @@
+# 포트폴리오 스택 전용 http 문맥 설정(compose.portfolio.yml이 /etc/nginx/templates/conf.d/에 붙인다).
+# 기존 VMware 스택(compose.yml)에는 붙이지 않는다.
+#
+# 전제: HTTP 리스너는 NAS 127.0.0.1에만 묶여 DSM 역방향 프록시만 접근한다. 그래서 아래 신뢰 범위
+# (127.0.0.1, 이 스택의 고정 Docker 서브넷)에서 온 X-Forwarded-For·X-Forwarded-Proto만 믿는다.
+
+# 클라이언트 IP: 신뢰 범위 밖의 가장 오른쪽 X-Forwarded-For 주소(DSM이 덧붙인 실제 접속 주소)를 $remote_addr로 쓴다.
+# http 문맥에 두어 요청을 읽은 직후(post-read 단계) 적용되므로 아래 속도 제한 키와 ModSecurity·앱 전달 값이 모두 이 주소다.
+set_real_ip_from 127.0.0.1;
+set_real_ip_from ${ZEEKAD_TRUSTED_SUBNET};
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+
+# 앱에 넘기는 X-Forwarded-Proto: 들어온 값이 https(DSM이 TLS를 끝냄)면 https, 아니면 이 리스너의 $scheme.
+map $http_x_forwarded_proto $zeekad_forwarded_proto {
+    default $scheme;
+    https   https;
+}
+
+# 앱에 넘기는 X-Forwarded-Port: https면 443(앱이 만드는 절대 URL에 내부 포트 8080이 붙지 않게), 아니면 기존 규칙.
+map $zeekad_forwarded_proto $zeekad_forwarded_port {
+    https   443;
+    default $forwarded_port;
+}
+
+# 로그인 속도 제한: POST /api/auth/login만, 클라이언트 IP당. 키가 빈 요청은 세지 않으므로 다른 요청은 영향이 없다.
+map "$request_method:$uri" $zeekad_login_limit_key {
+    default "";
+    "POST:/api/auth/login" $binary_remote_addr;
+}
+limit_req_zone $zeekad_login_limit_key zone=zeekad_login:10m rate=${ZEEKAD_LOGIN_RATE};
+limit_req zone=zeekad_login burst=${ZEEKAD_LOGIN_BURST} nodelay;
+limit_req_status 429;
+limit_req_log_level warn;

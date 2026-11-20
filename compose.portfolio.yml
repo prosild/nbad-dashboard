@@ -1,0 +1,206 @@
+# zeek_ad_dashboard 포트폴리오 공개 배포 스택(Synology DS920+ 단독, compose.yml과 독립된 파일. 병합하지 않는다).
+# - 구성: PostgreSQL 17(zeek_AD 스냅샷 복원) / zeek_AD 근거 API / dashboard-app / nginx-waf.
+# - 공개 경로: DSM 역방향 프록시(HTTPS, TLS 종료) -> 127.0.0.1:${PORTFOLIO_HTTP_PORT} (nginx-waf HTTP) -> dashboard-app.
+#   바깥에 여는 포트는 nginx-waf HTTP 하나뿐이고 127.0.0.1에만 묶는다(DSM만 접근 = 전달 헤더를 믿는 근거).
+# - 실행: docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d
+#   계정 시드: docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm demo-seed
+#   자세한 절차는 docs/portfolio-deployment.md.
+# - NAS Compose v2.20.1에서 동작하는 문법만 쓴다. 비밀값은 ${X:?}(필수 보간)로 막지 않는다
+#   (빈 비밀번호는 PostgreSQL 이미지·초기화 스크립트·시드 스크립트가 거부한다).
+name: zeekad-portfolio
+
+services:
+  postgres:
+    image: ${PORTFOLIO_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      # 비어 있으면 PostgreSQL 이미지가 초기화를 거부한다.
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-}
+      # 01-roles-databases.sh가 읽는 로그인 역할 비밀번호(하나라도 비어 있으면 초기화를 멈춘다).
+      ZEEKAD_API_PASSWORD: ${ZEEKAD_API_PASSWORD:-}
+      DASHBOARD_RO_PASSWORD: ${DASHBOARD_RO_PASSWORD:-}
+      DASHBOARD_RW_PASSWORD: ${DASHBOARD_RW_PASSWORD:-}
+      DASHBOARD_APP_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/portfolio/initdb:/docker-entrypoint-initdb.d:ro
+      - ${PORTFOLIO_SNAPSHOT_DIR:-./snapshot}:/snapshot:ro
+    healthcheck:
+      # TCP로 확인(초기화 중 임시 서버는 소켓만 연다) + 스냅샷 복원 성공 표지(02-restore-snapshot.sh)가 있어야 healthy.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d zeekad && test -s \"$$PGDATA/portfolio-restore.ok\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    mem_limit: 1g
+    restart: unless-stopped
+    networks:
+      - portfolio-net
+
+  api:
+    image: ${PORTFOLIO_PIPELINE_IMAGE:-zeekad-pipeline:dev}
+    command: ["python", "scripts/run_api.py", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      ZEEKAD_API_PASSWORD: ${ZEEKAD_API_PASSWORD:-}
+    # zeek_AD deploy/compose.yaml의 api와 같다: 일반 계정(uid 1000), 모든 capability 제거, 권한 상승 금지.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 1g
+    restart: unless-stopped
+    networks:
+      - portfolio-net
+
+  dashboard-app:
+    image: ${PORTFOLIO_APP_IMAGE:-zeek-ad-dashboard-app:local}
+    environment:
+      SERVER_PORT: "8080"
+      DASHBOARD_DB_HOST: postgres
+      DASHBOARD_DB_PORT: "5432"
+      DASHBOARD_DB_NAME: zeekad_dashboard
+      DASHBOARD_DB_USER: dashboard_app
+      DASHBOARD_APP_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+      ZEEKAD_DB_HOST: postgres
+      ZEEKAD_DB_PORT: "5432"
+      ZEEKAD_DB_NAME: zeekad
+      ZEEKAD_RO_USER: dashboard_ro
+      ZEEKAD_RO_PASSWORD: ${DASHBOARD_RO_PASSWORD:-}
+      ZEEKAD_RW_USER: dashboard_rw
+      ZEEKAD_RW_PASSWORD: ${DASHBOARD_RW_PASSWORD:-}
+      ZEEKAD_EVIDENCE_API_URL: http://api:8000
+      DASHBOARD_COOKIE_SECURE: "true"
+      # 공개 데모 계정을 남이 잠그지 못하게 계정 잠금을 사실상 끈다(0이나 작은 값은 첫 실패에 잠근다).
+      # 대신 nginx-waf가 POST /api/auth/login을 클라이언트 IP당 속도 제한한다.
+      DASHBOARD_MAX_FAILED_ATTEMPTS: ${PORTFOLIO_MAX_FAILED_ATTEMPTS:-1000000}
+      # 부트스트랩은 users 표가 비었을 때(첫 기동) 한 번만 돈다. 계정마다 서로 다른 비공개 무작위 비밀번호.
+      DASHBOARD_BOOTSTRAP_PASSWORD: ""
+      BOOTSTRAP_VIEWER1_PASSWORD: ${BOOTSTRAP_VIEWER1_PASSWORD:-}
+      BOOTSTRAP_ANALYST1_PASSWORD: ${BOOTSTRAP_ANALYST1_PASSWORD:-}
+      BOOTSTRAP_ANALYST2_PASSWORD: ${BOOTSTRAP_ANALYST2_PASSWORD:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_TOTP_SECRET: ${BOOTSTRAP_ADMIN_TOTP_SECRET:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    mem_limit: 1g
+    restart: unless-stopped
+    networks:
+      - portfolio-net
+
+  nginx-waf:
+    image: ${PORTFOLIO_WAF_IMAGE:-zeek-ad-dashboard-waf:local}
+    depends_on:
+      dashboard-app:
+        condition: service_healthy
+    ports:
+      # 이것 하나만 연다. 127.0.0.1에만 묶어 DSM 역방향 프록시만 접근한다(LAN에서도 직접 접근 불가).
+      - "127.0.0.1:${PORTFOLIO_HTTP_PORT:-18480}:8080"
+    volumes:
+      # 포트폴리오 전용 nginx 설정(실제 IP·전달 헤더 규칙·로그인 속도 제한). 기존 compose.yml에는 붙이지 않는다.
+      - ./docker/portfolio/nginx/zeekad-portfolio-http.conf.template:/etc/nginx/templates/conf.d/zeekad-portfolio-http.conf.template:ro
+      - ./docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template:/etc/nginx/templates/includes/proxy_backend_extra_portfolio.conf.template:ro
+    environment:
+      BACKEND: "http://dashboard-app:8080"
+      PORT: "8080"
+      # 8443은 스택 네트워크 안에서만 쓴다(ZAP 리허설 대상, 이미지 기본 자체 서명 인증서). 바깥에 열지 않는다.
+      SSL_PORT: "8443"
+      SERVER_NAME: ${PORTFOLIO_SERVER_NAME:-localhost}
+      # TLS는 DSM이 끝내므로 HTTP 리스너에서 HTTPS로 리다이렉트하지 않는다.
+      NGINX_ALWAYS_TLS_REDIRECT: "off"
+      SSL_OCSP_STAPLING: "off"
+      SERVER_TOKENS: "off"
+      SERVER_HEADER: ""
+      PROXY_HOST_HEADER: "$$http_host"
+      # 앱에 넘기는 전달 헤더(zeekad-portfolio-http.conf의 map): 들어온 X-Forwarded-Proto가 https면 https/443.
+      NGINX_X_FORWARDED_PROTO: "$$zeekad_forwarded_proto"
+      ZEEKAD_PROXY_X_FORWARDED_PORT: "$$zeekad_forwarded_port"
+      # X-Forwarded-For는 덧붙이지 않고 nginx가 정한 클라이언트 IP 하나로 덮어쓴다(방문자가 붙인 값이 감사 로그에 남지 않게).
+      ZEEKAD_PROXY_X_FORWARDED_FOR: "$$remote_addr"
+      # 실제 IP: 신뢰 범위는 127.0.0.1과 이 스택의 고정 서브넷뿐이다.
+      REAL_IP_HEADER: "X-Forwarded-For"
+      REAL_IP_RECURSIVE: "on"
+      SET_REAL_IP_FROM: "127.0.0.1,${PORTFOLIO_SUBNET:-10.203.48.0/24}"
+      ZEEKAD_TRUSTED_SUBNET: ${PORTFOLIO_SUBNET:-10.203.48.0/24}
+      ZEEKAD_LOGIN_RATE: ${PORTFOLIO_LOGIN_RATE:-10r/m}
+      ZEEKAD_LOGIN_BURST: ${PORTFOLIO_LOGIN_BURST:-5}
+      MODSEC_RULE_ENGINE: "on"
+      # compose.yml과 같다: CRS 기본 허용 메서드에 PUT만 더한다.
+      ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"
+      PARANOIA: "1"
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      ANOMALY_OUTBOUND: "4"
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+      MODSEC_AUDIT_LOG: "/dev/stdout"
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    mem_limit: 512m
+    restart: unless-stopped
+    networks:
+      - portfolio-net
+
+  # 계정 시드(한 번씩 실행하는 도구. up으로는 뜨지 않는다): demo만 활성, 나머지 계정 비활성. 멱등.
+  demo-seed:
+    profiles: ["seed"]
+    image: ${PORTFOLIO_PIPELINE_IMAGE:-zeekad-pipeline:dev}
+    entrypoint: ["python", "/seed/seed_demo.py"]
+    volumes:
+      - ./docker/portfolio/seed:/seed:ro
+    environment:
+      SEED_API_BASE_URL: http://dashboard-app:8080
+      SEED_DB_HOST: postgres
+      SEED_DB_PORT: "5432"
+      DASHBOARD_APP_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      DEMO_DISPLAY_NAME: ${DEMO_DISPLAY_NAME:-포트폴리오 방문자 (읽기 전용)}
+      BOOTSTRAP_VIEWER1_PASSWORD: ${BOOTSTRAP_VIEWER1_PASSWORD:-}
+      BOOTSTRAP_ANALYST1_PASSWORD: ${BOOTSTRAP_ANALYST1_PASSWORD:-}
+      BOOTSTRAP_ANALYST2_PASSWORD: ${BOOTSTRAP_ANALYST2_PASSWORD:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_TOTP_SECRET: ${BOOTSTRAP_ADMIN_TOTP_SECRET:-}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      dashboard-app:
+        condition: service_healthy
+    mem_limit: 256m
+    networks:
+      - portfolio-net
+
+volumes:
+  pgdata:
+
+networks:
+  portfolio-net:
+    driver: bridge
+    ipam:
+      config:
+        # 고정 서브넷: nginx-waf의 set_real_ip_from 신뢰 범위와 같아야 한다. NAS의 기존 Docker 네트워크와 겹치지 않게
+        # 배포 전에 확인한다(docs/portfolio-deployment.md). 바꾸면 PORTFOLIO_SUBNET 하나만 바꾼다.
+        - subnet: ${PORTFOLIO_SUBNET:-10.203.48.0/24}

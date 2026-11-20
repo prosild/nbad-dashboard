@@ -227,6 +227,79 @@ class StaticSecurityAndConfigTest {
     }
 
     @Test
+    void portfolioStackBindsOnlyLoopbackAndKeepsSecretsOutOfTrackedFiles() throws IOException {
+        List<Path> requiredFiles = List.of(
+                Path.of("compose.portfolio.yml"),
+                Path.of(".env.portfolio.example"),
+                Path.of("docker/portfolio/initdb/01-roles-databases.sh"),
+                Path.of("docker/portfolio/initdb/02-restore-snapshot.sh"),
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"),
+                Path.of("docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template"),
+                Path.of("docker/portfolio/seed/seed_demo.py"),
+                Path.of("scripts/portfolio-snapshot.ps1"),
+                Path.of("scripts/portfolio-verify.ps1"),
+                Path.of("docs/portfolio-deployment.md"));
+        for (Path path : requiredFiles) {
+            assertThat(path).as("포트폴리오 배포 파일 %s가 존재해야 합니다", path).exists();
+        }
+
+        String compose = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+        String composeWithoutComments = String.join("\n",
+                compose.lines().filter(line -> !line.trim().startsWith("#")).toList());
+        assertThat(composeWithoutComments)
+                .as("필수 보간은 빈 비밀값 예시 파일로 실행하는 config -q를 깨뜨린다")
+                .doesNotContainPattern("\\$\\{[A-Za-z0-9_]+:?\\?");
+        List<String> hostPorts = compose.lines()
+                .map(String::trim)
+                .filter(line -> line.matches("^- \"[^\"]*:\\d+\"$") && line.contains("PORTFOLIO_HTTP_PORT"))
+                .toList();
+        assertThat(hostPorts).containsExactly("- \"127.0.0.1:${PORTFOLIO_HTTP_PORT:-18480}:8080\"");
+        assertThat(compose.lines().filter(line -> line.trim().equals("ports:")).count())
+                .as("포트를 여는 서비스는 nginx-waf 하나뿐")
+                .isEqualTo(1);
+        assertThat(compose).contains("DASHBOARD_COOKIE_SECURE: \"true\"", "NGINX_ALWAYS_TLS_REDIRECT: \"off\"",
+                "ZEEKAD_PROXY_X_FORWARDED_FOR: \"$$remote_addr\"", "REAL_IP_HEADER: \"X-Forwarded-For\"",
+                "DASHBOARD_MAX_FAILED_ATTEMPTS: ${PORTFOLIO_MAX_FAILED_ATTEMPTS:-1000000}",
+                "cap_drop: [ALL]", "no-new-privileges:true", "subnet: ${PORTFOLIO_SUBNET:-10.203.48.0/24}");
+        assertThat(compose).doesNotContainPattern("(?i)DetectionOnly|MODSEC_RULE_ENGINE:\\s*\"?off");
+
+        String httpConf = Files.readString(
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"), StandardCharsets.UTF_8);
+        assertThat(httpConf).contains("limit_req_status 429;", "real_ip_header X-Forwarded-For;",
+                "real_ip_recursive on;", "\"POST:/api/auth/login\" $binary_remote_addr;");
+
+        // 공유 WAF 템플릿은 변수로만 바뀌고 기존(VMware) 기본값은 이미지 ENV로 그대로 유지한다.
+        String wafDockerfile = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8);
+        assertThat(wafDockerfile).contains("ZEEKAD_PROXY_X_FORWARDED_FOR=\\$proxy_add_x_forwarded_for",
+                "ZEEKAD_PROXY_X_FORWARDED_PORT=\\$forwarded_port");
+
+        String envExample = Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8);
+        Pattern filledSecret = Pattern.compile("(?m)^[A-Z0-9_]*(?:PASSWORD|SECRET)=\\S+");
+        assertThat(filledSecret.matcher(envExample).find())
+                .as(".env.portfolio.example의 비밀값은 비어 있어야 합니다")
+                .isFalse();
+        for (String requiredVar : List.of(
+                "POSTGRES_SUPERUSER_PASSWORD", "ZEEKAD_API_PASSWORD", "DASHBOARD_RO_PASSWORD",
+                "DASHBOARD_RW_PASSWORD", "DASHBOARD_APP_PASSWORD", "DEMO_PASSWORD",
+                "BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD",
+                "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET", "PORTFOLIO_HTTP_PORT", "PORTFOLIO_SUBNET")) {
+            assertThat(envExample).contains(requiredVar + "=");
+        }
+
+        Pattern privateKeyPattern = Pattern.compile("BEGIN [A-Z ]*PRIVATE KEY");
+        try (Stream<Path> files = Files.walk(Path.of("docker/portfolio"))) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                assertThat(privateKeyPattern.matcher(Files.readString(file, StandardCharsets.UTF_8)).find())
+                        .as("%s에 개인키가 없어야 합니다", file)
+                        .isFalse();
+            }
+        }
+
+        String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
+        assertThat(gitignore).contains("!.env.portfolio.example", "build/");
+    }
+
+    @Test
     void gitignoreExcludesSecretsKeysAndSecurityReports() throws IOException {
         String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
         assertThat(gitignore).contains(
