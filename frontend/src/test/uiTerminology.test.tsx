@@ -167,7 +167,7 @@ const detailResponse = (masked: boolean) => ({
       bytesReceived: 123985880,
       payloadBytesInflated: 724,
       transportCounts: { tcp: 155221, udp: 40 },
-      serviceProtocolCounts: { http: 147460, dns: 40 },
+      serviceProtocolCounts: { http: 147460, dns: 40, unidentified: 7663 },
       connStateCounts: { SF: 58598, RSTO: 91898, S0: 4169 },
       topPeers: [{ ip: '172.16.*.*', connections: 155111 }],
       uniquePeers: 12,
@@ -574,6 +574,8 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(await screen.findByText('근거 요약')).toBeInTheDocument();
     expect(screen.getAllByText('읽기 전용 · 개인정보 가림')).toHaveLength(1);
     expect(screen.getByText('이름 종류')).toBeInTheDocument();
+    expect(screen.getByText('식별 안 됨')).toBeInTheDocument();
+    expect(screen.getByText('http')).not.toHaveAttribute('data-unregistered');
     expect(screen.getByText('컴퓨터 계정')).toBeInTheDocument();
     expect(screen.getByText('2017-07-05 20:54:41')).toBeInTheDocument();
     expect(screen.getByText('탐지 순위 5위 이내(현재 1위)')).toBeInTheDocument();

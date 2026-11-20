@@ -110,12 +110,15 @@ function DistributionList({
   counts,
   tone,
   keyDict,
+  softDict = false,
 }: {
   title: string;
   counts: Record<string, unknown>;
   tone: 'cyan' | 'purple';
-  /** 분포 키를 사전으로 바꿀 때(연결 상태 코드). 없으면 키(tcp, http 등 업계 약어) 그대로 */
+  /** 분포 키를 사전으로 바꿀 때(연결 상태 코드 등). 없으면 키(tcp 등 업계 약어) 그대로 */
   keyDict?: LabelDictionaryName;
+  /** true면 사전에 없는 키를 미등록 표시 없이 그대로 보인다(http·dns 같은 프로토콜 이름) */
+  softDict?: boolean;
 }) {
   const entries = Object.entries(counts ?? {})
     .map(([key, val]) => ({ key, num: Number(val) }))
@@ -132,7 +135,8 @@ function DistributionList({
       ) : (
         <div className="space-y-2.5">
           {entries.map((entry) => {
-            const label = keyDict ? lookupLabel(keyDict, entry.key) : null;
+            const found = keyDict ? lookupLabel(keyDict, entry.key) : null;
+            const label = found && softDict && !found.known ? null : found;
             return (
               <div key={entry.key} className="space-y-1">
                 <div className="flex items-center justify-between gap-3 text-xs">
@@ -293,7 +297,13 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <DistributionList title="전송 계층 분포" counts={evidence.transportCounts} tone="cyan" />
-        <DistributionList title="서비스 프로토콜 분포" counts={evidence.serviceProtocolCounts} tone="cyan" />
+        <DistributionList
+          title="서비스 프로토콜 분포"
+          counts={evidence.serviceProtocolCounts}
+          tone="cyan"
+          keyDict="serviceProtocol"
+          softDict
+        />
         <DistributionList title="연결 상태 분포" counts={evidence.connStateCounts} tone="purple" keyDict="connState" />
       </div>
 

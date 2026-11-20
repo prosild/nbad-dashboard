@@ -146,6 +146,13 @@ export const LABEL_DICTIONARIES = {
     calls: '호출 수',
     top_operations: '주요 호출',
   },
+  /**
+   * 서비스 프로토콜 분포의 특수 값 (zeek_AD evidence.v1 network.protocol).
+   * http·dns 같은 프로토콜 이름은 업계 약어라 그대로 두고(사전에 없어도 미등록 표시를 하지 않는다), 특수 값만 바꾼다.
+   */
+  serviceProtocol: {
+    unidentified: '식별 안 됨',
+  },
   /** Zeek 연결 상태 코드 (zeek_AD evidence.v1 zeek_conn_state) */
   connState: {
     S0: '연결 시도, 응답 없음',
