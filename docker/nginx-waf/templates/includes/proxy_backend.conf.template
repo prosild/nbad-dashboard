@@ -3,10 +3,11 @@ proxy_set_header Proxy "";
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;
 proxy_set_header ${REAL_IP_PROXY_HEADER} $remote_addr;
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Port $forwarded_port;
+proxy_set_header X-Forwarded-For ${ZEEKAD_PROXY_X_FORWARDED_FOR};
+proxy_set_header X-Forwarded-Port ${ZEEKAD_PROXY_X_FORWARDED_PORT};
 proxy_set_header X-Forwarded-Proto ${NGINX_X_FORWARDED_PROTO};
 include includes/client_identity.conf;
+include includes/proxy_backend_extra*.conf;
 
 proxy_http_version 1.1;
 proxy_buffering off;
