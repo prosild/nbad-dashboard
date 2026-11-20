@@ -15,11 +15,18 @@
 - **`nginx-waf` (`docker/nginx-waf/Dockerfile`)**: `owasp/modsecurity-crs:nginx-alpine` 기반 앞단 리버스 프록시 + ModSecurity v3 WAF(OWASP CRS `PARANOIA=1`, `SecRuleEngine On`, `USER nginx`).
   - 외부 트래픽은 `nginx-waf`의 HTTPS(`${WAF_HTTPS_PORT:-443}` → 컨테이너 `8443`) 및 HTTP(`${WAF_HTTP_PORT:-80}` → 컨테이너 `8080`, HTTPS로 `301` 리다이렉트) 포트만 통과합니다.
   - `/actuator/**` 경로는 앞단 Nginx에서 `403 Forbidden`으로 즉시 차단합니다.
-  - `Server` 헤더 및 와일드카드 CORS 헤더를 제거하고, HTTPS 응답에 `Strict-Transport-Security` 헤더를 추가하며, 백엔드(`dashboard-app`)의 `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `COOP/COEP/CORP`, `Permissions-Policy` 헤더를 보존합니다.
-- **`dashboard-app` (`Dockerfile`)**: `eclipse-temurin:17-jre-alpine` 기반 비루트(`appuser`) Spring Boot + MyBatis 웹 서버.
+  - `compose.yml`의 `ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"`로 CRS 허용 메서드(기본 `GET HEAD POST OPTIONS`)에 `PUT`만 더합니다. SPA의 사용자 수정 요청 `PUT /api/admin/users/{id}` 때문이며, 앱이 쓰지 않는 `DELETE`·`PATCH`는 허용하지 않습니다. `PARANOIA`·`BLOCKING_PARANOIA=1`, `ANOMALY_INBOUND=5`, `MODSEC_RULE_ENGINE=on`은 그대로이고 WAF 예외 규칙은 두지 않습니다.
+  - `Server` 헤더 및 와일드카드 CORS 헤더를 제거하고(동일 Origin에서 SPA 정적 셸과 JSON API를 함께 서빙하므로 CORS 헤더 자체가 필요 없음), HTTPS 응답에 `Strict-Transport-Security` 헤더를 추가하며, 백엔드(`dashboard-app`)의 `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `COOP/COEP/CORP`, `Permissions-Policy` 헤더를 보존합니다.
+- **`dashboard-app` (`Dockerfile`)**: `eclipse-temurin:17-jre-alpine` 기반 비루트(`appuser`) Spring Boot + MyBatis JSON REST API 서버이며, 같은 jar 안의 React SPA 정적 번들(`BOOT-INF/classes/static/index.html`, `static/assets/*`)도 함께 서빙합니다. 최종 이미지에는 Node.js·npm·`node_modules`가 없습니다(Node는 빌드 단계에서만 사용).
   - `expose: ["8080"]`으로 Docker 내부 네트워크(`dashboard-net`)에서만 접근 가능하며 호스트 포트를 직접 열지 않습니다.
   - `server.forward-headers-strategy: framework`로 앞단 WAF가 전달하는 `X-Forwarded-Proto`, `X-Forwarded-For`, `X-Real-IP`, `Host`를 처리합니다.
   - 프로덕션 `bootJar`에는 H2 드라이버 및 `application-test.yml`이 포함되지 않습니다.
+
+### 1.3 SPA 라우팅과 `/api/**` 경계
+- **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다. 비인증 사용자는 `/login`을 제외한 화면 경로에서 `302 /login`으로 이동하며, `/admin/**` 화면은 `ADMIN`만 열 수 있습니다.
+- **정적 자산**: `/assets/*.js`·`/assets/*.css`·`/index.html`은 인증 없이 받을 수 있고(`Content-Type` `text/javascript`·`text/css`, `X-Content-Type-Options: nosniff`), CSP는 `script-src 'self'; style-src 'self'`로 인라인 스크립트·스타일을 허용하지 않습니다.
+- **JSON API (`/api/**`)**: SPA 폴백 대상이 아닙니다. 비인증 요청은 `401` JSON(`code: UNAUTHENTICATED`), 인증된 세션의 없는 경로는 `404` JSON(`code: NOT_FOUND`)이며 `index.html`을 돌려주지 않습니다. 관리자는 1차 로그인 뒤 TOTP 검증 전까지 업무 API가 `403`(`TOTP_VERIFICATION_REQUIRED`)입니다.
+- **CSRF**: SPA는 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키(`Secure; SameSite=Lax`, JS가 읽도록 HttpOnly 아님)를 받고, 쓰기 요청마다 그 값을 `X-XSRF-TOKEN` 헤더로 보냅니다(이중 제출). 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다. 로그인·TOTP 뒤 토큰이 회전하므로 클라이언트는 매 요청 최신 쿠키 값을 씁니다.
 
 ---
 
@@ -61,7 +68,7 @@
 
 ### 2.4 실습망 시험 데이터(`lab-20261119`) 참고 메모
 - `lab-20261119` 등 실습망 시험 데이터에는 가상 재생·스크립트 시험용 호스트 트래픽(예: Kali 공격 VM `10.10.0.50`, 배포 VM `10.10.0.10`)이 포함될 수 있습니다.
-- 대시보드 애플리케이션 코드와 템플릿은 특정 시험 날짜나 IP 라벨을 하드코딩하지 않고 `asset_names`·`host_ip`·`VIEWER` 마스킹 규칙에 따라 중립적으로 표시합니다. 운영·분석 시 해당 IP가 실습망 시험 호스트임을 참고하여 정상/공격 여부를 판별하세요.
+- 대시보드 애플리케이션 코드(백엔드·SPA)는 특정 시험 날짜나 IP 라벨을 하드코딩하지 않고 `asset_names`·`host_ip`·`VIEWER` 마스킹 규칙에 따라 중립적으로 표시합니다. 운영·분석 시 해당 IP가 실습망 시험 호스트임을 참고하여 정상/공격 여부를 판별하세요.
 
 ---
 
@@ -108,7 +115,14 @@ cp .env.example .env
 ## 4. 이미지 빌드 및 VMware Ubuntu Server 배포 절차
 
 ### 4.1 Docker 이미지 빌드 (`Dockerfile` & `docker/nginx-waf/Dockerfile`)
-프로젝트 루트에서 Spring Boot 애플리케이션(`Dockerfile`)과 ModSecurity WAF(`docker/nginx-waf/Dockerfile`) 이미지를 함께 빌드할 수 있습니다.
+프로젝트 루트에서 Spring Boot 애플리케이션(`Dockerfile`)과 ModSecurity WAF(`docker/nginx-waf/Dockerfile`) 이미지를 함께 빌드할 수 있습니다. 호스트에 Node.js·JDK가 없어도 됩니다.
+
+`Dockerfile`은 3단계 멀티스테이지 빌드입니다.
+1. **`frontend` (`node:24-alpine`)**: `frontend/package.json`·`package-lock.json`만 먼저 복사해 `npm ci`(빌드 도구가 devDependencies이므로 `--omit=dev`를 쓰지 않음) → 나머지 `frontend/` 복사 → `npm run build`로 `frontend/dist` 생성.
+2. **`builder` (`eclipse-temurin:17-jdk-alpine`)**: `src/main`과 1단계의 `frontend/dist`를 받아 `./gradlew bootJar`. `build.gradle` `processResources`가 `frontend/dist`를 jar의 `static/`으로 넣으며, Gradle은 Node·npm을 호출하지 않습니다.
+3. **런타임 (`eclipse-temurin:17-jre-alpine`)**: `apk upgrade`, 비루트 `appuser`, `HEALTHCHECK`(`/login`), jar만 복사. Node.js 런타임 컨테이너는 배포 스택에 두지 않습니다.
+
+`.dockerignore`가 `frontend/node_modules`·`frontend/dist`·`frontend/.vite`를 빌드 컨텍스트에서 빼므로 Windows 호스트 산출물이 이미지에 섞이지 않습니다. `RUN apk upgrade` 레이어가 빌드 캐시에서 재사용되면 그 뒤 나온 Alpine 보안 패치가 반영되지 않으므로, 배포·보안 재검증 전에는 `docker compose build --pull --no-cache`로 다시 빌드합니다.
 
 ```bash
 docker compose build
@@ -148,7 +162,7 @@ docker compose ps
 
 ### 4.3 초기 접속 및 `lab-*` 접근 패턴 부여
 1. Windows 브라우저에서 `https://<배포_VM_IP>`로 접속합니다.
-2. `admin` 계정으로 로그인해 `/login/totp/setup`에서 TOTP 2단계 인증을 등록하고 `/admin/users`에서 초기 비밀번호를 변경합니다.
+2. `admin` 계정으로 로그인하면 SPA가 `/login/totp/setup`(최초, QR 등록) 또는 `/login/totp`(등록 후)로 이동합니다. TOTP를 마친 뒤 `/admin/users`에서 계정을 관리합니다.
 3. 기본 시드 계정의 허용 패턴(`viewer1`/`analyst1`: `cic17-*`, `analyst2`: `syn1-*`, `admin`: `*`) 외에 **실습망 캡처(`lab-YYYYMMDD`)를 조회할 분석가·조회자**는 `/admin/users`에서 해당 계정의 허용 캡처 패턴에 `lab-*`(또는 `cic17-*,lab-*`)를 추가·저장합니다.
 4. 초기 계정 설정이 완료되면 `.env`에서 `DASHBOARD_BOOTSTRAP_PASSWORD` 등 부트스트랩 변수를 비우고 `docker compose up -d`로 재적용하는 것을 권장합니다.
 
@@ -194,6 +208,10 @@ docker compose up -d nginx-waf
 외부 PostgreSQL 없이 Docker Compose 오버라이드(`docker/verify/compose.verify.yml`)로 실제 PostgreSQL 17 + Flyway + `latest_incident_queue` + `dashboard.transition_incident` + `dashboard.decide_review` + Slack 스레드 + WAF + Trivy + OWASP ZAP을 통합 검증할 수 있습니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/<ID>/evidence"
 ```
+- 단계: CycloneDX SBOM → 이미지 빌드 → Trivy(SBOM / FS(`frontend/package-lock.json` npm 포함, `frontend/node_modules`·`frontend/dist` 제외) / 앱·WAF 이미지) → PostgreSQL 17 + WAF E2E → OWASP ZAP 베이스라인.
+- E2E는 JSON API로 진행합니다: `GET /api/auth/csrf`로 `XSRF-TOKEN`을 받고 `X-XSRF-TOKEN` 헤더 + JSON 본문으로 `POST /api/auth/login`, 관리자는 `POST /api/auth/totp/verify`. 응답은 JSON 필드로 판정하고, WAF 차단은 `403` + 앱 JSON 오류가 아님 + `nginx-waf` ModSecurity 감사 로그의 규칙 ID로 판정합니다. 결과는 `waf-e2e-verification.txt`에 남습니다.
+- ZAP은 정보성 경고만 있어도 종료 코드 `2`이므로 `zap-baseline.json`의 위험 등급별 경고 수로 판정합니다. High·Medium·Low가 하나라도 있으면 실패이며, 유일한 허용 예외는 모든 인스턴스가 `XSRF-TOKEN`인 Low `10010`(Cookie No HttpOnly Flag)입니다(이중 제출 CSRF 설계상 JS가 읽어야 하는 쿠키).
+- E2E는 `127.0.0.1`로 접속하므로 모든 요청에 CRS `920350`(숫자 IP Host, 3점)이 붙습니다. 실제 배포에서는 `WAF_SERVER_NAME`의 호스트명으로 접속하는 것을 권장합니다.
 - 실행 시점에만 난수 비밀번호를 생성해 `docker/verify/compose.verify.yml`을 기동하고, 검증 완료 후 `docker compose down -v`로 임시 컨테이너와 볼륨을 완전히 삭제합니다.
