@@ -31,6 +31,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -206,7 +207,7 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(content().string(not(containsString("spoofed_admin"))));
 
         // 3. 이미 investigating 상태에서 investigating 재요청 -> 409 CONFLICT + 새로고침 안내
-        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
+        MvcResult conflictResult = mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)
                         .with(xsrf())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -215,7 +216,11 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.succeeded").value(false))
                 .andExpect(jsonPath("$.code").value("CONFLICT"))
-                .andExpect(jsonPath("$.message").value(containsString("새로고침")));
+                .andExpect(jsonPath("$.message").value(containsString("새로고침")))
+                .andReturn();
+        String conflictMessage = objectMapper.readTree(
+                conflictResult.getResponse().getContentAsString(StandardCharsets.UTF_8)).path("message").asText();
+        assertThat(conflictMessage.split("새로고침", -1)).hasSize(2);
 
         // 4. closed 시 잘못된 결론 / 사유 공백 -> 400 INVALID_REQUEST 거부
         mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)

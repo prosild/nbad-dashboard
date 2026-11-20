@@ -47,6 +47,16 @@ final class SqlErrorSanitizer {
         return null;
     }
 
+    /**
+     * 메시지에 새로고침 안내가 없을 때만 {@link #REFRESH_GUIDE}를 한 번 붙인다(DB 함수 문구에 이미 안내가 있으면 그대로 둔다).
+     */
+    static String withRefreshGuide(String message) {
+        if (message.contains("새로고침")) {
+            return message;
+        }
+        return message + REFRESH_GUIDE;
+    }
+
     static String sanitizeSqlMessage(String rawMessage, String fallbackMessage) {
         if (rawMessage == null || rawMessage.isBlank()) {
             return fallbackMessage;

@@ -96,14 +96,14 @@ public class IncidentTransitionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "상태 변경 규칙에 위배되었거나 다른 사용자가 먼저 상태를 변경했습니다.");
-                    return TransitionResult.failure(409, "CONFLICT", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return TransitionResult.failure(409, "CONFLICT", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("사건 상태 전이 대상 없음(SQLSTATE 02000): jobId={}, rank={}", jobId, queueRank);
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "대상 사건을 찾을 수 없습니다.");
-                    return TransitionResult.failure(404, "NOT_FOUND", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return TransitionResult.failure(404, "NOT_FOUND", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
             }
             log.error("사건 상태 전이 중 예기치 않은 오류: jobId={}, rank={}", jobId, queueRank, ex);

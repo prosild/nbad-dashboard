@@ -119,7 +119,7 @@ public class AnalystReviewDecisionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "검토 결정 규칙에 위배되었거나 이미 다른 분석가가 결정했습니다.");
-                    return DecisionResult.failure(409, "CONFLICT", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return DecisionResult.failure(409, "CONFLICT", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("분석가 검토 대상 없음(SQLSTATE 02000): reviewJobId={}, incidentId={}",
@@ -127,7 +127,7 @@ public class AnalystReviewDecisionService {
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "요청한 분석가 검토 항목을 찾을 수 없습니다.");
-                    return DecisionResult.failure(404, "NOT_FOUND", safeMsg + SqlErrorSanitizer.REFRESH_GUIDE);
+                    return DecisionResult.failure(404, "NOT_FOUND", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
             }
             log.error("분석가 검토 결정 중 예기치 않은 오류: reviewJobId={}, incidentId={}",

@@ -34,6 +34,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -323,7 +324,7 @@ class AnalystReviewDecisionIntegrationTest {
                 .andExpect(content().string(not(containsString("spoofed_admin"))));
 
         // 3. 이미 결정된 항목 재결정 시도 -> 409 CONFLICT + 새로고침 안내
-        mockMvc.perform(post("/api/reviews/decide")
+        MvcResult conflictResult = mockMvc.perform(post("/api/reviews/decide")
                         .session(analystSession)
                         .with(xsrf())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -332,7 +333,11 @@ class AnalystReviewDecisionIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.succeeded").value(false))
                 .andExpect(jsonPath("$.code").value("CONFLICT"))
-                .andExpect(jsonPath("$.message").value(containsString("새로고침")));
+                .andExpect(jsonPath("$.message").value(containsString("새로고침")))
+                .andReturn();
+        String conflictMessage = objectMapper.readTree(
+                conflictResult.getResponse().getContentAsString(StandardCharsets.UTF_8)).path("message").asText();
+        assertThat(conflictMessage.split("새로고침", -1)).hasSize(2);
 
         // 4. 잘못된 action 값 -> 400 INVALID_REQUEST 거부
         mockMvc.perform(post("/api/reviews/decide")
