@@ -1,1 +1,1 @@
-# 동일 출처(Same-Origin) Thymeleaf 서버 렌더링 앱이므로 와일드카드 CORS 헤더를 추가하지 않는다.
+# 동일 출처(Same-Origin) React SPA 정적 셸과 JSON REST API(/api/**)를 같은 Origin에서 서빙하므로 CORS 헤더(특히 와일드카드)를 추가하지 않는다.

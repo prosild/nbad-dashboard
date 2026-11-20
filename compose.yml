@@ -78,6 +78,9 @@ services:
       NGINX_X_FORWARDED_PORT: "$$server_port"
       SET_REAL_IP_FROM: "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       MODSEC_RULE_ENGINE: "on"
+      # CRS 기본 허용 메서드(GET HEAD POST OPTIONS)에 PUT만 더한다: SPA의 PUT /api/admin/users/{id} 때문.
+      # 앱이 쓰지 않는 DELETE·PATCH는 넣지 않는다.
+      ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"
       PARANOIA: "1"
       BLOCKING_PARANOIA: "1"
       ANOMALY_INBOUND: "5"
