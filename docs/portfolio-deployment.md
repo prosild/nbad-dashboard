@@ -337,6 +337,67 @@ docker image rm zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-p
 
 새 이미지 `tar`를 옮겨 `docker load` → `docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait`. DB 볼륨은 유지되므로 계정·감사 로그가 그대로다.
 
+#### 앱 이미지만 갱신(`dashboard-app` 하나, T16)
+
+대시보드 코드만 바뀌었을 때는 `zeek-ad-dashboard-app:local` 하나만 옮기고 `dashboard-app`만 다시 만든다. 5GB 파이프라인 `tar`는 다시 만들지 않는다. DB 볼륨·`.env`·다른 컨테이너는 그대로 둔다.
+
+이 PC(PowerShell, 저장소 루트). 2.1의 앱 이미지 빌드와 2.3 리허설을 먼저 한다:
+
+```powershell
+New-Item -ItemType Directory -Force build/portfolio-images | Out-Null
+docker save -o build/portfolio-images/zeek-ad-dashboard-app.tar zeek-ad-dashboard-app:local
+if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
+# 2.4와 같은 방식(LF UTF-8, tar 안 Config digest). 네 이미지 목록(images.sha256·image-ids.txt)을 덮어쓰지 않게 이름을 따로 쓴다.
+$h = (Get-FileHash -Algorithm SHA256 build/portfolio-images/zeek-ad-dashboard-app.tar).Hash.ToLower()
+[IO.File]::WriteAllText("$PWD/build/portfolio-images/app-image.sha256", "$h  zeek-ad-dashboard-app.tar`n", [Text.UTF8Encoding]::new($false))
+$manifest = (tar -xOf build/portfolio-images/zeek-ad-dashboard-app.tar manifest.json | Out-String) | ConvertFrom-Json
+if (@($manifest)[0].Config -notmatch '([0-9a-f]{64})') { throw "Config digest not found" }
+[IO.File]::WriteAllText("$PWD/build/portfolio-images/app-image-id.txt", "sha256:$($Matches[1]) zeek-ad-dashboard-app:local`n", [Text.UTF8Encoding]::new($false))
+$nas = "psdev93@192.168.50.146"; $dst = "/volume1/docker/zeekad-portfolio"
+scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/app-image.sha256 build/portfolio-images/app-image-id.txt "${nas}:${dst}/images/"
+```
+
+NAS(셸):
+
+```sh
+cd /volume1/docker/zeekad-portfolio
+mkdir -p ~/zeekad-portfolio-check && C=~/zeekad-portfolio-check
+# 1) 전 상태 기록
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/app-update-containers-before.txt
+docker volume ls > $C/app-update-volumes-before.txt
+# 2) 롤백 준비: 지금 dashboard-app이 쓰는 이미지 ID를 남기고 태그로 보존한다
+APP=$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q dashboard-app)
+OLD=$(docker inspect --format '{{.Image}}' "$APP"); echo "$OLD" > $C/app-update-old-image-id.txt
+docker tag "$OLD" zeek-ad-dashboard-app:pre-update
+# 3) 무결성 확인 → 적재 → ID 대조
+(cd images && sha256sum -c app-image.sha256)
+docker load -i images/zeek-ad-dashboard-app.tar
+printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local)" zeek-ad-dashboard-app:local | diff - images/app-image-id.txt && echo "app image ID matches"
+# 4) dashboard-app만 다시 만든다
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app
+# 5) 후 상태 기록·비교: dashboard-app 줄만 달라야 하고 볼륨은 같아야 한다
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/app-update-containers-after.txt
+docker volume ls > $C/app-update-volumes-after.txt
+grep -v dashboard-app $C/app-update-containers-before.txt > $C/app-update-others-before.txt
+grep -v dashboard-app $C/app-update-containers-after.txt > $C/app-update-others-after.txt
+diff $C/app-update-others-before.txt $C/app-update-others-after.txt && echo "other containers unchanged"
+diff $C/app-update-volumes-before.txt $C/app-update-volumes-after.txt && echo "volumes unchanged"
+```
+
+그 뒤 3.6의 `curl` 확인(`/login` 200)과 4.4의 공개 주소 확인을 한다. `nginx-waf`는 다시 만들지 않으므로, 확인에서 502가 나오면 반복하지 말고 멈춰 원인을 본다.
+
+롤백(`--wait` 실패 또는 확인 실패):
+
+```sh
+cd /volume1/docker/zeekad-portfolio
+docker tag zeek-ad-dashboard-app:pre-update zeek-ad-dashboard-app:local
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app
+docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeekad-portfolio-check/app-update-old-image-id.txt   # 같아야 한다
+```
+
+- 보존 태그 이름은 갱신 작업마다 정한다(T16은 `zeek-ad-dashboard-app:pre-t16`). 확인이 끝나 더 필요 없으면 `docker image rm zeek-ad-dashboard-app:pre-<작업>`으로 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다).
+- 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다).
+
 ### 3.9 스냅샷 갱신
 
 스냅샷은 DB를 처음 만들 때만 복원된다. 데이터를 새로 바꾸려면 DB 볼륨을 지우고 다시 만든다. 이때 `zeekad_dashboard`(계정·감사 로그)도 새로 만들어진다(공개 데모 데이터는 읽기 전용이라 주기적 리셋은 두지 않는다).
