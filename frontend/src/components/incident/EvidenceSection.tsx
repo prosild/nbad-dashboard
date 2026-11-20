@@ -1,8 +1,94 @@
 import { AlertTriangle, Database, Network } from 'lucide-react';
-import type { EvidenceView } from '../../types/api';
+import type { EvidenceView, ProtocolLogEntry } from '../../types/api';
 import { formatBytes, formatNumber } from '../../utils/format';
 import { SocBadge } from '../StatusBadge';
 import { SvgProgressBar } from '../SvgProgressBar';
+
+/** 근거에 키가 없어 null인 값. 0(관측했는데 0)과 구분해 보여 준다. */
+const MISSING_LABEL = '값 없음';
+
+function displayCount(value: number | null | undefined): string {
+  return value === null || value === undefined ? MISSING_LABEL : formatNumber(value);
+}
+
+function displayBytes(value: number | null | undefined): string {
+  return value === null || value === undefined ? MISSING_LABEL : formatBytes(value);
+}
+
+function StatCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="soc-panel p-3.5">
+      <div className="text-[11px] font-medium text-slate-400">{label}</div>
+      <div
+        className={`mt-1 font-mono text-xl font-bold tabular-nums ${
+          value === MISSING_LABEL ? 'text-slate-500' : accent ? 'text-cyan-300' : 'text-slate-100'
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function formatMetricValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return MISSING_LABEL;
+  }
+  if (typeof value === 'number') {
+    return formatNumber(value);
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return '없음';
+    }
+    return value
+      .map((item) =>
+        item !== null && typeof item === 'object'
+          ? Object.values(item as Record<string, unknown>)
+              .map((v) => (typeof v === 'number' ? formatNumber(v) : String(v ?? MISSING_LABEL)))
+              .join(' · ')
+          : String(item),
+      )
+      .join(', ');
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function ProtocolLogCard({ entry }: { entry: ProtocolLogEntry }) {
+  const metrics = entry.metrics ? Object.entries(entry.metrics) : [];
+  const hasActivity = metrics.some(([, v]) =>
+    typeof v === 'number' ? v > 0 : Array.isArray(v) ? v.length > 0 : false,
+  );
+  return (
+    <div
+      data-testid={`protocol-log-${entry.protocol}`}
+      className={`rounded-lg border px-3 py-2 font-mono text-xs ${
+        hasActivity
+          ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200'
+          : 'border-slate-800 bg-[#090f1d] text-slate-400'
+      }`}
+    >
+      <div className="mb-1 font-semibold">{entry.protocol}</div>
+      {entry.metrics === null ? (
+        <div className="text-slate-500">{MISSING_LABEL}</div>
+      ) : metrics.length === 0 ? (
+        <div className="text-slate-500">하위 수치 없음</div>
+      ) : (
+        <dl className="space-y-0.5">
+          {metrics.map(([key, val]) => (
+            <div key={key} className="flex justify-between gap-3">
+              <dt className="text-slate-400">{key}</dt>
+              <dd className="break-all text-right font-bold tabular-nums">{formatMetricValue(val)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
 
 function DistributionList({
   title,
@@ -150,28 +236,20 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="soc-panel p-3.5">
-          <div className="text-[11px] font-medium text-slate-400">총 연결 수</div>
-          <div className="mt-1 font-mono text-xl font-bold tabular-nums text-cyan-300">
-            {formatNumber(evidence.connectionCount)}
-          </div>
-        </div>
-        <div className="soc-panel p-3.5">
-          <div className="text-[11px] font-medium text-slate-400">송신 바이트 (orig_bytes)</div>
-          <div className="mt-1 font-mono text-xl font-bold tabular-nums text-slate-100">
-            {formatBytes(evidence.origBytes)}
-          </div>
-        </div>
-        <div className="soc-panel p-3.5">
-          <div className="text-[11px] font-medium text-slate-400">수신 바이트 (resp_bytes)</div>
-          <div className="mt-1 font-mono text-xl font-bold tabular-nums text-slate-100">
-            {formatBytes(evidence.respBytes)}
-          </div>
-        </div>
+        <StatCard label="총 연결 수" value={displayCount(evidence.connectionCount)} accent />
+        <StatCard label="자산 송신 바이트" value={displayBytes(evidence.bytesSent)} />
+        <StatCard label="자산 수신 바이트" value={displayBytes(evidence.bytesReceived)} />
+        <StatCard label="고유 상대 IP 수" value={displayCount(evidence.uniquePeers)} />
+        <StatCard label="고유 목적지 포트 수" value={displayCount(evidence.uniquePorts)} />
+        <StatCard
+          label="페이로드 바이트가 부푼 연결 수"
+          value={displayCount(evidence.payloadBytesInflated)}
+        />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <DistributionList title="전송 계층 / 프로토콜 분포" counts={evidence.transportCounts} tone="cyan" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DistributionList title="전송 계층 분포" counts={evidence.transportCounts} tone="cyan" />
+        <DistributionList title="서비스 프로토콜 분포" counts={evidence.serviceProtocolCounts} tone="cyan" />
         <DistributionList title="연결 상태 (conn_state) 분포" counts={evidence.connStateCounts} tone="purple" />
       </div>
 
@@ -179,24 +257,10 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
           프로토콜 로그 수치
         </h4>
-        <div className="flex flex-wrap gap-2">
-          {evidence.protocolCounts.map((entry) => {
-            const countNum = Number(entry.count);
-            const hasActivity = Number.isFinite(countNum) && countNum > 0;
-            return (
-              <div
-                key={entry.protocol}
-                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 font-mono text-xs ${
-                  hasActivity
-                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200'
-                    : 'border-slate-800 bg-[#090f1d] text-slate-400'
-                }`}
-              >
-                <span>{entry.protocol}</span>
-                <span className="font-bold tabular-nums">{String(entry.count ?? 0)}</span>
-              </div>
-            );
-          })}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {evidence.protocolLogs.map((entry) => (
+            <ProtocolLogCard key={entry.protocol} entry={entry} />
+          ))}
         </div>
       </div>
 
@@ -219,13 +283,13 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
         emptyLabel="대표 연결 정보 없음"
       />
 
-      {evidence.limitations.length > 0 && (
+      {evidence.limits.length > 0 && (
         <div className="soc-panel p-4">
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-300">
             관측 한계 (Limitations)
           </h4>
           <ul className="list-disc space-y-1 pl-5 text-xs text-slate-300">
-            {evidence.limitations.map((item, idx) => (
+            {evidence.limits.map((item, idx) => (
               <li key={idx}>{item}</li>
             ))}
           </ul>

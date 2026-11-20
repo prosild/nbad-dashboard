@@ -120,24 +120,31 @@ export interface AssetNameRecord {
   extraAttributes: Record<string, unknown>;
 }
 
-export interface ProtocolCountEntry {
+/** 프로토콜 로그 하위 수치. metrics가 null이면 근거에 그 프로토콜 키가 없었다(0과 구분). */
+export interface ProtocolLogEntry {
   protocol: string;
-  count: unknown;
+  metrics: Record<string, unknown> | null;
 }
 
 export interface EvidenceView {
   available: boolean;
   statusMessage: string | null;
   connectionCount: number | null;
-  origBytes: number | null;
-  respBytes: number | null;
+  /** 자산(사건 대상 호스트) 기준 송신 IP 바이트 */
+  bytesSent: number | null;
+  /** 자산 기준 수신 IP 바이트 */
+  bytesReceived: number | null;
+  payloadBytesInflated: number | null;
   transportCounts: Record<string, unknown>;
+  serviceProtocolCounts: Record<string, unknown>;
   connStateCounts: Record<string, unknown>;
   topPeers: Array<Record<string, unknown>>;
+  uniquePeers: number | null;
   topPorts: Array<Record<string, unknown>>;
-  protocolCounts: ProtocolCountEntry[];
+  uniquePorts: number | null;
+  protocolLogs: ProtocolLogEntry[];
   representativeConnections: Array<Record<string, unknown>>;
-  limitations: string[];
+  limits: string[];
   additionalFields: Record<string, unknown>;
 }
 
