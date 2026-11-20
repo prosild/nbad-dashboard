@@ -94,18 +94,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-verify.ps1
 
 ```powershell
 New-Item -ItemType Directory -Force build/portfolio-images | Out-Null
-docker save -o build/portfolio-images/zeek-ad-dashboard-app.tar zeek-ad-dashboard-app:local
-docker save -o build/portfolio-images/zeek-ad-dashboard-waf.tar zeek-ad-dashboard-waf:local
-docker save -o build/portfolio-images/zeekad-pipeline.tar zeekad-pipeline:dev
-docker save -o build/portfolio-images/pgvector-pg17.tar pgvector/pgvector:0.8.1-pg17
+# 순서가 NAS 3.3의 docker image inspect 인자 순서와 같아야 한다.
+$images = [ordered]@{
+  'zeek-ad-dashboard-app:local'  = 'zeek-ad-dashboard-app.tar'
+  'zeek-ad-dashboard-waf:local'  = 'zeek-ad-dashboard-waf.tar'
+  'zeekad-pipeline:dev'          = 'zeekad-pipeline.tar'
+  'pgvector/pgvector:0.8.1-pg17' = 'pgvector-pg17.tar'
+}
+foreach ($tag in $images.Keys) {
+  docker save -o "build/portfolio-images/$($images[$tag])" $tag
+  # 다중 플랫폼 이미지(pgvector)는 받지 않은 플랫폼 때문에 실패할 수 있다. 그때만 amd64로 한정한다.
+  if ($LASTEXITCODE -ne 0) { docker save --platform linux/amd64 -o "build/portfolio-images/$($images[$tag])" $tag }
+  if ($LASTEXITCODE -ne 0) { throw "docker save failed: $tag" }
+}
 # NAS에서 sha256sum -c 로 확인할 목록(LF 줄바꿈)
-$lines = Get-ChildItem build/portfolio-images -Filter *.tar | ForEach-Object { "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())  $($_.Name)" }
+$lines = foreach ($f in $images.Values) { "$((Get-FileHash -Algorithm SHA256 "build/portfolio-images/$f").Hash.ToLower())  $f" }
 [IO.File]::WriteAllText("$PWD/build/portfolio-images/images.sha256", ($lines -join "`n") + "`n")
-# 이미지 ID(NAS에서 docker load 뒤 같은지 비교)
-docker image inspect --format "{{.Id}} {{index .RepoTags 0}}" zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-pipeline:dev pgvector/pgvector:0.8.1-pg17 > build/portfolio-images/image-ids.txt
+# 이미지 ID 대조 목록: 각 tar 안 manifest.json의 Config(이미지 설정 digest).
+# 이 PC Docker Desktop은 containerd 이미지 저장소라 이 PC의 docker image inspect .Id(매니페스트·인덱스 digest)는
+# NAS(Docker 24 기본 저장소)에서 docker load 뒤의 .Id(= 설정 digest)와 다르다. 그래서 tar 안의 Config digest로 비교한다.
+$ids = foreach ($tag in $images.Keys) {
+  $manifest = (tar -xOf "build/portfolio-images/$($images[$tag])" manifest.json | Out-String) | ConvertFrom-Json
+  $cfg = @($manifest)[0].Config                        # 예: blobs/sha256/<hex> 또는 <hex>.json
+  if ($cfg -notmatch '([0-9a-f]{64})') { throw "Config digest not found: $tag" }
+  "sha256:$($Matches[1]) $tag"
+}
+# PowerShell의 > 는 UTF-16·CRLF로 써서 NAS diff가 항상 실패한다. LF UTF-8(BOM 없음)로 쓴다.
+[IO.File]::WriteAllText("$PWD/build/portfolio-images/image-ids.txt", ($ids -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+Get-Content build/portfolio-images/image-ids.txt
 ```
 
 - `zeekad-pipeline.tar`는 약 5GB다. `/volume1` 여유 공간(1.5TB)은 충분하다.
+- 리허설(2.3)과 `docker save` 사이에 이미지를 다시 빌드하거나 받지 않는다. 그래야 리허설한 이미지가 NAS로 간다(이 PC 안의 동일성은 `docker image inspect --format '{{.Id}}'`를 리허설 전후·`docker save` 뒤에 기록해 비교한다).
 - 이미지 `tar`와 스냅샷은 Git에 넣지 않는다(`build/`는 Git 제외 경로).
 
 배포 묶음(NAS 폴더 `/volume1/docker/zeekad-portfolio`에 아래 구조로 둔다):
@@ -133,10 +153,22 @@ docker version --format '{{.Server.Version}}'; docker compose version   # Docker
 # 기존 컨테이너·네트워크 상태를 기록해 둔다(배포 뒤 같은지 비교).
 mkdir -p ~/zeekad-portfolio-check
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | sort > ~/zeekad-portfolio-check/containers-before.txt
-for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | tee ~/zeekad-portfolio-check/networks-before.txt
+for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | sort | tee ~/zeekad-portfolio-check/networks-before.txt
+docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | sort > ~/zeekad-portfolio-check/images-before.txt
+# 옮길 네 태그가 이미 있는지(아무것도 나오지 않는 것이 정상). 있으면 3.3 대조 전에 ID를 image-ids.txt와 비교하고,
+# 다른 ID면 멈춘다(docker load가 기존 태그를 새 이미지로 옮겨 기존 컨테이너가 쓰던 이미지를 바꿀 수 있다).
+grep -E '^(zeek-ad-dashboard-app:local|zeek-ad-dashboard-waf:local|zeekad-pipeline:dev|pgvector/pgvector:0\.8\.1-pg17) ' ~/zeekad-portfolio-check/images-before.txt || echo "no target tags"
 # 포트 18480이 비어 있는지(아무것도 나오지 않아야 한다). 18080은 nexus-portal이 쓴다.
 netstat -tln 2>/dev/null | grep -E ':18480\b' || echo "18480 free"
+# 배포 폴더를 sudo 없이 만들 수 있는지(/volume1/docker 쓰기 권한)
+ls -ld /volume1/docker; test -w /volume1/docker && echo "volume1/docker writable"
 free -m; df -h /volume1
+```
+
+이 PC(PowerShell)에서 기존 포트폴리오 응답을 기록해 둔다(배포·DSM 설정 뒤 같은지 비교). 공유기에 NAT 루프백이 없으면 이 PC에서 공개 IP로는 접속되지 않으므로 `--resolve`로 NAS의 DSM `443`에 직접 붙는다. 이 값은 `--resolve` 경로가 동작한다는 근거도 된다.
+
+```powershell
+curl.exe -s -o NUL -w "%{http_code}" --resolve <DDNS 이름>.synology.me:443:192.168.50.146 https://<DDNS 이름>.synology.me/
 ```
 
 - **서브넷 겹침 확인**: `networks-before.txt`에 `10.203.48.0/24`와 겹치는 대역이 있으면 `.env`의 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.49.0/24`)으로 바꾼다. 이 값 하나가 Compose 네트워크와 nginx 신뢰 범위를 함께 바꾼다.
@@ -158,7 +190,8 @@ $nas = "psdev93@192.168.50.146"; $dst = "/volume1/docker/zeekad-portfolio"
 scp compose.portfolio.yml .env.portfolio.example "${nas}:${dst}/"
 scp -r docker/portfolio "${nas}:${dst}/docker/"
 scp build/portfolio/zeekad.dump build/portfolio/zeekad.dump.sha256 build/portfolio/manifest.json "${nas}:${dst}/snapshot/"
-scp build/portfolio-images/*.tar build/portfolio-images/images.sha256 build/portfolio-images/image-ids.txt "${nas}:${dst}/images/"
+# PowerShell은 네이티브 명령 인자의 *.tar를 펼치지 않을 수 있으므로 파일 이름을 하나씩 적는다.
+scp build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/zeek-ad-dashboard-waf.tar build/portfolio-images/zeekad-pipeline.tar build/portfolio-images/pgvector-pg17.tar build/portfolio-images/images.sha256 build/portfolio-images/image-ids.txt "${nas}:${dst}/images/"
 ```
 
 - PowerShell 5.1 파이프(`tar | ssh`, `docker save | ssh`)는 바이트를 문자열로 바꿔 깨뜨리므로 쓰지 않는다. 파일은 `scp`로만 보낸다.
@@ -177,29 +210,66 @@ ls -l docker/portfolio/initdb/*.sh && head -1 docker/portfolio/initdb/01-roles-d
 
 ```sh
 cd /volume1/docker/zeekad-portfolio/images
-for f in *.tar; do docker load -i "$f"; done
-docker image inspect --format '{{.Id}} {{index .RepoTags 0}}' zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-pipeline:dev pgvector/pgvector:0.8.1-pg17 | diff - image-ids.txt && echo "image IDs match"
+for f in zeek-ad-dashboard-app.tar zeek-ad-dashboard-waf.tar zeekad-pipeline.tar pgvector-pg17.tar; do docker load -i "$f"; done
+# image-ids.txt는 tar 안 manifest.json의 Config digest(2.4). Docker 24 기본 저장소에서는 이것이 적재 뒤 .Id다.
+for t in zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-pipeline:dev pgvector/pgvector:0.8.1-pg17; do
+  printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' "$t")" "$t"
+done | diff - image-ids.txt && echo "image IDs match"
 ```
 
 이미지 적재가 끝나면 `images/*.tar`는 지워도 된다(롤백용으로 남겨도 된다).
 
 ### 3.4 `.env` 작성(비밀값 생성)
 
+비밀값은 셸 변수와 내장 명령(`printf`)으로만 다룬다. `sed` 같은 외부 명령의 인자로 넘기면 실행 중 프로세스 목록에 보인다.
+
 ```sh
 cd /volume1/docker/zeekad-portfolio
-cp .env.portfolio.example .env && chmod 600 .env
+umask 077
 gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
-for k in POSTGRES_SUPERUSER_PASSWORD ZEEKAD_API_PASSWORD DASHBOARD_RO_PASSWORD DASHBOARD_RW_PASSWORD DASHBOARD_APP_PASSWORD \
-         BOOTSTRAP_VIEWER1_PASSWORD BOOTSTRAP_ANALYST1_PASSWORD BOOTSTRAP_ANALYST2_PASSWORD BOOTSTRAP_ADMIN_PASSWORD; do
-  sed -i "s|^$k=\$|$k=$(gen)|" .env
-done
-sed -i "s|^BOOTSTRAP_ADMIN_TOTP_SECRET=\$|BOOTSTRAP_ADMIN_TOTP_SECRET=$(tr -dc 'A-Z2-7' </dev/urandom | head -c 32)|" .env
-sed -i "s|^PORTFOLIO_SERVER_NAME=.*|PORTFOLIO_SERVER_NAME=soc.<DDNS 이름>.synology.me|" .env
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    POSTGRES_SUPERUSER_PASSWORD=|ZEEKAD_API_PASSWORD=|DASHBOARD_RO_PASSWORD=|DASHBOARD_RW_PASSWORD=|DASHBOARD_APP_PASSWORD=|\
+    BOOTSTRAP_VIEWER1_PASSWORD=|BOOTSTRAP_ANALYST1_PASSWORD=|BOOTSTRAP_ANALYST2_PASSWORD=|BOOTSTRAP_ADMIN_PASSWORD=)
+      v=$(gen); printf '%s%s\n' "$line" "$v" ;;
+    BOOTSTRAP_ADMIN_TOTP_SECRET=)
+      v=$(tr -dc 'A-Z2-7' </dev/urandom | head -c 32); printf '%s%s\n' "$line" "$v" ;;
+    PORTFOLIO_SERVER_NAME=*)
+      printf '%s\n' 'PORTFOLIO_SERVER_NAME=soc.<DDNS 이름>.synology.me' ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done < .env.portfolio.example > .env
+unset v; chmod 600 .env
 # 비어 있는 비밀값이 없어야 한다(DEMO_PASSWORD만 남는다). 값은 출력하지 않는다.
 grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1
 ```
 
-- `DEMO_PASSWORD`는 포트폴리오 글에 공개할 값이다. 사용자가 정해 `.env`에 직접 넣는다(`vi .env`). 저장소·문서에는 적지 않는다.
+`DEMO_PASSWORD`는 이 PC에서 만들어 파일로 넣는다(값을 명령줄 인자·화면에 내지 않는다). 이 PC(PowerShell, 저장소 루트):
+
+```powershell
+# 영숫자 20자 무작위. handoff/<작업 ID>/는 Git 제외 경로다. 사용자가 이 값을 포트폴리오 글에 옮겨 적는다.
+$c = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; $b = New-Object byte[] 20
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[IO.File]::WriteAllText("$PWD/handoff/<작업 ID>/demo-password.txt", (-join ($b | ForEach-Object { $c[$_ % $c.Length] })))   # 줄바꿈 없이
+ssh psdev93@192.168.50.146 'umask 077; mkdir -p ~/zeekad-portfolio-check/tmp'
+scp handoff/<작업 ID>/demo-password.txt psdev93@192.168.50.146:zeekad-portfolio-check/tmp/demo-password.txt
+```
+
+NAS:
+
+```sh
+cd /volume1/docker/zeekad-portfolio
+chmod 600 ~/zeekad-portfolio-check/tmp/demo-password.txt
+umask 077
+grep -v '^DEMO_PASSWORD=' .env > .env.new
+{ printf 'DEMO_PASSWORD='; cat ~/zeekad-portfolio-check/tmp/demo-password.txt; printf '\n'; } >> .env.new
+mv .env.new .env && chmod 600 .env
+rm -f ~/zeekad-portfolio-check/tmp/demo-password.txt
+grep -c '^DEMO_PASSWORD=.\{16,\}$' .env   # 1 (값은 출력하지 않는다)
+grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1   # 아무것도 나오지 않아야 한다
+```
+
+- `DEMO_PASSWORD`는 포트폴리오 글에 공개할 값이다. 저장소·문서에는 적지 않는다. 나중에 바꾸려면 같은 방법으로 `.env`의 줄을 바꾸고 시드를 다시 실행한다(5절: `SET_PASSWORD` 하나만 한다).
 - 다른 비밀값(DB 비밀번호, 비활성 계정 비밀번호, `BOOTSTRAP_ADMIN_TOTP_SECRET`)은 출력하거나 다른 곳에 옮겨 적지 않는다. 운영 중 필요한 것은 시드 재실행뿐이며 시드는 `.env`를 읽는다.
 - 비밀값이 비어 있으면 기동되지 않는다: PostgreSQL 이미지가 빈 `POSTGRES_SUPERUSER_PASSWORD`로 초기화를 거부하고, `01-roles-databases.sh`가 빈 로그인 역할 비밀번호로 초기화를 멈춘다(그러면 `postgres`가 healthy가 되지 않아 `api`·`dashboard-app`·`nginx-waf`도 뜨지 않는다). 시드는 빈 `DEMO_PASSWORD`·부트스트랩 비밀번호·TOTP 시크릿이면 아무것도 하지 않고 끝난다. 부트스트랩 비밀번호가 빈 계정은 애초에 만들어지지 않는다.
 - 부트스트랩 계정은 `users` 표가 빈 첫 기동 때만 만들어진다. 첫 기동 뒤에 `BOOTSTRAP_*` 값을 바꿔도 이미 있는 계정 비밀번호는 바뀌지 않는다(바꾸려면 3.9의 초기화 재배포).
@@ -233,6 +303,9 @@ cd ~/zeekad-portfolio-check
 # ID·이름·이미지·상태(running/exited)·포트를 비교한다(가동 시간은 비교하지 않는다).
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | sort | grep -v zeekad-portfolio > containers-after.txt
 grep -v zeekad-portfolio containers-before.txt | diff - containers-after.txt && echo "existing containers unchanged"
+# 기존 네트워크가 바뀌지 않았는지(새로 생긴 zeekad-portfolio 네트워크만 달라야 한다)
+for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | sort | grep -v '^zeekad-portfolio' > networks-after.txt
+grep -v '^zeekad-portfolio' networks-before.txt | diff - networks-after.txt && echo "existing networks unchanged"
 ```
 
 이 PC(LAN)에서 직접 접근이 막혀 있는지: `curl.exe -m 5 http://192.168.50.146:18480/login`이 연결 실패여야 한다.
