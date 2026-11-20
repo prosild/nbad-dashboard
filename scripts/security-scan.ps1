@@ -129,10 +129,19 @@ if (-not $SkipTrivy) {
     $trivySummary.Add("=== TRIVY SBOM (bom.json) ===")
     $trivySummary.Add($sbomTable.Trim())
 
-    Write-Host "-> Trivy FS 스캔 (저장소 설정/의존성)"
-    $fsTable = (Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", "build,.gradle,security-reports,handoff", "--format", "table", "/work")).Output
-    [void](Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "-v", "${ReportFullDir}:/out", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", "build,.gradle,security-reports,handoff", "--format", "json", "-o", "/out/trivy-fs.json", "/work"))
+    Write-Host "-> Trivy FS 스캔 (저장소 설정/의존성, frontend/package-lock.json 포함)"
+    $fsSkipDirs = "build,.gradle,security-reports,handoff,frontend/node_modules,frontend/dist"
+    $fsTable = (Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "table", "/work")).Output
+    [void](Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "-v", "${ReportFullDir}:/out", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "json", "-o", "/out/trivy-fs.json", "/work"))
+    $fsJson = [IO.File]::ReadAllText((Join-Path $ReportFullDir "trivy-fs.json"), [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    $fsTargets = @($fsJson.Results | ForEach-Object { "$($_.Target) ($($_.Type))" })
+    $npmTarget = @($fsJson.Results | Where-Object { $_.Target -eq "frontend/package-lock.json" -and $_.Type -eq "npm" })
+    if ($npmTarget.Count -eq 0) {
+        throw "Trivy FS 결과에 frontend/package-lock.json(npm) 스캔 대상이 없습니다. 대상: $($fsTargets -join ', ')"
+    }
     $trivySummary.Add("`n=== TRIVY FS ===")
+    $trivySummary.Add("FS scan targets (trivy-fs.json Results): $($fsTargets -join ', ')")
+    $trivySummary.Add("frontend/package-lock.json (npm) vulnerabilities: $(@($npmTarget[0].Vulnerabilities).Where({ $_ }).Count)")
     $trivySummary.Add($fsTable.Trim())
 
     Write-Host "-> Trivy Image 스캔 (zeek-ad-dashboard-app:local)"
@@ -155,6 +164,7 @@ if (-not $SkipTrivy) {
 if (-not $SkipE2E -or -not $SkipZap) {
     $projectName = "zeekad-verify-" + (Get-Random -Minimum 1000 -Maximum 9999)
     $networkName = "${projectName}_dashboard-net"
+    $composeArgs = @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml")
 
     $env:VERIFY_POSTGRES_SUPER_PASSWORD = New-RandomToken 24
     $env:DASHBOARD_APP_PASSWORD = New-RandomToken 24
@@ -171,405 +181,529 @@ if (-not $SkipE2E -or -not $SkipZap) {
 
     try {
         Write-Host "=== [4/5] 검증용 Docker Compose 스택 기동 ($projectName) ==="
-        $upRes = Invoke-NativeCapture "docker" @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "up", "-d", "--wait") -IgnoreExitCode
+        $upRes = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait")) -IgnoreExitCode
         if ($upRes.ExitCode -ne 0) {
-            $diagLogs = (Invoke-NativeCapture "docker" @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "logs", "--tail=120") -IgnoreExitCode).Output
+            $diagLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--tail=120")) -IgnoreExitCode).Output
             throw "Docker Compose 검증 스택 기동 실패 (exit=$($upRes.ExitCode)):`n$($upRes.Output)`n--- CONTAINER LOGS ---`n$diagLogs"
         }
 
         if (-not $SkipE2E) {
-            Write-Host "=== WAF + HTTPS + PostgreSQL 17 + RBAC/IDOR 실측 검증 ==="
+            Write-Host "=== WAF + HTTPS + SPA + JSON API + PostgreSQL 17 + RBAC/IDOR 실측 검증 ==="
             $e2eLogs = [System.Collections.Generic.List[string]]::new()
+            $allBodies = [System.Collections.Generic.List[string]]::new()
             $baseHttps = "https://127.0.0.1:$WafHttpsPort"
             $baseHttp = "http://127.0.0.1:$WafHttpPort"
             $tmpDir = Join-Path ([IO.Path]::GetTempPath()) "zeekad-e2e-$projectName"
             New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+            $script:httpSeq = 0
+            $utf8NoBom = [Text.UTF8Encoding]::new($false)
 
             try {
-                function Invoke-CurlRaw([string[]]$CurlArgs) {
+                # Helper: curl 요청 1건. 응답 헤더·본문을 파일로 나눠 받고 본문은 UTF-8로 읽어 JSON 파싱을 시도한다.
+                function Invoke-Http {
+                    param(
+                        [string]$Url,
+                        [string]$Method = "GET",
+                        [string]$CookieJar = "",
+                        [switch]$SaveCookies,
+                        [switch]$Csrf,
+                        $JsonBody = $null,
+                        [string]$RawCookie = "",
+                        [string]$ProbeId = "",
+                        [switch]$PathAsIs
+                    )
+                    $script:httpSeq++
+                    $hdrFile = Join-Path $tmpDir "resp-$($script:httpSeq).hdr"
+                    $bodyFile = Join-Path $tmpDir "resp-$($script:httpSeq).body"
+                    $curlArgs = @("-sS", "-k", "--max-time", "20", "-X", $Method, "-D", $hdrFile, "-o", $bodyFile, "-w", "%{http_code}")
+                    if ($PathAsIs) { $curlArgs += "--path-as-is" }
+                    if ($CookieJar) {
+                        $curlArgs += @("-b", $CookieJar)
+                        if ($SaveCookies) { $curlArgs += @("-c", $CookieJar) }
+                    }
+                    if ($RawCookie) { $curlArgs += @("-b", $RawCookie) }
+                    if ($ProbeId) { $curlArgs += @("-H", "X-E2E-Probe: $ProbeId") }
+                    $curlArgs += @("-H", "Accept: application/json, text/html;q=0.9, */*;q=0.8")
+                    if ($Csrf) {
+                        $token = Get-JarCookie $CookieJar "XSRF-TOKEN"
+                        if (-not $token) { throw "쿠키 파일에 XSRF-TOKEN이 없습니다: $Url" }
+                        $curlArgs += @("-H", "X-XSRF-TOKEN: $token")
+                    }
+                    if ($null -ne $JsonBody) {
+                        $reqFile = Join-Path $tmpDir "req-$($script:httpSeq).json"
+                        $jsonText = if ($JsonBody -is [string]) { $JsonBody } else { $JsonBody | ConvertTo-Json -Depth 6 -Compress }
+                        [IO.File]::WriteAllText($reqFile, $jsonText, $utf8NoBom)
+                        $curlArgs += @("-H", "Content-Type: application/json", "--data-binary", "@$reqFile")
+                    } elseif ($Method -ne "GET") {
+                        # 브라우저 fetch처럼 본문 없는 POST에도 Content-Length: 0을 보낸다(curl -X POST 단독은 헤더를 생략한다).
+                        $curlArgs += @("-H", "Content-Length: 0")
+                    }
+                    $curlArgs += $Url
+
                     $savedEap = $ErrorActionPreference
                     $ErrorActionPreference = 'Continue'
-                    $out = & curl.exe -sS -k --max-time 15 @CurlArgs 2>&1 | Out-String
-                    $code = $LASTEXITCODE
+                    $statusText = & curl.exe @curlArgs 2>&1 | Out-String
+                    $curlExit = $LASTEXITCODE
                     $ErrorActionPreference = $savedEap
-                    return [pscustomobject]@{ ExitCode = $code; Output = $out }
-                }
+                    if ($curlExit -ne 0) { throw "curl 실패 (exit=$curlExit) $Method $Url : $statusText" }
 
-                # 0) bootJar 내 H2 / application-test.yml 미포함 확인
-                $jarCheck = & docker compose -p $projectName -f compose.yml -f docker/verify/compose.verify.yml exec -T dashboard-app `
-                    sh -c "unzip -l /app/app.jar | grep -E 'h2-|application-test\.yml' || echo 'NO_H2_OR_TEST_YML'" 2>&1 | Out-String
-                $e2eLogs.Add("[0] bootJar H2/test-yml check: $($jarCheck.Trim())")
-                if ($jarCheck -notmatch "NO_H2_OR_TEST_YML") {
-                    throw "bootJar에 H2 또는 application-test.yml이 포함되어 있습니다: $jarCheck"
-                }
-
-                # 1) HTTP -> HTTPS 리다이렉트 및 HTTPS GET /login 보안 헤더 확인
-                $httpRedir = Invoke-CurlRaw @("-I", "$baseHttp/login")
-                $e2eLogs.Add("[1a] HTTP -> HTTPS redirect:`n$($httpRedir.Output.Trim())")
-                if ($httpRedir.Output -notmatch "301" -or $httpRedir.Output -notmatch "Location:\s*https://") {
-                    throw "HTTP -> HTTPS 301 리다이렉트 확인 실패"
-                }
-
-                $loginGet = Invoke-CurlRaw @("-i", "$baseHttps/login")
-                $e2eLogs.Add("[1b] HTTPS GET /login:`n$(($loginGet.Output -split "`r?`n" | Select-Object -First 30) -join "`n")")
-                if ($loginGet.Output -notmatch "HTTP/[\d.]+ 200") { throw "GET /login 200 실패" }
-                if ($loginGet.Output -notmatch "Content-Security-Policy:.*frame-ancestors 'none'") { throw "CSP frame-ancestors 'none' 누락" }
-                if ($loginGet.Output -notmatch "X-Content-Type-Options:\s*nosniff") { throw "X-Content-Type-Options: nosniff 누락" }
-                if ($loginGet.Output -notmatch "Referrer-Policy:") { throw "Referrer-Policy 누락" }
-                if ($loginGet.Output -match "(?im)^Server:\s*nginx") { throw "Server: nginx 헤더가 노출되었습니다" }
-                if ($loginGet.Output -match "(?im)^Access-Control-Allow-Origin:\s*\*") { throw "와일드카드 CORS 헤더가 노출되었습니다" }
-
-                # 2) WAF 공격 차단 확인 (SQLi, XSS, Path Traversal) & /actuator/** 비노출
-                $sqliResp = Invoke-CurlRaw @("-i", "$baseHttps/incidents?asset=%27%20OR%201%3D1--")
-                $e2eLogs.Add("[2a] WAF SQLi probe:`n$(($sqliResp.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($sqliResp.Output -notmatch "HTTP/[\d.]+ 403") { throw "WAF SQLi 차단(403) 실패" }
-
-                $xssResp = Invoke-CurlRaw @("-i", "$baseHttps/incidents?asset=%3Cscript%3Ealert(1)%3C%2Fscript%3E")
-                $e2eLogs.Add("[2b] WAF XSS probe:`n$(($xssResp.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($xssResp.Output -notmatch "HTTP/[\d.]+ 403") { throw "WAF XSS 차단(403) 실패" }
-
-                $ptResp = Invoke-CurlRaw @("-i", "--path-as-is", "$baseHttps/../../etc/passwd")
-                $e2eLogs.Add("[2c] WAF Path Traversal probe (/../../etc/passwd):`n$(($ptResp.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                $ptQueryResp = Invoke-CurlRaw @("-i", "$baseHttps/incidents?asset=../../etc/passwd")
-                $e2eLogs.Add("[2d] WAF Path Traversal query probe (?asset=../../etc/passwd):`n$(($ptQueryResp.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($ptQueryResp.Output -notmatch "HTTP/[\d.]+ 403") {
-                    throw "WAF Path Traversal 차단(403) 실패: path=$($ptResp.Output) query=$($ptQueryResp.Output)"
-                }
-
-                $actHealth = Invoke-CurlRaw @("-i", "$baseHttps/actuator/health")
-                $actEnv = Invoke-CurlRaw @("-i", "$baseHttps/actuator/env")
-                $e2eLogs.Add("[3] /actuator/health & /actuator/env:`n$($actHealth.Output.Trim())`n---`n$($actEnv.Output.Trim())")
-                if ($actHealth.Output -notmatch "HTTP/[\d.]+ (403|404)" -or $actEnv.Output -notmatch "HTTP/[\d.]+ (403|404)") {
-                    throw "/actuator/** 차단 실패"
-                }
-
-                # Helper: 로그인 후 쿠키 저장
-                function Extract-Csrf([string]$Html) {
-                    if ($Html -match '<input[^>]*name="_csrf"[^>]*value="([^"]+)"') {
-                        return $Matches[1]
+                    $headers = if (Test-Path $hdrFile) { [IO.File]::ReadAllText($hdrFile, $utf8NoBom) } else { "" }
+                    $body = if (Test-Path $bodyFile) { [IO.File]::ReadAllText($bodyFile, $utf8NoBom) } else { "" }
+                    $json = $null
+                    if ($body.TrimStart().StartsWith("{") -or $body.TrimStart().StartsWith("[")) {
+                        try { $json = $body | ConvertFrom-Json } catch { $json = $null }
                     }
-                    if ($Html -match '<input[^>]*value="([^"]+)"[^>]*name="_csrf"') {
-                        return $Matches[1]
+                    $allBodies.Add($body)
+                    return [pscustomobject]@{
+                        Method = $Method; Url = $Url; Status = [int]($statusText.Trim()); Headers = $headers; Body = $body; Json = $json
                     }
-                    throw "HTML에서 CSRF 토큰 추출 실패"
                 }
 
-                function Login-Dashboard([string]$Username, [string]$CookieFile) {
-                    $page = Invoke-CurlRaw @("-c", $CookieFile, "$baseHttps/login")
-                    $csrf = Extract-Csrf $page.Output
-                    $loginPost = Invoke-CurlRaw @(
-                        "-i", "-b", $CookieFile, "-c", $CookieFile,
-                        "-X", "POST", "$baseHttps/login",
-                        "--data-urlencode", "username=$Username",
-                        "--data-urlencode", "password=$bootstrapPwd",
-                        "--data-urlencode", "_csrf=$csrf"
-                    )
-                    return $loginPost.Output
+                function Get-JarCookie([string]$Jar, [string]$Name) {
+                    $value = $null
+                    if (-not (Test-Path $Jar)) { return $null }
+                    foreach ($line in [IO.File]::ReadAllLines($Jar)) {
+                        $l = $line -replace '^#HttpOnly_', ''
+                        if (-not $l -or $l.StartsWith("#")) { continue }
+                        $parts = $l -split "`t"
+                        if ($parts.Count -ge 7 -and $parts[5] -eq $Name) { $value = $parts[6] }
+                    }
+                    return $value
                 }
 
-                # 4) viewer1 로그인, 쿠키 속성, 마스킹, IDOR 403, transition 403 확인
+                function Get-HeaderValue($Resp, [string]$Name) {
+                    $m = [regex]::Match($Resp.Headers, "(?im)^$([regex]::Escape($Name)):\s*(.*?)\s*$")
+                    if ($m.Success) { return $m.Groups[1].Value }
+                    return $null
+                }
+
+                function Format-Resp($Resp, [int]$BodyChars = 300) {
+                    $ct = Get-HeaderValue $Resp "Content-Type"
+                    $snippet = $Resp.Body
+                    if ($snippet.Length -gt $BodyChars) { $snippet = $snippet.Substring(0, $BodyChars) + "..." }
+                    $snippet = ($snippet -replace "\s+", " ").Trim()
+                    return "$($Resp.Method) $($Resp.Url -replace '^https?://[^/]+', '') -> HTTP $($Resp.Status) [$ct] $snippet"
+                }
+
+                function Assert-Status($Resp, [int]$Expected, [string]$What) {
+                    if ($Resp.Status -ne $Expected) {
+                        throw "$What : 기대 HTTP $Expected, 실제 $(Format-Resp $Resp 600)"
+                    }
+                }
+
+                function Assert-True([bool]$Condition, [string]$What, $Resp = $null) {
+                    if (-not $Condition) {
+                        $detail = if ($Resp) { "`n$(Format-Resp $Resp 1200)" } else { "" }
+                        throw "$What 확인 실패$detail"
+                    }
+                }
+
+                function Test-SpaShell($Resp) {
+                    return ($Resp.Body -match '<div id="root"></div>' -and $Resp.Body -match 'src="/assets/')
+                }
+
+                function Assert-ApiError($Resp, [int]$Status, [string]$Code, [string]$What) {
+                    Assert-Status $Resp $Status $What
+                    Assert-True ($null -ne $Resp.Json -and $Resp.Json.code -eq $Code) "$What (JSON code=$Code)" $Resp
+                    Assert-True (-not (Test-SpaShell $Resp)) "$What (SPA index.html 폴백 아님)" $Resp
+                }
+
+                # WAF 차단 판정: 403 + 앱 ApiErrorResponse JSON 아님 + nginx-waf 로그에 그 요청(X-E2E-Probe)의 ModSecurity 차단 기록(규칙 ID)
+                function Assert-WafBlocked($Resp, [string]$ProbeId, [string]$What) {
+                    Assert-Status $Resp 403 "$What (WAF 403)"
+                    Assert-True (-not ($null -ne $Resp.Json -and $null -ne $Resp.Json.code)) "$What (응답이 앱 ApiErrorResponse JSON이 아님)" $Resp
+                    $logLine = $null
+                    for ($i = 0; $i -lt 10 -and -not $logLine; $i++) {
+                        $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                        $logLine = $wafLogs -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($ProbeId) } | Select-Object -Last 1
+                        if (-not $logLine) { Start-Sleep -Seconds 1 }
+                    }
+                    Assert-True ([bool]$logLine) "$What (nginx-waf ModSecurity 감사 로그에 probe=$ProbeId 기록)"
+                    $ruleIds = @([regex]::Matches($logLine, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+                    $interrupted = $logLine -match '"is_interrupted":true'
+                    $logCode = [regex]::Match($logLine, '"http_code":(\d+)').Groups[1].Value
+                    $uniqueId = [regex]::Match($logLine, '"unique_id":"([^"]+)"').Groups[1].Value
+                    Assert-True ($ruleIds.Count -gt 0 -and $interrupted -and $logCode -eq "403") "$What (WAF 로그 차단 규칙 ID·interrupted·403)"
+                    return "WAF log: unique_id=$uniqueId is_interrupted=true http_code=$logCode ruleIds=[$($ruleIds -join ', ')]"
+                }
+
+                function Redact-Cookies([string]$Text) {
+                    return ($Text -replace '(ZEEKAD_SESSION|XSRF-TOKEN)=[^;\s]+', '$1=<redacted>')
+                }
+
+                function Login-Api([string]$Username, [string]$CookieJar) {
+                    $csrfRes = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $CookieJar -SaveCookies
+                    Assert-Status $csrfRes 200 "$Username GET /api/auth/csrf"
+                    Assert-True ($csrfRes.Json.headerName -eq "X-XSRF-TOKEN" -and [bool](Get-JarCookie $CookieJar "XSRF-TOKEN")) "$Username XSRF-TOKEN 쿠키 발급" $csrfRes
+                    return Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $CookieJar -SaveCookies -Csrf `
+                        -JsonBody @{ username = $Username; password = $bootstrapPwd }
+                }
+
+                # [0] bootJar 구성(H2·application-test.yml 없음, SPA 번들 포함)과 최종 앱 이미지(Node 없음, non-root)
+                $execPrefix = $composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c")
+                $jarCheck = (Invoke-NativeCapture "docker" ($execPrefix + @("unzip -l /app/app.jar | grep -E 'h2-|application-test\.yml' || echo 'NO_H2_OR_TEST_YML'")) -IgnoreExitCode).Output
+                $e2eLogs.Add("[0a] bootJar H2/test-yml check: $($jarCheck.Trim())")
+                Assert-True ($jarCheck -match "NO_H2_OR_TEST_YML") "bootJar H2·application-test.yml 미포함"
+
+                $staticCheck = (Invoke-NativeCapture "docker" ($execPrefix + @("unzip -l /app/app.jar | grep -E 'BOOT-INF/classes/static/' | awk '{print `$4}'")) -IgnoreExitCode).Output
+                $e2eLogs.Add("[0b] bootJar SPA static entries:`n$($staticCheck.Trim())")
+                Assert-True ($staticCheck -match "(?m)^BOOT-INF/classes/static/index\.html\s*$") "bootJar BOOT-INF/classes/static/index.html 포함"
+                Assert-True ($staticCheck -match "(?m)^BOOT-INF/classes/static/assets/[^/\s]+\.js\s*$") "bootJar BOOT-INF/classes/static/assets/*.js 포함"
+
+                $runtimeCheck = (Invoke-NativeCapture "docker" ($execPrefix + @("echo uid=`$(id -u) user=`$(id -un); (command -v node || echo NO_NODE); (command -v npm || echo NO_NPM); (ls -d /app/node_modules /usr/local/lib/node_modules /usr/lib/node_modules 2>/dev/null || echo NO_NODE_MODULES); . /etc/os-release; echo os=`$ID-`$VERSION_ID; (test -e /opt/java/openjdk/bin/javac && echo HAS_JAVAC || echo NO_JAVAC); java -version 2>&1 | head -1")) -IgnoreExitCode).Output
+                $e2eLogs.Add("[0c] app runtime image (user / Node.js absence / base):`n$($runtimeCheck.Trim())")
+                $uidMatch = [regex]::Match($runtimeCheck, "uid=(\d+)")
+                Assert-True ($uidMatch.Success -and $uidMatch.Groups[1].Value -ne "0") "앱 컨테이너 non-root(id -u != 0)"
+                Assert-True ($runtimeCheck -match "NO_NODE" -and $runtimeCheck -match "NO_NPM" -and $runtimeCheck -match "NO_NODE_MODULES") "최종 앱 이미지에 Node.js·npm·node_modules 없음"
+                Assert-True ($runtimeCheck -match "NO_JAVAC") "최종 앱 이미지가 JRE(javac 없음)"
+                $imageEnv = (Invoke-NativeCapture "docker" @("image", "inspect", "zeek-ad-dashboard-app:local", "--format", "{{range .Config.Env}}{{println .}}{{end}}") -IgnoreExitCode).Output
+                $e2eLogs.Add("[0d] app image Config.Env (JRE base check):`n$($imageEnv.Trim())")
+                Assert-True ($imageEnv -match "(?m)^JAVA_VERSION=jdk-?17" -and $imageEnv -notmatch "(?m)^NODE_VERSION=") "최종 앱 이미지가 Temurin 17 JRE 기반이고 NODE_VERSION 없음"
+
+                # [1] HTTP -> HTTPS, SPA 셸·보안 헤더, 비인증 보호 경로 302 /login, 정적 자산
+                $httpRedir = Invoke-Http -Url "$baseHttp/login"
+                $e2eLogs.Add("[1a] HTTP -> HTTPS redirect: HTTP $($httpRedir.Status) Location=$(Get-HeaderValue $httpRedir 'Location')")
+                Assert-Status $httpRedir 301 "HTTP -> HTTPS 리다이렉트"
+                Assert-True ((Get-HeaderValue $httpRedir "Location") -match "^https://") "HTTP -> HTTPS Location" $httpRedir
+
+                $loginGet = Invoke-Http -Url "$baseHttps/login"
+                $e2eLogs.Add("[1b] HTTPS GET /login (unauthenticated SPA shell):`n$(Redact-Cookies $loginGet.Headers.Trim())`n$(Format-Resp $loginGet 600)")
+                Assert-Status $loginGet 200 "비인증 GET /login"
+                Assert-True (Test-SpaShell $loginGet) "GET /login SPA 셸 표지(<div id=`"root`"></div>, src=`"/assets/)" $loginGet
+                $csp = Get-HeaderValue $loginGet "Content-Security-Policy"
+                Assert-True ($csp -and $csp.Contains("script-src 'self'") -and $csp.Contains("style-src 'self'") -and $csp.Contains("frame-ancestors 'none'")) "CSP script-src/style-src 'self', frame-ancestors 'none'" $loginGet
+                Assert-True ($csp -notmatch "unsafe-inline" -and $csp -notmatch "unsafe-eval") "CSP unsafe-inline·unsafe-eval 없음" $loginGet
+                Assert-True ((Get-HeaderValue $loginGet "X-Content-Type-Options") -eq "nosniff") "X-Content-Type-Options: nosniff" $loginGet
+                Assert-True ([bool](Get-HeaderValue $loginGet "Referrer-Policy")) "Referrer-Policy" $loginGet
+                Assert-True ($loginGet.Headers -notmatch "(?im)^Server:\s*nginx") "Server: nginx 헤더 비노출" $loginGet
+                Assert-True ($loginGet.Headers -notmatch "(?im)^Access-Control-Allow-Origin:\s*\*") "와일드카드 CORS 헤더 비노출" $loginGet
+
+                foreach ($protectedPath in @("/", "/incidents/101/rank/1")) {
+                    $protectedRes = Invoke-Http -Url "$baseHttps$protectedPath"
+                    $loc = Get-HeaderValue $protectedRes "Location"
+                    $e2eLogs.Add("[1c] unauthenticated GET $protectedPath -> HTTP $($protectedRes.Status) Location=$loc")
+                    Assert-Status $protectedRes 302 "비인증 GET $protectedPath"
+                    Assert-True ($loc -match "^(https://[^/]+)?/login$") "비인증 GET $protectedPath Location /login" $protectedRes
+                }
+
+                $jsAssets = @([regex]::Matches($loginGet.Body, 'src="(/assets/[^"]+\.js)"') | ForEach-Object { $_.Groups[1].Value })
+                $cssAssets = @([regex]::Matches($loginGet.Body, 'href="(/assets/[^"]+\.css)"') | ForEach-Object { $_.Groups[1].Value })
+                Assert-True ($jsAssets.Count -gt 0 -and $cssAssets.Count -gt 0) "index.html의 /assets/*.js·/assets/*.css 참조" $loginGet
+                $bundleText = ""
+                foreach ($asset in $jsAssets) {
+                    $assetRes = Invoke-Http -Url "$baseHttps$asset"
+                    $ct = Get-HeaderValue $assetRes "Content-Type"
+                    $e2eLogs.Add("[1d] unauthenticated GET $asset -> HTTP $($assetRes.Status) Content-Type=$ct nosniff=$(Get-HeaderValue $assetRes 'X-Content-Type-Options') bytes=$($assetRes.Body.Length)")
+                    Assert-Status $assetRes 200 "비인증 GET $asset"
+                    Assert-True ($ct -match "^(text|application)/javascript") "$asset JavaScript Content-Type" $assetRes
+                    $bundleText += $assetRes.Body
+                }
+                foreach ($asset in $cssAssets) {
+                    $assetRes = Invoke-Http -Url "$baseHttps$asset"
+                    $ct = Get-HeaderValue $assetRes "Content-Type"
+                    $e2eLogs.Add("[1d] unauthenticated GET $asset -> HTTP $($assetRes.Status) Content-Type=$ct nosniff=$(Get-HeaderValue $assetRes 'X-Content-Type-Options') bytes=$($assetRes.Body.Length)")
+                    Assert-Status $assetRes 200 "비인증 GET $asset"
+                    Assert-True ($ct -match "^text/css") "$asset text/css Content-Type" $assetRes
+                }
+                # 운영 화면의 고정 안내 문구는 SSR HTML이 아니라 SPA 번들에 있다(데이터 필드 아님).
+                $bundleNotices = @("분석가 결론 집계", "놓친 공격(재현율)", "전체 (all)")
+                foreach ($notice in $bundleNotices) {
+                    Assert-True ($bundleText.Contains($notice)) "SPA 번들 운영 화면 문구 '$notice'"
+                }
+                Assert-True (-not $bundleText.Contains("정확도")) "SPA 번들에 '정확도' 문구 없음"
+                $e2eLogs.Add("[1e] SPA bundle operations notices present: $($bundleNotices -join ' | '); '정확도' absent")
+
+                # [2] /api/** 는 SPA로 폴백하지 않는다
+                $unauthApi = Invoke-Http -Url "$baseHttps/api/incidents"
+                $unauthMissing = Invoke-Http -Url "$baseHttps/api/does-not-exist/e2e"
+                $e2eLogs.Add("[2a] $(Format-Resp $unauthApi)`n[2b] $(Format-Resp $unauthMissing)")
+                Assert-ApiError $unauthApi 401 "UNAUTHENTICATED" "비인증 GET /api/incidents"
+                Assert-ApiError $unauthMissing 401 "UNAUTHENTICATED" "비인증 GET /api/does-not-exist/e2e"
+
+                # [3] WAF 차단 (쿼리 SQLi·XSS·경로 탐색, CSRF 토큰을 붙인 JSON 본문 SQLi·XSS)
+                $wafProbes = @(
+                    @{ Id = "e2e-q-sqli"; Label = "query SQLi (?asset=' OR 1=1--)"; Url = "$baseHttps/api/incidents?asset=%27%20OR%201%3D1--" },
+                    @{ Id = "e2e-q-xss"; Label = "query XSS (?asset=<script>alert(1)</script>)"; Url = "$baseHttps/api/incidents?asset=%3Cscript%3Ealert(1)%3C%2Fscript%3E" },
+                    @{ Id = "e2e-q-traversal"; Label = "query path traversal (?asset=../../etc/passwd)"; Url = "$baseHttps/api/incidents?asset=../../etc/passwd" }
+                )
+                foreach ($probe in $wafProbes) {
+                    $probeRes = Invoke-Http -Url $probe.Url -ProbeId $probe.Id
+                    $wafEvidence = Assert-WafBlocked $probeRes $probe.Id "WAF $($probe.Label)"
+                    $e2eLogs.Add("[3] WAF $($probe.Label): $(Format-Resp $probeRes 120)`n    $wafEvidence")
+                }
+                $ptPath = Invoke-Http -Url "$baseHttps/../../etc/passwd" -PathAsIs
+                $e2eLogs.Add("[3] (참고) raw path traversal /../../etc/passwd: $(Format-Resp $ptPath 120)")
+
+                $wafCookies = Join-Path $tmpDir "waf.cookies"
+                $wafCsrf = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $wafCookies -SaveCookies
+                Assert-Status $wafCsrf 200 "WAF JSON 본문 시험용 GET /api/auth/csrf"
+                $jsonProbes = @(
+                    @{ Id = "e2e-body-sqli"; Label = "JSON body SQLi (username=admin' OR 1=1--)"; Body = '{"username":"admin'' OR 1=1--","password":"x"}' },
+                    @{ Id = "e2e-body-xss"; Label = "JSON body XSS (username=<script>alert(1)</script>)"; Body = '{"username":"<script>alert(1)</script>","password":"x"}' }
+                )
+                foreach ($probe in $jsonProbes) {
+                    $probeRes = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $wafCookies -Csrf -JsonBody $probe.Body -ProbeId $probe.Id
+                    $wafEvidence = Assert-WafBlocked $probeRes $probe.Id "WAF $($probe.Label)"
+                    $e2eLogs.Add("[3] WAF $($probe.Label) with XSRF-TOKEN cookie + X-XSRF-TOKEN header: $(Format-Resp $probeRes 120)`n    $wafEvidence")
+                }
+                $benignLogin = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $wafCookies -Csrf -JsonBody @{ username = "nobody-e2e"; password = "x" }
+                $e2eLogs.Add("[3] (대조) benign JSON login with same CSRF: $(Format-Resp $benignLogin 200)")
+                Assert-ApiError $benignLogin 401 "INVALID_CREDENTIALS" "WAF 대조용 정상 JSON 로그인 요청(앱 도달)"
+
+                $actHealth = Invoke-Http -Url "$baseHttps/actuator/health"
+                $actEnv = Invoke-Http -Url "$baseHttps/actuator/env"
+                $e2eLogs.Add("[3] /actuator/health & /actuator/env: $(Format-Resp $actHealth 80) | $(Format-Resp $actEnv 80)")
+                Assert-True (@(403, 404) -contains $actHealth.Status -and @(403, 404) -contains $actEnv.Status) "/actuator/** 차단(403/404)"
+
+                # [4] viewer1: 세션 쿠키 속성, 마스킹, Slack 스레드, IDOR 403, 운영 집계 격리, 쓰기 403
                 $viewerCookies = Join-Path $tmpDir "viewer.cookies"
-                $viewerLoginOut = Login-Dashboard "viewer1" $viewerCookies
-                $e2eLogs.Add("[4a] viewer1 login Set-Cookie & redirect:`n$($viewerLoginOut.Trim())")
-                if ($viewerLoginOut -notmatch "HTTP/[\d.]+ 302" -or $viewerLoginOut -match "/login\?error") {
-                    throw "viewer1 로그인 실패"
-                }
-                if ($viewerLoginOut -notmatch "Set-Cookie:\s*ZEEKAD_SESSION=" -or
-                    $viewerLoginOut -notmatch "(?i)Set-Cookie:\s*ZEEKAD_SESSION=[^\r\n]*\bSecure\b" -or
-                    $viewerLoginOut -notmatch "(?i)Set-Cookie:\s*ZEEKAD_SESSION=[^\r\n]*\bHttpOnly\b" -or
-                    $viewerLoginOut -notmatch "(?i)Set-Cookie:\s*ZEEKAD_SESSION=[^\r\n]*\bSameSite=Lax\b") {
-                    throw "ZEEKAD_SESSION 쿠키 속성(Secure/HttpOnly/SameSite=Lax) 확인 실패"
-                }
+                $viewerLogin = Login-Api "viewer1" $viewerCookies
+                $e2eLogs.Add("[4a] viewer1 POST /api/auth/login:`n$(Redact-Cookies $viewerLogin.Headers.Trim())`n$(Format-Resp $viewerLogin 400)")
+                Assert-Status $viewerLogin 200 "viewer1 JSON 로그인"
+                Assert-True ($viewerLogin.Json.authenticated -eq $true -and $viewerLogin.Json.user.role -eq "VIEWER" -and $viewerLogin.Json.nextRoute -eq "/") "viewer1 로그인 응답 필드" $viewerLogin
+                $sessionCookieLine = [regex]::Match($viewerLogin.Headers, "(?im)^Set-Cookie:\s*ZEEKAD_SESSION=[^\r\n]*").Value
+                Assert-True ($sessionCookieLine -and $sessionCookieLine -match "(?i)\bSecure\b" -and $sessionCookieLine -match "(?i)\bHttpOnly\b" -and $sessionCookieLine -match "(?i)\bSameSite=Lax\b") "ZEEKAD_SESSION 쿠키 속성(Secure/HttpOnly/SameSite=Lax)" $viewerLogin
 
-                $viewerQueue = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents?captureId=cic17-wed")
-                $e2eLogs.Add("[4b] viewer1 GET /incidents?captureId=cic17-wed (status + masked check): HTTP $((($viewerQueue.Output -split "`r?`n")[0]))")
-                if ($viewerQueue.Output -notmatch "HTTP/[\d.]+ 200") { throw "viewer1 조사 큐 조회 실패" }
-                if ($viewerQueue.Output -notmatch "192\.168\.\*\.\*") { throw "viewer1 조사 큐 IP 마스킹 확인 실패" }
+                $viewerMissing = Invoke-Http -Url "$baseHttps/api/does-not-exist/e2e" -CookieJar $viewerCookies
+                $e2eLogs.Add("[2c] authenticated(viewer1) $(Format-Resp $viewerMissing)")
+                Assert-ApiError $viewerMissing 404 "NOT_FOUND" "인증 세션 GET /api/does-not-exist/e2e"
 
-                $viewerDetail = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents/101/rank/1")
-                if ($viewerDetail.Output -notmatch "HTTP/[\d.]+ 200") { throw "viewer1 사건 상세 조회 실패" }
-                if ($viewerDetail.Output -notmatch "192\.168\.\*\.\*" -or $viewerDetail.Output -match "192\.168\.10\.50") {
-                    throw "viewer1 사건 상세 IP 마스킹 확인 실패"
-                }
-                if ($viewerDetail.Output -notmatch "머리 알림" -or $viewerDetail.Output -notmatch "머리 사건 후속 답글" -or $viewerDetail.Output -notmatch "broadcast") {
-                    throw "viewer1 Slack 스레드 묶음/재알림 표시 확인 실패"
-                }
+                $viewerQueue = Invoke-Http -Url "$baseHttps/api/incidents?captureId=cic17-wed" -CookieJar $viewerCookies
+                $viewerHosts = @($viewerQueue.Json.incidents | ForEach-Object { $_.hostIp })
+                $e2eLogs.Add("[4b] viewer1 GET /api/incidents?captureId=cic17-wed -> HTTP $($viewerQueue.Status) maskedView=$($viewerQueue.Json.maskedView) hostIp=[$($viewerHosts -join ', ')]")
+                Assert-Status $viewerQueue 200 "viewer1 조사 큐 조회"
+                Assert-True ($viewerQueue.Json.maskedView -eq $true -and ($viewerHosts -contains "192.168.*.*") -and -not $viewerQueue.Body.Contains("192.168.10.50")) "viewer1 조사 큐 IP 마스킹" $viewerQueue
 
-                $viewerDetail2 = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents/101/rank/2")
-                if ($viewerDetail2.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $viewerDetail2.Output -notmatch "스레드 답글" -or
-                    $viewerDetail2.Output -match "192\.168\.10\.50") {
-                    throw "viewer1 Slack thread_parent IP 마스킹 확인 실패"
-                }
+                $viewerDetail = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $viewerCookies
+                Assert-Status $viewerDetail 200 "viewer1 사건 상세(101/rank/1)"
+                $vd1 = $viewerDetail.Json.detail
+                $vd1Labels = @($vd1.slackDeliveries | ForEach-Object { $_.threadRoleLabel })
+                $vd1Broadcast = @($vd1.slackDeliveries | Where-Object { $_.replyBroadcast -eq $true })
+                $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/1 -> HTTP $($viewerDetail.Status) hostIp=$($vd1.incident.hostIp) slack threadRoleLabel=[$($vd1Labels -join ', ')] replyBroadcast=$($vd1Broadcast.Count) threadGroups=$(@($vd1.slackThreadGroups).Count)")
+                Assert-True ($vd1.incident.hostIp -eq "192.168.*.*" -and -not $viewerDetail.Body.Contains("192.168.10.50")) "viewer1 사건 상세 IP 마스킹" $viewerDetail
+                Assert-True (($vd1Labels -contains "머리 알림") -and ($vd1Labels -contains "머리 사건 후속 답글") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
 
-                $viewerIdor = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/incidents/201/rank/1")
-                $e2eLogs.Add("[4c] viewer1 IDOR syn1-tue (/incidents/201/rank/1):`n$(($viewerIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($viewerIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "viewer1 미허용 캡처 IDOR 403 차단 실패" }
+                $viewerDetail2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $viewerCookies
+                Assert-Status $viewerDetail2 200 "viewer1 사건 상세(101/rank/2)"
+                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "스레드 답글" })
+                $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/2 -> HTTP $($viewerDetail2.Status) thread replies=$($vd2Replies.Count) threadParent=[$(@($vd2Replies | ForEach-Object { $_.threadParent }) -join ', ')]")
+                Assert-True ($vd2Replies.Count -gt 0 -and @($vd2Replies | Where-Object { $_.threadParent -match "192\.168\.\*\.\*" }).Count -gt 0 -and -not $viewerDetail2.Body.Contains("192.168.10.50")) "viewer1 Slack zeekad_thread_parent IP 마스킹" $viewerDetail2
 
-                $viewerOps = Invoke-CurlRaw @("-i", "-b", $viewerCookies, "$baseHttps/operations")
-                $e2eLogs.Add("[4c-ops] viewer1 GET /operations feedback_summary IDOR check: HTTP $((($viewerOps.Output -split "`r?`n")[0]))")
-                if ($viewerOps.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $viewerOps.Output -notmatch "분석가 결론 집계" -or
-                    $viewerOps.Output -notmatch "놓친 공격\(재현율\)" -or
-                    $viewerOps.Output -notmatch "cic17-wed" -or
-                    $viewerOps.Output -notmatch "정밀도 0\.00, 결론 1/3 \(33\.3%\)" -or
-                    $viewerOps.Output -match "syn1-tue" -or
-                    $viewerOps.Output -match "lab-20261118" -or
-                    $viewerOps.Output -match "lab-fusion-v2" -or
-                    $viewerOps.Output -match "정확도") {
-                    throw "viewer1 /operations feedback_summary 허용 캡처 격리 또는 문구 확인 실패"
+                $viewerIdor = Invoke-Http -Url "$baseHttps/api/incidents/201/rank/1" -CookieJar $viewerCookies
+                $e2eLogs.Add("[4c] viewer1 IDOR syn1-tue: $(Format-Resp $viewerIdor)")
+                Assert-Status $viewerIdor 403 "viewer1 미허용 캡처(201/rank/1) IDOR 차단"
+
+                $viewerOps = Invoke-Http -Url "$baseHttps/api/operations" -CookieJar $viewerCookies
+                Assert-Status $viewerOps 200 "viewer1 /api/operations"
+                $vFeedback = @($viewerOps.Json.feedbackSummaries)
+                $vCaptures = @($vFeedback | ForEach-Object { $_.captureId } | Select-Object -Unique)
+                $vAllRow = @($vFeedback | Where-Object { $_.allModel -eq $true -and $_.captureId -eq "cic17-wed" })
+                $e2eLogs.Add("[4c-ops] viewer1 GET /api/operations -> HTTP $($viewerOps.Status) allowedCaptures=[$(@($viewerOps.Json.allowedCaptures) -join ', ')] feedback captures=[$($vCaptures -join ', ')] all-row precisionSummaryText=[$(@($vAllRow | ForEach-Object { $_.precisionSummaryText }) -join ' | ')]")
+                Assert-True ($vFeedback.Count -gt 0 -and $vCaptures.Count -eq 1 -and $vCaptures[0] -eq "cic17-wed") "viewer1 feedback_summary 허용 캡처(cic17-wed)만 노출" $viewerOps
+                Assert-True (@($vAllRow | Where-Object { $_.precisionSummaryText -eq "정밀도 0.00, 결론 1/3 (33.3%)" }).Count -eq 1) "viewer1 feedback_summary '정밀도 0.00, 결론 1/3 (33.3%)'" $viewerOps
+                foreach ($forbidden in @("syn1-tue", "lab-20261118", "lab-fusion-v2", "정확도")) {
+                    Assert-True (-not $viewerOps.Body.Contains($forbidden)) "viewer1 /api/operations에 '$forbidden' 없음" $viewerOps
                 }
 
-                $viewerCsrf = Extract-Csrf $viewerDetail.Output
-                $viewerTransition = Invoke-CurlRaw @(
-                    "-i", "-b", $viewerCookies,
-                    "-X", "POST", "$baseHttps/incidents/101/rank/1/transition",
-                    "--data-urlencode", "toStatus=investigating",
-                    "--data-urlencode", "reason=unauthorized-test",
-                    "--data-urlencode", "_csrf=$viewerCsrf"
-                )
-                $e2eLogs.Add("[4d] viewer1 POST transition:`n$(($viewerTransition.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($viewerTransition.Output -notmatch "HTTP/[\d.]+ 403") { throw "VIEWER 상태 전이 403 차단 실패" }
+                $viewerTransition = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/transition" -Method POST -CookieJar $viewerCookies -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "investigating"; reason = "unauthorized-test" }
+                $viewerReview1 = Invoke-Http -Url "$baseHttps/api/reviews/decide" -Method POST -CookieJar $viewerCookies -SaveCookies -Csrf `
+                    -JsonBody @{ jobId = 101; incidentId = "cic17-wed|10.20.30.40|responder|1700000300"; action = "confirm" }
+                $viewerReview2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/review-decision" -Method POST -CookieJar $viewerCookies -SaveCookies -Csrf `
+                    -JsonBody @{ action = "confirm" }
+                $viewerAdmin = Invoke-Http -Url "$baseHttps/api/admin/users" -CookieJar $viewerCookies
+                $e2eLogs.Add("[4d] viewer1 POST transition: $(Format-Resp $viewerTransition)`n[4e] viewer1 POST /api/reviews/decide: $(Format-Resp $viewerReview1)`n[4e] viewer1 POST /api/incidents/101/rank/2/review-decision: $(Format-Resp $viewerReview2)`n[4f] viewer1 GET /api/admin/users: $(Format-Resp $viewerAdmin)")
+                Assert-Status $viewerTransition 403 "VIEWER 상태 전이 차단"
+                Assert-Status $viewerReview1 403 "VIEWER /api/reviews/decide 차단"
+                Assert-Status $viewerReview2 403 "VIEWER 상세 review-decision 차단"
+                Assert-Status $viewerAdmin 403 "VIEWER /api/admin/users 차단"
 
-                $viewerReviewCsrf = Extract-Csrf $viewerDetail2.Output
-                $viewerReviewPost1 = Invoke-CurlRaw @(
-                    "-i", "-b", $viewerCookies,
-                    "-X", "POST", "$baseHttps/reviews/decide",
-                    "--data-urlencode", "jobId=101",
-                    "--data-urlencode", "incidentId=cic17-wed|10.20.30.40|responder|1700000300",
-                    "--data-urlencode", "action=confirm",
-                    "--data-urlencode", "_csrf=$viewerReviewCsrf"
-                )
-                $viewerReviewPost2 = Invoke-CurlRaw @(
-                    "-i", "-b", $viewerCookies,
-                    "-X", "POST", "$baseHttps/incidents/101/rank/2/review-decision",
-                    "--data-urlencode", "action=confirm",
-                    "--data-urlencode", "_csrf=$viewerReviewCsrf"
-                )
-                $e2eLogs.Add("[4e] viewer1 POST review-decision (/reviews/decide & detail):`n$(($viewerReviewPost1.Output -split "`r?`n" | Select-Object -First 10) -join "`n")`n---`n$(($viewerReviewPost2.Output -split "`r?`n" | Select-Object -First 10) -join "`n")")
-                if ($viewerReviewPost1.Output -notmatch "HTTP/[\d.]+ 403" -or $viewerReviewPost2.Output -notmatch "HTTP/[\d.]+ 403") {
-                    throw "VIEWER 분석가 검토 결정 403 차단 실패"
-                }
-
-                # 5) analyst1 로그인, 원문 조회, IDOR 403(syn1-tue), PostgreSQL transition_incident 정방향 전이 확인
+                # [5] analyst1: 미허용 캡처 403, 원문 조회, 전이·검토 결정(PostgreSQL 함수), 22023 중복 결정, 운영 집계 격리
                 $analystCookies = Join-Path $tmpDir "analyst1.cookies"
-                $analystLoginOut = Login-Dashboard "analyst1" $analystCookies
-                if ($analystLoginOut -notmatch "HTTP/[\d.]+ 302" -or $analystLoginOut -match "/login\?error") {
-                    throw "analyst1 로그인 실패"
+                $analystLogin = Login-Api "analyst1" $analystCookies
+                Assert-Status $analystLogin 200 "analyst1 JSON 로그인"
+                Assert-True ($analystLogin.Json.user.role -eq "ANALYST") "analyst1 로그인 역할" $analystLogin
+
+                $analystIdor = Invoke-Http -Url "$baseHttps/api/incidents?captureId=syn1-tue" -CookieJar $analystCookies
+                $analystLabIdor = Invoke-Http -Url "$baseHttps/api/incidents?captureId=lab-20261118" -CookieJar $analystCookies
+                $analystRevIdor = Invoke-Http -Url "$baseHttps/api/reviews/decide" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
+                    -JsonBody @{ jobId = 201; incidentId = "syn1-tue|10.99.88.77|originator|1700001000"; action = "confirm" }
+                $e2eLogs.Add("[5a] analyst1 IDOR syn1-tue: $(Format-Resp $analystIdor)`n[5a] analyst1 IDOR lab-20261118: $(Format-Resp $analystLabIdor)`n[5a] analyst1 review decide job 201 (syn1-tue): $(Format-Resp $analystRevIdor)")
+                Assert-Status $analystIdor 403 "analyst1 미허용 캡처 syn1-tue 차단"
+                Assert-Status $analystLabIdor 403 "analyst1 미허용 캡처 lab-20261118 차단"
+                Assert-Status $analystRevIdor 403 "analyst1 미허용 캡처 검토 결정(job 201) 차단"
+
+                $analystDetail = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $analystCookies
+                Assert-Status $analystDetail 200 "analyst1 사건 상세(101/rank/1)"
+                Assert-True ($analystDetail.Json.detail.incident.hostIp -eq "192.168.10.50" -and $analystDetail.Json.maskedView -eq $false) "analyst1 허용 사건 원문(192.168.10.50) 조회" $analystDetail
+                $statusBefore = $analystDetail.Json.detail.currentStatus
+
+                $analystTransition = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/transition" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "investigating"; reason = "PostgreSQL WAF E2E check" }
+                $analystDetailAfter = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $analystCookies
+                $e2eLogs.Add("[5b] analyst1 POST transition (open -> investigating): $(Format-Resp $analystTransition)`n     currentStatus before=$statusBefore after=$($analystDetailAfter.Json.detail.currentStatus)")
+                Assert-Status $analystTransition 200 "analyst1 상태 전이(open -> investigating)"
+                Assert-True ($statusBefore -eq "open" -and $analystTransition.Json.succeeded -eq $true -and $analystDetailAfter.Json.detail.currentStatus -eq "investigating") "PostgreSQL 17 dashboard.transition_incident 전이 반영" $analystDetailAfter
+
+                $analystRevConfirm = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/review-decision" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
+                    -JsonBody @{ action = "confirm"; note = "PG17 decide_review confirm E2E" }
+                $analystRank2After = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $analystCookies
+                $ar2 = $analystRank2After.Json.detail.analystReview
+                $e2eLogs.Add("[5d] analyst1 POST /api/incidents/101/rank/2/review-decision (confirm): $(Format-Resp $analystRevConfirm)`n     analystReview.reviewAction=$($ar2.reviewAction) resumeStatusLabel=$($ar2.resumeStatusLabel)")
+                Assert-Status $analystRevConfirm 200 "analyst1 검토 결정(confirm)"
+                Assert-True ($analystRevConfirm.Json.succeeded -eq $true -and $ar2.reviewAction -eq "confirm" -and $ar2.resumeStatusLabel -eq "반영 중") "PostgreSQL 17 dashboard.decide_review confirm 반영(결정: confirm, 반영 중)" $analystRank2After
+
+                $analystRevDup = Invoke-Http -Url "$baseHttps/api/reviews/decide" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
+                    -JsonBody @{ jobId = 101; incidentId = "cic17-wed|10.20.30.40|responder|1700000300"; action = "dismiss" }
+                $e2eLogs.Add("[5e] analyst1 duplicate POST /api/reviews/decide (SQLSTATE 22023): $(Format-Resp $analystRevDup 400)")
+                Assert-ApiError $analystRevDup 409 "CONFLICT" "PostgreSQL 17 decide_review 중복 결정(SQLSTATE 22023) 거부"
+                Assert-True ($analystRevDup.Json.succeeded -eq $false -and $analystRevDup.Json.message.Contains("새로고침")) "중복 결정 오류 메시지(새로고침 안내)" $analystRevDup
+
+                $analystOps = Invoke-Http -Url "$baseHttps/api/operations" -CookieJar $analystCookies
+                $aCaptures = @($analystOps.Json.feedbackSummaries | ForEach-Object { $_.captureId } | Select-Object -Unique)
+                $e2eLogs.Add("[5c-ops] analyst1 GET /api/operations -> HTTP $($analystOps.Status) allowedCaptures=[$(@($analystOps.Json.allowedCaptures) -join ', ')] feedback captures=[$($aCaptures -join ', ')]")
+                Assert-Status $analystOps 200 "analyst1 /api/operations"
+                Assert-True ($aCaptures.Count -eq 1 -and $aCaptures[0] -eq "cic17-wed") "analyst1 feedback_summary 허용 캡처 격리" $analystOps
+                foreach ($forbidden in @("syn1-tue", "lab-20261118", "lab-fusion-v2")) {
+                    Assert-True (-not $analystOps.Body.Contains($forbidden)) "analyst1 /api/operations에 '$forbidden' 없음" $analystOps
                 }
 
-                $analystIdor = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents?captureId=syn1-tue")
-                $e2eLogs.Add("[5a] analyst1 IDOR syn1-tue:`n$(($analystIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($analystIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 캡처 IDOR 403 차단 실패" }
-
-                $analystDetail = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/1")
-                if ($analystDetail.Output -notmatch "HTTP/[\d.]+ 200" -or $analystDetail.Output -notmatch "192\.168\.10\.50") {
-                    throw "analyst1 사건 상세 원문 조회 실패"
-                }
-                $analystCsrf = Extract-Csrf $analystDetail.Output
-
-                $analystTransition = Invoke-CurlRaw @(
-                    "-i", "-b", $analystCookies, "-c", $analystCookies,
-                    "-X", "POST", "$baseHttps/incidents/101/rank/1/transition",
-                    "--data-urlencode", "toStatus=investigating",
-                    "--data-urlencode", "reason=PostgreSQL WAF E2E check",
-                    "--data-urlencode", "_csrf=$analystCsrf"
-                )
-                $e2eLogs.Add("[5b] analyst1 POST transition (open -> investigating):`n$(($analystTransition.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($analystTransition.Output -notmatch "HTTP/[\d.]+ 302") { throw "analyst1 상태 전이 리다이렉트 실패" }
-
-                $analystDetailAfter = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/1")
-                if ($analystDetailAfter.Output -notmatch "investigating") {
-                    throw "PostgreSQL 17 dashboard.transition_incident 전이 반영 확인 실패"
-                }
-
-                $analystLabIdor = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents?captureId=lab-20261118")
-                $e2eLogs.Add("[5c] analyst1 IDOR lab-20261118:`n$(($analystLabIdor.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($analystLabIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 lab-20261118 IDOR 403 차단 실패" }
-
-                $analystOps = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/operations")
-                $e2eLogs.Add("[5c-ops] analyst1 GET /operations feedback_summary IDOR check: HTTP $((($analystOps.Output -split "`r?`n")[0]))")
-                if ($analystOps.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $analystOps.Output -notmatch "분석가 결론 집계" -or
-                    $analystOps.Output -notmatch "cic17-wed" -or
-                    $analystOps.Output -match "syn1-tue" -or
-                    $analystOps.Output -match "lab-20261118" -or
-                    $analystOps.Output -match "lab-fusion-v2") {
-                    throw "analyst1 /operations feedback_summary 허용 캡처 격리 확인 실패"
-                }
-
-                $analystRevIdor = Invoke-CurlRaw @(
-                    "-i", "-b", $analystCookies,
-                    "-X", "POST", "$baseHttps/reviews/decide",
-                    "--data-urlencode", "jobId=201",
-                    "--data-urlencode", "incidentId=syn1-tue|10.99.88.77|originator|1700001000",
-                    "--data-urlencode", "action=confirm",
-                    "--data-urlencode", "_csrf=$analystCsrf"
-                )
-                if ($analystRevIdor.Output -notmatch "HTTP/[\d.]+ 403") { throw "analyst1 미허용 캡처 검토 결정 IDOR 403 차단 실패" }
-
-                $analystRank2 = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/2")
-                $analystRevCsrf = Extract-Csrf $analystRank2.Output
-                $analystRevConfirm = Invoke-CurlRaw @(
-                    "-i", "-b", $analystCookies, "-c", $analystCookies,
-                    "-X", "POST", "$baseHttps/incidents/101/rank/2/review-decision",
-                    "--data-urlencode", "action=confirm",
-                    "--data-urlencode", "note=PG17 decide_review confirm E2E",
-                    "--data-urlencode", "_csrf=$analystRevCsrf"
-                )
-                $e2eLogs.Add("[5d] analyst1 POST /incidents/101/rank/2/review-decision (confirm):`n$(($analystRevConfirm.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($analystRevConfirm.Output -notmatch "HTTP/[\d.]+ 302") { throw "analyst1 검토 결정(confirm) 리다이렉트 실패" }
-
-                $analystRank2After = Invoke-CurlRaw @("-i", "-b", $analystCookies, "$baseHttps/incidents/101/rank/2")
-                if ($analystRank2After.Output -notmatch "결정: confirm" -or $analystRank2After.Output -notmatch "반영 중") {
-                    throw "PostgreSQL 17 dashboard.decide_review confirm 반영 확인 실패"
-                }
-
-                $analystRevDup = Invoke-CurlRaw @(
-                    "-i", "-b", $analystCookies, "-c", $analystCookies,
-                    "-X", "POST", "$baseHttps/reviews/decide",
-                    "--data-urlencode", "jobId=101",
-                    "--data-urlencode", "incidentId=cic17-wed|10.20.30.40|responder|1700000300",
-                    "--data-urlencode", "action=dismiss",
-                    "--data-urlencode", "captureId=cic17-wed",
-                    "--data-urlencode", "_csrf=$analystRevCsrf"
-                )
-                if ($analystRevDup.Output -notmatch "HTTP/[\d.]+ 302") {
-                    throw "analyst1 중복 검토 결정 POST 리다이렉트 확인 실패"
-                }
-                $analystRevDupGet = Invoke-CurlRaw @("-i", "-b", $analystCookies, "-c", $analystCookies, "$baseHttps/reviews?captureId=cic17-wed")
-                $e2eLogs.Add("[5e] analyst1 duplicate review decide (22023 check): HTTP $((($analystRevDupGet.Output -split "`r?`n")[0]))")
-                if ($analystRevDupGet.Output -notmatch "HTTP/[\d.]+ 200" -or $analystRevDupGet.Output -notmatch "새로고침") {
-                    throw "PostgreSQL 17 dashboard.decide_review 중복 결정 SQLSTATE 22023 거부 확인 실패"
-                }
-
-                # 6) admin TOTP 로그인 + v2.1 (lab-20261118 다중 작업/보고서 작업 불일치/보고서 없음/incident_id 상태 승계·이력 합산) 실측
+                # [6] admin: TOTP 전 403, TOTP 뒤 v2.1 다중 작업·상태 승계, 운영 집계 전체, fusion/3, dismiss, PUT 사용자 수정, SPA 셸
                 $adminCookies = Join-Path $tmpDir "admin.cookies"
-                $adminLoginOut = Login-Dashboard "admin" $adminCookies
-                if ($adminLoginOut -notmatch "HTTP/[\d.]+ 302" -or $adminLoginOut -notmatch "/login/totp") {
-                    throw "admin 1차 로그인(TOTP 이동) 실패"
-                }
-                $totpPage = Invoke-CurlRaw @("-i", "-b", $adminCookies, "-c", $adminCookies, "$baseHttps/login/totp")
-                $totpCsrf = Extract-Csrf $totpPage.Output
+                $adminLogin = Login-Api "admin" $adminCookies
+                $e2eLogs.Add("[6a] admin POST /api/auth/login: $(Format-Resp $adminLogin 400)")
+                Assert-Status $adminLogin 200 "admin 1차 JSON 로그인"
+                Assert-True ($adminLogin.Json.nextRoute -eq "/login/totp" -and $adminLogin.Json.user.totpVerified -eq $false) "admin 1차 로그인 뒤 TOTP 이동(nextRoute=/login/totp)" $adminLogin
+
+                $adminPreTotp = Invoke-Http -Url "$baseHttps/api/incidents" -CookieJar $adminCookies
+                $e2eLogs.Add("[6a] admin GET /api/incidents before TOTP: $(Format-Resp $adminPreTotp)")
+                Assert-ApiError $adminPreTotp 403 "TOTP_VERIFICATION_REQUIRED" "admin TOTP 전 업무 API"
+
                 $totpCode = Get-TotpCode $adminTotpSecret
-                $totpPost = Invoke-CurlRaw @(
-                    "-i", "-b", $adminCookies, "-c", $adminCookies,
-                    "-X", "POST", "$baseHttps/login/totp",
-                    "--data-urlencode", "code=$totpCode",
-                    "--data-urlencode", "_csrf=$totpCsrf"
-                )
-                $e2eLogs.Add("[6a] admin TOTP verify:`n$(($totpPost.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($totpPost.Output -notmatch "HTTP/[\d.]+ 302" -or $totpPost.Output -match "/login/totp\?error") {
-                    throw "admin TOTP 2차 인증 실패"
+                $totpPost = Invoke-Http -Url "$baseHttps/api/auth/totp/verify" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf -JsonBody @{ code = $totpCode }
+                $e2eLogs.Add("[6a] admin POST /api/auth/totp/verify: $(Format-Resp $totpPost 300)")
+                Assert-Status $totpPost 200 "admin TOTP 2차 인증"
+                Assert-True ($totpPost.Json.succeeded -eq $true -and $totpPost.Json.user.totpVerified -eq $true) "admin TOTP 검증 응답" $totpPost
+
+                $labQueue = Invoke-Http -Url "$baseHttps/api/incidents?captureId=lab-20261118" -CookieJar $adminCookies
+                Assert-Status $labQueue 200 "admin lab-20261118 조사 큐"
+                $labItems = @($labQueue.Json.incidents)
+                $labR1 = $labItems | Where-Object { $_.queueRank -eq 1 } | Select-Object -First 1
+                $labR2 = $labItems | Where-Object { $_.queueRank -eq 2 } | Select-Object -First 1
+                $e2eLogs.Add("[6b] admin GET /api/incidents?captureId=lab-20261118 -> HTTP $($labQueue.Status) selectedJob=$($labQueue.Json.selectedJob.jobId) captureJobs=[$(@($labQueue.Json.captureJobs | ForEach-Object { $_.jobId }) -join ', ')] rank1(hasReport=$($labR1.hasReport) reportJob=$($labR1.zeekadReportJobId)) rank2(hasReport=$($labR2.hasReport) reportJob=$($labR2.zeekadReportJobId) reviewPending=$($labR2.zeekadReviewPending) status=$($labR2.zeekadStatus))")
+                Assert-True ($labQueue.Json.selectedJob.jobId -eq 502 -and (@($labQueue.Json.captureJobs | ForEach-Object { $_.jobId }) -contains 501)) "v2.1 lab-20261118 최신 큐 job 502" $labQueue
+                Assert-True ($labR2.zeekadReportJobId -eq 501 -and $labR2.zeekadReviewPending -eq $true -and $labR1.hasReport -eq $false -and $null -eq $labR1.zeekadReportJobId) "v2.1 보고 작업 501·검토 대기·보고서 없음" $labQueue
+
+                $labRank1 = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/1" -CookieJar $adminCookies
+                Assert-Status $labRank1 200 "admin 502/rank/1"
+                $e2eLogs.Add("[6b] admin GET /api/incidents/502/rank/1 -> hostIp=$($labRank1.Json.detail.incident.hostIp) report.present=$($labRank1.Json.detail.report.present) zeekadReportJobId=$($labRank1.Json.detail.incident.zeekadReportJobId)")
+                Assert-True ($labRank1.Json.detail.incident.hostIp -eq "10.20.0.25" -and $labRank1.Json.detail.report.present -eq $false) "v2.1 zeekad_report_job_id NULL 보고서 없음" $labRank1
+
+                $labRank2 = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/2" -CookieJar $adminCookies
+                Assert-Status $labRank2 200 "admin 502/rank/2"
+                $lr2 = $labRank2.Json.detail
+                $lr2Ratios = @($lr2.modelScores | ForEach-Object { $_.windowRatioLabel })
+                $lr2Reasons = @($lr2.statusHistory | ForEach-Object { $_.reason })
+                $e2eLogs.Add("[6b] admin GET /api/incidents/502/rank/2 -> zeekadReportJobId=$($lr2.incident.zeekadReportJobId) windowRatioLabel=[$($lr2Ratios -join ', ')] currentStatus=$($lr2.currentStatus) statusHistory=[$(@($lr2.statusHistory | ForEach-Object { "$($_.jobId):$($_.fromStatus)->$($_.toStatus) $($_.reason)" }) -join ' | ')]")
+                Assert-True ($lr2.incident.zeekadReportJobId -eq 501 -and ($lr2Ratios -contains "5 / 6") -and $lr2.currentStatus -eq "investigating" -and ($lr2Reasons -contains "실습망 초기 조사 시작")) "v2.1 다중 작업 조인(보고 작업 501, 5 / 6) 및 상태 승계(investigating)" $labRank2
+
+                $labTransition = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/2/transition" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "PG17 v2.1 multi-job transition check" }
+                $labRank2After = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/2" -CookieJar $adminCookies
+                $lr2a = $labRank2After.Json.detail
+                $lr2aJobs = @($lr2a.statusHistory | ForEach-Object { $_.jobId } | Select-Object -Unique)
+                $e2eLogs.Add("[6c] admin POST /api/incidents/502/rank/2/transition (investigating -> closed, true_positive): $(Format-Resp $labTransition)`n     after currentStatus=$($lr2a.currentStatus) resolution=$($lr2a.currentResolution) statusHistory jobs=[$($lr2aJobs -join ', ')]")
+                Assert-Status $labTransition 200 "admin v2.1 상태 전이"
+                Assert-True ($lr2a.currentStatus -eq "closed" -and $lr2a.currentResolution -eq "true_positive" -and ($lr2aJobs -contains 501) -and ($lr2aJobs -contains 502)) "v2.1 incident_id 기준 종료 및 이력 합산(501+502)" $labRank2After
+
+                $opsPage = Invoke-Http -Url "$baseHttps/api/operations" -CookieJar $adminCookies
+                Assert-Status $opsPage 200 "admin /api/operations"
+                $oFeedback = @($opsPage.Json.feedbackSummaries)
+                $oCaptures = @($oFeedback | ForEach-Object { $_.captureId } | Select-Object -Unique)
+                $oTexts = @($oFeedback | ForEach-Object { $_.precisionSummaryText })
+                $oBundles = @($opsPage.Json.bundles | ForEach-Object { $_.bundleId })
+                $e2eLogs.Add("[6d-ops] admin GET /api/operations -> HTTP $($opsPage.Status) bundles=[$($oBundles -join ', ')] feedback captures=[$($oCaptures -join ', ')] all rows=$(@($oFeedback | Where-Object { $_.allModel -eq $true }).Count)`n     precisionSummaryText: $(@($oFeedback | ForEach-Object { "$($_.captureId)/$($_.zeekadPickedBy)=$($_.precisionSummaryText)" }) -join ' | ')")
+                Assert-True ($oBundles -contains "zeekad-fusion/3") "운영 상태 zeekad-fusion/3 번들" $opsPage
+                Assert-True (@($oFeedback | Where-Object { $_.allModel -eq $true -and $_.zeekadPickedBy -eq "all" }).Count -gt 0) "admin feedback_summary 'all' 행" $opsPage
+                foreach ($cap in @("cic17-wed", "syn1-tue", "lab-20261118", "lab-fusion-v2")) {
+                    Assert-True ($oCaptures -contains $cap) "admin feedback_summary 전체 캡처($cap)" $opsPage
+                }
+                Assert-True (($oTexts -contains "정밀도 1.00, 결론 1/2 (50.0%)") -and ($oTexts -contains "정밀도 1.00, 결론 1/1 (100.0%)")) "admin 정밀도 비율('정밀도 1.00, 결론 1/2 (50.0%)', '정밀도 1.00, 결론 1/1 (100.0%)')" $opsPage
+                Assert-True (-not $opsPage.Body.Contains("정확도")) "admin /api/operations에 '정확도' 없음" $opsPage
+
+                $fusionDetail = Invoke-Http -Url "$baseHttps/api/incidents/602/rank/1" -CookieJar $adminCookies
+                Assert-Status $fusionDetail 200 "admin 602/rank/1"
+                $fd = $fusionDetail.Json.detail
+                $fdSlackJobs = @($fd.slackDeliveries | ForEach-Object { $_.jobId })
+                $e2eLogs.Add("[6d] admin GET /api/incidents/602/rank/1 -> bundleId=$($fd.job.bundleId) zeekadReportJobId=$($fd.incident.zeekadReportJobId) eventStart=$($fd.incident.eventStart) eventEnd=$($fd.incident.eventEnd) slack jobIds=[$($fdSlackJobs -join ', ')]")
+                Assert-True ($fd.job.bundleId -eq "zeekad-fusion/3" -and $fd.incident.zeekadReportJobId -eq 602 -and ([string]$fd.incident.eventEnd).StartsWith("2026-11-19T01:45") -and ($fdSlackJobs -contains 601)) "zeekad-fusion/3 45분 사건(보고 작업 602) 및 incident_id 단독 Slack(601)" $fusionDetail
+
+                $adminRevDismiss = Invoke-Http -Url "$baseHttps/api/reviews/decide" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ jobId = 602; incidentId = "lab-fusion-v2|10.40.0.10|originator|1763514000"; action = "dismiss"; note = "PG17 admin dismiss E2E" }
+                $adminRevAfter = Invoke-Http -Url "$baseHttps/api/reviews?captureId=lab-fusion-v2" -CookieJar $adminCookies
+                $revItems = @($adminRevAfter.Json.reviews)
+                $dismissed = $revItems | Where-Object { $_.incidentId -eq "lab-fusion-v2|10.40.0.10|originator|1763514000" }
+                $revLabels = @($revItems | ForEach-Object { $_.resumeStatusLabel })
+                $e2eLogs.Add("[6d] admin POST /api/reviews/decide (dismiss): $(Format-Resp $adminRevDismiss)`n     GET /api/reviews?captureId=lab-fusion-v2: $(@($revItems | ForEach-Object { "job=$($_.reviewJobId) rank=$($_.queueRank) action=$($_.zeekadReviewAction) label=$($_.resumeStatusLabel)" }) -join ' | ')")
+                Assert-Status $adminRevDismiss 200 "admin /api/reviews/decide dismiss"
+                Assert-True (@($dismissed).Count -eq 1 -and $dismissed.zeekadReviewAction -eq "dismiss" -and $dismissed.reviewJobId -eq 602) "admin dismiss 결정 반영(최신 작업 602 한 건)" $adminRevAfter
+                Assert-True (($revLabels -contains "반영 중") -and ($revLabels -contains "반영 실패(운영자 확인)")) "검토 반영 상태 라벨(반영 중, 반영 실패(운영자 확인))" $adminRevAfter
+                Assert-True (@($revItems | Where-Object { $_.reviewJobId -eq 601 -or $_.jobId -eq 601 }).Count -eq 0 -and -not $adminRevAfter.Body.Contains("구 작업(601) 중복 검토 요청")) "구 작업(601) 중복 검토 요청 제거" $adminRevAfter
+
+                # WAF를 거친 PUT /api/admin/users/{id}: GET 결과의 id·role·capturePatterns를 그대로 쓰고 displayName만 바꾼다.
+                $usersRes = Invoke-Http -Url "$baseHttps/api/admin/users" -CookieJar $adminCookies
+                Assert-Status $usersRes 200 "admin GET /api/admin/users"
+                $analyst2 = @($usersRes.Json.users | Where-Object { $_.username -eq "analyst2" }) | Select-Object -First 1
+                Assert-True ($null -ne $analyst2 -and @($analyst2.capturePatterns).Count -gt 0) "analyst2 사용자·capturePatterns 조회" $usersRes
+                $newDisplayName = "분석가 2 (E2E $(Get-Random -Minimum 100 -Maximum 999))"
+                $putBody = [ordered]@{ displayName = $newDisplayName; role = $analyst2.role; capturePatterns = @($analyst2.capturePatterns) }
+                $putRes = Invoke-Http -Url "$baseHttps/api/admin/users/$($analyst2.id)" -Method PUT -CookieJar $adminCookies -SaveCookies -Csrf -JsonBody $putBody -ProbeId "e2e-put-user"
+                $e2eLogs.Add("[6e] admin PUT /api/admin/users/$($analyst2.id) via WAF (role=$($analyst2.role) capturePatterns=[$(@($analyst2.capturePatterns) -join ', ')]): $(Format-Resp $putRes 400)")
+                Assert-Status $putRes 200 "WAF를 거친 PUT /api/admin/users/{id}"
+                Assert-True ($putRes.Json.user.displayName -eq $newDisplayName -and $putRes.Json.user.role -eq $analyst2.role) "PUT 사용자 수정 응답" $putRes
+                $auditRes = Invoke-Http -Url "$baseHttps/api/admin/audit-logs?actionType=USER_ADMIN_CHANGE&limit=20" -CookieJar $adminCookies
+                $userAudit = @($auditRes.Json.logs | Where-Object { $_.actionType -eq "USER_ADMIN_CHANGE" -and $_.actorUsername -eq "admin" -and $_.detailJson -match '"targetUsername":"analyst2"' -and $_.detailJson -match '"operation":"UPDATE_USER"' })
+                $e2eLogs.Add("[6e] admin GET /api/admin/audit-logs?actionType=USER_ADMIN_CHANGE -> HTTP $($auditRes.Status) matching=$($userAudit.Count) latest=$(if ($userAudit.Count) { "$($userAudit[0].occurredAt) $($userAudit[0].detailJson)" })")
+                Assert-Status $auditRes 200 "admin 감사 로그 조회"
+                Assert-True ($userAudit.Count -gt 0) "감사 로그 USER_ADMIN_CHANGE(UPDATE_USER analyst2)" $auditRes
+
+                foreach ($spaPath in @("/", "/incidents/101/rank/1", "/admin/users")) {
+                    $spaRes = Invoke-Http -Url "$baseHttps$spaPath" -CookieJar $adminCookies
+                    $e2eLogs.Add("[6f] admin(TOTP verified) GET $spaPath -> HTTP $($spaRes.Status) Content-Type=$(Get-HeaderValue $spaRes 'Content-Type') SPA shell=$(Test-SpaShell $spaRes)")
+                    Assert-Status $spaRes 200 "admin GET $spaPath"
+                    Assert-True (Test-SpaShell $spaRes) "admin GET $spaPath SPA 셸 표지" $spaRes
                 }
 
-                $labQueue = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents?captureId=lab-20261118")
-                $e2eLogs.Add("[6b] admin GET /incidents?captureId=lab-20261118: HTTP $((($labQueue.Output -split "`r?`n")[0]))")
-                if ($labQueue.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $labQueue.Output -notmatch "job #502" -or
-                    $labQueue.Output -notmatch "보고 작업 #501" -or
-                    $labQueue.Output -notmatch "검토 대기" -or
-                    $labQueue.Output -notmatch "보고서 없음") {
-                    throw "v2.1 lab-20261118 latest_incident_queue 화면 검증 실패"
-                }
+                # [7] 로그아웃 뒤 서버 쪽 세션 무효화: 로그아웃 전 세션 값을 직접 보내 401 확인
+                $savedSession = Get-JarCookie $adminCookies "ZEEKAD_SESSION"
+                Assert-True ([bool]$savedSession) "로그아웃 전 ZEEKAD_SESSION 값 저장"
+                $logoutRes = Invoke-Http -Url "$baseHttps/api/auth/logout" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf
+                $replayRes = Invoke-Http -Url "$baseHttps/api/incidents" -RawCookie "ZEEKAD_SESSION=$savedSession"
+                $e2eLogs.Add("[7] admin POST /api/auth/logout: $(Format-Resp $logoutRes)`n[7] replay saved ZEEKAD_SESSION (value redacted) GET /api/incidents: $(Format-Resp $replayRes)")
+                Assert-Status $logoutRes 200 "POST /api/auth/logout"
+                Assert-ApiError $replayRes 401 "UNAUTHENTICATED" "로그아웃 뒤 이전 세션 재사용"
 
-                $labRank1 = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/1")
-                if ($labRank1.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $labRank1.Output -notmatch "10\.20\.0\.25" -or
-                    $labRank1.Output -notmatch "보고서 없음") {
-                    throw "v2.1 zeekad_report_job_id NULL 보고서 없음 검증 실패"
-                }
-
-                $labRank2 = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/2")
-                if ($labRank2.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $labRank2.Output -notmatch "보고 작업 job #501" -or
-                    $labRank2.Output -notmatch "5 / 6" -or
-                    $labRank2.Output -notmatch "현재 상태: investigating" -or
-                    $labRank2.Output -notmatch "실습망 초기 조사 시작") {
-                    throw "v2.1 다중 작업 조인 및 상태 승계 검증 실패"
-                }
-
-                $adminCsrf = Extract-Csrf $labRank2.Output
-                $labTransition = Invoke-CurlRaw @(
-                    "-i", "-b", $adminCookies, "-c", $adminCookies,
-                    "-X", "POST", "$baseHttps/incidents/502/rank/2/transition",
-                    "--data-urlencode", "toStatus=closed",
-                    "--data-urlencode", "resolution=true_positive",
-                    "--data-urlencode", "reason=PG17 v2.1 multi-job transition check",
-                    "--data-urlencode", "_csrf=$adminCsrf"
-                )
-                $e2eLogs.Add("[6c] admin POST transition on job 502 rank 2 (investigating -> closed):`n$(($labTransition.Output -split "`r?`n" | Select-Object -First 15) -join "`n")")
-                if ($labTransition.Output -notmatch "HTTP/[\d.]+ 302") { throw "admin v2.1 상태 전이 리다이렉트 실패" }
-
-                $labRank2After = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/502/rank/2")
-                if ($labRank2After.Output -notmatch "현재 상태: closed" -or
-                    $labRank2After.Output -notmatch "job #501" -or
-                    $labRank2After.Output -notmatch "job #502") {
-                    throw "v2.1 incident_id 기준 상태 종료 및 이력 합산(501+502) 확인 실패"
-                }
-
-                # 6d) zeekad-fusion/3 (45분 사건), 보고서 재생성(602) 뒤에도 Slack(601) 조회, admin dismiss 검토 결정 및 /operations feedback_summary 전체 집계 실측
-                $opsPage = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/operations")
-                $e2eLogs.Add("[6d-ops] admin GET /operations feedback_summary full check: HTTP $((($opsPage.Output -split "`r?`n")[0]))")
-                if ($opsPage.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $opsPage.Output -notmatch "zeekad-fusion/3" -or
-                    $opsPage.Output -notmatch "분석가 결론 집계" -or
-                    $opsPage.Output -notmatch "놓친 공격\(재현율\)" -or
-                    $opsPage.Output -notmatch "전체 \(all\)" -or
-                    $opsPage.Output -notmatch "cic17-wed" -or
-                    $opsPage.Output -notmatch "syn1-tue" -or
-                    $opsPage.Output -notmatch "lab-20261118" -or
-                    $opsPage.Output -notmatch "lab-fusion-v2" -or
-                    $opsPage.Output -notmatch "정밀도 1\.00, 결론 1/2 \(50\.0%\)" -or
-                    $opsPage.Output -notmatch "정밀도 1\.00, 결론 1/1 \(100\.0%\)" -or
-                    $opsPage.Output -match "정확도") {
-                    throw "운영 상태 화면 zeekad-fusion/3 및 admin feedback_summary 전체 집계/정밀도 비율/재현율 안내 확인 실패"
-                }
-
-                $fusionDetail = Invoke-CurlRaw @("-i", "-b", $adminCookies, "$baseHttps/incidents/602/rank/1")
-                if ($fusionDetail.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $fusionDetail.Output -notmatch "zeekad-fusion/3" -or
-                    $fusionDetail.Output -notmatch "보고 작업 job #602" -or
-                    $fusionDetail.Output -notmatch "2026-11-19T01:45" -or
-                    $fusionDetail.Output -notmatch "job #601") {
-                    throw "zeekad-fusion/3 45분 사건 및 incident_id 단독 Slack(601) 조회 확인 실패"
-                }
-                $fusionCsrf = Extract-Csrf $fusionDetail.Output
-                $adminRevDismiss = Invoke-CurlRaw @(
-                    "-i", "-b", $adminCookies, "-c", $adminCookies,
-                    "-X", "POST", "$baseHttps/reviews/decide",
-                    "--data-urlencode", "jobId=602",
-                    "--data-urlencode", "incidentId=lab-fusion-v2|10.40.0.10|originator|1763514000",
-                    "--data-urlencode", "action=dismiss",
-                    "--data-urlencode", "note=PG17 admin dismiss E2E",
-                    "--data-urlencode", "captureId=lab-fusion-v2",
-                    "--data-urlencode", "_csrf=$fusionCsrf"
-                )
-                if ($adminRevDismiss.Output -notmatch "HTTP/[\d.]+ 302") {
-                    throw "admin /reviews/decide dismiss POST 리다이렉트 실패"
-                }
-                $adminRevAfter = Invoke-CurlRaw @("-i", "-b", $adminCookies, "-c", $adminCookies, "$baseHttps/reviews?captureId=lab-fusion-v2")
-                $e2eLogs.Add("[6d] admin POST /reviews/decide (dismiss) + fusion/3 + Slack(601): HTTP $((($adminRevAfter.Output -split "`r?`n")[0]))")
-                if ($adminRevAfter.Output -notmatch "HTTP/[\d.]+ 200" -or
-                    $adminRevAfter.Output -notmatch "dismiss" -or
-                    $adminRevAfter.Output -notmatch "반영 중" -or
-                    $adminRevAfter.Output -notmatch "반영 실패\(운영자 확인\)" -or
-                    $adminRevAfter.Output -match "구 작업\(601\) 중복 검토 요청") {
-                    throw "admin /reviews/decide dismiss 및 중복 제거/반영 상태 확인 실패"
-                }
-
-                # 7) PostgreSQL audit_logs 불변 트리거 실증 (UPDATE 시도 실패)
-                $immutableRes = Invoke-NativeCapture "docker" @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "exec", "-T", "verify-postgres", "psql", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE audit_logs SET action_type = 'TAMPERED' WHERE id = (SELECT MIN(id) FROM audit_logs);") -IgnoreExitCode
+                # [8] PostgreSQL audit_logs 불변 트리거 실증 (UPDATE 시도 실패)
+                $immutableRes = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE audit_logs SET action_type = 'TAMPERED' WHERE id = (SELECT MIN(id) FROM audit_logs);")) -IgnoreExitCode
                 $immutableCheck = $immutableRes.Output
-                $e2eLogs.Add("[7] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
-                if ($immutableCheck -notmatch "audit_logs is append-only") {
-                    throw "PostgreSQL audit_logs 불변 트리거 검증 실패"
-                }
+                $e2eLogs.Add("[8] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
+                Assert-True ($immutableCheck -match "audit_logs is append-only") "PostgreSQL audit_logs 불변 트리거"
+
+                $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
+                $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
+                Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
 
                 $e2eReport = $e2eLogs -join "`n`n"
-                [IO.File]::WriteAllText((Join-Path $ReportFullDir "waf-e2e-verification.txt"), $e2eReport, [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $ReportFullDir "waf-e2e-verification.txt"), $e2eReport, $utf8NoBom)
                 Save-Evidence "waf-e2e-verification.txt" $e2eReport
-                Write-Host "-> WAF + PostgreSQL 17 E2E 실측 검증 모두 통과!"
+                Write-Host "-> WAF + SPA + JSON API + PostgreSQL 17 E2E 실측 검증 모두 통과!"
+            } catch {
+                if ($e2eLogs.Count -gt 0) {
+                    $partial = ($e2eLogs -join "`n`n") + "`n`n[FAILED] $($_.Exception.Message)"
+                    [IO.File]::WriteAllText((Join-Path $ReportFullDir "waf-e2e-verification.txt"), $partial, $utf8NoBom)
+                    Save-Evidence "waf-e2e-verification.txt" $partial
+                }
+                throw
             } finally {
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmpDir
             }
@@ -578,26 +712,52 @@ if (-not $SkipE2E -or -not $SkipZap) {
         if (-not $SkipZap) {
             Write-Host "=== [5/5] OWASP ZAP 베이스라인 스캔 (https://nginx-waf:8443/) ==="
             [void](Invoke-NativeCapture "docker" @("pull", "ghcr.io/zaproxy/zaproxy:stable"))
+            $zapJsonPath = Join-Path $ReportFullDir "zap-baseline.json"
+            Remove-Item -Force -ErrorAction SilentlyContinue $zapJsonPath
             $zapRes = Invoke-NativeCapture "docker" @("run", "--rm", "--network", $networkName, "-v", "${ReportFullDir}:/zap/wrk:rw", "ghcr.io/zaproxy/zaproxy:stable", "zap-baseline.py", "-t", "https://nginx-waf:8443/", "-J", "zap-baseline.json", "-r", "zap-baseline.html", "-w", "zap-baseline.md") -IgnoreExitCode
             $zapOut = $zapRes.Output
             $zapExit = $zapRes.ExitCode
 
-            $zapSummary = "ZAP_EXIT_CODE=$zapExit`n`n$($zapOut.Trim())"
+            # ZAP은 정보성 경고만 있어도 exit 2가 되므로 판정은 zap-baseline.json의 위험 등급별 경고 수로 한다.
+            $riskCounts = [ordered]@{ High = 0; Medium = 0; Low = 0; Informational = 0 }
+            $alertLines = [System.Collections.Generic.List[string]]::new()
+            $zapJsonOk = Test-Path $zapJsonPath
+            if ($zapJsonOk) {
+                $zapJson = [IO.File]::ReadAllText($zapJsonPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                foreach ($site in @($zapJson.site)) {
+                    foreach ($alert in @($site.alerts)) {
+                        if (-not $alert) { continue }
+                        $riskName = switch ([string]$alert.riskcode) { "3" { "High" } "2" { "Medium" } "1" { "Low" } default { "Informational" } }
+                        $riskCounts[$riskName]++
+                        $alertLines.Add("- [$riskName] $($alert.pluginid) $($alert.name) (instances=$(@($alert.instances).Count))")
+                    }
+                }
+            }
+            $riskLine = "ZAP_RISK_COUNTS High=$($riskCounts.High) Medium=$($riskCounts.Medium) Low=$($riskCounts.Low) Informational=$($riskCounts.Informational)"
+            $zapHeader = "ZAP_EXIT_CODE=$zapExit`n$riskLine`nzap-baseline.json parsed=$zapJsonOk`n`nAlerts by risk (zap-baseline.json):`n$(if ($alertLines.Count) { $alertLines -join "`n" } else { '(none)' })"
+
+            $zapSummary = "$zapHeader`n`n$($zapOut.Trim())"
             [IO.File]::WriteAllText((Join-Path $ReportFullDir "zap-baseline-output.txt"), $zapSummary, [Text.UTF8Encoding]::new($false))
             if (Test-Path (Join-Path $ReportFullDir "zap-baseline.md")) {
                 $md = [IO.File]::ReadAllText((Join-Path $ReportFullDir "zap-baseline.md"), [Text.UTF8Encoding]::new($false))
-                Save-Evidence "zap-baseline-summary.md" ("ZAP_EXIT_CODE=$zapExit`n`n" + $md)
+                Save-Evidence "zap-baseline-summary.md" ("$zapHeader`n`n" + $md)
             } else {
                 Save-Evidence "zap-baseline-summary.md" $zapSummary
             }
-            Write-Host "-> OWASP ZAP 종료 코드: $zapExit (0=PASS, 2=WARN, 1/3=FAIL)"
+            Write-Host "-> OWASP ZAP 종료 코드: $zapExit / $riskLine"
             if ($zapExit -eq 1 -or $zapExit -eq 3) {
                 throw "OWASP ZAP 스캔 실패 (exit=$zapExit)"
+            }
+            if (-not $zapJsonOk) {
+                throw "OWASP ZAP 결과 zap-baseline.json이 생성되지 않았습니다 (exit=$zapExit)"
+            }
+            if ($riskCounts.High -gt 0 -or $riskCounts.Medium -gt 0 -or $riskCounts.Low -gt 0) {
+                throw "OWASP ZAP 베이스라인 경고 존재: $riskLine"
             }
         }
     } finally {
         Write-Host "=== 검증용 Docker Compose 스택 정리 (down -v) ==="
-        [void](Invoke-NativeCapture "docker" @("compose", "-p", $projectName, "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "down", "-v") -IgnoreExitCode)
+        [void](Invoke-NativeCapture "docker" ($composeArgs + @("down", "-v")) -IgnoreExitCode)
     }
 }
 

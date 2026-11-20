@@ -191,6 +191,42 @@ class StaticSecurityAndConfigTest {
     }
 
     @Test
+    void dockerfileBuildsSpaInNodeStageOnlyAndWafAllowsPutWithoutRelaxation() throws IOException {
+        String dockerfile = Files.readString(Path.of("Dockerfile"), StandardCharsets.UTF_8);
+        assertThat(dockerfile).contains("npm ci", "npm run build");
+        assertThat(dockerfile).doesNotContain("--omit=dev");
+        assertThat(dockerfile).containsPattern("(?m)^FROM node:\\S+ AS frontend\\s*$");
+        assertThat(dockerfile).containsPattern("(?m)^COPY --from=frontend \\S+/dist \\./frontend/dist\\s*$");
+
+        List<String> fromLines = dockerfile.lines().filter(line -> line.startsWith("FROM ")).toList();
+        assertThat(fromLines).hasSizeGreaterThanOrEqualTo(3);
+        assertThat(fromLines.get(fromLines.size() - 1).trim()).isEqualTo("FROM eclipse-temurin:17-jre-alpine");
+
+        String finalStage = dockerfile.substring(dockerfile.lastIndexOf("\nFROM "));
+        assertThat(finalStage)
+                .as("최종 런타임 단계에 Node.js·npm이 없어야 합니다")
+                .doesNotContainPattern("(?i)\\bnode\\b|\\bnpm\\b|node_modules")
+                .contains("USER appuser");
+
+        String dockerignore = Files.readString(Path.of(".dockerignore"), StandardCharsets.UTF_8);
+        assertThat(dockerignore.lines().map(String::trim).toList())
+                .contains("frontend/node_modules", "frontend/dist");
+
+        String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
+        java.util.regex.Matcher allowedMethods = Pattern
+                .compile("(?m)^\\s*ALLOWED_METHODS:\\s*\"([^\"]*)\"")
+                .matcher(compose);
+        assertThat(allowedMethods.find()).as("compose.yml nginx-waf ALLOWED_METHODS").isTrue();
+        List<String> methods = List.of(allowedMethods.group(1).trim().split("\\s+"));
+        assertThat(methods).contains("GET", "HEAD", "POST", "PUT", "OPTIONS").doesNotContain("DELETE", "PATCH");
+
+        assertThat(compose).contains("MODSEC_RULE_ENGINE: \"on\"", "PARANOIA: \"1\"",
+                "BLOCKING_PARANOIA: \"1\"", "ANOMALY_INBOUND: \"5\"");
+        assertThat(compose).doesNotContainPattern("(?i)DetectionOnly|MODSEC_RULE_ENGINE:\\s*\"?off");
+        assertThat(compose).doesNotContainPattern("(?m)^\\s*(BLOCKING_)?PARANOIA:\\s*\"?0");
+    }
+
+    @Test
     void gitignoreExcludesSecretsKeysAndSecurityReports() throws IOException {
         String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
         assertThat(gitignore).contains(
