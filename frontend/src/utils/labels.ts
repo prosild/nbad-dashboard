@@ -206,8 +206,9 @@ export function lookupLabel(dict: LabelDictionaryName, value: string | boolean |
   }
   const raw = String(value).trim();
   const entries = LABEL_DICTIONARIES[dict] as Record<string, string>;
-  const hit =
-    entries[raw] ?? entries[raw.toLowerCase()] ?? entries[raw.toUpperCase()];
+  // 데이터 값이 'constructor' 같은 객체 기본 속성 이름이어도 사전 항목으로 오인하지 않게 자기 속성만 본다.
+  const own = (key: string) => (Object.prototype.hasOwnProperty.call(entries, key) ? entries[key] : undefined);
+  const hit = own(raw) ?? own(raw.toLowerCase()) ?? own(raw.toUpperCase());
   if (hit !== undefined) {
     return { text: hit, known: true, raw };
   }

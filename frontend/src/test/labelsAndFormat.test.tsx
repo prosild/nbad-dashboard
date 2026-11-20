@@ -57,6 +57,7 @@ describe('표시 이름 사전', () => {
     expect(lookupLabel('incidentStatus', 'reopened')).toEqual({ text: 'reopened', known: false, raw: 'reopened' });
     expect(labelText('auditAction', 'NEW_ACTION')).toBe('NEW_ACTION');
     expect(lookupLabel('resolution', null)).toEqual({ text: '-', known: true, raw: '' });
+    expect(lookupLabel('jobStatus', 'constructor')).toEqual({ text: 'constructor', known: false, raw: 'constructor' });
   });
 
   it('미등록 값은 흐린 원문과 "미등록 값" 툴팁으로, 등록 값은 원래 코드를 툴팁으로 보여 준다', () => {
