@@ -42,6 +42,7 @@
 - **로그인 잠금 대신 속도 제한**: 공개 비밀번호 계정은 계정 잠금이 보호 효과 없이 남이 데모를 막는 수단이 되므로 `DASHBOARD_MAX_FAILED_ATTEMPTS=1000000`으로 사실상 끈다(`0`이나 작은 값은 오히려 첫 실패에 잠근다). 대신 nginx가 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
 - **세션 쿠키**: `DASHBOARD_COOKIE_SECURE=true` 그대로다(`Secure`·`HttpOnly`·`SameSite=Lax`). 브라우저는 DSM과 HTTPS로 통신하므로 문제없다.
 - **8443 리스너**: `nginx-waf`의 HTTPS 리스너(이미지 기본 자체 서명 인증서)는 스택 네트워크 안에서만 쓰인다(리허설 ZAP 대상). 바깥에 열지 않는다.
+- **잔여 위험(고치지 않음)**: `dashboard_app` 계정은 관리용 `postgres` DB에도 접속할 수 있다(PostgreSQL 기본 `PUBLIC` CONNECT. 시드가 그 DB의 `pgcrypto`를 쓴다). 슈퍼유저가 아니고 `public` 스키마 CREATE 권한도 없다. `postgres` 컨테이너에는 바깥 포트가 없어 스택 네트워크 안의 컨테이너만 접속할 수 있다(`T13` 확인).
 
 ### 1.2 관련 파일
 
@@ -172,7 +173,8 @@ curl.exe -s -o NUL -w "%{http_code}" --resolve <DDNS 이름>.synology.me:443:192
 ```
 
 - **서브넷 겹침 확인**: `networks-before.txt`에 `10.203.48.0/24`와 겹치는 대역이 있으면 `.env`의 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.49.0/24`)으로 바꾼다. 이 값 하나가 Compose 네트워크와 nginx 신뢰 범위를 함께 바꾼다.
-- `docker compose`가 없고 `docker-compose`만 있으면 아래 명령에서 `docker compose`를 `docker-compose`로 바꾼다(확인 필요).
+- DS920+ DSM 7.3.2(Container Manager)에서는 `docker compose`(v2.20.1)가 동작한다(`T13` 확인). `docker-compose`로 바꿀 필요 없다.
+- 이 절부터의 NAS 블록(`sh`)은 **NAS 셸 안에서** 실행한다(`ssh psdev93@192.168.50.146`로 들어가서 붙여 넣거나, 이 PC의 Git Bash에서 `ssh ... 'bash -s' <<'EOF' ... EOF`). 이 PC의 Windows PowerShell 5.1에서 `ssh <NAS> '<여러 명령>'`처럼 한 줄 인자로 넘기면 인자 안의 큰따옴표가 지워져(`printf "\n"` → `printf n`) 결과가 달라진다(`T13`에서 겪음).
 
 ### 3.2 폴더와 파일 전송
 
@@ -187,20 +189,26 @@ chmod 700 /volume1/docker/zeekad-portfolio
 
 ```powershell
 $nas = "psdev93@192.168.50.146"; $dst = "/volume1/docker/zeekad-portfolio"
-scp compose.portfolio.yml .env.portfolio.example "${nas}:${dst}/"
-scp -r docker/portfolio "${nas}:${dst}/docker/"
-scp build/portfolio/zeekad.dump build/portfolio/zeekad.dump.sha256 build/portfolio/manifest.json "${nas}:${dst}/snapshot/"
+# DSM은 SFTP가 꺼져 있어 기본 scp(SFTP 모드)가 'subsystem request failed'로 실패한다. -O(기존 SCP 프로토콜)를 쓴다(T13 확인).
+scp -O compose.portfolio.yml .env.portfolio.example "${nas}:${dst}/"
+scp -O -r docker/portfolio "${nas}:${dst}/docker/"
+scp -O build/portfolio/zeekad.dump build/portfolio/zeekad.dump.sha256 build/portfolio/manifest.json "${nas}:${dst}/snapshot/"
 # PowerShell은 네이티브 명령 인자의 *.tar를 펼치지 않을 수 있으므로 파일 이름을 하나씩 적는다.
-scp build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/zeek-ad-dashboard-waf.tar build/portfolio-images/zeekad-pipeline.tar build/portfolio-images/pgvector-pg17.tar build/portfolio-images/images.sha256 build/portfolio-images/image-ids.txt "${nas}:${dst}/images/"
+scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/zeek-ad-dashboard-waf.tar build/portfolio-images/zeekad-pipeline.tar build/portfolio-images/pgvector-pg17.tar build/portfolio-images/images.sha256 build/portfolio-images/image-ids.txt "${nas}:${dst}/images/"
 ```
 
 - PowerShell 5.1 파이프(`tar | ssh`, `docker save | ssh`)는 바이트를 문자열로 바꿔 깨뜨리므로 쓰지 않는다. 파일은 `scp`로만 보낸다.
-- DSM에서 SFTP가 꺼져 있으면 최신 OpenSSH `scp`가 실패할 수 있다(확인 필요). 그때는 `scp -O`(기존 SCP 프로토콜)로 다시 보낸다.
+- 작업 트리의 `.env.portfolio.example`·`compose.portfolio.yml`·`seed_demo.py`·nginx 템플릿은 Windows에서 CRLF로 체크아웃돼 그대로 전송된다(`*.sh`만 `.gitattributes`로 LF). Compose·nginx·`python`은 CRLF여도 동작하지만, 3.4의 `.env` 작성 스크립트는 줄 끝 `\r`을 떼야 한다(스크립트에 들어 있다).
 
-NAS에서 무결성 확인:
+NAS에서 스냅샷 권한과 무결성 확인:
 
 ```sh
 cd /volume1/docker/zeekad-portfolio
+# snapshot/은 chmod 700 이전에 만들어져 /volume1/docker의 Synology ACL을 상속받는다(psdev93만 허용).
+# 그러면 컨테이너 안 postgres(uid 999)가 덤프를 읽지 못해 복원이 'zeekad.dump ... is missing'으로 실패한다(T13에서 겪음).
+# 755/644로 바꾸면 Linux 권한 모드가 된다. 덤프는 공개 데모 데이터이고 상위 폴더가 700이라 다른 NAS 사용자는 들어올 수 없다.
+chmod 755 snapshot && chmod 644 snapshot/*
+docker run --rm --network none --user 999:999 -v /volume1/docker/zeekad-portfolio/snapshot:/snapshot:ro --entrypoint sh pgvector/pgvector:0.8.1-pg17 -c 'cd /snapshot && sha256sum -c zeekad.dump.sha256'   # 3.3 적재 뒤에 실행. zeekad.dump: OK
 (cd snapshot && sha256sum -c zeekad.dump.sha256)
 (cd images && sha256sum -c images.sha256)
 ls -l docker/portfolio/initdb/*.sh && head -1 docker/portfolio/initdb/01-roles-databases.sh | od -c | head -2   # \r 이 없어야 한다
@@ -228,6 +236,7 @@ cd /volume1/docker/zeekad-portfolio
 umask 077
 gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
 while IFS= read -r line || [ -n "$line" ]; do
+  line=${line%$'\r'}   # 작업 트리에서 CRLF로 전송된 예시 파일. 떼지 않으면 'KEY=' 패턴이 맞지 않아 비밀값이 하나도 채워지지 않는다
   case "$line" in
     POSTGRES_SUPERUSER_PASSWORD=|ZEEKAD_API_PASSWORD=|DASHBOARD_RO_PASSWORD=|DASHBOARD_RW_PASSWORD=|DASHBOARD_APP_PASSWORD=|\
     BOOTSTRAP_VIEWER1_PASSWORD=|BOOTSTRAP_ANALYST1_PASSWORD=|BOOTSTRAP_ANALYST2_PASSWORD=|BOOTSTRAP_ADMIN_PASSWORD=)
@@ -244,7 +253,7 @@ unset v; chmod 600 .env
 grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1
 ```
 
-`DEMO_PASSWORD`는 이 PC에서 만들어 파일로 넣는다(값을 명령줄 인자·화면에 내지 않는다). 이 PC(PowerShell, 저장소 루트):
+`DEMO_PASSWORD`는 이 PC에서 만들어 파일로 넣는다(값을 명령줄 인자·화면에 내지 않는다). **이 단계(파일 전송과 아래 'NAS:' 블록)는 사용자가 한다.** 에이전트 세션은 `.env`를 읽거나 쓰는 명령이 이 PC의 guard 훅에 막힌다(`T13`). 'NAS:' 블록은 NAS 셸 안에서 실행한다(3.1의 주의). 이 PC(PowerShell, 저장소 루트):
 
 ```powershell
 # 영숫자 20자 무작위. handoff/<작업 ID>/는 Git 제외 경로다. 사용자가 이 값을 포트폴리오 글에 옮겨 적는다.
@@ -252,7 +261,7 @@ $c = [char[]]'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'; $b = N
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
 [IO.File]::WriteAllText("$PWD/handoff/<작업 ID>/demo-password.txt", (-join ($b | ForEach-Object { $c[$_ % $c.Length] })))   # 줄바꿈 없이
 ssh psdev93@192.168.50.146 'umask 077; mkdir -p ~/zeekad-portfolio-check/tmp'
-scp handoff/<작업 ID>/demo-password.txt psdev93@192.168.50.146:zeekad-portfolio-check/tmp/demo-password.txt
+scp -O handoff/<작업 ID>/demo-password.txt psdev93@192.168.50.146:zeekad-portfolio-check/tmp/demo-password.txt
 ```
 
 NAS:
@@ -340,11 +349,12 @@ docker image rm zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-p
 
 DSM 7.3 기준 메뉴 경로다. 이 문서를 쓸 때 실제 화면으로 확인하지 못했으므로 메뉴 이름이 조금 다를 수 있다(확인 필요).
 
-### 4.1 와일드카드 인증서
+### 4.1 하위 도메인 인증서
 
-1. **제어판 > 보안 > 인증서**에서 기존 `<DDNS 이름>.synology.me` 인증서의 주체 대체 이름에 `*.<DDNS 이름>.synology.me`가 이미 있는지 본다. 있으면 4.1은 건너뛴다.
-2. 없으면 **추가 > 새 인증서 추가 > Let's Encrypt에서 인증서 얻기**: 도메인 이름 `<DDNS 이름>.synology.me`, 주체 대체 이름 `*.<DDNS 이름>.synology.me`. Synology DDNS(`synology.me`) 호스트는 와일드카드 인증서 발급을 지원한다(확인 필요).
-3. `soc.<DDNS 이름>.synology.me`가 NAS 공인 IP로 풀리는지 확인한다: 이 PC에서 `nslookup soc.<DDNS 이름>.synology.me`. Synology DDNS의 와일드카드 레코드로 하위 도메인이 같은 IP를 가리킨다는 전제다(확인 필요).
+1. **제어판 > 보안 > 인증서 > 추가 > 새 인증서 추가 > Let's Encrypt에서 인증서 얻기**: 도메인 이름 `soc.<DDNS 이름>.synology.me`(하위 도메인 전용 인증서).
+   - 와일드카드(`*.<DDNS 이름>.synology.me`)는 DSM이 "잘못된 도메인"으로 거부했다(`T13`). 하위 도메인 전용 인증서로 충분하다.
+   - `T13` 발급 결과: `CN=soc.<DDNS 이름>.synology.me`, SAN `DNS:soc.<DDNS 이름>.synology.me`, Let's Encrypt `YE1`, 유효 90일(DSM이 자동 갱신).
+2. `soc.<DDNS 이름>.synology.me`가 NAS 공인 IP로 풀리는지 확인한다: 이 PC에서 `nslookup soc.<DDNS 이름>.synology.me`. Synology DDNS의 와일드카드 레코드로 하위 도메인이 같은 IP를 가리킨다(`T13` 확인).
 
 ### 4.2 역방향 프록시 규칙
 
@@ -357,9 +367,10 @@ DSM 7.3 기준 메뉴 경로다. 이 문서를 쓸 때 실제 화면으로 확�
 | HSTS 활성화 | 켬 |
 | 대상 프로토콜 / 호스트 이름 / 포트 | `HTTP` / `localhost` / `18480` (`.env`의 `PORTFOLIO_HTTP_PORT`) |
 
-- **사용자 지정 헤더**: DSM 역방향 프록시는 기본으로 `Host`(소스 호스트 이름), `X-Forwarded-For`(방문자 IP를 덧붙임), `X-Forwarded-Proto`(`https`)를 넘긴다고 보고 설계했다(확인 필요). 4.4의 감사 로그 IP·`Location` 확인에서 기대와 다르면 이 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다(확인 필요). WebSocket 헤더는 필요 없다.
-- `localhost`가 IPv6 `::1`로 풀려 연결되지 않으면 대상 호스트 이름을 `127.0.0.1`로 바꾼다(확인 필요).
+- **사용자 지정 헤더는 넣지 않는다.** `T13`에서 기본 규칙(사용자 지정 헤더 없음)이 넘기는 헤더를 `nginx-waf` ModSecurity 감사 로그로 확인했다: `Host`는 소스 호스트 이름, `X-Forwarded-For`는 방문자가 보낸 값 뒤에 실제 접속 IP를 **덧붙인다**(덮어쓰지 않음, 예: `203.0.113.9, 192.168.50.207`), `X-Forwarded-Proto`는 방문자 값과 관계없이 `https`로 **덮어쓴다**, `X-Real-IP`는 실제 접속 IP다. nginx가 가장 오른쪽 비신뢰 주소를 쓰므로(1.1) 방문자가 앞부분을 꾸며도 감사 로그 IP·속도 제한 키·`Location`이 바뀌지 않는다. WebSocket 헤더는 필요 없다.
+- `localhost`가 IPv6 `::1`로 풀려 연결되지 않으면 대상 호스트 이름을 `127.0.0.1`로 바꾼다(`T13`에서는 이 문제가 없었다).
 - **인증서 연결**: **제어판 > 보안 > 인증서 > 설정**에서 서비스 `soc.<DDNS 이름>.synology.me`에 4.1의 인증서를 고른다.
+- DSM은 HSTS를 켜면 `Strict-Transport-Security: max-age=15768000; includeSubdomains; preload`를 붙인다. 앱도 `max-age=31536000 ; includeSubDomains`를 보내므로 응답에 HSTS 헤더가 두 개 있다(동작 영향 없음). DSM 앞단은 `Server: nginx`(버전 없음)를 붙이며 이 스택에서 바꿀 수 없다.
 - 공유기·모뎀 포트 포워딩과 기존 포트폴리오(`nexus-portal`)의 역방향 프록시 규칙은 바꾸지 않는다.
 
 ### 4.3 DSM이 실제로 보내는 헤더 확인(T13, 작업자)
@@ -372,14 +383,18 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
   psql -U postgres -d zeekad_dashboard -c "SELECT occurred_at, actor_username, client_ip FROM audit_logs WHERE action_type='LOGIN_SUCCESS' ORDER BY id DESC LIMIT 3"
 ```
 
-- `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 스택 서브넷 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2의 사용자 지정 헤더를 추가한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다.
-- `docker compose ... logs nginx-waf`의 ModSecurity 로그 `client_ip`도 같은 값이어야 한다.
+- `occurred_at`은 UTC다. 사용자가 알려 준 로그인 시각(한국 시간이면 9시간을 뺀다)으로 줄을 구분한다.
+- `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 스택 서브넷 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다(`T13`에서는 필요 없었다).
+- `docker compose ... logs nginx-waf`: 접근 로그 줄의 마지막 칸은 받은 `X-Forwarded-For` 원문이다(DSM이 덧붙인 마지막 주소 = 방문자 IP). ModSecurity JSON 로그(`"client_ip"`)는 차단·오류 응답 등 관련 있는 요청만 남으므로 성공한 로그인(200)은 접근 로그로 본다.
+- DSM이 넘기는 헤더를 직접 보려면 실패하는 로그인(401) 요청에 `X-E2E-Probe: <표지>` 헤더를 붙여 보내고, ModSecurity JSON 로그에서 그 표지가 있는 줄의 `request.headers`를 본다.
 
 ### 4.4 공개 주소 확인 체크리스트(SPEC '완료 기준' 6)
 
 외부망에서 `https://soc.<DDNS 이름>.synology.me`로 확인한다. 리허설에서 같은 항목을 이 PC로 확인한 증거는 `scripts/portfolio-verify.ps1`의 E2E 번호로 적었다.
 
-- [ ] 브라우저 주소 표시줄에 인증서 경고가 없다(와일드카드 인증서). `http://` 접속은 DSM 설정대로 `https://`로 넘어간다.
+**같은 LAN(이 PC)에서 확인할 때**: 공유기에 NAT 루프백이 없으면 이 PC에서 공인 IP로는 접속되지 않는다. 대신 `curl.exe --resolve soc.<DDNS 이름>.synology.me:443:192.168.50.146 https://soc.<DDNS 이름>.synology.me/...`로 NAS의 DSM `443`에 직접 붙는다(인증서·역방향 프록시·헤더는 공개 경로와 같다). 브라우저가 필요한 항목은 `curl.exe`의 인증서 검증 성공(`--insecure` 없이 종료 코드 0)과 `Set-Cookie` 속성으로 대신한다. 이 PC의 모든 요청은 같은 클라이언트 IP(이 PC LAN IP)라 로그인 요청 사이에 7초 정도 간격을 두지 않으면 속도 제한(`429`)에 걸린다. 공개 IP 접속 자체와 방문자 공인 IP 기록(4.3)은 외부망(휴대전화 데이터 등)에서만 확인할 수 있다.
+
+- [ ] 브라우저 주소 표시줄에 인증서 경고가 없다(4.1 하위 도메인 인증서). `http://` 접속은 공유기가 `443`만 포워딩하므로 외부에서는 해당 없다.
 - [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 캡처 9개(`cic17-*` 4, `syn1-*` 4, `lab-20261201`) 건수가 `snapshot/manifest.json`과 같다. (리허설 [2]·[3])
 - [ ] IP는 뒤 두 옥텟이 가려져 보인다(`192.168.*.*`). (리허설 [3])
 - [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
@@ -387,7 +402,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `demo`에 틀린 비밀번호를 여러 번 넣어도 잠기지 않는다. 짧은 시간에 로그인을 많이 시도하면 `429`가 난다. (리허설 [6]·[7])
 - [ ] 감사 로그의 로그인 IP가 실제 접속 IP다(4.3). (리허설 [7])
 - [ ] `https://soc.<DDNS 이름>.synology.me/api/incidents?asset=%27%20OR%201%3D1--`가 `403`(WAF)이다. XSS(`?asset=%3Cscript%3E`)·경로 탐색(`?asset=../../etc/passwd`)도 `403`. (리허설 [8])
-- [ ] 응답 헤더에 `Strict-Transport-Security`(DSM HSTS), `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server: nginx`가 없다. 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1], HSTS는 공개 주소에서만)
+- [ ] 응답 헤더에 `Strict-Transport-Security`(DSM HSTS), `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server`에 버전이 없다(DSM 앞단이 `Server: nginx`를 붙인다. 4.2). 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1], HSTS는 공개 주소에서만)
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
 - [ ] 로그아웃 상태에서 `https://soc.<DDNS 이름>.synology.me/`에 접속하면 `https://soc.<DDNS 이름>.synology.me/login`으로 간다(주소에 `:8080`·`:18480`·`http://`가 없다). (리허설 [1])
 - [ ] LAN에서 `http://192.168.50.146:18480/`로 직접 접근할 수 없다. NAS의 이 스택 포트는 `127.0.0.1:18480` 하나뿐이다. (3.6, 리허설 [0])
