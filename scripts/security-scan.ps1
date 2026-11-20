@@ -481,11 +481,11 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $vd1Broadcast = @($vd1.slackDeliveries | Where-Object { $_.replyBroadcast -eq $true })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/1 -> HTTP $($viewerDetail.Status) hostIp=$($vd1.incident.hostIp) slack threadRoleLabel=[$($vd1Labels -join ', ')] replyBroadcast=$($vd1Broadcast.Count) threadGroups=$(@($vd1.slackThreadGroups).Count)")
                 Assert-True ($vd1.incident.hostIp -eq "192.168.*.*" -and -not $viewerDetail.Body.Contains("192.168.10.50")) "viewer1 사건 상세 IP 마스킹" $viewerDetail
-                Assert-True (($vd1Labels -contains "머리 알림") -and ($vd1Labels -contains "머리 사건 후속 답글") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
+                Assert-True (($vd1Labels -contains "첫 알림") -and ($vd1Labels -contains "후속 알림") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
 
                 $viewerDetail2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $viewerCookies
                 Assert-Status $viewerDetail2 200 "viewer1 사건 상세(101/rank/2)"
-                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "스레드 답글" })
+                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "다른 사건 알림의 후속 알림" })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/2 -> HTTP $($viewerDetail2.Status) thread replies=$($vd2Replies.Count) threadParent=[$(@($vd2Replies | ForEach-Object { $_.threadParent }) -join ', ')]")
                 Assert-True ($vd2Replies.Count -gt 0 -and @($vd2Replies | Where-Object { $_.threadParent -match "192\.168\.\*\.\*" }).Count -gt 0 -and -not $viewerDetail2.Body.Contains("192.168.10.50")) "viewer1 Slack zeekad_thread_parent IP 마스킹" $viewerDetail2
 
@@ -647,7 +647,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $e2eLogs.Add("[6d] admin POST /api/reviews/decide (dismiss): $(Format-Resp $adminRevDismiss)`n     GET /api/reviews?captureId=lab-fusion-v2: $(@($revItems | ForEach-Object { "job=$($_.reviewJobId) rank=$($_.queueRank) action=$($_.zeekadReviewAction) label=$($_.resumeStatusLabel)" }) -join ' | ')")
                 Assert-Status $adminRevDismiss 200 "admin /api/reviews/decide dismiss"
                 Assert-True (@($dismissed).Count -eq 1 -and $dismissed.zeekadReviewAction -eq "dismiss" -and $dismissed.reviewJobId -eq 602) "admin dismiss 결정 반영(최신 작업 602 한 건)" $adminRevAfter
-                Assert-True (($revLabels -contains "반영 중") -and ($revLabels -contains "반영 실패(운영자 확인)")) "검토 반영 상태 라벨(반영 중, 반영 실패(운영자 확인))" $adminRevAfter
+                Assert-True (($revLabels -contains "반영 중") -and ($revLabels -contains "반영 실패(관리자 확인 필요)")) "검토 반영 상태 라벨(반영 중, 반영 실패(관리자 확인 필요))" $adminRevAfter
                 Assert-True (@($revItems | Where-Object { $_.reviewJobId -eq 601 -or $_.jobId -eq 601 }).Count -eq 0 -and -not $adminRevAfter.Body.Contains("구 작업(601) 중복 검토 요청")) "구 작업(601) 중복 검토 요청 제거" $adminRevAfter
 
                 # WAF를 거친 PUT /api/admin/users/{id}: GET 결과의 id·role·capturePatterns를 그대로 쓰고 displayName만 바꾼다.
