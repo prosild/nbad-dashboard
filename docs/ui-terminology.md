@@ -12,3 +12,94 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 | 2026-11-21 | T16 | 사건 상세 · 근거 요약 | (없음) | 페이로드 바이트가 부푼 연결 수 | 프론트엔드 라벨(값: `evidence.network.zeekad_payload_bytes_inflated`) | 새 정형 칸. zeek_AD `limits` 문장의 설명과 같은 뜻 | 아니요 |
 | 2026-11-21 | T16 | 사건 상세 · 근거 요약 | `-`(키 없음), 프로토콜 로그는 0 또는 `[object Object]` | 값 없음 | 프론트엔드 | 키가 없는 값(null)과 관측한 0을 구분한다 | 아니요 |
 | 2026-11-21 | T16 | 사건 상세 · 근거 요약 | 근거 API 연결 불가(DB 뷰 정보만 표시) — 근거 행이 없을 때도 같은 문구 | 이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음) | API(`EvidenceData.NO_EVIDENCE_MESSAGE`) | API 연결 실패와 근거 행 없음(`"evidence": null`)을 구분한다. 연결 실패 문구는 그대로 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 제품 이름(로그인 제목, 사이드바) | zeek_AD SOC Console / zeek_AD SOC / 관제·조사 콘솔 | zeek_AD 보안 관제 | 프론트엔드 | 이름이 세 가지였다. 설계자 확정 핵심 용어 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 메뉴, 화면 제목 | 이상탐지 조사 큐 / 분석가 승인 대기(목록) / 운영 상태 · 결론 집계(운영 상태 및 분석가 결론 집계) | 탐지 사건 / 판단 요청 / 운영 현황 | 프론트엔드 | "큐"·"승인"은 개발·행위와 맞지 않는 말이다. 메뉴 "판단 요청"과 전송 판단 선택지 "분석가 판단 요청"은 같은 흐름(파이프라인이 분석가 판단을 요청함)이라 일부러 같은 말을 쓴다 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 페이지 부제 | `dashboard.latest_incident_queue 기반 …`, `dashboard.analyst_review_queue · (zeekad_report_job_id, incident_id) 연계 …`, `dashboard.feedback_summary · scoring_jobs …`, `DB UPDATE/DELETE 차단 트리거로 …`, `역할(VIEWER/ANALYST/ADMIN), 캡처 패턴(IDOR 경계) …` | 화면에서 하는 일을 한 문장으로(예: "탐지 모델이 올린 사건을 우선순위 순으로 확인하고 조사합니다", "로그인·열람·상태 변경 기록입니다. 기록은 수정하거나 지울 수 없습니다") | 프론트엔드 | DB·뷰·필드 이름과 취약점 이름을 보이는 글에서 뺐다 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 카드 제목 | 괄호 속 내부 이름: `(evidence.v1)`, `(incident_id 단독 조회)`, `(incident_id 기준)`, `(analyst_review_queue)`, `(dashboard.feedback_summary)`, `(scoring_jobs)`, `(model_bundles)`, `(slack_summaries)`, `(큐 작업 #N)`, `(큐 기준)` | 괄호 삭제: 근거 요약 / Slack 알림 이력 / 상태 변경 · 이력 / 분석가 판단 요청 / 분석가 판정 집계 / 분석 실행 기록 / 모델 구성 / Slack 일일 요약 / 모델별 이상 판정 구간 / 총 연결 수 | 프론트엔드 | 내부 이름 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 병기 | `한국어 (영어)` 병기: 관측 요약 (Observation Summary), 주장 목록 (Claims …), 가능한 설명 (Possible Explanations), ATT&CK 후보 (MITRE ATT&CK Candidates), 보고서 전송 권고 (Send Recommendation), 가명표 (Pseudonyms), 추가 확인 항목 (Follow-up), 관측 한계 (Limitations), 상위 상대 IP (Top Peers), 상위 포트 (Top Ports), 정책 규칙 (Policy), 행위 유형 (actionType) 등 | 관측 요약 / 확인된 사실 / 가능한 해석 / 관련 ATT&CK 기법 후보 / 보고서의 알림 권고 / 보고서 속 가명 / 추가 확인 권고 / 근거의 한계 / 많이 통신한 상대 IP / 많이 쓴 목적지 포트 / 규칙 의견 / 동작 유형 | 프론트엔드 | 한국어 하나로 쓴다(업계 약어 IP·DNS·HTTP·TCP/UDP·Kerberos·NTLM·Slack·TOTP·ATT&CK는 예외) | 아니요 |
+| 2026-11-21 | T17 | 전체 · 표 머리글·소제목 | 영문 대문자·자간 확대(`uppercase tracking-wider`) | 한국어 일반 글꼴 | 프론트엔드(`.soc-th`, `.soc-subhead`) | 한국어 제목 옆 영문 대문자가 반복됐다 | 아니요 |
+| 2026-11-21 | T17 | 사건 목록·상세·판정 | 미해결 (open) / 확인 중 (investigating) / 종료 (closed) | 신규 / 조사 중 / 종료 | zeek_AD 값 `open`/`investigating`/`closed` | 핵심 용어(설계자 확정) | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세·운영 | 결론 / 종료 결론 / 결론 3종 분포, 실제 공격 (true_positive) / 오탐 (false_positive) / 정상 행위 (benign), TP·FP·정상 | 판정 / 판정 분포, 정탐 / 오탐 / 정상 행위 | zeek_AD 값 `true_positive`/`false_positive`/`benign` | 핵심 용어. "결론"과 "결정"의 혼동을 없앤다. 운영 화면 정밀도 문장 속 "결론"은 T20에서 바꾼다 | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세·판단 요청 | confirm (조사 진행) / dismiss (오탐 종료) / 승인 대기, 검토 결정 제출 (confirm / dismiss), 검토 메모, 현재 결정, 미결정만 보기 (pendingOnly) | 조사 진행 / 오탐으로 종료 / 판단 대기, 판단 입력, 판단 메모, 현재 판단, 판단 대기만 보기 | zeek_AD 값 `confirm`/`dismiss` | 핵심 용어 | 예 |
+| 2026-11-21 | T17 | 판단 요청·상세 | 대기 중 / 반영 실패(운영자 확인), 파이프라인 반영 | 판단 대기 / 반영 실패(관리자 확인 필요), 자동 처리 반영 | API(`AnalystReviewItem.getResumeStatusLabel`), 프론트엔드 | 핵심 용어. 결정 전 값도 "판단 대기"로 맞췄다. 백엔드 문구를 바꿔 Gradle 기대값도 고쳤다 | 아니요 |
+| 2026-11-21 | T17 | 상세·판단 요청 | 검토 결정이 '조사 진행 (confirm)'으로 저장되었습니다. 파이프라인이 30초 주기로 후속 반영을 진행합니다. (dismiss도 같은 형식) | 판단을 '조사 진행'으로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다. / 판단을 '오탐으로 종료'로 저장했습니다. … | API(`AnalystReviewDecisionService` 성공 메시지, 알림 토스트) | 병기·"파이프라인" 내부어 제거 | 아니요 |
+| 2026-11-21 | T17 | 상세 | 사건이 종료(closed, 결론: true_positive) 상태로 변경되었습니다. / 사건이 확인 중(investigating) 상태로 변경되었습니다. / 사건 종료(closed) 시 결론(true_positive, false_positive, benign)을 선택해야 합니다. | 사건을 종료했습니다. 판정: 정탐 / 사건을 조사 중으로 바꿨습니다. / 사건을 종료하려면 판정(정탐·오탐·정상 행위)을 선택해야 합니다. | API(`IncidentTransitionService`) | 병기 제거, 핵심 용어 | 아니요 |
+| 2026-11-21 | T17 | 상세 | 다음 상태 전이: A → B / 확인 중으로 변경 (investigating) / 종료 처리 (closed) / 종료 결론 (필수) / init → open | 다음 단계: A → B / 조사 중으로 변경 / 종료 처리 / 판정 (필수) / 생성 → 신규 | 프론트엔드 | "전이"는 개발어, 병기 제거 | 아니요 |
+| 2026-11-21 | T17 | 사건 목록·상세·판단 요청 | 역할 (Role) / originator / responder | 통신 방향: 연결 시작 측 / 연결 수신 측 | zeek_AD 값 `zeekad_role` | 핵심 용어. 권한 "역할"과 겹치지 않게 한다(조사 2 제안 "요청 측/응답 측" 대신 설계자 확정 이름) | 예 |
+| 2026-11-21 | T17 | 전체 | 캡처 (Capture) / 선택 캡처 / 캡처 필터 / 전체 허용 캡처 / 허용 캡처 패턴 / 허용된 캡처 없음 | 수집 구간 / 열람 허용 수집 구간 전체 / 열람 허용 수집 구간 / 열람 허용 수집 구간 없음 (값 `cic17-wed` 등은 그대로, 사이드바의 `*`는 "전체") | 프론트엔드 | 핵심 용어 | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세·운영 | 채점 작업 (Job) / 작업 # / 큐 작업 # / 보고 작업 # / 검토 작업 # / Job ID / `#4 · zeekad-fusion/1 · succeeded (최신)` | 분석 실행(날짜·시각으로 표시) — 번호는 툴팁("분석 실행 #N", "보고서 실행 #N", "판단 요청 실행 #N"). 실행 선택지: `2026-11-12 11:27:00 · zeekad-fusion/1 · 완료 · 최신` | 프론트엔드(값: zeek_AD `job_id`, `status`) | 핵심 용어. 작업 번호는 업무에 필요 없어 툴팁으로 옮겼다 | 예 |
+| 2026-11-21 | T17 | 상세·운영 | 번들 / 모델 번들 / 역할 · 번들 / 처음 뽑은 모델 / 꼽은 모델 (pickedBy) / 탐지 모델 | 모델 구성 (값 `zeekad-fusion/N` 그대로) / 주 탐지 모델 (모델 식별자 그대로) | 프론트엔드 | 핵심 용어. 모델 표시 이름은 사용자 결정으로 미룸 | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세 | 중복 탐지 +N / 중복 탐지: a, b | 함께 탐지한 모델 +N (모델 목록은 툴팁) | 프론트엔드 | 핵심 용어. "중복"은 제거 대상처럼 읽힌다 | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세 | 단계 5 보고서 / 단계 5 사건 보고서 / 단계 5 보고서 유무 / 보고서 없음 / `llm` / `template` / `report` | AI 분석 보고서 / 이 사건에는 AI 분석 보고서가 없습니다. / AI 작성 / 템플릿 작성 | zeek_AD 값 `zeekad_report_kind` | 핵심 용어. 파이프라인 단계 번호를 쓰지 않는다 | 예 |
+| 2026-11-21 | T17 | 사건 목록·상세 | 검증 통과 / 검증 실패 / 검증 실패 사유 | 사실 검증 통과 / 사실 검증 실패 / 사실 검증 실패 사유 | zeek_AD 값 `zeekad_verification_passed` | 핵심 용어. 무엇을 검증했는지 드러낸다 | 예 |
+| 2026-11-21 | T17 | 상세 · AI 분석 보고서 | 요청 / 응답 모델, 소요 시간 · 토큰(`1.40s · in 500 / out 200 / think 50`), 입력 버전 · 실행, 생성 시각, LLM 오류 | 사용 모델(요청 / 응답), 소요 시간 · 토큰(`1.4초 · 입력 500 · 출력 200 · 추론 50 토큰`), 보고서 형식 · 입력 형식 · 실행 ID(값 원문), 작성 시각, AI 작성 오류 | 프론트엔드 | 영어 약어 제거, 기간 표기 통일. 버전 값은 원문 그대로 둔다(접기는 T19) | 아니요 |
+| 2026-11-21 | T17 | 사건 목록·상세 | Slack 전송 대상 / 전송 대상 / 보류 / 보류 / 미전송 / 최종 판단: 전송 대상 (would_send = true) / 단계 5 전송 판단 기준(would_send=true) | 알림 보냄 / 알림 보류 / 최종 알림 보냄·알림 보류 / 알림 전송 판단에서 Slack 알림을 보내기로 한 사건 | zeek_AD 값 `would_send` | 핵심 용어. "대상"은 아직 안 보낸 것처럼 읽힌다 | 예 |
+| 2026-11-21 | T17 | 상세 · 알림 전송 판단 | 3자 전송 판단 비교 / 정책 규칙 (Policy) / 필수 규칙 / policy_id: … / 일반 LLM 권고 / 판단 모델 (gemini-decision-1) / 결정 주체: policy / 정책 규칙, 일반 LLM, 판단 모델 간 의견 불일치가 감지되었습니다. / 전송 판단 없음 | 알림 전송 판단 / 규칙 의견 / 반드시 적용되는 규칙 / (규칙 ID는 툴팁) / AI 보고서 의견 / 판단 모델 의견(모델 이름은 툴팁) / 결정 근거 규칙 / 규칙, AI 보고서, 판단 모델의 의견이 서로 다릅니다. / 이 사건은 알림 전송 판단 대상이 아닙니다. | 프론트엔드(값: zeek_AD `decided_by`, `policy_id`, `decision_model`) | 핵심 용어. "선택 확률"은 그대로(정확도 금지 결정 유지) | 예 |
+| 2026-11-21 | T17 | 상세 · 알림 전송 판단 | 선택지 원문·병기: send / hold / analyst_review / need_more_evidence, 전송 (send) 등 | 전송 / 보류 / 분석가 판단 요청 / 근거 보강 필요 | zeek_AD 값 | 핵심 용어. "분석가 판단 요청"은 메뉴 "판단 요청"과 같은 흐름이라 같은 말을 쓴다 | 예 |
+| 2026-11-21 | T17 | 상세 · 알림 전송 판단 | 규칙 사유 원문 `queue_rank 1 <= 5`, `flagging_models 3 >= 2` | 탐지 순위 5위 이내(현재 1위) / 2개 이상 모델이 탐지(현재 3개). 모르는 형식은 원문을 흐리게 + "미등록 값" 툴팁 | zeek_AD `policy_reasons` | 조건식 원문은 필드 이름이다. 새 규칙 형식이 생기면 사전(`policyReasonText`)에 더한다 | 예 |
+| 2026-11-21 | T17 | 상세·판단 요청 | 검토 사유 원문 `llm=analyst_review, decision_model=analyst_review` | 요청 사유: AI 보고서: 분석가 판단 요청 · 판단 모델: 분석가 판단 요청 | zeek_AD `zeekad_review_reason` | 내부 키 나열을 문장으로 바꿨다. 자유 문장 사유는 그대로 | 예 |
+| 2026-11-21 | T17 | 상세 · Slack | Slack 알림 스레드 / 스레드 묶음 N개 / 스레드 키: … / 머리 알림 / 머리 사건 후속 답글 / 스레드 답글 / 채널 재알림 / 기록만(dry-run) / 상태: recorded / 모드: dry_run / ts·parent·작업 # / Slack 페이로드 펼치기 / Slack 전송 기록이 없습니다. | Slack 알림 이력 / 알림 묶음 N개 / (묶음 기준 사건은 툴팁) / 첫 알림 / 후속 알림 / 다른 사건 알림의 후속 알림 / 채널에도 표시 / 시험 모드(실제 전송 안 함) / 전송 결과 기록됨 / (시험 모드면 생략) / (툴팁) / Slack 원본 메시지 보기 / 이 사건으로 보낸 Slack 알림이 없습니다. | API(`IncidentDetailService` 스레드 역할), 프론트엔드(값: zeek_AD `message_kind`, `delivery_mode`, `delivery_status`) | 핵심 용어. "머리"는 직역이다. 세 번째 경우(다른 사건 스레드의 답글)는 핵심 표에 없어 작업자가 정했다 | 예 |
+| 2026-11-21 | T17 | 상세 · 근거 요약 | 근거 API 연결 불가(DB 뷰 정보만 표시) / 이 사건의 근거 요약 없음(근거 API는 정상, 근거 행 없음) / 상단 "정상" 배지 | 상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다. / 이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다. / (배지 삭제) | API(`EvidenceData.FALLBACK_MESSAGE`, `NO_EVIDENCE_MESSAGE`) | "DB 뷰"·"근거 행" 내부어 제거. 두 경우를 구분하는 것은 유지. 의미 없는 배지 삭제 | 아니요 |
+| 2026-11-21 | T17 | 상세 · 근거 요약 | 연결 상태 (conn_state) 분포 / 프로토콜 로그 수치 / 표 열 `ip`·`connections`·`port`·`transport`·`zeek`·`event`·`source`·`destination`·`network` / 프로토콜 하위 수치 `queries`·`nxdomain`·`requests` 등 / 연결 상태 `SF`·`S0`·`RSTO` 등 / 추가 근거 필드 | 연결 상태 분포 / 프로토콜별 기록 수 / IP·연결 수·포트·전송 계층·Zeek 기록·시각·출발지·목적지·네트워크 / 질의 수·없는 도메인 응답·요청 수 등 / 정상 연결·종료·연결 시도, 응답 없음·시작 측이 강제 종료 등(원 코드는 툴팁) / 원본 근거 데이터 | 프론트엔드 사전(값: zeek_AD `evidence.v1` 키) | 키 이름은 라벨이므로 사전으로 바꾼다. 원본 근거 데이터의 키·값은 원문 그대로(접기는 T19) | 예 |
+| 2026-11-21 | T17 | 상세 · 자산 관측 | 자산 관측 이름 (Kerberos / NTLM) / `zeekad_name_kind: kerberos_machine`, `zeekad_source_log`, `first_seen: 2017-07-05T11:54:41.816+00:00` 등 | Kerberos·NTLM 관측 계정 이름 / 이름 종류 컴퓨터 계정, 출처 로그, 처음 관측 2017-07-05 20:54:41 등 | 프론트엔드 사전(값: zeek_AD `zeekad_asset_observations`) | 키 원문 제거, 시각 표기 통일 | 예 |
+| 2026-11-21 | T17 | 상세 | 모델 창 비율 / 임계값 이상 창 수 / 전체 창 수 / 모델 창 비율 정보가 없습니다. | 모델별 이상 판정 구간 / 기준값을 넘은 구간 수 / 전체 구간 수 / 모델별 이상 판정 구간 정보가 없습니다. | 프론트엔드(값 `windowRatioLabel`은 그대로, T19) | "창"은 내부어 | 예(구간 정의) |
+| 2026-11-21 | T17 | 상세 | 사건 상세 · IP (#1) / incident_id: … / 조사 큐로 / 사건 근거·보고서·판단 데이터를 조합하는 중... / 호스트명 없음 | 사건 상세 · IP · 1위 / 부제 "관측 구간 · 수집 구간", 본문 "사건 ID" + 원문 / 사건 목록으로 / 사건 정보를 불러오는 중... / 호스트 이름 없음 | 프론트엔드 | 필드 이름 라벨 제거 | 아니요 |
+| 2026-11-21 | T17 | 사건 목록 | 상태별 분포 (open / investigating / closed), 미해결 · 확인 중 · 종료 건수 / 분석가 승인 대기 / 승인 대기 화면으로 이동 / 조건에 해당하는 이상탐지 사건이 없습니다. / 조사 큐 데이터를 불러오지 못했습니다. / 순위 `#1` | 처리 상태 신규 N · 조사 중 N · 종료 N / 분석가 판단 대기 / 판단 요청 화면으로 이동 / 조건에 맞는 사건이 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요. / 사건 목록을 불러오지 못했습니다. / 순위 `1`(오른쪽 정렬 숫자) | 프론트엔드 | 병기·내부어 제거 | 아니요 |
+| 2026-11-21 | T17 | 판단 요청 | 조회자(VIEWER) 권한은 검토 목록을 조회할 수 있으나 결정(confirm/dismiss)은 분석가(ANALYST) 이상만 가능합니다. / 조건에 해당하는 검토 요청이 없습니다. / 검토 사유 / 결정 · 반영 상태 / 작업 ID 없음 | 읽기 전용 계정입니다. 판단은 분석가 계정에서 할 수 있습니다.(경고색 없이 한 줄) / 판단을 기다리는 사건이 없습니다. / 요청 사유 / 판단 · 반영 상태 / 판단 요청 정보가 없어 결정할 수 없습니다 | 프론트엔드 | 병기 제거. 판단 대기 행은 "판단 대기" 배지 하나만 남겼다(중복 배지 제거) | 아니요 |
+| 2026-11-21 | T17 | 운영 현황 | 전체 (all) / 사건 / 알림 / 결론 / 결론 비율 / 놓친 공격(재현율)은 이 집계로 알 수 없습니다. / 표시할 분석가 결론 집계 데이터가 없습니다. / 채점 작업 기록이 없습니다. / 등록된 모델 번들이 없습니다. / `name (version)` / `sha256: …` / 작업 # / `daily-summary.v1` / 채널: … · 상태: recorded | 모든 모델 합계 / 사건 / 알림 / 판정 / 판정 비율 / 이 표는 탐지된 사건만 셉니다. 놓친 공격 수는 알 수 없습니다. / 아직 분석가 판정이 기록된 사건이 없습니다. / 분석 실행 기록이 없습니다. / 등록된 모델 구성이 없습니다. / 등록 이름 … · 판 … / 구성 파일 해시 … / (툴팁) / (툴팁) / 채널 … · 전송 결과 기록됨 | 프론트엔드(값: zeek_AD `feedback_summary`, `slack_summaries`) | 핵심 용어·병기 제거. 정밀도 문장(`FeedbackSummaryRecord`)은 T20에서 다루므로 그대로 | 예(판정 용어) |
+| 2026-11-21 | T17 | 운영 현황 | 작업 상태 `succeeded` / `failed` | 완료 / 실패 / 진행 중 / 대기 | zeek_AD 값 `scoring_jobs.status` | 원문 코드 | 예 |
+| 2026-11-21 | T17 | 사용자 관리 | 관리자 · 사용자 및 접근 권한 관리 / 아이디 (username) / 표시 이름 (displayName) / 역할 (Role) / 역할 값 `VIEWER`·`ANALYST`·`ADMIN` / 계정 / TOTP 상태 / TOTP 등록됨·미등록 / 잠금 (시각) / 실패 횟수: N / TOTP 초기화 / 예: analyst3 | 사용자 관리 / 아이디 / 표시 이름 / 역할 / 조회자·분석가·관리자 / 계정 · 2단계 인증 상태 / 2단계 인증 등록됨·미등록 / 잠김 · 시각까지 / 로그인 실패 N회 / 2단계 인증 초기화 / 영문·숫자 3~64자 | 프론트엔드 | 핵심 용어(역할)·병기 제거 | 아니요 |
+| 2026-11-21 | T17 | 감사 로그 | 관리자 · 불변 감사 로그 / 행위 유형 (actionType) / 행위자 아이디 (actorUsername) / 조회 건수 (limit) / 예: analyst1 / 클라이언트 IP / 상세 JSON · JSON 보기 / 동작 코드 원문(`LOGIN_SUCCESS` 등) | 감사 로그 / 동작 유형 / 사용자 아이디 / 조회 건수 / 찾을 사용자 아이디 / 접속 IP / 상세 · 상세 보기 / 표시 이름 사전(아래 '감사 로그 동작 유형') | 프론트엔드(값: 대시보드 `AuditActionType`) | 병기·코드 제거, 예시 아이디를 일반 문구로 | 아니요 |
+| 2026-11-21 | T17 | 로그인 | 연속 5회 로그인 실패 시 계정이 15분간 잠깁니다. 관리자(ADMIN) 계정은 로그인 후 TOTP 2단계 인증이 필요합니다. / 이상탐지 조사·사건 근거·검토 승인 보안 관제실 / 예: analyst1 | 로그인을 여러 번 실패하면 잠시 로그인이 제한될 수 있습니다. 관리자 계정은 2단계 인증을 거칩니다. / 네트워크 이상탐지 사건을 조사하고 판단하는 관제 화면 / 아이디 입력 | 프론트엔드 | 공개 데모 설정(잠금 꺼짐·속도 제한)과 어긋나는 문구를 어느 배포에서도 사실인 문구로 고쳤다 | 아니요 |
+| 2026-11-21 | T17 | 로그인 · 2단계 인증 / 권한 없음 / 로딩 | Base32 시크릿 키 / otpauth URI / 발급자 / 계정 / SOC 보안 세션 확인 중... / 이 메뉴는 관리자(ADMIN) 역할만 접근할 수 있습니다. | 수동 입력용 키 / QR 코드에 담긴 등록 주소 / 발급자 · 계정 / 로그인 상태를 확인하는 중... / 이 메뉴는 관리자만 쓸 수 있습니다. | 프론트엔드 | 기술어·병기 제거(TOTP는 업계 약어로 둔다) | 아니요 |
+| 2026-11-21 | T17 | 전체 · 마스킹 안내 | 상단 "VIEWER 마스킹 적용 중" 배지 + "조회자 (VIEWER)" 배지 + 페이지마다 주황 배너 3종(조사 큐·사건 상세·승인 대기) | 상단 바 한 곳 "읽기 전용 · 개인정보 가림"(중립색, 툴팁에 설명). 페이지 배너 삭제 | 프론트엔드 | 같은 안내가 세 번 겹쳤고 상시 정보에 경고색을 썼다 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 시각 | `2017. 07. 05. 22:45:00`(브라우저 시간대), `2017-07-05T11:54:41.816+00:00`(원문) 혼재, 시간대 표시 없음 | `2017-07-05 22:45:00`(항상 한국 표준시 `Asia/Seoul`) + 상단 바 "시각 기준 KST". 기간은 `45분`·`1시간 5분`·`1.4초` | 프론트엔드(`utils/format.ts`) | 방문자 시간대에 따라 값이 달라지고 시간대를 알 수 없었다 | 아니요 |
+| 2026-11-21 | T17 | 전체 · 오류 | 요청 처리 중 오류가 발생했습니다 / 새로고침(빨강 띠) | 요청을 처리하지 못했습니다 + "잠시 후 다시 시도하세요. 계속되면 관리자에게 알려 주세요." / 다시 시도(주황 띠) | 프론트엔드 | 사람이 할 일을 알려 준다. 빨강은 위험·정탐 전용이라 주황을 쓴다 | 아니요 |
+
+## 색·배지 체계 (T17)
+
+조사 3 보고서 3절을 출발점으로 정했다. 같은 의미는 모든 화면에서 같은 색이다. 공통 컴포넌트는 `frontend/src/components/StatusBadge.tsx`(`SocBadge`, `CodeLabel`, 상태별 배지)다.
+
+| 의미 | 색(Tailwind) | 쓰는 곳 | 쓰지 않는 곳 |
+|---|---|---|---|
+| 빨강 `danger`(rose) | 높은 위험·우선순위·정탐 전용 | 판정 "정탐" 배지, 판정 분포의 정탐 건수(0이면 무색) | 사건 상태, 오류·실패, 버튼, 로그아웃 |
+| 주황 `attention`(amber) | 사람 손이 필요함 | 판단 대기, 반영 실패(관리자 확인 필요), 분석 실행 실패, 사실 검증 실패, 의견 불일치 경고, 요청 실패·오류 안내, 계정 잠김·2단계 인증 미등록, 보안 감사 동작(로그인 실패·계정 잠김·접근 거부), 되돌리기 어려운 버튼(`.soc-btn-caution`, 2단계 인증 초기화) | 상시 정보(마스킹 안내, ATT&CK 가설, 근거의 한계, 시험 모드) |
+| 중립(slate) + 아이콘 | 상태·정보 | 사건 상태(신규 ○, 종료 ✓), 판단 완료(조사 진행·오탐으로 종료 ✓), 반영 중·반영됨, 분석 실행 완료, 사용자 역할, 마스킹 안내, 시험 모드, 보고서 작성 방식 | — |
+| 하늘 `info`(sky) | 진행 중 | 사건 상태 "조사 중"(◐), 분석 실행 진행 중 | — |
+| 초록 `positive`(emerald) | 정상 행위 판정, 사실 검증 통과 | 판정 "정상 행위", 사실 검증 통과 배지, 조사 진행 버튼 | — |
+| 보라 `violet` | 오탐 판정 | 판정 "오탐" | 조사 중·판단 결정(예전엔 주황과 겹쳤다) |
+| 청록 `notice`(cyan) | 알림 보냄, 첫 알림, 링크·포커스 | 알림 보냄 배지(종 아이콘) | 데이터 의미(정상 행위·수집 구간·순위)에 쓰지 않는다 |
+
+- 글꼴: 고정폭은 IP·사건 ID·해시·포트·모델·구성 식별자·수집 구간 값 같은 기계 값에만 쓴다. 숫자는 `tabular-nums` + 오른쪽 정렬(`.soc-num`) + 천 단위 구분(`formatNumber`).
+- 줄바꿈: `body`에 `word-break: keep-all`(어절 단위), 배지·버튼은 `whitespace-nowrap`.
+- 머리글: `.soc-th`·`.soc-subhead`에 대문자·자간 확대를 쓰지 않는다.
+- CSP: 모두 Tailwind 정적 클래스와 순수 SVG(lucide 아이콘)다. 인라인 `style`·외부 폰트를 쓰지 않는다.
+
+## 표시 이름 사전 (코드 값 → 표시 이름)
+
+`frontend/src/utils/labels.ts`(`LABEL_DICTIONARIES`)와 같은 내용이다. 화면은 이 사전으로만 코드 값을 보여 주고 원래 코드 값은 툴팁에 둔다. 사전에 없는 값은 원래 값을 흐린 고정폭 글자로 보이고 "미등록 값" 툴팁을 단다. **탐지 모델 이름(`tail_rarity_v2`, `transformer_v2`, `tgn_recon`)과 모델 구성(`zeekad-fusion/N`)은 사용자 결정으로 바꾸지 않는다(사전에 없음).** "zeek_AD 공유"가 예인 항목은 zeek_AD가 주는 값이다.
+
+| 분류(사전 이름) | 코드 값 → 표시 이름 | 출처 | zeek_AD 공유 필요 |
+|---|---|---|---|
+| 사건 상태 (`incidentStatus`) | `open` → 신규, `investigating` → 조사 중, `closed` → 종료 | zeek_AD | 예 |
+| 판정 (`resolution`) | `true_positive` → 정탐, `false_positive` → 오탐, `benign` → 정상 행위 | zeek_AD | 예 |
+| 통신 방향 (`hostRole`) | `originator` → 연결 시작 측, `responder` → 연결 수신 측 | zeek_AD `zeekad_role` | 예 |
+| 보고서 작성 방식 (`reportKind`) | `llm` → AI 작성, `template` → 템플릿 작성 | zeek_AD | 예 |
+| 알림 전송 판단 선택지 (`sendChoice`) | `send` → 전송, `hold` → 보류, `analyst_review` → 분석가 판단 요청, `need_more_evidence` → 근거 보강 필요 | zeek_AD | 예 |
+| 최종 결정 주체 (`decidedBy`) | `policy` → 규칙, `llm` → AI 보고서, `decision_model` → 판단 모델 | zeek_AD `decided_by` | 예 |
+| 분석가 판단 (`reviewAction`) | `confirm` → 조사 진행, `dismiss` → 오탐으로 종료 (결정 전: 판단 대기) | zeek_AD | 예 |
+| 사실 검증 (`verification`) | `true` → 사실 검증 통과, `false` → 사실 검증 실패 | zeek_AD `zeekad_verification_passed` | 예 |
+| 관측 이름 종류 (`assetNameKind`) | `kerberos_machine` → 컴퓨터 계정, `kerberos_user` → 사용자 계정, `ntlm_user` → NTLM 사용자 계정 | zeek_AD `zeekad_name_kind` | 예 |
+| 자산 관측 항목 (`assetAttribute`) | `zeekad_name` → 이름, `zeekad_name_kind` → 이름 종류, `zeekad_source_log` → 출처 로그, `observations`·`observation_count` → 관측 횟수, `first_seen` → 처음 관측, `last_seen` → 마지막 관측 | zeek_AD `zeekad_asset_observations` | 예 |
+| Slack 메시지 종류 (`slackMessageKind`) | `incident` → 사건 알림, `status` → 상태 변경 알림, `daily_summary` → 일일 요약 | zeek_AD | 예 |
+| Slack 전송 방식 (`slackDeliveryMode`) | `dry_run` → 시험 모드(실제 전송 안 함), `live` → 실제 전송 | zeek_AD | 예 |
+| Slack 전송 결과 (`slackDeliveryStatus`) | `recorded` → 기록됨, `sent`·`delivered` → 전송됨, `failed` → 전송 실패 | zeek_AD | 예 |
+| 분석 실행 상태 (`jobStatus`) | `succeeded` → 완료, `failed` → 실패, `running` → 진행 중, `queued`·`pending` → 대기 | zeek_AD `scoring_jobs.status` | 예 |
+| 사용자 역할 (`userRole`) | `VIEWER` → 조회자, `ANALYST` → 분석가, `ADMIN` → 관리자 | 대시보드 | 아니요 |
+| 감사 로그 동작 유형 (`auditAction`) | `LOGIN_SUCCESS` → 로그인 성공, `LOGIN_FAILURE` → 로그인 실패, `ACCOUNT_LOCKED` → 계정 잠김, `TOTP_VERIFIED` → 2단계 인증 성공, `ACCESS_DENIED_IDOR` → 허용 범위 밖 접근 거부, `INCIDENT_VIEW_UNMASKED` → 가림 없이 사건 열람, `INCIDENT_STATUS_TRANSITION` → 사건 상태 변경, `ANALYST_REVIEW_DECISION` → 분석가 판단 결정, `USER_ADMIN_CHANGE` → 사용자 계정 변경 | 대시보드 `AuditActionType` | 아니요 |
+| 근거 표 열 (`evidenceField`) | `ip` → IP, `port` → 포트, `transport` → 전송 계층, `protocol` → 서비스 프로토콜, `connections` → 연결 수, `bytes` → 바이트, `zeek` → Zeek 기록, `event` → 시각, `source` → 출발지, `destination` → 목적지, `network` → 네트워크, `uid` → 연결 ID, `conn_state` → 연결 상태, `start` → 시작, `duration` → 지속 시간 | zeek_AD `evidence.v1` | 예 |
+| 프로토콜 하위 수치 (`protocolMetric`) | `queries` → 질의 수, `nxdomain` → 없는 도메인 응답, `max_query_length` → 최장 질의 길이, `failed_replies` → 실패 응답, `files` → 파일 수, `mappings` → 공유 폴더 연결, `auth_failures` → 인증 실패, `connections` → 연결 수, `without_sni` → SNI 없는 연결, `errors` → 오류 응답, `requests` → 요청 수, `auths` → 인증 수, `failures` → 실패 수, `calls` → 호출 수, `top_operations` → 주요 호출 | zeek_AD `evidence.v1 protocol_logs` | 예 |
+| Zeek 연결 상태 (`connState`) | `S0` → 연결 시도, 응답 없음 / `S1` → 연결됨, 종료 전 / `S2` → 연결됨, 시작 측만 종료 / `S3` → 연결됨, 수신 측만 종료 / `SF` → 정상 연결·종료 / `REJ` → 연결 거부 / `RSTO` → 시작 측이 강제 종료 / `RSTR` → 수신 측이 강제 종료 / `RSTOS0` → 시작 측이 응답 전 강제 종료 / `RSTRH` → 수신 측이 강제 종료(시작 미확인) / `SH` → 시작 측 종료, 응답 없음 / `SHR` → 수신 측 종료, 시작 미확인 / `OTH` → 시작 미확인 연결 | Zeek `conn_state` | 예 |
+| ATT&CK 전술 (`attackTactic`) | `reconnaissance` → 정찰, `resource-development` → 자원 개발, `initial-access` → 최초 접근, `execution` → 실행, `persistence` → 지속성 확보, `privilege-escalation` → 권한 상승, `defense-evasion` → 방어 회피, `credential-access` → 자격 증명 접근, `discovery` → 탐색, `lateral-movement` → 내부 확산, `collection` → 수집, `command-and-control` → 명령 및 제어, `exfiltration` → 유출, `impact` → 영향 (제목 표기 `Command and Control` 등도 같은 이름) | zeek_AD 보고서 `tactics` | 예 |
+| 알림 규칙 사유 (`policyReasonText`) | `queue_rank A <= B` → 탐지 순위 B위 이내(현재 A위), `flagging_models A >= B` → B개 이상 모델이 탐지(현재 A개) | zeek_AD `policy_reasons` | 예 |
+| 판단 요청 사유 (`reviewReasonText`) | `주체=선택지` 나열(예: `llm=analyst_review, decision_model=analyst_review`) → `AI 보고서: 분석가 판단 요청 · 판단 모델: 분석가 판단 요청` | zeek_AD `zeekad_review_reason` | 예 |
