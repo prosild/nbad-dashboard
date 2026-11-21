@@ -480,6 +480,8 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeeka
 
 이 PC에서 먼저 한다: 2.2 스냅샷(VM 원본은 `-SshHost zeekad-vm`) → `secret-scan.txt` 확인 → 2.3 리허설(`-SnapshotDir build/portfolio`) 통과 → (실습망 등 처음 공개하는 데이터면) 공개 전 내용 확인. NAS에서는 `zeekad-portfolio` 프로젝트와 `/volume1/docker/zeekad-portfolio` 안에서만, sudo 없이, 아래 순서대로 하고 **단계마다 실패하면 멈추고 되돌린다.** `.env`는 읽거나 고치지 않는다(`DEMO_PASSWORD`는 그대로 쓰인다).
 
+**표준 입력 주의(T22에서 겪음)**: 아래 블록을 `echo <base64> | base64 -d | bash`나 `ssh ... 'bash -s' < 파일`처럼 **표준 입력으로 bash에 넘기면** `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버린다. 그러면 그 뒤 줄(백업 권한·`down` 등)이 실행되지 않은 채 exit 0으로 끝난다. 블록은 NAS에 파일로 풀어 `bash <파일> < /dev/null`로 실행하고(또는 대화형 셸에 붙여 넣고), compose를 부르는 줄에는 아래처럼 `< /dev/null`을 붙인다.
+
 ```sh
 export PATH=/usr/local/bin:$PATH
 ID=<작업 ID 소문자, 예: t22>
@@ -497,10 +499,12 @@ for f in snapshot/zeekad.dump snapshot/zeekad.dump.sha256 snapshot/manifest.json
 done
 # 3) 앱 DB 백업(NAS 안에만. 비밀번호 해시가 들어 있으므로 밖으로 옮기거나 내용을 출력하지 않는다)
 mkdir -p backup && chmod 700 backup || exit 3
-$C exec -T postgres pg_dump -U postgres -Fc zeekad_dashboard > backup/app-pre-$ID.dump || exit 3
-chmod 600 backup/app-pre-$ID.dump && test -s backup/app-pre-$ID.dump || exit 3
+umask 077
+$C exec -T postgres pg_dump -U postgres -Fc zeekad_dashboard < /dev/null > backup/app-pre-$ID.dump.partial || exit 3
+mv -f backup/app-pre-$ID.dump.partial backup/app-pre-$ID.dump && chmod 600 backup/app-pre-$ID.dump && test -s backup/app-pre-$ID.dump || exit 3
+$C exec -T postgres pg_restore --list < backup/app-pre-$ID.dump > /dev/null && echo "backup OK" || exit 3
 # 4) 내리기(-v 없이)
-$C down || exit 4
+$C down < /dev/null || exit 4
 # 5) 이 프로젝트의 DB 볼륨 하나만 지운다(이름을 먼저 확인한다)
 docker volume ls --format '{{.Name}}' | grep '^zeekad-portfolio_'      # zeekad-portfolio_pgdata 하나여야 한다
 docker volume rm zeekad-portfolio_pgdata || exit 5
@@ -510,11 +514,11 @@ docker volume rm zeekad-portfolio_pgdata || exit 5
 
 ```sh
 # 7) 올리기: 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)가 다시 돈다
-$C up -d --wait || exit 7
+$C up -d --wait < /dev/null || exit 7
 $C logs postgres | grep -E 'portfolio-restore|pg_restore: error'      # "portfolio-restore: done", 오류 줄 없음
-# 8) 시드 두 번: 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
-$C --profile seed run --rm demo-seed
-$C --profile seed run --rm demo-seed
+# 8) 시드 두 번(7 직후 바로): 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
+$C --profile seed run --rm demo-seed < /dev/null
+$C --profile seed run --rm demo-seed < /dev/null
 # 9) 대조: 다른 프로젝트의 컨테이너·네트워크·볼륨이 1)과 같고 앱 이미지가 그대로인지
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | grep -v 'zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-containers-before.txt - && echo "containers same"
 for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | grep -v '^zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-networks-before.txt - && echo "networks same"
@@ -523,17 +527,18 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
 ```
 
 - 앱 코드가 바뀌지 않았으면 앱 이미지는 교체하지 않는다(바뀌었으면 3.8을 먼저 따로 한다).
+- 7과 8 사이에는 새 앱 DB의 부트스트랩 계정(`viewer1`·`analyst1`·`analyst2`·`admin`)이 활성이다(비공개 무작위 비밀번호, `admin`은 TOTP). `demo`는 아직 없다. 7이 끝나면 바로 8을 실행해 이 틈을 짧게 둔다(T22: 약 5분).
 - 끝나면 3.6 확인과 4.4 공개 주소 확인을 한다. 공개 주소가 `502`면 3.8의 대처를 따른다.
 - **되돌리기**(어느 단계든 실패 시) 다음 순서로 한 뒤 멈춰 원인을 본다:
   1. `$C down`
   2. 새로 생긴 DB 볼륨을 지운다(`docker volume rm zeekad-portfolio_pgdata`, 없으면 건너뛴다)
   3. `*.pre-$ID` 파일을 원래 이름으로 되돌린다(`for f in ...; do cp -p "$f.pre-$ID" "$f"; done`)
   4. `$C up -d --wait`(이전 스냅샷이 복원된다)
-  5. `$C stop dashboard-app`
+  5. `$C stop dashboard-app < /dev/null`
   6. `$C exec -T postgres pg_restore -U postgres -d zeekad_dashboard --clean --if-exists < backup/app-pre-$ID.dump`
   7. `$C start dashboard-app`. 시드는 돌리지 않는다(`demo`가 백업에 있다).
   - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든다. 이때 지난 감사 로그는 백업에만 남는다.
-- 작업자 도구로 실행할 때는 단계를 작업 폴더 스크립트로 저장해 3.8처럼 보내고 출력을 `handoff/<작업 ID>/evidence/nas-replace.txt`(시드는 `nas-seed.txt`)에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
+- 작업자 도구로 실행할 때는 단계를 작업 폴더 스크립트로 저장해 NAS의 `~/zeekad-portfolio-check/<작업 ID>-step-<단계>.sh`로 풀고 `bash <그 파일> < /dev/null`로 실행한다(표준 입력으로 넘기지 않는다, 예: `handoff/T22/tools/nas-run.ps1`). 출력은 `handoff/<작업 ID>/evidence/nas-replace.txt`(시드는 `nas-seed.txt`)에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
 
 ## 4. DSM 설정 (사용자)
 
