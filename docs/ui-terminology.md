@@ -64,6 +64,30 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 | 2026-11-21 | T18 | 탐지 사건 · 필터 | 늘 펼친 필터 8개(카드) | 수집 구간·분석 실행은 늘 보임, 나머지는 "필터" 단추로 접고 펼침(적용 수 표시). 적용 중인 필터는 칩("사건 상태: 신규", "주 탐지 모델: …", "우선순위: 높음", "판단 대기만", "알림 보냄만" 등)으로 보이고 칩마다 지움. "필터 초기화"는 수집 구간·분석 실행만 남긴다 | 프론트엔드 | 첫 화면 높이를 줄인다 | 아니요 |
 | 2026-11-21 | T18 | 탐지 사건 · 정렬·쪽 | (없음, 241건을 한 번에) | 열 머리 정렬(우선순위·순위·관측 시작·상태 · 판정·연결 수, 화살표 표시, 읽기 프로그램용 "… 기준 정렬, 지금 오름차순/내림차순"), 표 아래 "전체 N건 중 a–b", "쪽당 25건/50건/100건", 이전 쪽·다음 쪽·쪽 번호 | 프론트엔드 | 기본 정렬은 우선순위 → 탐지 순위 | 아니요 |
 | 2026-11-21 | T18 | 탐지 사건 · 휴대폰 폭 | 가로 스크롤 표 | 사건마다 한 장짜리 목록 항목(우선순위 · 호스트 · 순위 / 관측 시작 · 지속 · 상태) | 프론트엔드 | 390px 폭에서 읽을 수 있게 | 아니요 |
+| 2026-11-21 | T18b | 전체 · 메뉴·제목 | 탐지 사건 / 사건 목록·사건 상세·사건 ID·사건 요약 / 조사 큐(로그·스크립트) | 인시던트 / 인시던트 목록·인시던트 상세·인시던트 ID·인시던트 요약 | 프론트엔드, API 메시지, `scripts/*.ps1` 단언 글 | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 전체 · 메뉴·제목 | 판단 요청 / 분석가 판단 요청 / 판단 요청 화면으로 이동 | 에스컬레이션 / 에스컬레이션으로 이동 | 프론트엔드 | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·운영 | 사건 상태 신규 / 조사 중 / 종료, 조사 중으로 변경 / 종료 처리 | 신규 / 분석 중 / 종결, 분석 중으로 변경 / 종결 처리 | zeek_AD 값 `open`/`investigating`/`closed`, API 메시지(`IncidentTransitionService`) | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·운영 | 판정 정탐 / 오탐 / 정상 행위 | 정탐 / 오탐 / 정상 | zeek_AD 값 `true_positive`/`false_positive`/`benign`, API 메시지 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·에스컬레이션 | 조사 진행 / 오탐으로 종료 / 판단 대기, 분석가 판단 열, 현재 판단, 판단 입력, 판단 메모, 판단 시각 | 승인 / 오탐 종결 / 대기, 에스컬레이션 열, 검토 결정, 검토 결정 입력, 검토 메모, 결정 시각 | zeek_AD 값 `confirm`/`dismiss`, API 메시지(`AnalystReviewDecisionService`) | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록 요약 띠·필터 칩·자동 분류 기준, 에스컬레이션 반영 상태 | 판단 대기 / 판단 대기만 | 에스컬레이션 대기 / 에스컬레이션 대기만(배지·에스컬레이션 열처럼 문맥이 분명한 곳은 "대기") | 프론트엔드, API(`AnalystReviewItem.getResumeStatusLabel`) | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 전체 · 통신 방향 | 연결 시작 측 / 연결 수신 측 | 출발지 / 목적지(세션 표의 열은 "출발지 IP"·"목적지 IP"처럼 IP를 붙여 구분) | zeek_AD 값 `zeekad_role` | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록 · 우선순위 | 높음 / 중간 / 낮음, 우선순위 높음 N건만 보기 | High / Medium / Low, 우선순위 High N건만 보기(URL 키 `priority=high` 등은 그대로) | 대시보드 계산 값(사전 `priority`) | 관제 표준 용어(사용자 요청) | 예(계산 규칙) |
+| 2026-11-21 | T18b | 전체 | 수집 구간 / 열람 허용 수집 구간 | 캡처 / 열람 허용 캡처 | 프론트엔드 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 전체 | 분석 실행 / 분석 실행 기록 / 보고서 실행 #N / 판단 요청 실행 #N | 탐지 작업 / 탐지 작업 기록 / 리포트 작업 #N / 에스컬레이션 작업 #N | 프론트엔드 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 상세·운영 | 모델 구성 / 등록된 모델 구성이 없습니다. | 모델 버전 / 등록된 모델 버전이 없습니다.(값 `zeekad-fusion/N`은 그대로) | 프론트엔드 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·운영 | 주 탐지 모델 / 함께 탐지한 모델 +N / 함께 탐지한 모델: a, b | 탐지 모델 / 교차 탐지 +N / 교차 탐지: (표시 이름들) | 프론트엔드 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 상세 · 증적 | 근거 요약 / 근거의 한계 / 원본 근거 데이터 / 상세 근거를 불러오지 못했습니다… / 이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다. | 증적 요약 / 증적의 한계 / 원본 증적 데이터 / 상세 증적을 불러오지 못했습니다… / 이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다. | 프론트엔드, API(`EvidenceData`) | 관제 표준 용어(사용자 요청). AI 리포트의 사실 근거(`F*` 칩, "근거 사실")는 리포트가 인용한 사실이라 "근거"를 그대로 둔다 | 아니요 |
+| 2026-11-21 | T18b | 상세 · 증적 | 총 연결 수 / 대표 연결 (최대 10건) / 연결 상태 분포 / 페이로드 바이트가 부푼 연결 수 / 표 열 연결 수·연결 ID·연결 상태 / 인시던트 목록 열·정렬 "연결 수" | 총 세션 수 / 주요 세션 (최대 10건) / 세션 상태 분포 / 페이로드 바이트가 부푼 세션 수 / 세션 수·세션 ID·세션 상태 / 세션 수 | 프론트엔드(사전 `evidenceField`·`protocolMetric`) | 관제 표준 용어(사용자 요청). 프로토콜별 하위 수치 이름(질의 수 등)과 연결 상태 코드 설명(정상 연결·종료 등)은 그대로 | 아니요 |
+| 2026-11-21 | T18b | 상세 | 모델별 이상 판정 구간 / 기준값을 넘은 구간 수 / 전체 구간 수 | 모델별 탐지 윈도우 / 기준값을 넘은 윈도우 수 / 전체 윈도우 수 | 프론트엔드 | 관제 표준 용어(사용자 요청) | 예(구간 정의) |
+| 2026-11-21 | T18b | 인시던트 목록·상세 | AI 분석 보고서 / 보고서 없음 / 보고서 있음 / 보고서의 알림 권고 / 보고서의 한계 / 보고서 속 가명 / 결정 주체 AI 보고서 | AI 분석 리포트 / 리포트 없음 / 리포트 있음 / 리포트의 경보 권고 / 리포트의 한계 / 리포트 속 가명 / AI 리포트 | zeek_AD 값 `decided_by=llm` 등, 프론트엔드 | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록·상세 | 사실 검증 통과 / 사실 검증 실패 / 사실 검증 실패 사유 | 검증 통과 / 검증 실패 / 검증 실패 사유 | zeek_AD 값 `zeekad_verification_passed` | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·운영 | 알림 보냄 / 알림 보류 / 알림 전송 판단 / 알림 정밀도·사건 / 알림 / 판정 열 | 경보 발송 / 보류 / 경보 발송 판단 / 경보 정밀도·인시던트 / 경보 / 판정 열(정밀도 문장 "- (알림 없음)"은 백엔드 문구와 같아 T20에서 다룬다) | zeek_AD 값 `would_send` | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 상세 · 경보 발송 판단 | 분석가 판단 요청 / 근거 보강 필요 | 에스컬레이션 / 증적 보강 필요 | zeek_AD 값 `analyst_review`/`need_more_evidence` | 관제 표준 용어(사용자 요청). `analyst_review`는 메뉴 "에스컬레이션"과 같은 흐름 | 예 |
+| 2026-11-21 | T18b | 상세 · Slack | 첫 알림 / 다른 사건 알림의 후속 알림 / 시험 모드(실제 전송 안 함) / 사건 알림 | 최초 알림 / 타 인시던트 후속 알림 / Dry-run / 인시던트 알림("후속 알림"과 "Slack 알림 이력"은 그대로) | API(`IncidentDetailService` 스레드 역할), zeek_AD 값 `dry_run`·`incident` | 관제 표준 용어(사용자 요청) | 예 |
+| 2026-11-21 | T18b | 전체 · 마스킹 안내 | 읽기 전용 · 개인정보 가림 | 마스킹 적용 | 프론트엔드 | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 상세 · 증적 | 자산 송신 바이트 / 자산 수신 바이트 | 송신 바이트 / 수신 바이트(기준 "인시던트 대상 호스트 기준"은 툴팁) | 프론트엔드(값: zeek_AD `evidence.network.bytes`) | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 감사 로그 | 가림 없이 사건 열람 / 사건 상태 변경 / 분석가 판단 결정 / 대상 수집 구간 · 사건 | 마스킹 없이 인시던트 열람 / 인시던트 상태 변경 / 에스컬레이션 결정 / 대상 캡처 · 인시던트 | 프론트엔드 사전 `auditAction` | 관제 표준 용어(사용자 요청) | 아니요 |
+| 2026-11-21 | T18b | 인시던트 목록·상세·운영 | 탐지 모델 식별자 그대로(`tail_rarity_v2` 등) | 기준선 이탈 / 행위 패턴 이탈 / 통신 관계 이상(표에는 표시 이름만, 상세·툴팁은 "모델 종류 · 식별자"와 설명). 아래 '탐지 모델 표시 이름' 절 | zeek_AD 데이터 계약 v2 "모델 표시 이름"(설계 토론 Q63) | zeek_AD 확정 표시 이름(SPEC 결정 2026-11-21) | 예 |
 
 ## 색·배지 체계 (T17)
 
@@ -71,65 +95,80 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 
 | 의미 | 색(Tailwind) | 쓰는 곳 | 쓰지 않는 곳 |
 |---|---|---|---|
-| 빨강 `danger`(rose) | 높은 위험·우선순위·정탐 전용 | 판정 "정탐" 배지, 판정 분포의 정탐 건수(0이면 무색), 우선순위 "높음"(↑ 아이콘, T18) | 사건 상태, 오류·실패, 버튼, 로그아웃 |
-| 주황 `attention`(amber) | 사람 손이 필요함 | 판단 대기, 반영 실패(관리자 확인 필요), 분석 실행 실패, 사실 검증 실패, 의견 불일치 경고, 요청 실패·오류 안내, 계정 잠김·2단계 인증 미등록, 보안 감사 동작(로그인 실패·계정 잠김·접근 거부), 되돌리기 어려운 버튼(`.soc-btn-caution`, 2단계 인증 초기화) | 상시 정보(마스킹 안내, ATT&CK 가설, 근거의 한계, 시험 모드) |
-| 중립(slate) + 아이콘 | 상태·정보 | 사건 상태(신규 ○, 종료 ✓), 판단 완료(조사 진행·오탐으로 종료 ✓), 반영 중·반영됨, 분석 실행 완료, 사용자 역할, 마스킹 안내, 시험 모드, 보고서 작성 방식 | — |
-| 하늘 `info`(sky) | 진행 중 | 사건 상태 "조사 중"(◐), 분석 실행 진행 중 | — |
-| 초록 `positive`(emerald) | 정상 행위 판정, 사실 검증 통과 | 판정 "정상 행위", 사실 검증 통과 배지, 조사 진행 버튼 | — |
-| 보라 `violet` | 오탐 판정 | 판정 "오탐" | 조사 중·판단 결정(예전엔 주황과 겹쳤다) |
-| 청록 `notice`(cyan) | 알림 보냄, 첫 알림, 링크·포커스 | 알림 보냄 배지(종 아이콘) | 데이터 의미(정상 행위·수집 구간·순위)에 쓰지 않는다 |
-| 밝은 회색 테두리 `emphasis`(T18) | 중립이지만 눈에 띄어야 함 | 우선순위 "중간"(─ 아이콘) | 상태·판정 |
-| 흐린 회색 `muted` | 낮은 중요도·값 없음 | 우선순위 "낮음"(↓ 아이콘)과 종료 사건의 `-`, 알림 보류, 판단 없음 | — |
+| 빨강 `danger`(rose) | 높은 위험·우선순위·정탐 전용 | 판정 "정탐" 배지, 판정 분포의 정탐 건수(0이면 무색), 우선순위 "High"(↑ 아이콘, T18) | 사건 상태, 오류·실패, 버튼, 로그아웃 |
+| 주황 `attention`(amber) | 사람 손이 필요함 | 에스컬레이션 대기, 반영 실패(관리자 확인 필요), 탐지 작업 실패, 검증 실패, 의견 불일치 경고, 요청 실패·오류 안내, 계정 잠김·2단계 인증 미등록, 보안 감사 동작(로그인 실패·계정 잠김·접근 거부), 되돌리기 어려운 버튼(`.soc-btn-caution`, 2단계 인증 초기화) | 상시 정보(마스킹 안내, ATT&CK 가설, 근거의 한계, 시험 모드) |
+| 중립(slate) + 아이콘 | 상태·정보 | 인시던트 상태(신규 ○, 종결 ✓), 검토 결정 완료(승인·오탐 종결 ✓), 반영 중·반영됨, 탐지 작업 완료, 사용자 역할, 마스킹 안내, Dry-run, 리포트 작성 방식 | — |
+| 하늘 `info`(sky) | 진행 중 | 인시던트 상태 "분석 중"(◐), 탐지 작업 진행 중 | — |
+| 초록 `positive`(emerald) | 정상 판정, 검증 통과 | 판정 "정상", 검증 통과 배지, 승인 버튼 | — |
+| 보라 `violet` | 오탐 판정 | 판정 "오탐" | 분석 중·검토 결정(예전엔 주황과 겹쳤다) |
+| 청록 `notice`(cyan) | 경보 발송, 최초 알림, 링크·포커스 | 경보 발송 배지(종 아이콘) | 데이터 의미(정상 판정·캡처·순위)에 쓰지 않는다 |
+| 밝은 회색 테두리 `emphasis`(T18) | 중립이지만 눈에 띄어야 함 | 우선순위 "Medium"(─ 아이콘) | 상태·판정 |
+| 흐린 회색 `muted` | 낮은 중요도·값 없음 | 우선순위 "Low"(↓ 아이콘)과 종결 인시던트의 `-`, 보류, 검토 결정 없음 | — |
 
-- 글꼴: 고정폭은 IP·사건 ID·해시·포트·모델·구성 식별자·수집 구간 값 같은 기계 값에만 쓴다. 숫자는 `tabular-nums` + 오른쪽 정렬(`.soc-num`) + 천 단위 구분(`formatNumber`).
+- 글꼴: 고정폭은 IP·인시던트 ID·해시·포트·모델 식별자·모델 버전·캡처 값 같은 기계 값에만 쓴다. 숫자는 `tabular-nums` + 오른쪽 정렬(`.soc-num`) + 천 단위 구분(`formatNumber`).
 - 줄바꿈: `body`에 `word-break: keep-all`(어절 단위), 배지·버튼은 `whitespace-nowrap`.
 - 머리글: `.soc-th`·`.soc-subhead`에 대문자·자간 확대를 쓰지 않는다.
-- 우선순위(T18): 높음 = 빨강, 중간 = 밝은 회색 테두리, 낮음·종료 = 흐린 회색. 주황은 "사람 손 필요" 전용이라 우선순위에 쓰지 않는다(판단 대기 배지는 그대로 주황).
+- 우선순위(T18): High = 빨강, Medium = 밝은 회색 테두리, Low·종결 = 흐린 회색. 주황은 "사람 손 필요" 전용이라 우선순위에 쓰지 않는다(에스컬레이션 대기 배지는 그대로 주황).
 - CSP: 모두 Tailwind 정적 클래스와 순수 SVG(lucide 아이콘)다. 인라인 `style`·외부 폰트를 쓰지 않는다.
 
 ## 자동 분류 기준 (T18, zeek_AD와 공유)
 
-탐지 사건 화면의 "우선순위"는 대시보드 프론트엔드가 `GET /api/incidents` 응답 필드로 계산한다(`frontend/src/utils/triage.ts`의 `computePriority`). 자동 판단이며 분석가 판정이 아니다. 근거: `SPEC.md` 결정 2026-11-21 "자동 분류 우선순위 규칙 수정".
+인시던트 화면의 "우선순위"는 대시보드 프론트엔드가 `GET /api/incidents` 응답 필드로 계산한다(`frontend/src/utils/triage.ts`의 `computePriority`). 자동 판단이며 분석가 판정이 아니다. 근거: `SPEC.md` 결정 2026-11-21 "자동 분류 우선순위 규칙 수정". SPEC 결정 기록(2026-11-21)의 높음/중간/낮음은 화면 표기 High/Medium/Low와 같은 등급이다(T18b, "화면 용어를 관제 표준 용어로 재정비").
 
 | 우선순위 | 조건(위에서부터 먼저 맞는 것) | 쓰는 필드(zeek_AD 값) |
 |---|---|---|
-| 없음(`-`, 회색) | 사건 상태가 종료 | `zeekadStatus == closed`(소문자로 비교. `null`·빈 문자열은 신규로 보고, 등록되지 않은 값은 종료가 아닌 것으로 본다) |
-| 높음(빨강) | 알림 보냄 또는 분석가 판단 대기 | `zeekadWouldSend`(zeek_AD `would_send`), `zeekadReviewPending`(판단 결정 전 분석가 판단 요청) |
-| 중간(밝은 회색) | 2개 이상 모델이 함께 탐지 또는 AI 분석 보고서 있음 | `zeekadAlsoFlaggedBy` 1개 이상(zeek_AD `zeekad_also_flagged_by`. `multiModelFlagged`는 쓰지 않는다), `hasReport` |
-| 낮음(흐린 회색) | 그 밖 | — |
+| 없음(`-`, 회색) | 인시던트 상태가 종결 | `zeekadStatus == closed`(소문자로 비교. `null`·빈 문자열은 신규로 보고, 등록되지 않은 값은 종결이 아닌 것으로 본다) |
+| High(빨강) | 경보 발송 또는 에스컬레이션 대기 | `zeekadWouldSend`(zeek_AD `would_send`), `zeekadReviewPending`(검토 결정 전 에스컬레이션) |
+| Medium(밝은 회색) | 교차 탐지(2개 이상 모델) 또는 AI 분석 리포트 있음 | `zeekadAlsoFlaggedBy` 1개 이상(zeek_AD `zeekad_also_flagged_by`. `multiModelFlagged`는 쓰지 않는다), `hasReport` |
+| Low(흐린 회색) | 그 밖 | — |
 
-- 정렬: 기본은 우선순위 오름(높음 먼저) → 같으면 `queueRank` 오름. 종료(우선순위 없음)와 연결 수·시각이 없는 사건은 방향과 상관없이 맨 뒤. 상태 순서는 신규 → 조사 중 → 종료.
-- 요약 띠의 우선순위·판단 대기·알림 보냄 건수는 서버 필터를 적용한 응답 집합 기준이고, 화면 필터(우선순위·판단 대기·알림 보냄)를 눌러도 바뀌지 않는다.
+- 정렬: 기본은 우선순위 오름(High 먼저) → 같으면 `queueRank` 오름. 종결(우선순위 없음)과 세션 수·시각이 없는 인시던트는 방향과 상관없이 맨 뒤. 상태 순서는 신규 → 분석 중 → 종결.
+- 요약 띠의 우선순위·에스컬레이션 대기·경보 발송 건수는 서버 필터를 적용한 응답 집합 기준이고, 화면 필터(우선순위·에스컬레이션 대기·경보 발송)를 눌러도 바뀌지 않는다.
 - URL 쿼리: `priority=high|medium|low`, `reviewPending=true`, `alerted=true`(화면 필터), `sort=priority|rank|start|connections|status`, `dir=asc|desc`, `page`(1부터), `size=25|50|100`. 서버 필터 키(`captureId`, `jobId`, `pickedBy`, `role`, `status`, `hasReport`, `wouldSend`, `asset`)는 그대로.
 - 심각도 같은 원천 우선순위 데이터, 담당자·SLA, 서버 쪽 정렬·페이지 나눔은 C 단계에서 다룬다.
 
 ## 표시 이름 사전 (코드 값 → 표시 이름)
 
-`frontend/src/utils/labels.ts`(`LABEL_DICTIONARIES`)와 같은 내용이다. 화면은 이 사전으로만 코드 값을 보여 주고 원래 코드 값은 툴팁에 둔다. 사전에 없는 값은 원래 값을 흐린 고정폭 글자로 보이고 "미등록 값" 툴팁을 단다. **탐지 모델 이름(`tail_rarity_v2`, `transformer_v2`, `tgn_recon`)과 모델 구성(`zeekad-fusion/N`)은 사용자 결정으로 바꾸지 않는다(사전에 없음).** "zeek_AD 공유"가 예인 항목은 zeek_AD가 주는 값이다.
+`frontend/src/utils/labels.ts`(`LABEL_DICTIONARIES`)와 같은 내용이다. 화면은 이 사전으로만 코드 값을 보여 주고 원래 코드 값은 툴팁에 둔다. 사전에 없는 값은 원래 값을 흐린 고정폭 글자로 보이고 "미등록 값" 툴팁을 단다. **탐지 모델 이름은 zeek_AD가 확정한 표시 이름으로 바꾼다(아래 '탐지 모델 표시 이름' 절, SPEC 결정 2026-11-21 — T17의 "탐지 모델 이름은 바꾸지 않는다" 규칙을 대체). 모델 버전 값(`zeekad-fusion/N`)은 그대로 둔다(사전에 없음).** "zeek_AD 공유"가 예인 항목은 zeek_AD가 주는 값이다.
 
 | 분류(사전 이름) | 코드 값 → 표시 이름 | 출처 | zeek_AD 공유 필요 |
 |---|---|---|---|
-| 사건 상태 (`incidentStatus`) | `open` → 신규, `investigating` → 조사 중, `closed` → 종료 | zeek_AD | 예 |
-| 자동 분류 우선순위 (`priority`, T18) | `high` → 높음, `medium` → 중간, `low` → 낮음 (종료는 `-`) | 대시보드 계산 값(위 '자동 분류 기준') | 예(계산 규칙) |
-| 판정 (`resolution`) | `true_positive` → 정탐, `false_positive` → 오탐, `benign` → 정상 행위 | zeek_AD | 예 |
-| 통신 방향 (`hostRole`) | `originator` → 연결 시작 측, `responder` → 연결 수신 측 | zeek_AD `zeekad_role` | 예 |
-| 보고서 작성 방식 (`reportKind`) | `llm` → AI 작성, `template` → 템플릿 작성 | zeek_AD | 예 |
-| 알림 전송 판단 선택지 (`sendChoice`) | `send` → 전송, `hold` → 보류, `analyst_review` → 분석가 판단 요청, `need_more_evidence` → 근거 보강 필요 | zeek_AD | 예 |
-| 최종 결정 주체 (`decidedBy`) | `policy` → 규칙, `llm` → AI 보고서, `decision_model` → 판단 모델 | zeek_AD `decided_by` | 예 |
-| 분석가 판단 (`reviewAction`) | `confirm` → 조사 진행, `dismiss` → 오탐으로 종료 (결정 전: 판단 대기) | zeek_AD | 예 |
-| 사실 검증 (`verification`) | `true` → 사실 검증 통과, `false` → 사실 검증 실패 | zeek_AD `zeekad_verification_passed` | 예 |
+| 인시던트 상태 (`incidentStatus`) | `open` → 신규, `investigating` → 분석 중, `closed` → 종결 | zeek_AD | 예 |
+| 자동 분류 우선순위 (`priority`, T18) | `high` → High, `medium` → Medium, `low` → Low (종결은 `-`) | 대시보드 계산 값(위 '자동 분류 기준') | 예(계산 규칙) |
+| 탐지 모델 (`detectionModel`, T18b) | `tail_rarity_v2` → 기준선 이탈, `transformer_v2` → 행위 패턴 이탈, `tgn_recon` → 통신 관계 이상 (모델 종류·툴팁은 `DETECTION_MODEL_INFO`, 아래 절) | zeek_AD 데이터 계약 v2 "모델 표시 이름" | 예 |
+| 판정 (`resolution`) | `true_positive` → 정탐, `false_positive` → 오탐, `benign` → 정상 | zeek_AD | 예 |
+| 통신 방향 (`hostRole`) | `originator` → 출발지, `responder` → 목적지 | zeek_AD `zeekad_role` | 예 |
+| 리포트 작성 방식 (`reportKind`) | `llm` → AI 작성, `template` → 템플릿 작성 | zeek_AD | 예 |
+| 경보 발송 판단 선택지 (`sendChoice`) | `send` → 전송, `hold` → 보류, `analyst_review` → 에스컬레이션, `need_more_evidence` → 증적 보강 필요 | zeek_AD | 예 |
+| 최종 결정 주체 (`decidedBy`) | `policy` → 규칙, `llm` → AI 리포트, `decision_model` → 판단 모델 | zeek_AD `decided_by` | 예 |
+| 에스컬레이션 검토 결정 (`reviewAction`) | `confirm` → 승인, `dismiss` → 오탐 종결 (결정 전: 대기, 문맥 밖에서는 에스컬레이션 대기) | zeek_AD | 예 |
+| 리포트 검증 (`verification`) | `true` → 검증 통과, `false` → 검증 실패 | zeek_AD `zeekad_verification_passed` | 예 |
 | 관측 이름 종류 (`assetNameKind`) | `kerberos_machine` → 컴퓨터 계정, `kerberos_user` → 사용자 계정, `ntlm_user` → NTLM 사용자 계정 | zeek_AD `zeekad_name_kind` | 예 |
 | 자산 관측 항목 (`assetAttribute`) | `zeekad_name` → 이름, `zeekad_name_kind` → 이름 종류, `zeekad_source_log` → 출처 로그, `observations`·`observation_count` → 관측 횟수, `first_seen` → 처음 관측, `last_seen` → 마지막 관측 | zeek_AD `zeekad_asset_observations` | 예 |
-| Slack 메시지 종류 (`slackMessageKind`) | `incident` → 사건 알림, `status` → 상태 변경 알림, `daily_summary` → 일일 요약 | zeek_AD | 예 |
-| Slack 전송 방식 (`slackDeliveryMode`) | `dry_run` → 시험 모드(실제 전송 안 함), `live` → 실제 전송 | zeek_AD | 예 |
+| Slack 메시지 종류 (`slackMessageKind`) | `incident` → 인시던트 알림, `status` → 상태 변경 알림, `daily_summary` → 일일 요약 | zeek_AD | 예 |
+| Slack 전송 방식 (`slackDeliveryMode`) | `dry_run` → Dry-run, `live` → 실제 전송 | zeek_AD | 예 |
 | Slack 전송 결과 (`slackDeliveryStatus`) | `recorded` → 기록됨, `sent`·`delivered` → 전송됨, `failed` → 전송 실패 | zeek_AD | 예 |
-| 분석 실행 상태 (`jobStatus`) | `succeeded` → 완료, `failed` → 실패, `running` → 진행 중, `queued`·`pending` → 대기 | zeek_AD `scoring_jobs.status` | 예 |
+| 탐지 작업 상태 (`jobStatus`) | `succeeded` → 완료, `failed` → 실패, `running` → 진행 중, `queued`·`pending` → 대기 | zeek_AD `scoring_jobs.status` | 예 |
 | 사용자 역할 (`userRole`) | `VIEWER` → 조회자, `ANALYST` → 분석가, `ADMIN` → 관리자 | 대시보드 | 아니요 |
-| 감사 로그 동작 유형 (`auditAction`) | `LOGIN_SUCCESS` → 로그인 성공, `LOGIN_FAILURE` → 로그인 실패, `ACCOUNT_LOCKED` → 계정 잠김, `TOTP_VERIFIED` → 2단계 인증 성공, `ACCESS_DENIED_IDOR` → 허용 범위 밖 접근 거부, `INCIDENT_VIEW_UNMASKED` → 가림 없이 사건 열람, `INCIDENT_STATUS_TRANSITION` → 사건 상태 변경, `ANALYST_REVIEW_DECISION` → 분석가 판단 결정, `USER_ADMIN_CHANGE` → 사용자 계정 변경 | 대시보드 `AuditActionType` | 아니요 |
-| 근거 표 열 (`evidenceField`) | `ip` → IP, `port` → 포트, `transport` → 전송 계층, `protocol` → 서비스 프로토콜, `connections` → 연결 수, `bytes` → 바이트, `zeek` → Zeek 기록, `event` → 시각, `source` → 출발지, `destination` → 목적지, `network` → 네트워크, `uid` → 연결 ID, `conn_state` → 연결 상태, `start` → 시작, `duration` → 지속 시간 | zeek_AD `evidence.v1` | 예 |
-| 프로토콜 하위 수치 (`protocolMetric`) | `queries` → 질의 수, `nxdomain` → 없는 도메인 응답, `max_query_length` → 최장 질의 길이, `failed_replies` → 실패 응답, `files` → 파일 수, `mappings` → 공유 폴더 연결, `auth_failures` → 인증 실패, `connections` → 연결 수, `without_sni` → SNI 없는 연결, `errors` → 오류 응답, `requests` → 요청 수, `auths` → 인증 수, `failures` → 실패 수, `calls` → 호출 수, `top_operations` → 주요 호출 | zeek_AD `evidence.v1 protocol_logs` | 예 |
+| 감사 로그 동작 유형 (`auditAction`) | `LOGIN_SUCCESS` → 로그인 성공, `LOGIN_FAILURE` → 로그인 실패, `ACCOUNT_LOCKED` → 계정 잠김, `TOTP_VERIFIED` → 2단계 인증 성공, `ACCESS_DENIED_IDOR` → 허용 범위 밖 접근 거부, `INCIDENT_VIEW_UNMASKED` → 마스킹 없이 인시던트 열람, `INCIDENT_STATUS_TRANSITION` → 인시던트 상태 변경, `ANALYST_REVIEW_DECISION` → 에스컬레이션 결정, `USER_ADMIN_CHANGE` → 사용자 계정 변경 | 대시보드 `AuditActionType` | 아니요 |
+| 증적 표 열 (`evidenceField`) | `ip` → IP, `port` → 포트, `transport` → 전송 계층, `protocol` → 서비스 프로토콜, `connections` → 세션 수, `bytes` → 바이트, `zeek` → Zeek 기록, `event` → 시각, `source` → 출발지, `destination` → 목적지, `network` → 네트워크, `uid` → 세션 ID, `conn_state` → 세션 상태, `start` → 시작, `duration` → 지속 시간 | zeek_AD `evidence.v1` | 예 |
+| 프로토콜 하위 수치 (`protocolMetric`) | `queries` → 질의 수, `nxdomain` → 없는 도메인 응답, `max_query_length` → 최장 질의 길이, `failed_replies` → 실패 응답, `files` → 파일 수, `mappings` → 공유 폴더 연결, `auth_failures` → 인증 실패, `connections` → 세션 수, `without_sni` → SNI 없는 세션, `errors` → 오류 응답, `requests` → 요청 수, `auths` → 인증 수, `failures` → 실패 수, `calls` → 호출 수, `top_operations` → 주요 호출 | zeek_AD `evidence.v1 protocol_logs` | 예 |
 | 서비스 프로토콜 특수 값 (`serviceProtocol`) | `unidentified` → 식별 안 됨 (http·dns 같은 프로토콜 이름은 그대로, 미등록 표시 없음) | zeek_AD `evidence.v1 network.protocol` | 예 |
 | Zeek 연결 상태 (`connState`) | `S0` → 연결 시도, 응답 없음 / `S1` → 연결됨, 종료 전 / `S2` → 연결됨, 시작 측만 종료 / `S3` → 연결됨, 수신 측만 종료 / `SF` → 정상 연결·종료 / `REJ` → 연결 거부 / `RSTO` → 시작 측이 강제 종료 / `RSTR` → 수신 측이 강제 종료 / `RSTOS0` → 시작 측이 응답 전 강제 종료 / `RSTRH` → 수신 측이 강제 종료(시작 미확인) / `SH` → 시작 측 종료, 응답 없음 / `SHR` → 수신 측 종료, 시작 미확인 / `OTH` → 시작 미확인 연결 | Zeek `conn_state` | 예 |
 | ATT&CK 전술 (`attackTactic`) | `reconnaissance` → 정찰, `resource-development` → 자원 개발, `initial-access` → 최초 접근, `execution` → 실행, `persistence` → 지속성 확보, `privilege-escalation` → 권한 상승, `defense-evasion` → 방어 회피, `credential-access` → 자격 증명 접근, `discovery` → 탐색, `lateral-movement` → 내부 확산, `collection` → 수집, `command-and-control` → 명령 및 제어, `exfiltration` → 유출, `impact` → 영향 (제목 표기 `Command and Control` 등도 같은 이름) | zeek_AD 보고서 `tactics` | 예 |
 | 알림 규칙 사유 (`policyReasonText`) | `queue_rank A <= B` → 탐지 순위 B위 이내(현재 A위), `flagging_models A >= B` → B개 이상 모델이 탐지(현재 A개) | zeek_AD `policy_reasons` | 예 |
-| 판단 요청 사유 (`reviewReasonText`) | `주체=선택지` 나열(예: `llm=analyst_review, decision_model=analyst_review`) → `AI 보고서: 분석가 판단 요청 · 판단 모델: 분석가 판단 요청` | zeek_AD `zeekad_review_reason` | 예 |
+| 에스컬레이션 사유 (`reviewReasonText`) | `주체=선택지` 나열(예: `llm=analyst_review, decision_model=analyst_review`) → `AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션` | zeek_AD `zeekad_review_reason` | 예 |
+
+## 탐지 모델 표시 이름 (T18b, 출처 zeek_AD)
+
+zeek_AD 데이터 계약 v2 "모델 표시 이름" 절(zeek_AD 설계 토론 Q63)에서 확정해 사용자가 전달한 표다(`SPEC.md` 결정 2026-11-21 "탐지 모델 표시 이름 확정"). 대시보드는 그대로 쓴다(`frontend/src/utils/labels.ts`의 `detectionModel` 사전과 `DETECTION_MODEL_INFO`). DB 값(`zeekad_picked_by`, `zeekad_also_flagged_by`, `zeekad_model`, `model_bundles.thresholds`의 키, `feedback_summary.zeekad_picked_by`)은 바뀌지 않는다.
+
+| 식별자 | 표시 이름 | 모델 종류 | 툴팁 | zeek_AD 공유 필요 |
+|---|---|---|---|---|
+| `tail_rarity_v2` | 기준선 이탈 | 통계 기준선 | 5분 구간의 통신 특징 42개(연결 수, 목적지 포트 수, 연결 실패 비율, 프로토콜 로그 등) 중 정상 기간에 거의 없던 값이 있는 정도. 가장 드문 특징 하나가 점수다. 정찰·스캔, 인증 실패 반복에 강하다. | 예(zeek_AD 출처) |
+| `transformer_v2` | 행위 패턴 이탈 | Transformer | 이 자산의 직전 1시간(5분 구간 12개)으로 다음 5분을 예측하고, 실제와 다른 정도. 다른 자산이 아니라 자기 평소 흐름과 비교한다. 이력이 없는 첫 구간에서는 높게 나올 수 있다. | 예(zeek_AD 출처) |
+| `tgn_recon` | 통신 관계 이상 | TGN(시간 그래프 신경망) | 호스트 사이의 연결을 시간 그래프로 학습해, 예상하기 어려운 연결이 나온 정도(구간 안에서 가장 예상 밖인 연결 하나 기준). beacon처럼 양은 적어도 상대가 특이한 통신을 올린다. 이상 호스트와 통신한 정상 호스트도 함께 올라갈 수 있다. | 예(zeek_AD 출처) |
+
+- 표시 규칙: 인시던트 목록·운영 화면 결론 집계·임계값 같은 표에는 표시 이름만 보인다(툴팁에 "모델 종류 · 식별자"와 설명). 인시던트 상세(탐지 모델, 모델별 탐지 윈도우)에는 표시 이름 옆에 "모델 종류 · 식별자"(예: "Transformer · transformer_v2", `data-raw`)를 함께 보인다. 필터의 탐지 모델 선택지는 표시 이름, 값·URL 키는 식별자 그대로다. 결론 집계의 `'all'`은 "모든 모델 합계" 그대로다.
+- 표시 이름에 버전을 넣지 않는다. 사전에 없는 새 식별자는 원문을 흐린 고정폭 글자 + "미등록 값" 툴팁으로 보인다(zeek_AD가 표에 행을 더한다).
+- 툴팁 설명 속 "연결 수"·"연결" 같은 말은 zeek_AD 확정 문구 원문이라 화면 용어 재정비(세션)와 별개로 그대로 둔다.
