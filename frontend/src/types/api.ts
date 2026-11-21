@@ -469,10 +469,119 @@ export interface OperationsApiResponse {
   maskedView: boolean;
   allowedCaptures: string[];
   selectedCaptureId: string | null;
+  /** T24: period가 있으면 기간 안(완료 시각, 없으면 시작 시각)만, 최대 500건 */
   jobs: ScoringJob[];
+  /** 조건 수집원의 작업이 쓴 모델 버전만 */
   bundles: ModelBundle[];
+  /** 누적(기간 없음), 수집원 조건만 적용 */
   feedbackSummaries: FeedbackSummaryRecord[];
+  /** T24: period가 있으면 기간 안(기록 시각)만 */
   slackSummaries: SlackSummary[];
+  period?: string | null;
+  source?: string | null;
+  anchor?: string | null;
+  jobsTruncated?: boolean;
+  jobsTotal?: number;
+  /** 캡처마다 최신 끝난 작업·최신 성공 작업(기간 무관) */
+  latestJobs?: LatestJobs[];
+  /** 허용 캡처 전체와 수집원 종류(조건 줄 선택지) */
+  sources?: QueueSource[];
+}
+
+/** T24 탐지 작업 요약(VIEWER면 오류 글의 IP가 가려진다). error는 실패 작업에만 있다 */
+export interface JobRef {
+  jobId: number;
+  captureId: string;
+  bundleId: string | null;
+  status: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface LatestJobs {
+  captureId: string;
+  latestEnded: JobRef | null;
+  latestSucceeded: JobRef | null;
+}
+
+/* ───────────── T24 현황판 overview ───────────── */
+
+export type TrendBucketUnit = '5m' | '1h' | '6h' | '1d' | '1w';
+
+/** 구간 (start, end], UTC ISO. partial = 일부만 기간 안 */
+export interface TrendBucket {
+  start: string;
+  end: string;
+  partial: boolean;
+  high: number;
+  medium: number;
+  low: number;
+  none: number;
+  total: number;
+}
+
+export interface DashboardTrend {
+  bucket: TrendBucketUnit;
+  buckets: TrendBucket[];
+  unbucketed: { noDetectedAt: number; afterAnchor: number };
+}
+
+export type SensorHealth = 'ok' | 'stale' | 'down' | 'failed' | 'none';
+export type CaptureState = 'active' | 'ended' | 'imported' | 'failed' | 'none';
+
+export interface SensorRow {
+  sensorKey: string;
+  label: string;
+  health: SensorHealth;
+  latestJob: JobRef | null;
+  activeCaptureId: string | null;
+  lastScoredAt: string | null;
+  lastActivityAt: string | null;
+  total: number;
+  high: number;
+  alerted: number;
+  failedJobs: number;
+  captureCount: number;
+}
+
+export interface CaptureRow {
+  captureId: string;
+  sourceType: SourceType;
+  sensorKey: string | null;
+  state: CaptureState;
+  latestJob: JobRef | null;
+  lastScoredAt: string | null;
+  lastActivityAt: string | null;
+  total: number;
+  high: number;
+  alerted: number;
+  failedJobs: number;
+}
+
+export interface DashboardAlerting {
+  latestDeliveryMode: string | null;
+  latestDeliveryStatus: string | null;
+  latestDryRun: boolean;
+  latestCreatedAt: string | null;
+  latestDeliveredAt: string | null;
+  latestCaptureId: string | null;
+  summariesInPeriod: number;
+}
+
+export interface DashboardOverviewResponse {
+  anchor: string;
+  anchorMode: string;
+  snapshot: boolean;
+  period: string;
+  timeZone: string;
+  staleAfterSeconds: number;
+  downAfterSeconds: number;
+  trend: DashboardTrend;
+  sensors: SensorRow[];
+  captures: CaptureRow[];
+  alerting: DashboardAlerting;
+  maskedView: boolean;
 }
 
 export interface AdminUserDto {

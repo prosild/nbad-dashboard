@@ -1,9 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers, MessageSquare } from 'lucide-react';
+import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers, MessageSquare, Server } from 'lucide-react';
 import { ApiError } from '../api/client';
-import { operationsApi } from '../api/endpoints';
+import { dashboardApi, operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
+import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
+import { SensorHealthBadge, SourceStatusTable, sensorHealthTooltip } from '../components/dashboard/SourceStatus';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
   CaptureName,
@@ -14,20 +16,16 @@ import {
   type BadgeTone,
 } from '../components/StatusBadge';
 import { SvgProgressBar } from '../components/SvgProgressBar';
-import type { FeedbackSummaryRecord, OperationsApiResponse } from '../types/api';
-import { formatDateTime, formatNumber } from '../utils/format';
-import { captureInfo } from '../utils/labels';
+import type { DashboardOverviewResponse, FeedbackSummaryRecord, OperationsApiResponse, ScoringJob } from '../types/api';
+import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber } from '../utils/format';
+import { captureShortNames } from '../utils/labels';
+import { parsePeriod, parseSource, periodLabel, type Period } from '../utils/triage';
 import {
   SAMPLE_MIN,
   alertPrecisionSummaryText,
   effectiveAlertedResolved,
-  failedJobCount,
   isAllModelRow,
-  isFailedJob,
   isQuietRow,
-  latestJobPerCapture,
-  latestSlackSummary,
-  latestSucceededJob,
   precisionSummaryText,
   precisionValue,
   sampleShortTooltip,
@@ -69,53 +67,84 @@ function groupSummaries(rows: FeedbackSummaryRecord[]): SummaryGroup[] {
   return groups;
 }
 
+/** 운영 현황 기본 기간(T24) */
+export const OPERATIONS_DEFAULT_PERIOD: Period = '7d';
+
+/** 누적 판정 표의 모델 버전 선택용: latestJobs의 최신 성공 작업(기간 무관, 빈틈 검토 M2) */
+export function latestSucceededJobs(data: OperationsApiResponse): ScoringJob[] {
+  return (data.latestJobs ?? [])
+    .map((l) => l.latestSucceeded)
+    .filter((j): j is NonNullable<typeof j> => j !== null)
+    .map(
+      (j) =>
+        ({
+          jobId: j.jobId,
+          captureId: j.captureId,
+          bundleId: j.bundleId ?? '',
+          status: j.status ?? 'succeeded',
+          startedAt: j.startedAt,
+          finishedAt: j.finishedAt,
+          error: j.error,
+          incidentCount: null,
+        }) as unknown as ScoringJob,
+    );
+}
+
 export function OperationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<OperationsApiResponse | null>(null);
+  const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const seq = useRef(0);
 
-  const captureId = searchParams.get('captureId') ?? '';
+  // URL이 상태의 원본이다. 옛 captureId 링크는 수집원 선택 안의 캡처로 읽는다.
+  const period: Period = searchParams.get('period') ? parsePeriod(searchParams.get('period')) : OPERATIONS_DEFAULT_PERIOD;
+  const source = parseSource(searchParams.get('source'));
+  const captureId = searchParams.get('captureId') || null;
 
   const loadOperations = useCallback(async () => {
+    const my = ++seq.current;
     setLoading(true);
     setErrorMsg(null);
-    try {
-      const res = await operationsApi.get(captureId || undefined);
-      setData(res);
-    } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '운영 현황을 불러오지 못했습니다.');
-    } finally {
-      setLoading(false);
+    const params = { period, source: captureId ? undefined : (source ?? undefined), captureId: captureId ?? undefined };
+    const [ops, ov] = await Promise.allSettled([operationsApi.get(params), dashboardApi.overview(params)]);
+    if (my !== seq.current) return;
+    // 한쪽만 실패하면 받은 쪽은 그대로 보이고 오류를 알린다(수집원 상태는 overview, 나머지는 운영 현황 API)
+    const failed = [ops, ov].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    if (failed) {
+      setErrorMsg(failed.reason instanceof ApiError ? failed.reason.message : '운영 현황을 불러오지 못했습니다.');
     }
-  }, [captureId]);
+    setData(ops.status === 'fulfilled' ? ops.value : null);
+    setOverview(ov.status === 'fulfilled' ? ov.value : null);
+    setLoading(false);
+  }, [period, source, captureId]);
 
   useEffect(() => {
     void loadOperations();
   }, [loadOperations]);
 
-  function handleCaptureChange(value: string) {
+  function updateParams(changes: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
-    if (value) next.set('captureId', value);
-    else next.delete('captureId');
+    for (const [k, v] of Object.entries(changes)) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
     setSearchParams(next);
   }
 
   const groups = useMemo(() => groupSummaries(data?.feedbackSummaries ?? []), [data]);
+  const shortNames = useMemo(() => captureShortNames((data?.sources ?? []).map((x) => x.captureId)), [data]);
   const status = useMemo(() => {
     if (!data) return null;
-    const { allRows } = selectSummaryRows(data.feedbackSummaries, data.jobs);
-    const latestJobs = latestJobPerCapture(data.jobs);
-    return {
-      totalsRow: totalsAsRow(sumAllRows(allRows)),
-      latestJobs,
-      latestFailed: latestJobs.filter(isFailedJob).length,
-      failedAll: failedJobCount(data.jobs),
-      latestOk: latestSucceededJob(data.jobs),
-      latestSlack: latestSlackSummary(data.slackSummaries),
-    };
+    const { allRows } = selectSummaryRows(data.feedbackSummaries, latestSucceededJobs(data));
+    return { totalsRow: totalsAsRow(sumAllRows(allRows)) };
   }, [data]);
+  const scope = period === 'all' ? '전체 기간' : `최근 ${periodLabel(period)}`;
+  const sensors = overview?.sensors ?? [];
+  const importedFailed = (overview?.captures ?? []).filter((c) => c.sensorKey === null && c.state === 'failed').length;
+  const importedCount = (overview?.captures ?? []).filter((c) => c.sensorKey === null).length;
 
   const groupKey = (g: SummaryGroup) => `${g.all.captureId}|${g.all.bundleId}`;
   const allExpanded = groups.length > 0 && groups.every((g) => g.models.length === 0 || expanded.has(groupKey(g)));
@@ -134,34 +163,34 @@ export function OperationsPage() {
   }
 
   return (
-    <AppShell title="운영 현황" subtitle="파이프라인·탐지 모델 판정·경보 상태와 판정 집계를 확인합니다">
+    <AppShell title="운영 현황" subtitle="수집원·탐지 작업·경보가 어떻게 돌고 있는지와 누적 판정 집계를 확인합니다">
       <div className="space-y-4">
-        <section className="soc-card flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <label htmlFor="ops-capture" className="text-xs font-medium text-slate-400">
-              캡처
-            </label>
-            <select
-              id="ops-capture"
-              value={captureId}
-              onChange={(e) => handleCaptureChange(e.target.value)}
-              className="soc-select py-1.5 text-xs"
-            >
-              <option value="">열람 허용 캡처 전체</option>
-              {(data?.allowedCaptures ?? []).map((cap) => {
-                const info = captureInfo(cap);
-                return (
-                  <option key={cap} value={cap} title={info.tooltip}>
-                    {info.text}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-          <div className="flex flex-wrap gap-3 text-xs tabular-nums text-slate-400">
-            <span>탐지 작업 {formatNumber(data?.jobs.length ?? 0)}건</span>
-            <span>· 모델 버전 {formatNumber(data?.bundles.length ?? 0)}개</span>
-            <span>· Slack 일일 요약 {formatNumber(data?.slackSummaries.length ?? 0)}건</span>
+        <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <PeriodButtons value={period} onChange={(p) => updateParams({ period: p === OPERATIONS_DEFAULT_PERIOD ? null : p })} />
+            <SourceField
+              id="ops-source"
+              sources={data?.sources ?? []}
+              value={sourceSelectValue(source, captureId)}
+              onChange={(v) => updateParams(sourceSelectChanges(v))}
+            />
+            <div className="ml-auto flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-slate-400">
+              {overview && (
+                <span data-testid="ops-anchor">
+                  {overview.snapshot ? (
+                    <>
+                      기준 시각 <span className="text-slate-200">{formatDateTime(overview.anchor)}</span> {DISPLAY_TIME_ZONE_LABEL}
+                    </>
+                  ) : (
+                    '기준 시각 = 현재'
+                  )}
+                </span>
+              )}
+              <span>
+                {scope} 탐지 작업 {formatNumber(data?.jobsTotal ?? data?.jobs.length ?? 0)}건
+              </span>
+              <span>· Slack 일일 요약 {formatNumber(data?.slackSummaries.length ?? 0)}건</span>
+            </div>
           </div>
         </section>
 
@@ -173,19 +202,37 @@ export function OperationsPage() {
           <>
             {status && (
               <section aria-label="상태 요약" className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <StatusCard icon={Activity} title="파이프라인" tone={status.latestFailed > 0 ? 'attention' : 'ok'}>
-                  <div className="text-base font-semibold text-slate-50">
-                    {status.latestJobs.length === 0
-                      ? '탐지 작업 없음'
-                      : status.latestFailed > 0
-                        ? `최근 작업 실패 ${formatNumber(status.latestFailed)}개 캡처`
-                        : `최근 작업 모두 완료(${formatNumber(status.latestJobs.length)}개 캡처)`}
-                  </div>
-                  <div className="text-xs text-slate-400" title="가장 최근에 성공한 탐지 작업의 완료 시각">
-                    데이터 기준 <span className="tabular-nums text-slate-300">{formatDateTime(status.latestOk?.finishedAt)}</span>
-                  </div>
-                  <div className="text-xs text-slate-400" title="열람 허용 캡처의 탐지 작업 기록 전체 기준">
-                    실패한 탐지 작업 <span className="tabular-nums text-slate-300">{formatNumber(status.failedAll)}건</span>
+                <StatusCard
+                  icon={Server}
+                  title="수집원"
+                  tone={sensors.some((x) => x.health !== 'ok') || importedFailed > 0 ? 'attention' : 'ok'}
+                >
+                  {sensors.length === 0 ? (
+                    <div className="text-sm text-slate-400">조건에 맞는 센서가 없습니다</div>
+                  ) : (
+                    <ul className="space-y-1">
+                      {sensors.map((x) => (
+                        <li key={x.sensorKey} className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-50">
+                          {x.label}
+                          <SensorHealthBadge
+                            health={x.health}
+                            title={sensorHealthTooltip(
+                              x.health,
+                              overview?.staleAfterSeconds ?? 900,
+                              overview?.downAfterSeconds ?? 3600,
+                              Boolean(overview?.snapshot),
+                            )}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="text-xs text-slate-400" title="가장 최근 탐지 작업이 실패한 가져온 데이터 캡처 수">
+                    가져온 데이터 실패{' '}
+                    <span className={`tabular-nums ${importedFailed > 0 ? 'text-amber-300' : 'text-slate-300'}`}>
+                      {formatNumber(importedFailed)}개
+                    </span>{' '}
+                    / {formatNumber(importedCount)}개 캡처
                   </div>
                 </StatusCard>
                 <StatusCard icon={Cpu} title="모델 판정" tone="neutral">
@@ -215,21 +262,40 @@ export function OperationsPage() {
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
                     최근 일일 요약{' '}
                     <span className="tabular-nums text-slate-300">
-                      {status.latestSlack
-                        ? formatDateTime(status.latestSlack.deliveredAt ?? status.latestSlack.createdAt)
+                      {overview && (overview.alerting.latestDeliveredAt ?? overview.alerting.latestCreatedAt)
+                        ? formatDateTime(overview.alerting.latestDeliveredAt ?? overview.alerting.latestCreatedAt)
                         : '기록 없음'}
                     </span>
-                    {status.latestSlack?.dryRunOrRecorded && <SocBadge tone="muted">Dry-run</SocBadge>}
+                    {overview?.alerting.latestDryRun && <SocBadge tone="muted">Dry-run</SocBadge>}
                   </div>
                 </StatusCard>
               </section>
             )}
 
-            <section className="soc-card space-y-3 p-4">
+            {overview && (
+              <section className="soc-card space-y-3 p-4" aria-label="수집원 상태 표">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                    <Server className="h-4 w-4 text-slate-400" />
+                    수집원 상태
+                  </h2>
+                  <span className="text-[11px] text-slate-400">
+                    인시던트·High·경보 발송·실패 작업은 {scope}
+                    {overview.snapshot ? ' · 기준 시각 기준' : ''}
+                  </span>
+                </div>
+                <SourceStatusTable overview={overview} shortNames={shortNames} />
+              </section>
+            )}
+
+            <section className="soc-card space-y-3 p-4" aria-label="분석가 판정 집계">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                   <BarChart3 className="h-4 w-4 text-slate-400" />
                   분석가 판정 집계
+                  <span className="text-xs font-normal text-slate-400" data-testid="cumulative-note">
+                    누적(기간 없음)
+                  </span>
                 </h2>
                 {groups.some((g) => g.models.length > 0) && (
                   <button type="button" onClick={toggleAll} className="soc-btn-secondary py-1 text-xs">
@@ -295,7 +361,16 @@ export function OperationsPage() {
               )}
             </section>
 
-            <CollapsibleSection icon={Activity} title="탐지 작업 기록" count={`${formatNumber(data?.jobs.length ?? 0)}건`}>
+            <CollapsibleSection
+              icon={Activity}
+              title="탐지 작업 기록"
+              count={`${scope} ${formatNumber(data?.jobsTotal ?? data?.jobs.length ?? 0)}건`}
+            >
+              {data?.jobsTruncated && (
+                <p className="mb-2 text-xs text-amber-200" data-testid="jobs-truncated">
+                  최근 {formatNumber(data.jobs.length)}건만 보임(전체 {formatNumber(data.jobsTotal ?? 0)}건)
+                </p>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
@@ -313,7 +388,7 @@ export function OperationsPage() {
                     {(data?.jobs ?? []).length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-400">
-                          탐지 작업 기록이 없습니다.
+                          이 기간에 탐지 작업 기록이 없습니다.
                         </td>
                       </tr>
                     ) : (
@@ -405,10 +480,10 @@ export function OperationsPage() {
             <CollapsibleSection
               icon={MessageSquare}
               title="Slack 일일 요약"
-              count={`${formatNumber(data?.slackSummaries.length ?? 0)}건`}
+              count={`${scope} ${formatNumber(data?.slackSummaries.length ?? 0)}건`}
             >
               {(data?.slackSummaries ?? []).length === 0 ? (
-                <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">Slack 일일 요약 기록이 없습니다.</div>
+                <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">이 기간에 Slack 일일 요약 기록이 없습니다.</div>
               ) : (
                 <div className="space-y-3">
                   {(data?.slackSummaries ?? []).map((summary, idx) => (

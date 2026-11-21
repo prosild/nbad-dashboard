@@ -489,6 +489,10 @@ class T24DashboardOverviewIntegrationTest {
         JsonNode v = getJson(viewer, "/api/operations");
         assertThat(v.get("bundles")).hasSize(1);
         assertThat(v.get("bundles").get(0).get("bundleId").asText()).isEqualTo("zeekad-fusion/1");
+        // 조건 줄 선택지: 허용 캡처와 수집원 종류만
+        assertThat(v.get("sources")).hasSize(1);
+        assertThat(v.get("sources").get(0).get("captureId").asText()).isEqualTo("cic17-wed");
+        assertThat(v.get("sources").get(0).get("sourceType").asText()).isEqualTo("imported");
     }
 
     /* ───────────── 도우미 ───────────── */

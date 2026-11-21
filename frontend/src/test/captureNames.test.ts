@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureInfo, captureText } from '../utils/labels';
+import { captureInfo, captureText, captureShortName, captureShortNames, shortNameOf } from '../utils/labels';
 
 /** 수집 구간(캡처) 표시 이름(zeek_AD 데이터 계약 v2, Q65) */
 describe('캡처 표시 이름', () => {
@@ -50,5 +50,30 @@ describe('캡처 표시 이름', () => {
       expect(info.tooltip).toContain('미등록 값');
     }
     expect(captureInfo(null).text).toBe('-');
+  });
+});
+
+describe('짧은 수집원 이름(T24, T23 review-4 M1)', () => {
+  it('세 계열과 규칙 밖', () => {
+    expect(captureShortName('cic17-wed')).toBe('CIC 수');
+    expect(captureShortName('cic17-mon')).toBe('CIC 월');
+    expect(captureShortName('syn1-thu')).toBe('CIC+APT 목');
+    expect(captureShortName('lab-20261119')).toBe('실습 11-19');
+    expect(captureShortName('t24-custom')).toBe('t24-custom');
+    expect(captureShortName('cic17-sat')).toBe('cic17-sat');
+    expect(captureShortName(null)).toBe('-');
+  });
+
+  it('공개 캡처 9개가 서로 다른 짧은 이름이고, 허용 목록 안에서 겹치면 연도를 붙인다', () => {
+    const publicIds = ['cic17-tue', 'cic17-wed', 'cic17-thu', 'cic17-fri', 'syn1-tue', 'syn1-wed', 'syn1-thu', 'syn1-fri', 'lab-20261119'];
+    const names = captureShortNames(publicIds);
+    expect(new Set(publicIds.map((id) => names.get(id))).size).toBe(9);
+    expect(names.get('lab-20261119')).toBe('실습 11-19');
+    const clash = captureShortNames(['lab-20251119', 'lab-20261119', 'lab-20261120']);
+    expect(clash.get('lab-20251119')).toBe('실습 2025-11-19');
+    expect(clash.get('lab-20261119')).toBe('실습 2026-11-19');
+    expect(clash.get('lab-20261120')).toBe('실습 11-20');
+    expect(shortNameOf(clash, 'lab-20261119')).toBe('실습 2026-11-19');
+    expect(shortNameOf(clash, 'cic17-wed')).toBe('CIC 수');
   });
 });

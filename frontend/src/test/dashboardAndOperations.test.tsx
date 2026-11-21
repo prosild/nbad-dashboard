@@ -1,14 +1,35 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
-import { expectAllTablesInScrollBox, hiddenBelowMd } from './tableScrollBox';
+import { DASHBOARD_REFRESH_MS } from '../pages/DashboardPage';
+import type {
+  CaptureRow,
+  DashboardOverviewResponse,
+  IncidentQueueItem,
+  SensorRow,
+  TrendBucket,
+  UnifiedQueueItem,
+} from '../types/api';
+import { fakeQueue, unified } from './fakeQueueServer';
+import { expectAllTablesInScrollBox, tablesOutsideScrollBox } from './tableScrollBox';
+
+/**
+ * T24 현황판·운영 현황(시간·수집원 기준). 기존 T20·T26 현황판 시험의 단언은 지우지 않고 새 동작 단언으로 바꿨다:
+ * - "API 두 번" → overview·큐(최근)·큐(전체 기간) 세 번
+ * - KPI(누적 합) → 같은 조건 큐 summary, 링크 목록 수 = 카드 수
+ * - 기준 띠(데이터 기준) → 조건 줄의 기준 시각, 없어진 "데이터 기준"은 없다는 단언
+ * - 탐지 모델 상태·캡처별 현황·파이프라인 패널 → 없어졌다는 단언(누적 정탐률·작업 기록은 운영 현황 쪽 단언)
+ */
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+const ANCHOR = '2026-11-21T00:00:00Z';
+const minutesAgo = (m: number) => new Date(new Date(ANCHOR).getTime() - m * 60_000).toISOString();
 
 const analystUser = {
   username: 'analyst1',
@@ -18,8 +39,154 @@ const analystUser = {
   totpEnabled: false,
   totpVerified: true,
   totpRequired: false,
-  allowedCapturePatterns: ['cic17-*', 'syn1-*'],
+  allowedCapturePatterns: ['cic17-*', 'syn1-*', 'lab-*'],
 };
+
+function base(i: number, captureId: string): IncidentQueueItem {
+  return {
+    jobId: 40 + i,
+    captureId,
+    bundleId: 'zeekad-fusion/3',
+    queueRank: i,
+    incidentId: `${captureId}|10.0.${i}.1|originator|${i}`,
+    hostIp: `10.0.${i}.1`,
+    zeekadRole: 'originator',
+    eventStart: minutesAgo(600),
+    eventEnd: minutesAgo(590),
+    zeekadPickedBy: 'tgn_recon',
+    zeekadAlsoFlaggedBy: [],
+    connectionCount: 10,
+    hostName: [],
+    zeekadStatus: 'open',
+    zeekadResolution: null,
+    statusUpdatedAt: null,
+    zeekadReportJobId: null,
+    hasReport: false,
+    zeekadReportKind: null,
+    zeekadVerificationPassed: null,
+    zeekadWouldSend: false,
+    zeekadReviewAction: null,
+    zeekadReviewPending: false,
+    alerted: false,
+  };
+}
+
+function item(
+  i: number,
+  captureId: string,
+  detectedMinutesAgo: number,
+  priority: 'high' | 'medium' | 'low' | null,
+  extra: Partial<IncidentQueueItem> = {},
+): UnifiedQueueItem {
+  return unified({ ...base(i, captureId), ...extra }, { detectedAt: minutesAgo(detectedMinutesAgo), priority });
+}
+
+/** 시험 인시던트: 기간마다 다르게 나뉜다(1시간 3건, 24시간 5건, 7일 7건, 30일 8건, 전체 9건) */
+const ITEMS: UnifiedQueueItem[] = [
+  item(1, 'lab-20261120', 10, 'high', { alerted: true, zeekadWouldSend: true }),
+  item(2, 'lab-20261120', 20, 'medium'),
+  item(3, 'lab-20261120', 30, null, { zeekadStatus: 'closed' }),
+  item(4, 'lab-20261120', 300, 'high', { zeekadReviewPending: true }),
+  item(5, 'lab-20261119', 1200, 'low'),
+  item(6, 'cic17-wed', 3 * 1440, 'low', { alerted: true }),
+  item(7, 'cic17-wed', 5 * 1440, 'medium'),
+  item(8, 'syn1-thu', 20 * 1440, 'low'),
+  item(9, 'syn1-thu', 40 * 1440, 'high', { zeekadReviewPending: true }),
+];
+
+const PERIOD_MIN: Record<string, number> = { '1h': 60, '24h': 1440, '7d': 7 * 1440, '30d': 30 * 1440 };
+const periodFilter = (it: UnifiedQueueItem, period: string) =>
+  period === 'all' || new Date(ANCHOR).getTime() - new Date(it.detectedAt as string).getTime() < PERIOD_MIN[period] * 60_000;
+
+const BUCKET_COUNT: Record<string, number> = { '1h': 12, '24h': 24, '7d': 28, '30d': 30, all: 41 };
+
+function buckets(period: string, total: number): TrendBucket[] {
+  const n = BUCKET_COUNT[period] ?? 24;
+  const out: TrendBucket[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i === n - 1 ? total : 0;
+    out.push({
+      start: minutesAgo((n - i) * 60),
+      end: minutesAgo((n - i - 1) * 60),
+      partial: i === 0,
+      high: t,
+      medium: 0,
+      low: 0,
+      none: 0,
+      total: t,
+    });
+  }
+  return out;
+}
+
+function jobRef(jobId: number, captureId: string, status: string, finishedMinutesAgo: number, error: string | null = null) {
+  return { jobId, captureId, bundleId: 'zeekad-fusion/3', status, startedAt: minutesAgo(finishedMinutesAgo + 2), finishedAt: minutesAgo(finishedMinutesAgo), error };
+}
+
+const SENSOR: SensorRow = {
+  sensorKey: 'lab-*',
+  label: '실습망 센서',
+  health: 'ok',
+  latestJob: jobRef(60, 'lab-20261120', 'succeeded', 5),
+  activeCaptureId: 'lab-20261120',
+  lastScoredAt: minutesAgo(5),
+  lastActivityAt: minutesAgo(12),
+  total: 0,
+  high: 0,
+  alerted: 0,
+  failedJobs: 0,
+  captureCount: 2,
+};
+
+const CAPTURES: CaptureRow[] = [
+  { captureId: 'lab-20261120', sourceType: 'live', sensorKey: 'lab-*', state: 'active', latestJob: jobRef(60, 'lab-20261120', 'succeeded', 5), lastScoredAt: minutesAgo(5), lastActivityAt: minutesAgo(12), total: 0, high: 0, alerted: 0, failedJobs: 0 },
+  { captureId: 'lab-20261119', sourceType: 'live', sensorKey: 'lab-*', state: 'ended', latestJob: jobRef(55, 'lab-20261119', 'succeeded', 1000), lastScoredAt: minutesAgo(1000), lastActivityAt: null, total: 0, high: 0, alerted: 0, failedJobs: 0 },
+  { captureId: 'cic17-wed', sourceType: 'imported', sensorKey: null, state: 'imported', latestJob: jobRef(2, 'cic17-wed', 'succeeded', 9000), lastScoredAt: minutesAgo(9000), lastActivityAt: minutesAgo(9100), total: 0, high: 0, alerted: 0, failedJobs: 0 },
+  { captureId: 'syn1-thu', sourceType: 'imported', sensorKey: null, state: 'failed', latestJob: jobRef(9, 'syn1-thu', 'failed', 600, '근거 API 시간 초과 10.0.0.*'), lastScoredAt: minutesAgo(30000), lastActivityAt: minutesAgo(30100), total: 0, high: 0, alerted: 0, failedJobs: 1 },
+];
+
+/** 가짜 overview: 조건에 맞는 캡처만, 수는 가짜 큐와 같은 집합으로 센다(불변식) */
+function fakeOverview(url: string, opts: { snapshot?: boolean; sensors?: SensorRow[]; captures?: CaptureRow[] } = {}): DashboardOverviewResponse {
+  const p = new URLSearchParams(url.split('?')[1] ?? '');
+  const period = p.get('period') ?? '24h';
+  const inCond = (c: { captureId: string; sourceType: string }) =>
+    (!p.get('source') || c.sourceType === p.get('source')) && (!p.get('captureId') || c.captureId === p.get('captureId'));
+  const queue = fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter });
+  const captures = (opts.captures ?? CAPTURES).filter(inCond).map((c) => {
+    const mine = ITEMS.filter((i) => i.captureId === c.captureId && periodFilter(i, period));
+    return { ...c, total: mine.length, high: mine.filter((i) => i.priority === 'high').length, alerted: mine.filter((i) => i.alerted).length };
+  });
+  const sensors = (opts.sensors ?? [SENSOR])
+    .map((s) => {
+      const mine = captures.filter((c) => c.sensorKey === s.sensorKey);
+      return mine.length === 0 && !opts.sensors
+        ? null
+        : { ...s, total: mine.reduce((a, c) => a + c.total, 0), high: mine.reduce((a, c) => a + c.high, 0) };
+    })
+    .filter((s): s is SensorRow => s !== null);
+  return {
+    anchor: ANCHOR,
+    anchorMode: opts.snapshot ? 'latest-data' : 'now',
+    snapshot: Boolean(opts.snapshot),
+    period,
+    timeZone: 'Asia/Seoul',
+    staleAfterSeconds: 900,
+    downAfterSeconds: 3600,
+    trend: { bucket: period === '1h' ? '5m' : period === '24h' ? '1h' : period === '7d' ? '6h' : '1d', buckets: buckets(period, queue.summary.total), unbucketed: { noDetectedAt: 0, afterAnchor: 0 } },
+    sensors,
+    captures,
+    alerting: {
+      latestDeliveryMode: 'dry_run',
+      latestDeliveryStatus: 'recorded',
+      latestDryRun: true,
+      latestCreatedAt: '2026-11-20T15:40:00Z',
+      latestDeliveredAt: null,
+      latestCaptureId: 'lab-20261120',
+      summariesInPeriod: 1,
+    },
+    maskedView: false,
+  };
+}
 
 const baseRow = {
   bundleId: 'zeekad-fusion/3',
@@ -34,81 +201,86 @@ const baseRow = {
 };
 
 /** cic17-wed: 판정 9건(표본 부족), syn1-thu: 판정 10건(정탐률 표시). 탐지 모델 행도 9/10건 경계. */
-const operationsResponse = {
-  maskedView: false,
-  allowedCaptures: ['cic17-wed', 'syn1-thu'],
-  selectedCaptureId: null,
-  jobs: [
-    { jobId: 9, captureId: 'syn1-thu', bundleId: 'zeekad-fusion/3', status: 'failed', startedAt: null, finishedAt: '2026-11-20T05:00:00Z', error: '근거 API 시간 초과', incidentCount: null },
-    { jobId: 8, captureId: 'syn1-thu', bundleId: 'zeekad-fusion/3', status: 'succeeded', startedAt: null, finishedAt: '2026-11-19T15:30:00Z', error: null, incidentCount: 21 },
-    { jobId: 2, captureId: 'cic17-wed', bundleId: 'zeekad-fusion/3', status: 'succeeded', startedAt: null, finishedAt: '2026-11-12T02:27:00Z', error: null, incidentCount: 79 },
-  ],
-  bundles: [],
-  feedbackSummaries: [
-    { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'all', allModel: true, incidents: 79, alerted: 9, resolved: 9, truePositive: 8, zeekadPrecision: 0.889, alertedResolved: 1, zeekadAlertPrecision: 1, zeekadAlertResolvedRate: 0.111 },
-    { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'tgn_recon', allModel: false, incidents: 30, resolved: 9, truePositive: 8, zeekadPrecision: 0.889 },
-    { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'transformer_v2', allModel: false, incidents: 49, alerted: 0, resolved: 0 },
-    { ...baseRow, captureId: 'syn1-thu', zeekadPickedBy: 'all', allModel: true, incidents: 21, alerted: 3, resolved: 10, truePositive: 6, zeekadPrecision: 0.6, alertedResolved: 3, zeekadAlertPrecision: 0.667, zeekadAlertResolvedRate: 1 },
-    { ...baseRow, captureId: 'syn1-thu', zeekadPickedBy: 'tail_rarity_v2', allModel: false, incidents: 21, resolved: 10, truePositive: 6, zeekadPrecision: 0.6 },
-  ],
-  slackSummaries: [
-    { jobId: 8, captureId: 'syn1-thu', zeekadMessageVersion: 'daily-summary.v1', zeekadDeliveryMode: 'dry_run', zeekadDeliveryStatus: 'recorded', slackPayload: null, slackTs: null, deliveredAt: null, createdAt: '2026-11-19T15:40:00Z', dryRunOrRecorded: true, payloadTextPreview: '요약', payloadChannel: '#sec' },
-    { jobId: 2, captureId: 'cic17-wed', zeekadMessageVersion: 'daily-summary.v1', zeekadDeliveryMode: 'dry_run', zeekadDeliveryStatus: 'recorded', slackPayload: null, slackTs: null, deliveredAt: null, createdAt: '2026-11-12T02:40:00Z', dryRunOrRecorded: true, payloadTextPreview: '요약', payloadChannel: '#sec' },
-  ],
-};
+const FEEDBACK = [
+  { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'all', allModel: true, incidents: 79, alerted: 9, resolved: 9, truePositive: 8, zeekadPrecision: 0.889, alertedResolved: 1, zeekadAlertPrecision: 1, zeekadAlertResolvedRate: 0.111 },
+  { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'tgn_recon', allModel: false, incidents: 30, resolved: 9, truePositive: 8, zeekadPrecision: 0.889 },
+  { ...baseRow, captureId: 'cic17-wed', zeekadPickedBy: 'transformer_v2', allModel: false, incidents: 49, alerted: 0, resolved: 0 },
+  { ...baseRow, captureId: 'syn1-thu', zeekadPickedBy: 'all', allModel: true, incidents: 21, alerted: 3, resolved: 10, truePositive: 6, zeekadPrecision: 0.6, alertedResolved: 3, zeekadAlertPrecision: 0.667, zeekadAlertResolvedRate: 1 },
+  { ...baseRow, captureId: 'syn1-thu', zeekadPickedBy: 'tail_rarity_v2', allModel: false, incidents: 21, resolved: 10, truePositive: 6, zeekadPrecision: 0.6 },
+];
 
-const reviewsResponse = {
-  maskedView: false,
-  canDecideReview: true,
-  allowedCaptures: ['cic17-wed', 'syn1-thu'],
-  selectedCaptureId: null,
-  pendingOnly: true,
-  reviews: [
-    { jobId: 2, reviewJobId: 5, captureId: 'cic17-wed', incidentId: 'a|1', queueRank: 1, hostIp: '10.0.0.1', zeekadRole: 'responder', zeekadReviewReason: null, requestedAt: null, zeekadReviewAction: null, analyst: null, analystDisplay: null, decidedAt: null, zeekadReviewResumedAt: null, zeekadReviewResumeFailed: null, pending: true },
-    { jobId: 8, reviewJobId: 6, captureId: 'syn1-thu', incidentId: 'b|1', queueRank: 1, hostIp: '10.0.0.2', zeekadRole: 'originator', zeekadReviewReason: null, requestedAt: null, zeekadReviewAction: null, analyst: null, analystDisplay: null, decidedAt: null, zeekadReviewResumedAt: null, zeekadReviewResumeFailed: null, pending: true },
-  ],
-};
+const ALL_JOBS = [
+  { jobId: 9, captureId: 'syn1-thu', bundleId: 'zeekad-fusion/3', status: 'failed', startedAt: null, finishedAt: minutesAgo(600), error: '근거 API 시간 초과', incidentCount: null },
+  { jobId: 8, captureId: 'syn1-thu', bundleId: 'zeekad-fusion/3', status: 'succeeded', startedAt: null, finishedAt: minutesAgo(30000), error: null, incidentCount: 21 },
+  { jobId: 2, captureId: 'cic17-wed', bundleId: 'zeekad-fusion/3', status: 'succeeded', startedAt: null, finishedAt: minutesAgo(9000), error: null, incidentCount: 79 },
+];
 
-/** T23 통합 큐 빈 응답 */
-const emptyQueue = {
-  items: [],
-  total: 0,
-  page: 1,
-  size: 50,
-  pageCount: 1,
-  summary: { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {} },
-  anchor: '2026-11-21T00:00:00Z',
-  anchorMode: 'now',
-  snapshot: false,
-  period: 'all',
-  latestDetectedAt: null,
-  newestOutsidePeriod: null,
-  sources: [
-    { captureId: 'cic17-wed', sourceType: 'imported', latestJobId: 1 },
-    { captureId: 'syn1-thu', sourceType: 'imported', latestJobId: 2 },
-  ],
-  maskedView: false,
-  availableModels: [],
-  availableRoles: [],
-};
+const SOURCES = [
+  { captureId: 'cic17-wed', sourceType: 'imported', latestJobId: 2 },
+  { captureId: 'lab-20261119', sourceType: 'live', latestJobId: 55 },
+  { captureId: 'lab-20261120', sourceType: 'live', latestJobId: 60 },
+  { captureId: 'syn1-thu', sourceType: 'imported', latestJobId: 8 },
+];
+
+/** 가짜 /api/operations: 작업·Slack 요약은 기간 안만, 판정 집계·latestJobs는 기간 무관 */
+function fakeOperations(url: string, opts: { truncated?: boolean } = {}) {
+  const p = new URLSearchParams(url.split('?')[1] ?? '');
+  const period = p.get('period');
+  const within = (iso: string | null) =>
+    !period || period === 'all' || (iso !== null && new Date(ANCHOR).getTime() - new Date(iso).getTime() < PERIOD_MIN[period] * 60_000);
+  const jobs = ALL_JOBS.filter((j) => within(j.finishedAt));
+  return {
+    maskedView: false,
+    allowedCaptures: SOURCES.map((s) => s.captureId),
+    selectedCaptureId: p.get('captureId'),
+    jobs,
+    bundles: [],
+    feedbackSummaries: FEEDBACK,
+    slackSummaries: [
+      { jobId: 8, captureId: 'syn1-thu', zeekadMessageVersion: 'daily-summary.v1', zeekadDeliveryMode: 'dry_run', zeekadDeliveryStatus: 'recorded', slackPayload: null, slackTs: null, deliveredAt: null, createdAt: minutesAgo(30000), dryRunOrRecorded: true, payloadTextPreview: '요약', payloadChannel: '#sec' },
+    ].filter((s) => within(s.createdAt)),
+    period,
+    source: p.get('source'),
+    anchor: ANCHOR,
+    jobsTruncated: Boolean(opts.truncated),
+    jobsTotal: opts.truncated ? 1234 : jobs.length,
+    latestJobs: [
+      { captureId: 'cic17-wed', latestEnded: jobRef(2, 'cic17-wed', 'succeeded', 9000), latestSucceeded: jobRef(2, 'cic17-wed', 'succeeded', 9000) },
+      { captureId: 'syn1-thu', latestEnded: jobRef(9, 'syn1-thu', 'failed', 600, '근거 API 시간 초과'), latestSucceeded: jobRef(8, 'syn1-thu', 'succeeded', 30000) },
+    ],
+    sources: SOURCES,
+  };
+}
 
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderAt(
-  path: string,
-  options: { operations?: () => Response; reviews?: () => Response } = {},
-) {
+interface RenderOptions {
+  overview?: (url: string) => Response;
+  queue?: (url: string) => Response;
+  operations?: (url: string) => Response;
+  snapshot?: boolean;
+}
+
+function renderAt(path: string, options: RenderOptions = {}) {
   document.cookie = 'XSRF-TOKEN=dashboard-test-token; path=/';
+  const calls: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url === '/api/auth/me') return json({ authenticated: true, user: analystUser });
-    if (url.startsWith('/api/operations')) return options.operations ? options.operations() : json(operationsResponse);
-    if (url.startsWith('/api/reviews')) return options.reviews ? options.reviews() : json(reviewsResponse);
-    if (url === '/api/time-context') return json({ anchor: '2026-11-21T00:00:00Z', anchorMode: 'now', snapshot: false });
-    if (url.startsWith('/api/incidents')) return json(emptyQueue);
+    if (url === '/api/time-context') return json({ anchor: ANCHOR, anchorMode: options.snapshot ? 'latest-data' : 'now', snapshot: Boolean(options.snapshot) });
+    calls.push(url);
+    if (url.startsWith('/api/dashboard/overview')) {
+      return options.overview ? options.overview(url) : json(fakeOverview(url, { snapshot: options.snapshot }));
+    }
+    if (url.startsWith('/api/incidents/queue')) {
+      return options.queue
+        ? options.queue(url)
+        : json(fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter, snapshot: options.snapshot, newestOutsidePeriod: minutesAgo(10) }));
+    }
+    if (url.startsWith('/api/operations')) return options.operations ? options.operations(url) : json(fakeOperations(url));
     return json({}, 404);
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -122,12 +294,29 @@ function renderAt(
       </ToastProvider>
     </MemoryRouter>,
   );
-  return { ...utils, fetchMock };
+  return { ...utils, fetchMock, calls };
 }
 
-/** 화면이 부른 API(로그인 확인과 T23 기준 시각은 화면마다가 아니라 로그인한 사용자마다 한 번 부르므로 뺀다) */
-const apiCalls = (fetchMock: ReturnType<typeof vi.fn>) =>
-  fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u !== '/api/auth/me' && u !== '/api/time-context');
+const paramsOf = (url: string) => Object.fromEntries(new URLSearchParams(url.split('?')[1] ?? ''));
+const hrefParams = (a: HTMLElement) => new URLSearchParams((a.getAttribute('href') ?? '').split('?')[1] ?? '');
+
+async function kpiRegion() {
+  const kpi = await screen.findByRole('region', { name: '핵심 지표' });
+  await waitFor(() => expect(within(kpi).getByRole('link', { name: /에스컬레이션 대기/ })).not.toHaveTextContent(/^에스컬레이션 대기현재-$/));
+  return kpi;
+}
+
+const kpiValue = (link: HTMLElement) => Number((link.querySelector('[data-kpi-value]')?.textContent ?? '').replace(/,/g, ''));
+
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  setVisibility('visible');
+});
 
 describe('라우팅과 사이드바(T20)', () => {
   it("'/'는 현황판이고 사이드바의 현황판만 활성이다", async () => {
@@ -155,181 +344,362 @@ describe('라우팅과 사이드바(T20)', () => {
   });
 });
 
-describe('관제 현황판', () => {
-  it('API 두 번(운영 현황·에스컬레이션 대기)으로 그리고 KPI는 캡처별 모든 모델 합계의 합이다', async () => {
-    const { fetchMock } = renderAt('/');
-    const kpi = await screen.findByRole('region', { name: '핵심 지표' });
-    await waitFor(() => expect(within(kpi).getByRole('link', { name: /에스컬레이션 대기/ })).toHaveTextContent('2'));
-    expect(apiCalls(fetchMock).sort()).toEqual(['/api/operations', '/api/reviews?pendingOnly=true']);
+describe('관제 현황판(T24 시간·수집원 기준)', () => {
+  it('API 세 번(overview·큐 최근·큐 전체 기간)으로 그리고 KPI 넷은 같은 조건 큐 summary다(기본 24시간)', async () => {
+    const { calls } = renderAt('/');
+    const kpi = await kpiRegion();
+    expect(calls.map(paramsOf)).toEqual(
+      expect.arrayContaining([
+        { period: '24h' },
+        { period: '24h', sort: 'detected', dir: 'desc', size: '25' },
+        { period: 'all', size: '25' },
+      ]),
+    );
+    expect(calls.filter((c) => c.startsWith('/api/dashboard/overview'))).toEqual(['/api/dashboard/overview?period=24h']);
+    expect(calls.some((c) => c.startsWith('/api/operations') || c.startsWith('/api/reviews'))).toBe(false);
 
-    expect(within(kpi).getByRole('link', { name: /전체 인시던트/ })).toHaveTextContent('100');
-    expect(within(kpi).getByRole('link', { name: /경보 발송/ })).toHaveTextContent('12');
-    const resolved = within(kpi).getByRole('link', { name: /판정 완료/ });
-    expect(resolved).toHaveTextContent('19');
-    expect(resolved).toHaveTextContent('미판정 81건');
+    const total = within(kpi).getByRole('link', { name: /탐지된 인시던트/ });
+    expect(kpiValue(total)).toBe(5);
+    expect(total).toHaveTextContent('최근 24시간');
+    expect(kpiValue(within(kpi).getByRole('link', { name: /High\(미종결\)/ }))).toBe(2);
+    expect(kpiValue(within(kpi).getByRole('link', { name: /경보 발송/ }))).toBe(1);
+    const pending = within(kpi).getByRole('link', { name: /에스컬레이션 대기/ });
+    expect(kpiValue(pending)).toBe(2); // 전체 기간: 4번(24시간 안)·9번(40일 전)
+    expect(pending).toHaveTextContent('현재');
+    expect(pending.getAttribute('title')).toContain('최신 분석 결과 기준');
   });
 
-  it('기준 띠: 데이터 기준은 최근 성공 탐지 작업 완료 시각(KST), 실패 작업 수, 새로 고침', async () => {
-    const { fetchMock } = renderAt('/');
-    const strip = await screen.findByRole('region', { name: '기준 시각' });
-    // 2026-11-19T15:30:00Z → KST 2026-11-20 00:30:00 (실패한 작업 9의 시각은 쓰지 않는다)
-    await waitFor(() => expect(within(strip).getByTestId('data-as-of')).toHaveTextContent('2026-11-20 00:30:00'));
-    expect(strip).toHaveTextContent('KST');
-    expect(strip).toHaveTextContent('실패한 탐지 작업 1건');
-    const before = apiCalls(fetchMock).length;
-    await userEvent.setup().click(within(strip).getByRole('button', { name: '새로 고침' }));
-    await waitFor(() => expect(apiCalls(fetchMock).length).toBe(before + 2));
-  });
-
-  it('탐지 모델 상태: 판정 9건은 표본 부족(값은 툴팁), 10건은 정탐률', async () => {
-    renderAt('/');
-    const panel = await screen.findByRole('region', { name: '탐지 모델 상태' });
-    const rowOf = (name: string) => within(panel).getByText(name).closest('tr') as HTMLElement;
-    await waitFor(() => expect(within(panel).getByText('통신 관계 이상')).toBeInTheDocument());
-    const short = within(rowOf('통신 관계 이상')).getByText('표본 부족');
-    expect(short).toHaveAttribute('title', expect.stringContaining('정탐률 88.9%(판정 9건)'));
-    expect(within(rowOf('기준선 이탈')).getByText('60.0%')).toBeInTheDocument();
-    expect(within(rowOf('행위 패턴 이탈')).getByText('판정 없음')).toBeInTheDocument();
-    expect(within(panel).getByText('주 탐지 기준 인시던트 수')).toBeInTheDocument();
-  });
-
-  it('KPI와 캡처를 누르면 인시던트 목록·에스컬레이션으로 간다', async () => {
-    const user = userEvent.setup();
-    renderAt('/');
-    const kpi = await screen.findByRole('region', { name: '핵심 지표' });
-    await user.click(within(kpi).getByRole('link', { name: /에스컬레이션 대기/ }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/reviews?pendingOnly=true');
-  });
-
-  it('KPI 경보 발송은 경보 발송 필터, 캡처 행은 그 캡처의 인시던트 목록. 목록 링크는 모두 기간 전체(T23: KPI는 기간 없는 수)', async () => {
-    const user = userEvent.setup();
-    const first = renderAt('/');
-    const kpi = await screen.findByRole('region', { name: '핵심 지표' });
-    const total = within(kpi).getByRole('link', { name: /전체 인시던트/ });
-    expect(total).toHaveAttribute('href', '/incidents?period=all');
-    expect(total.getAttribute('title')).not.toContain('캡처 하나씩');
-    expect(within(kpi).getByRole('link', { name: /경보 발송/ }).getAttribute('title')).not.toContain('캡처 하나씩');
-    await user.click(within(kpi).getByRole('link', { name: /경보 발송/ }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&alerted=true');
-    first.unmount();
-
-    // 현황판·운영 현황의 /incidents 링크는 모두 period=all을 붙인다(KPI 수와 목록 수가 어긋나지 않게)
-    const again = renderAt('/');
-    await screen.findByRole('region', { name: '캡처별 현황' });
-    await waitFor(() => expect(again.container.querySelectorAll('a[href^="/incidents"]').length).toBeGreaterThan(2));
-    const hrefs = [...again.container.querySelectorAll('a[href^="/incidents"]')].map((a) => a.getAttribute('href') ?? '');
-    for (const href of hrefs) {
-      if (href === '/incidents') continue; // 사이드바 메뉴(기본 큐)
-      expect(new URLSearchParams(href.split('?')[1] ?? '').get('period'), href).toBe('all');
+  it('KPI 링크는 조건(period·source·captureId)을 그대로 싣고, 카드 수 = 그 링크로 부른 큐 목록 수다', async () => {
+    for (const path of ['/', '/?period=1h', '/?period=7d&source=live', '/?period=30d&source=imported', '/?period=all&captureId=lab-20261120']) {
+      const view = renderAt(path);
+      const kpi = await kpiRegion();
+      const want = new URLSearchParams(path.split('?')[1] ?? '');
+      for (const link of within(kpi).getAllByRole('link')) {
+        const q = hrefParams(link);
+        const label = link.textContent ?? '';
+        expect(q.get('source'), `${path} ${label}`).toBe(want.get('source'));
+        expect(q.get('captureId'), `${path} ${label}`).toBe(want.get('captureId'));
+        if (label.startsWith('에스컬레이션 대기')) {
+          expect(q.get('period')).toBe('all');
+          expect(q.get('reviewPending')).toBe('true');
+        } else {
+          expect(q.get('period'), `${path} ${label}`).toBe(want.get('period') ?? '24h');
+        }
+        // 카드 수 = 같은 링크 조건으로 부른 큐의 목록 수(total, 띠 축 포함)
+        const listed = fakeQueue(`/api/incidents/queue?${q.toString()}`, { items: ITEMS, anchor: ANCHOR, periodFilter });
+        expect(kpiValue(link), `${path} ${label}`).toBe(listed.total);
+      }
+      view.unmount();
     }
-    again.unmount();
-
-    const ops = renderAt('/operations');
-    await screen.findByRole('heading', { name: '운영 현황' });
-    for (const a of ops.container.querySelectorAll('a[href^="/incidents"]')) {
-      const href = a.getAttribute('href') ?? '';
-      if (href === '/incidents') continue;
-      expect(new URLSearchParams(href.split('?')[1] ?? '').get('period'), href).toBe('all');
-    }
-    ops.unmount();
-
-    renderAt('/');
-    const captures = await screen.findByRole('region', { name: '캡처별 현황' });
-    const link = await within(captures).findByRole('link', { name: 'CIC 목요일 + 합성 APT 인시던트 목록' });
-    // 캡처는 표시 이름, 원래 ID는 툴팁
-    expect(within(link).getByText('CIC 목요일 + 합성 APT')).toHaveAttribute('title', expect.stringContaining('캡처 ID: syn1-thu'));
-    await user.click(link);
-    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&captureId=syn1-thu');
   });
 
-  it('파이프라인·경보 패널: 캡처마다 최근 작업, 최근 일일 요약과 Dry-run', async () => {
-    renderAt('/');
-    const pipeline = await screen.findByRole('region', { name: '파이프라인' });
-    await waitFor(() => expect(within(pipeline).getAllByRole('row')).toHaveLength(3));
-    const synRow = within(pipeline).getByText('CIC 목요일 + 합성 APT').closest('tr') as HTMLElement;
-    expect(within(synRow).getByText('실패')).toBeInTheDocument();
-    const alertPanel = screen.getByRole('region', { name: '경보' });
-    expect(alertPanel).toHaveTextContent('2026-11-20 00:40:00');
-    expect(within(alertPanel).getByText('Dry-run')).toBeInTheDocument();
-    expect(alertPanel).toHaveTextContent('일일 요약 기록2건');
+  it('KPI를 누르면 같은 조건의 인시던트 목록으로 간다', async () => {
+    const user = userEvent.setup();
+    renderAt('/?period=7d&source=live');
+    const kpi = await kpiRegion();
+    await user.click(within(kpi).getByRole('link', { name: /High\(미종결\)/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=7d&source=live&priority=high');
   });
 
-  it('T26 휴대폰 폭: 현황판의 모든 표는 가로 스크롤 상자 안에 있다', async () => {
-    renderAt('/');
-    const pipeline = await screen.findByRole('region', { name: '파이프라인' });
-    await waitFor(() => expect(within(pipeline).getAllByRole('row')).toHaveLength(3));
-    await screen.findByRole('region', { name: '탐지 모델 상태' });
-    expectAllTablesInScrollBox();
-
-    // 파이프라인: md 미만은 카드 목록, md 이상은 표. (a) 표 쪽은 md 미만에서 숨는다
-    const table = within(pipeline).getByRole('table');
-    expect(hiddenBelowMd(table)).toBe(true);
-    // (b) 카드 목록에 캡처 이름·상태·완료 시각(짧게, 전체 값은 툴팁)이 있다. 모델 버전은 보조 줄
-    const list = within(pipeline).getByRole('list', { name: '파이프라인 목록' });
-    expect(hiddenBelowMd(list)).toBe(false);
-    expect(list.className.split(/\s+/)).toContain('md:hidden');
-    const items = within(list).getAllByRole('listitem');
-    expect(items).toHaveLength(2);
-    const syn = items.find((li) => li.textContent?.includes('합성 APT')) as HTMLElement;
-    const synName = syn.querySelector('[data-capture-name]') as HTMLElement;
-    expect(synName).toHaveTextContent(/^CIC 목요일 \+ 합성 APT$/);
-    // 캡처 이름은 공백에서만 줄을 바꾼다: 조각마다 whitespace-nowrap
-    const words = Array.from(synName.children);
-    expect(words.map((w) => w.textContent)).toEqual(['CIC', '목요일', '+', '합성', 'APT']);
-    for (const w of words) expect(w.className).toContain('whitespace-nowrap');
-    expect(within(syn).getByText('실패')).toBeInTheDocument();
-    // syn1-thu 최근 작업 #9 완료 2026-11-20T05:00:00Z = KST 2026-11-20 14:00:00
-    const short = within(syn).getByText('완료 11-20 14:00');
-    expect(short).toHaveAttribute('title', '완료 시각 2026-11-20 14:00:00');
-    expect(within(syn).getByText('zeekad-fusion/3')).toBeInTheDocument();
-    // md 이상 표의 완료 시각은 지금 형식(연도·초) 그대로
-    const synRow = within(table).getByText('CIC 목요일 + 합성 APT').closest('tr') as HTMLElement;
-    expect(within(synRow).getByText('2026-11-20 14:00:00')).toBeInTheDocument();
-    expect(within(table).queryByText(/^11-20 14:00$/)).toBeNull();
+  it('기간·수집원을 바꾸면 URL과 요청 조건이 바뀐다. 조건 줄에 기준 시각 = 현재와 불러온 시각이 있다', async () => {
+    const user = userEvent.setup();
+    const { calls } = renderAt('/');
+    await kpiRegion();
+    const bar = screen.getByRole('region', { name: '보기 조건' });
+    expect(within(bar).getByTestId('dashboard-anchor')).toHaveTextContent('기준 시각 = 현재');
+    expect(bar).toHaveTextContent('불러온 시각');
+    await user.click(within(bar).getByRole('button', { name: '7일' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/?period=7d');
+    await waitFor(() => expect(calls).toContain('/api/dashboard/overview?period=7d'));
+    await user.selectOptions(within(bar).getByLabelText('수집원'), 'src:imported');
+    expect(screen.getByTestId('location')).toHaveTextContent('/?period=7d&source=imported');
+    await waitFor(() => expect(calls).toContain('/api/dashboard/overview?period=7d&source=imported'));
+    await user.selectOptions(within(bar).getByLabelText('수집원'), 'cap:lab-20261120');
+    expect(screen.getByTestId('location')).toHaveTextContent('/?period=7d&captureId=lab-20261120');
+    // 기본 기간(24시간)을 고르면 주소에서 뺀다
+    await user.click(within(bar).getByRole('button', { name: '24시간' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/\?captureId=lab-20261120$/);
   });
 
-  it('데이터가 없으면 빈 상태를 보인다', async () => {
-    renderAt('/', {
-      operations: () => json({ ...operationsResponse, jobs: [], feedbackSummaries: [], slackSummaries: [] }),
-      reviews: () => json({ ...reviewsResponse, reviews: [] }),
+  it('자동 갱신: 60초마다 다시 부르고, 화면이 숨겨지면 멈췄다가 보이면 곧바로 부른다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const { calls } = renderAt('/');
+    await kpiRegion();
+    await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+    const overviews = () => calls.filter((c) => c.startsWith('/api/dashboard/overview')).length;
+    expect(overviews()).toBe(1);
+    await act(async () => {
+      vi.advanceTimersByTime(DASHBOARD_REFRESH_MS);
     });
-    expect(await screen.findByText('표시할 캡처 집계가 없습니다.')).toBeInTheDocument();
-    expect(screen.getByText('탐지 모델별 집계가 없습니다.')).toBeInTheDocument();
-    expect(screen.getByText('탐지 작업 기록이 없습니다.')).toBeInTheDocument();
-    expect(screen.getByTestId('data-as-of')).toHaveTextContent('-');
+    await waitFor(() => expect(overviews()).toBe(2));
+    act(() => setVisibility('hidden'));
+    await act(async () => {
+      vi.advanceTimersByTime(DASHBOARD_REFRESH_MS * 3);
+    });
+    expect(overviews()).toBe(2);
+    act(() => setVisibility('visible'));
+    await waitFor(() => expect(overviews()).toBe(3));
   });
 
-  it('운영 현황 API가 실패하면 오류와 다시 시도를 보이고, 에스컬레이션만 실패하면 그 KPI만 비운다', async () => {
-    const first = renderAt('/', { operations: () => json({ message: '서버 오류' }, 500) });
+  it('자동 갱신: 고정 스냅샷이면 꺼지고 조건 줄의 기준 시각은 맨 위 띠와 같은 값이다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const { calls } = renderAt('/', { snapshot: true });
+    await kpiRegion();
+    expect(screen.getByTestId('dashboard-anchor')).toHaveTextContent('기준 시각 2026-11-21 09:00:00 KST');
+    await act(async () => {
+      vi.advanceTimersByTime(DASHBOARD_REFRESH_MS * 3);
+    });
+    expect(calls.filter((c) => c.startsWith('/api/dashboard/overview'))).toHaveLength(1);
+  });
+
+  it('탐지 추이: 구간 수만큼 막대 묶음, 구간마다 툴팁, 화면 판독기용 표', async () => {
+    const view = renderAt('/');
+    const trend = await screen.findByRole('region', { name: '탐지 추이' });
+    await waitFor(() => expect(trend.querySelectorAll('[data-bucket]')).toHaveLength(24));
+    expect(trend.querySelectorAll('[data-bucket][data-partial="true"]')).toHaveLength(1);
+    expect(trend.querySelector('[data-bucket] title')?.textContent).toContain('KST');
+    const table = trend.querySelector('table.sr-only') as HTMLTableElement;
+    expect(table).not.toBeNull();
+    expect(table.caption?.textContent).toBe('탐지 추이 구간별 인시던트 수');
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(24);
+    expect(trend.querySelector('[data-axis-max]')).toHaveTextContent('5');
+    expect(trend).toHaveTextContent('구간 1시간');
+    view.unmount();
+
+    renderAt('/?period=7d');
+    const week = await screen.findByRole('region', { name: '탐지 추이' });
+    await waitFor(() => expect(week.querySelectorAll('[data-bucket]')).toHaveLength(28));
+    expect(week).toHaveTextContent('구간 6시간');
+  });
+
+  it('탐지 추이: 기간 안 0건이면 가장 최근 탐지와 [기간: 전체로 보기]를 보인다', async () => {
+    const user = userEvent.setup();
+    const empty = (url: string) => fakeQueue(url, { items: [], anchor: ANCHOR, newestOutsidePeriod: '2026-11-12T03:00:00Z' });
+    renderAt('/?period=1h', {
+      queue: (url) => json({ ...empty(url), sources: SOURCES }),
+      overview: (url) => json({ ...fakeOverview(url), trend: { bucket: '5m', buckets: buckets('1h', 0), unbucketed: { noDetectedAt: 0, afterAnchor: 0 } } }),
+    });
+    const trend = await screen.findByRole('region', { name: '탐지 추이' });
+    expect(await within(trend).findByText(/이 기간에 탐지된 인시던트가 없습니다\. 가장 최근 탐지:/)).toHaveTextContent('2026-11-12 12:00:00');
+    expect(trend.querySelectorAll('[data-bucket]')).toHaveLength(0);
+    await user.click(within(trend).getByRole('button', { name: '기간: 전체로 보기' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/?period=all');
+  });
+
+  it('탐지 추이: 구간에 들지 않은 인시던트가 있으면 한 줄로 알린다', async () => {
+    renderAt('/?period=all', {
+      overview: (url) => {
+        const ov = fakeOverview(url);
+        return json({ ...ov, trend: { ...ov.trend, unbucketed: { noDetectedAt: 2, afterAnchor: 1 } } });
+      },
+    });
+    const trend = await screen.findByRole('region', { name: '탐지 추이' });
+    expect(await within(trend).findByText(/추이에 넣지 않은 인시던트/)).toHaveTextContent('탐지 시각 없음 2건 · 기준 시각 뒤 탐지 1건');
+  });
+
+  it('최근 인시던트: 탐지 시각 최근순 최대 8줄, 상세 링크에 from=(같은 조건·정렬), [모두 보기]', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => item(20 + i, 'lab-20261120', 5 + i, 'low'));
+    renderAt('/?source=live', {
+      queue: (url) => json(fakeQueue(url, { items: [...ITEMS, ...many], anchor: ANCHOR, periodFilter })),
+    });
+    const panel = await screen.findByRole('region', { name: '최근 인시던트' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-recent-row]')).toHaveLength(8));
+    const first = panel.querySelector('[data-recent-row]') as HTMLAnchorElement;
+    const href = first.getAttribute('href') ?? '';
+    expect(href).toMatch(/^\/incidents\/\d+\/rank\/\d+\?from=/);
+    const from = new URLSearchParams(new URLSearchParams(href.split('?')[1]).get('from') ?? '');
+    expect(Object.fromEntries(from)).toEqual({ period: '24h', source: 'live', sort: 'detected', dir: 'desc' });
+    // 짧은 수집원 이름이 보이고 전체 이름은 판독기 글자에 있다
+    expect(first).toHaveTextContent('실습 11-20');
+    expect(first).toHaveTextContent('수집원: 실습망 2026-11-20 · 캡처 ID: lab-20261120');
+    expect(within(panel).getByRole('link', { name: '모두 보기' })).toHaveAttribute(
+      'href',
+      '/incidents?period=24h&source=live&sort=detected&dir=desc',
+    );
+  });
+
+  it('수집원 상태: 센서 행(상태·마지막 채점·마지막 이상 활동·수)과 수집 중 캡처, 지난 날짜 접기, 가져온 데이터(실패 먼저), 행 링크', async () => {
+    renderAt('/');
+    const panel = await screen.findByRole('region', { name: '수집원 상태' });
+    const sensor = await within(panel).findByRole('link', { name: '실습망 센서 인시던트 목록' });
+    expect(sensor).toHaveAttribute('href', '/incidents?period=24h&source=live');
+    expect(within(sensor).getByText('정상')).toBeInTheDocument();
+    expect(sensor).toHaveTextContent('인시던트 5 · High 2');
+    const li = sensor.closest('li') as HTMLElement;
+    expect(within(li).getByText('5분 전')).toHaveAttribute('title', expect.stringContaining('마지막 채점'));
+    expect(within(li).getByText('12분 전')).toHaveAttribute('title', expect.stringContaining('마지막 이상 활동'));
+    expect(within(li).getByText('실습 11-20').closest('a')).toHaveAttribute('href', '/incidents?period=24h&captureId=lab-20261120');
+    const ended = li.querySelector('details[data-ended-captures]') as HTMLElement;
+    expect(ended).not.toHaveAttribute('open');
+    expect(within(ended).getByText('지난 날짜 1개')).toBeInTheDocument();
+    expect(within(ended).getByText('실습 11-19')).toBeInTheDocument();
+
+    const imported = within(panel).getByRole('list', { name: '가져온 데이터' });
+    const rows = within(imported).getAllByRole('link');
+    expect(rows.map((r) => r.getAttribute('data-capture'))).toEqual(['syn1-thu', 'cic17-wed']);
+    expect(within(rows[0]).getByText('실패')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('CIC+APT 목')).toBeInTheDocument();
+    expect(rows[0]).toHaveAttribute('href', '/incidents?period=24h&captureId=syn1-thu');
+    expect(rows[0].getAttribute('title')).toContain('오류: 근거 API 시간 초과');
+    expect(within(rows[1]).getByText('가져온 데이터')).toBeInTheDocument();
+  });
+
+  it('수집원 상태 배지 문구 여섯 가지(정상·지연·중단·실패·기록 없음·가져온 데이터)와 뜻 툴팁', async () => {
+    const healths = ['ok', 'stale', 'down', 'failed', 'none'] as const;
+    const sensors = healths.map((h, i) => ({ ...SENSOR, sensorKey: `s${i}-*`, label: `센서 s${i}-*`, health: h }));
+    renderAt('/', { overview: (url) => json(fakeOverview(url, { sensors })) });
+    const panel = await screen.findByRole('region', { name: '수집원 상태' });
+    await within(panel).findByText('지연');
+    for (const label of ['정상', '지연', '중단', '실패', '기록 없음', '가져온 데이터']) {
+      expect(within(panel).getAllByText(label).length, label).toBeGreaterThan(0);
+    }
+    expect(within(panel).getByText('지연').closest('[title]')).toHaveAttribute('title', expect.stringContaining('15분을 넘었고 1시간 안'));
+    expect(within(panel).getByText('중단').closest('[title]')).toHaveAttribute('title', expect.stringContaining('1시간을 넘었습니다'));
+  });
+
+  it('경보 발송 상태(작게): 발송 방식 Dry-run, 최근 일일 요약 시각, 기간 안 일일 요약 수', async () => {
+    renderAt('/');
+    const panel = await screen.findByRole('region', { name: '경보 발송 상태' });
+    expect(await within(panel).findByText('Dry-run')).toBeInTheDocument();
+    expect(panel).toHaveTextContent('2026-11-21 00:40:00');
+    expect(panel).toHaveTextContent('최근 24시간 일일 요약1건');
+  });
+
+  it('없어진 것: 캡처별 현황·탐지 모델 상태·파이프라인 패널, 판정 완료 KPI, 데이터 기준 띠. 운영 현황 링크가 있다', async () => {
+    renderAt('/');
+    await kpiRegion();
+    for (const name of ['캡처별 현황', '탐지 모델 상태', '파이프라인', '기준 시각', '경보']) {
+      expect(screen.queryByRole('region', { name }), name).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText('판정 완료')).not.toBeInTheDocument();
+    expect(screen.queryByText(/데이터 기준/)).not.toBeInTheDocument();
+    expect(screen.queryByText('전체 인시던트')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('data-as-of')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /누적 판정·탐지 모델 성능은 운영 현황/ })).toHaveAttribute('href', '/operations?period=24h');
+  });
+
+  it('T26 휴대폰 폭: 현황판의 모든 표(화면 판독기 전용 표 제외)는 가로 스크롤 상자 안에 있다', async () => {
+    renderAt('/');
+    const trend = await screen.findByRole('region', { name: '탐지 추이' });
+    await waitFor(() => expect(trend.querySelectorAll('[data-bucket]').length).toBeGreaterThan(0));
+    // 현황판의 표는 화면 판독기 전용 추이 표 하나뿐이다(패널은 목록으로 그린다)
+    const tables = Array.from(document.querySelectorAll('table'));
+    expect(tables.every((t) => t.closest('.sr-only'))).toBe(true);
+    expect(tablesOutsideScrollBox()).toEqual([]);
+  });
+
+  it('overview·큐 API가 실패하면 오류와 다시 시도를 보이고, 에스컬레이션(전체 기간 큐)만 실패하면 그 KPI만 비운다', async () => {
+    const first = renderAt('/', { overview: () => json({ message: '서버 오류' }, 500) });
     expect(await screen.findByRole('button', { name: /다시 시도/ })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: '핵심 지표' })).not.toBeInTheDocument();
     first.unmount();
 
-    renderAt('/', { reviews: () => json({ message: '서버 오류' }, 500) });
+    renderAt('/', {
+      queue: (url) =>
+        paramsOf(url).period === 'all' && !paramsOf(url).sort
+          ? json({ message: '서버 오류' }, 500)
+          : json(fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter })),
+    });
     const kpi = await screen.findByRole('region', { name: '핵심 지표' });
     const pending = within(kpi).getByRole('link', { name: /에스컬레이션 대기/ });
     await waitFor(() => expect(pending).toHaveTextContent('불러오지 못했습니다'));
-    expect(within(kpi).getByRole('link', { name: /전체 인시던트/ })).toHaveTextContent('100');
+    expect(kpiValue(within(kpi).getByRole('link', { name: /탐지된 인시던트/ }))).toBe(5);
+  });
+
+  it('허용 밖 캡처(403)면 서버 문구를 보인다', async () => {
+    renderAt('/?captureId=lab-20261201', {
+      overview: () => json({ status: 403, code: 'ACCESS_DENIED', message: '접근 권한이 없는 캡처입니다.' }, 403),
+    });
+    expect(await screen.findByText(/접근 권한이 없는 캡처입니다/)).toBeInTheDocument();
   });
 });
 
-describe('운영 현황 재구성(T20)', () => {
-  it('상태 카드 3개와 합계 문장', async () => {
+describe('운영 현황(T24 기간·수집원 조건)', () => {
+  it('조건 줄: 기본 7일로 운영 현황·overview를 부르고, 기간·수집원을 바꾸면 URL과 요청이 바뀐다', async () => {
+    const user = userEvent.setup();
+    const { calls } = renderAt('/operations');
+    await screen.findByRole('region', { name: '상태 요약' });
+    expect(calls).toEqual(expect.arrayContaining(['/api/operations?period=7d', '/api/dashboard/overview?period=7d']));
+    const bar = screen.getByRole('region', { name: '보기 조건' });
+    expect(within(bar).getByRole('button', { name: '7일' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(bar).getByRole('button', { name: '1시간' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/operations?period=1h');
+    await waitFor(() => expect(calls).toContain('/api/operations?period=1h'));
+    await user.selectOptions(within(bar).getByLabelText('수집원'), 'src:live');
+    await waitFor(() => expect(calls).toContain('/api/operations?period=1h&source=live'));
+  });
+
+  it('옛 captureId 링크는 수집원 선택 안의 캡처로 읽는다', async () => {
+    const { calls } = renderAt('/operations?captureId=syn1-thu');
+    await screen.findByRole('region', { name: '상태 요약' });
+    expect(calls).toEqual(expect.arrayContaining(['/api/operations?period=7d&captureId=syn1-thu', '/api/dashboard/overview?period=7d&captureId=syn1-thu']));
+    expect(screen.getByLabelText('수집원')).toHaveValue('cap:syn1-thu');
+  });
+
+  it('상태 카드 3개(수집원·모델 판정·경보)와 합계 문장', async () => {
     renderAt('/operations');
     const cards = await screen.findByRole('region', { name: '상태 요약' });
-    expect(within(cards).getByRole('region', { name: '파이프라인 상태' })).toHaveTextContent('최근 작업 실패 1개 캡처');
-    expect(within(cards).getByRole('region', { name: '파이프라인 상태' })).toHaveTextContent('데이터 기준 2026-11-20 00:30:00');
+    const sourceCard = within(cards).getByRole('region', { name: '수집원 상태' });
+    await waitFor(() => expect(sourceCard).toHaveTextContent('실습망 센서정상'));
+    expect(sourceCard).toHaveTextContent('가져온 데이터 실패 1개 / 2개 캡처');
     // 판정 19/100, 정탐 14 → 73.7%
     expect(within(cards).getByRole('region', { name: '모델 판정 상태' })).toHaveTextContent('정탐률 73.7% · 판정 19/100건(19.0%)');
-    // 경보 판정 1 + 3 = 4건(10건 미만)
     const alert = within(cards).getByRole('region', { name: '경보 상태' });
     expect(alert).toHaveTextContent('경보 발송 12건');
     expect(alert).toHaveTextContent('표본 부족 · 경보 판정 4/12건(33.3%)');
+    expect(alert).toHaveTextContent('2026-11-21 00:40:00');
+  });
+
+  it('판정 집계는 "누적(기간 없음)"이고 기간을 바꿔도 값이 같다. 탐지 작업·Slack 요약은 기간 안만', async () => {
+    const user = userEvent.setup();
+    renderAt('/operations?period=all');
+    const table = (await screen.findAllByText('모든 모델 합계'))[0].closest('table') as HTMLElement;
+    const section = table.closest('section') as HTMLElement;
+    expect(within(section).getByTestId('cumulative-note')).toHaveTextContent('누적(기간 없음)');
+    const before = table.textContent;
+    expect(screen.getByText(/^탐지 작업 기록/, { selector: 'summary' })).toHaveTextContent('전체 기간 3건');
+    expect(screen.getByText(/^Slack 일일 요약/, { selector: 'summary' })).toHaveTextContent('전체 기간 1건');
+
+    await user.click(screen.getByRole('button', { name: '1시간' }));
+    await waitFor(() => expect(screen.getByText(/^탐지 작업 기록/, { selector: 'summary' })).toHaveTextContent('최근 1시간 0건'));
+    expect(screen.getByText(/^Slack 일일 요약/, { selector: 'summary' })).toHaveTextContent('최근 1시간 0건');
+    const after = (await screen.findAllByText('모든 모델 합계'))[0].closest('table') as HTMLElement;
+    expect(after.textContent).toBe(before);
+  });
+
+  it('작업 기록이 잘렸으면 "최근 500건만 보임(전체 N건)"을 적는다', async () => {
+    renderAt('/operations?period=all', {
+      operations: (url) => {
+        const ops = fakeOperations(url, { truncated: true });
+        return json({ ...ops, jobs: Array.from({ length: 500 }, (_, i) => ({ ...ALL_JOBS[2], jobId: 1000 + i })) });
+      },
+    });
+    expect(await screen.findByTestId('jobs-truncated')).toHaveTextContent('최근 500건만 보임(전체 1,234건)');
+  });
+
+  it('수집원 상태 표: 센서 행·캡처 행(지난 날짜 포함)의 값, 짧은 이름(전체 이름은 판독기 글자), 오류 글', async () => {
+    renderAt('/operations');
+    const section = await screen.findByRole('region', { name: '수집원 상태 표' });
+    const table = await within(section).findByRole('table');
+    const sensorRow = table.querySelector('[data-sensor-row="lab-*"]') as HTMLElement;
+    expect(within(sensorRow).getByText('정상')).toBeInTheDocument();
+    expect(sensorRow).toHaveTextContent('#60');
+    const rows = Array.from(table.querySelectorAll('[data-capture-row]')).map((r) => r.getAttribute('data-capture-row'));
+    expect(rows).toEqual(['lab-20261120', 'lab-20261119', 'syn1-thu', 'cic17-wed']);
+    const ended = table.querySelector('[data-capture-row="lab-20261119"]') as HTMLElement;
+    expect(within(ended).getByText('지난 날짜')).toBeInTheDocument();
+    expect(ended).toHaveTextContent('실습 11-19');
+    expect(ended).toHaveTextContent('실습망 2026-11-19 · Kali 공격 + 정상 배경 · 캡처 ID: lab-20261119');
+    const failed = table.querySelector('[data-capture-row="syn1-thu"]') as HTMLElement;
+    expect(failed).toHaveTextContent('근거 API 시간 초과 10.0.0.*');
   });
 
   it('T26 휴대폰 폭: 운영 현황의 모든 표(접힌 영역 포함)는 가로 스크롤 상자 안에 있다', async () => {
     renderAt('/operations');
     await screen.findAllByText('모든 모델 합계');
+    await screen.findByRole('region', { name: '수집원 상태 표' });
     expectAllTablesInScrollBox();
   });
 
@@ -339,11 +709,7 @@ describe('운영 현황 재구성(T20)', () => {
     const table = (await screen.findAllByText('모든 모델 합계'))[0].closest('table') as HTMLElement;
     expect(within(table).getAllByText('모든 모델 합계')).toHaveLength(2);
     expect(within(table).queryByText('통신 관계 이상')).not.toBeInTheDocument();
-    // 정탐률 문장: 판정 9건은 표본 부족, 10건은 정탐률
-    expect(within(table).getByText('표본 부족 · 판정 9/79건(11.4%)')).toHaveAttribute(
-      'title',
-      expect.stringContaining('정탐률 88.9%'),
-    );
+    expect(within(table).getByText('표본 부족 · 판정 9/79건(11.4%)')).toHaveAttribute('title', expect.stringContaining('정탐률 88.9%'));
     expect(within(table).getByText('정탐률 60.0% · 판정 10/21건(47.6%)')).toBeInTheDocument();
     expect(within(table).getByRole('img', { name: '정탐률' })).toBeInTheDocument();
 
@@ -359,15 +725,15 @@ describe('운영 현황 재구성(T20)', () => {
     expect(within(table).queryByText('통신 관계 이상')).not.toBeInTheDocument();
   });
 
-  it('탐지 작업·모델 버전·Slack 일일 요약은 접힌 영역이고 캡처 선택은 표시 이름', async () => {
+  it('탐지 작업·모델 버전·Slack 일일 요약은 접힌 영역이고 수집원 선택은 표시 이름', async () => {
     renderAt('/operations');
     await screen.findByRole('region', { name: '상태 요약' });
     for (const title of ['탐지 작업 기록', '모델 버전', 'Slack 일일 요약']) {
       const summary = screen.getByText(new RegExp(`^${title}`), { selector: 'summary' });
       expect(summary.closest('details')).not.toHaveAttribute('open');
     }
-    const select = screen.getByLabelText('캡처');
-    expect(within(select).getByRole('option', { name: 'CIC-IDS2017 수요일' })).toHaveAttribute('value', 'cic17-wed');
+    const select = screen.getByLabelText('수집원');
+    expect(within(select).getByRole('option', { name: 'CIC-IDS2017 수요일' })).toHaveAttribute('value', 'cap:cic17-wed');
     expect(within(select).getByRole('option', { name: 'CIC 목요일 + 합성 APT' })).toHaveAttribute(
       'title',
       expect.stringContaining('캡처 ID: syn1-thu'),

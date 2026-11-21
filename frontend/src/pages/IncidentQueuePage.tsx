@@ -24,6 +24,7 @@ import {
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
+import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
   CaptureName,
@@ -39,7 +40,7 @@ import {
   SOURCE_TYPE_LABEL,
   SourceTypeBadge,
 } from '../components/StatusBadge';
-import type { QueueSource, SourceType, UnifiedQueueItem, UnifiedQueueResponse } from '../types/api';
+import type { UnifiedQueueItem, UnifiedQueueResponse } from '../types/api';
 import {
   formatDateTime,
   formatDateTimeRange,
@@ -47,7 +48,7 @@ import {
   formatNumber,
   formatRelativeTo,
 } from '../utils/format';
-import { captureInfo, detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
+import { captureInfo, captureShortNames, detectionModelInfo, labelText, lookupLabel, shortNameOf } from '../utils/labels';
 import {
   DEFAULT_PAGE_SIZE,
   DEFAULT_PERIOD,
@@ -57,11 +58,11 @@ import {
   PAGE_SIZES,
   PANEL_FILTER_KEYS,
   parseQueueQuery,
-  PERIODS,
   periodLabel,
   PRIORITY_VALUES,
   queueApiParams,
   STRIP_FILTER_KEYS,
+  type Period,
   type Priority,
   type SortDir,
   type SortKey,
@@ -207,6 +208,8 @@ export function IncidentQueuePage() {
   }, [loading, data, dataKey, apiKey, searchParams, setSearchParams, query.size]);
 
   const since = data ? (data.latestDetectedAt ?? data.anchor) : null;
+  /** 짧은 수집원 이름(허용 캡처 목록 안에서 겹치면 연도를 붙인다) */
+  const shortNames = useMemo(() => captureShortNames((data?.sources ?? []).map((s) => s.captureId)), [data]);
   const newCount = useNewIncidentCount(Boolean(data) && !data?.snapshot, since, pollKey);
 
   /** URL 쿼리를 바꾼다. 기본은 쪽 번호를 지운다(1쪽으로). */
@@ -245,19 +248,13 @@ export function IncidentQueuePage() {
     updateParams({ sort: key, dir });
   }
 
-  function handlePeriod(value: string) {
+  function handlePeriod(value: Period) {
     updateParams({ period: value === DEFAULT_PERIOD ? null : value });
   }
 
   /** 수집원 선택: '' = 전체, 'src:live|imported' = 종류 전체, 'cap:<id>' = 캡처 하나 */
   function handleSource(value: string) {
-    if (value.startsWith('cap:')) {
-      updateParams({ captureId: value.slice(4), source: null });
-    } else if (value.startsWith('src:')) {
-      updateParams({ source: value.slice(4), captureId: null });
-    } else {
-      updateParams({ source: null, captureId: null });
-    }
+    updateParams(sourceSelectChanges(value));
   }
 
   /** 새 인시던트 불러오기: 탐지 시각 최근순 1쪽을 다시 부르고 새 행에 표지를 붙인다. */
@@ -304,7 +301,7 @@ export function IncidentQueuePage() {
   const panelFilterCount = PANEL_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
   const anyFilter =
     chips.length > 0 || query.source !== null || query.captureId !== null;
-  const sourceValue = query.captureId ? `cap:${query.captureId}` : query.source ? `src:${query.source}` : '';
+  const sourceValue = sourceSelectValue(query.source, query.captureId);
   const items = data?.items ?? [];
 
   return (
@@ -340,37 +337,9 @@ export function IncidentQueuePage() {
 
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <div className="flex items-center gap-2" role="group" aria-label="기간">
-              <span className="shrink-0 text-xs font-medium text-slate-400" aria-hidden="true">
-                기간
-              </span>
-              <div className="flex overflow-hidden rounded-md border border-slate-700">
-                {PERIODS.map((p) => {
-                  const active = p.value === query.period;
-                  return (
-                    <button
-                      key={p.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => handlePeriod(p.value)}
-                      title={p.value === 'all' ? '탐지 시각 조건 없이 전체' : `기준 시각에서 최근 ${p.label} 안에 탐지된 인시던트`}
-                      className={`border-l border-slate-700 px-2 py-1 text-xs tabular-nums first:border-l-0 ${
-                        active ? 'bg-cyan-500/15 font-semibold text-cyan-200' : 'text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <PeriodButtons value={query.period} onChange={handlePeriod} />
 
-            <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
-              <label htmlFor="filter-source" className="shrink-0 text-xs font-medium text-slate-400">
-                수집원
-              </label>
-              <SourceSelect sources={data?.sources ?? []} value={sourceValue} onChange={handleSource} />
-            </div>
+            <SourceField sources={data?.sources ?? []} value={sourceValue} onChange={handleSource} />
 
             <span className="hidden h-5 w-px bg-slate-800 sm:block" aria-hidden="true" />
 
@@ -582,6 +551,7 @@ export function IncidentQueuePage() {
               <>
                 <QueueTable
                   rows={items}
+                  shortNames={shortNames}
                   sortKey={query.sortKey}
                   sortDir={query.sortDir}
                   onSort={handleSort}
@@ -611,55 +581,6 @@ export function IncidentQueuePage() {
         )}
       </div>
     </AppShell>
-  );
-}
-
-/* ───────────────────────── 수집원 선택 ───────────────────────── */
-
-function SourceSelect({
-  sources,
-  value,
-  onChange,
-}: {
-  sources: QueueSource[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const groups: SourceType[] = ['live', 'imported'];
-  const known = new Set(sources.map((s) => `cap:${s.captureId}`));
-  const selectedCapture = value.startsWith('cap:') ? value.slice(4) : null;
-  return (
-    <select
-      id="filter-source"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="soc-select w-full py-1.5 text-xs sm:w-72"
-      title={selectedCapture ? captureInfo(selectedCapture).tooltip || undefined : undefined}
-    >
-      <option value="">전체 수집원</option>
-      {groups.map((g) => {
-        const members = sources.filter((s) => s.sourceType === g);
-        return [
-          <option key={`src-${g}`} value={`src:${g}`}>
-            {SOURCE_TYPE_LABEL[g]} 전체
-          </option>,
-          members.length > 0 ? (
-            <optgroup key={`grp-${g}`} label={SOURCE_TYPE_LABEL[g]}>
-              {members.map((s) => {
-                const info = captureInfo(s.captureId);
-                return (
-                  <option key={s.captureId} value={`cap:${s.captureId}`} title={info.tooltip}>
-                    {info.text}
-                  </option>
-                );
-              })}
-            </optgroup>
-          ) : null,
-        ];
-      })}
-      {/* 옛 링크의 captureId가 목록에 없으면(허용 밖 등) 그대로 보여 준다. 서버가 403으로 답한다. */}
-      {selectedCapture && !known.has(value) && <option value={value}>{captureInfo(selectedCapture).text}</option>}
-    </select>
   );
 }
 
@@ -938,22 +859,22 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
 }
 
 /**
- * 수집원(한 줄): 종류 아이콘 + 표시 이름(넘치면 말줄임). 종류 문구·표시 이름 전체·캡처 ID는 툴팁에 둔다.
- * 종류 문구는 수집원 조건과 상세 헤더에 글자로 보인다.
- * T26(T23 review-4 L2): 역할 없는 span의 aria-label은 화면 판독기가 읽지 않을 수 있어, 보이는 표시 이름은 그대로 읽히게 두고
- * 종류 문구·캡처 ID는 sr-only 글자로 더한다(행의 접근성 이름에 "수집원: 종류 · 표시 이름 · 캡처 ID"가 들어간다).
+ * 수집원(한 줄): 종류 아이콘 + 짧은 수집원 이름(T24, "CIC 수"·"실습 11-19"). 종류 문구·전체 이름·캡처 ID는 툴팁에 둔다.
+ * T26(T23 review-4 L2): 역할 없는 span의 aria-label은 화면 판독기가 읽지 않을 수 있어 sr-only 글자를 쓴다.
+ * T24: 보이는 짧은 이름은 판독기에서 감추고(aria-hidden), 판독기 글자에 "수집원: 종류 · 전체 이름 · 캡처 ID"를 둔다.
  */
-function SourceCell({ item }: { item: UnifiedQueueItem }) {
+function SourceCell({ item, shortNames }: { item: UnifiedQueueItem; shortNames: Map<string, string> }) {
   const info = captureInfo(item.captureId);
   const typeText = SOURCE_TYPE_LABEL[item.sourceType] ?? '-';
   const label = `${typeText} · ${info.text} · 캡처 ID: ${item.captureId}`;
   const Icon = item.sourceType === 'live' ? Radio : Database;
   return (
-    <span title={label} className="flex max-w-[5.5rem] items-center gap-1 2xl:max-w-[13rem]">
+    <span title={label} className="flex max-w-[5.5rem] items-center gap-1 2xl:max-w-[13rem]" data-source-cell="">
       <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-      <span className="sr-only">{`수집원: ${typeText} · `}</span>
-      <span className="min-w-0 truncate text-slate-300">{info.text}</span>
-      <span className="sr-only">{` · 캡처 ID: ${item.captureId}`}</span>
+      <span className="min-w-0 truncate text-slate-300" aria-hidden="true" data-short-name="">
+        {shortNameOf(shortNames, item.captureId)}
+      </span>
+      <span className="sr-only">{`수집원: ${typeText} · ${info.text} · 캡처 ID: ${item.captureId}`}</span>
     </span>
   );
 }
@@ -968,6 +889,7 @@ function compactOccurrence(iso: string | null, anchor: string | null): string {
 
 function QueueTable({
   rows,
+  shortNames,
   sortKey,
   sortDir,
   onSort,
@@ -977,6 +899,7 @@ function QueueTable({
   highlightAfter,
 }: {
   rows: UnifiedQueueItem[];
+  shortNames: Map<string, string>;
   sortKey: SortKey;
   sortDir: SortDir;
   onSort: (key: SortKey) => void;
@@ -1101,7 +1024,7 @@ function QueueTable({
                   </div>
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
-                  <SourceCell item={item} />
+                  <SourceCell item={item} shortNames={shortNames} />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2 hidden text-slate-300 2xl:table-cell">
                   <CodeLabel dict="hostRole" value={item.zeekadRole} />

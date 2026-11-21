@@ -6,7 +6,7 @@
  * - 경보 판정률 = 경보 발송 ∧ 판정 완료 / 경보 발송 (zeekad_alert_resolved_rate)
  * 문장 형식은 백엔드 FeedbackSummaryRecord#getPrecisionSummaryText·getAlertPrecisionSummaryText와 같다(둘이 다르면 안 된다).
  */
-import type { FeedbackSummaryRecord, ScoringJob, SlackSummary } from '../types/api';
+import type { FeedbackSummaryRecord, ScoringJob } from '../types/api';
 import { formatNumber } from './format';
 
 /** 판정이 이 건수보다 적으면 비율 대신 "표본 부족"을 쓴다. */
@@ -109,53 +109,14 @@ export function isQuietRow(row: FeedbackSummaryRecord): boolean {
   return (row.resolved ?? 0) === 0 && (row.alerted ?? 0) === 0;
 }
 
-/** 캡처마다 가장 최근 탐지 작업(작업 번호가 가장 큰 것) */
-export function latestJobPerCapture(jobs: ScoringJob[]): ScoringJob[] {
-  const map = new Map<string, ScoringJob>();
-  for (const job of jobs) {
-    const prev = map.get(job.captureId);
-    if (!prev || job.jobId > prev.jobId) {
-      map.set(job.captureId, job);
-    }
-  }
-  return [...map.values()].sort((a, b) => a.captureId.localeCompare(b.captureId));
-}
-
 function isSucceeded(job: ScoringJob): boolean {
   return (job.status ?? '').toLowerCase() === 'succeeded';
 }
 
-function isFailed(job: ScoringJob): boolean {
-  return (job.status ?? '').toLowerCase() === 'failed';
-}
-
-function timeOf(iso: string | null | undefined): number {
-  if (!iso) return Number.NEGATIVE_INFINITY;
-  const t = new Date(iso).getTime();
-  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
-}
-
-/** 받은 탐지 작업 목록 중 가장 최근 성공 작업(완료 시각 기준) */
-export function latestSucceededJob(jobs: ScoringJob[]): ScoringJob | null {
-  let best: ScoringJob | null = null;
-  for (const job of jobs) {
-    if (!isSucceeded(job) || !job.finishedAt) continue;
-    if (!best || timeOf(job.finishedAt) > timeOf(best.finishedAt)) {
-      best = job;
-    }
-  }
-  return best;
-}
-
-export function failedJobCount(jobs: ScoringJob[]): number {
-  return jobs.filter(isFailed).length;
-}
-
-export { isFailed as isFailedJob, isSucceeded as isSucceededJob };
-
 /**
  * 캡처마다 쓸 모델 버전 하나를 고른다. feedback_summary는 캡처마다 최신 탐지 작업 하나로 만들어져 보통 '모든 모델 합계' 행이 하나다.
  * 한 캡처에 '모든 모델 합계' 행이 둘 이상이면, 그 캡처의 최근 성공 탐지 작업과 같은 모델 버전 행을 쓴다(없으면 응답 순서의 첫 행).
+ * T24: jobs에는 기간으로 거른 작업 목록이 아니라 /api/operations latestJobs의 최신 성공 작업을 넘긴다(누적 표가 기간에 따라 바뀌지 않게).
  */
 export function selectSummaryRows(summaries: FeedbackSummaryRecord[], jobs: ScoringJob[]): {
   allRows: FeedbackSummaryRecord[];
@@ -235,42 +196,6 @@ export function sumAllRows(allRows: FeedbackSummaryRecord[]): OverviewTotals {
   }
   totals.unresolved = Math.max(0, totals.incidents - totals.resolved);
   return totals;
-}
-
-export interface ModelStatus {
-  model: string;
-  incidents: number;
-  resolved: number;
-  truePositive: number;
-  /** 정탐 / 판정 완료(판정 0건이면 null) */
-  precision: number | null;
-}
-
-/** 탐지 모델별(주 탐지 기준) 합계. 캡처마다 고른 모델 버전 행만 더한다. */
-export function modelStatuses(modelRows: FeedbackSummaryRecord[]): ModelStatus[] {
-  const map = new Map<string, ModelStatus>();
-  for (const row of modelRows) {
-    const model = row.zeekadPickedBy ?? '-';
-    const cur = map.get(model) ?? { model, incidents: 0, resolved: 0, truePositive: 0, precision: null };
-    cur.incidents += row.incidents ?? 0;
-    cur.resolved += row.resolved ?? 0;
-    cur.truePositive += row.truePositive ?? 0;
-    map.set(model, cur);
-  }
-  return [...map.values()]
-    .map((m) => ({ ...m, precision: m.resolved > 0 ? m.truePositive / m.resolved : null }))
-    .sort((a, b) => b.incidents - a.incidents || a.model.localeCompare(b.model));
-}
-
-/** 가장 최근 Slack 일일 요약(전송 시각, 없으면 기록 시각 기준) */
-export function latestSlackSummary(summaries: SlackSummary[]): SlackSummary | null {
-  let best: SlackSummary | null = null;
-  for (const s of summaries) {
-    if (!best || timeOf(s.deliveredAt ?? s.createdAt) > timeOf(best.deliveredAt ?? best.createdAt)) {
-      best = s;
-    }
-  }
-  return best;
 }
 
 /** 합계를 판정 집계 행 모양으로 바꾼다(상태 카드 문장을 행 문장과 같은 함수로 만들기 위해). */

@@ -429,3 +429,57 @@ export function captureInfo(id: string | null | undefined): CaptureLookup {
 export function captureText(id: string | null | undefined): string {
   return captureInfo(id).text;
 }
+
+/**
+ * 짧은 수집원 이름(T24, T23 review-4 M1). 좁은 칸(인시던트 큐 수집원 칸, 현황판, 운영 현황 수집원 상태)에 쓴다.
+ * 전체 이름·캡처 ID는 툴팁·화면 판독기 글자에 둔다. 규칙: `cic17-<요일>` → "CIC 수", `syn1-<요일>` → "CIC+APT 수",
+ * `lab-YYYYMMDD` → "실습 MM-DD", 규칙 밖 → 캡처 ID 그대로. 실습망 날짜는 UTC다(전체 이름 툴팁의 설명 유지).
+ */
+export function captureShortName(id: string | null | undefined): string {
+  if (id === null || id === undefined || id.trim() === '') {
+    return '-';
+  }
+  const raw = id.trim();
+  const weekday = /^(cic17|syn1)-(mon|tue|wed|thu|fri)$/.exec(raw);
+  if (weekday) {
+    const day = CAPTURE_WEEKDAY[weekday[2]];
+    return weekday[1] === 'cic17' ? `CIC ${day}` : `CIC+APT ${day}`;
+  }
+  const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw);
+  if (lab) {
+    return `실습 ${lab[2]}-${lab[3]}`;
+  }
+  return raw;
+}
+
+/** 실습망 짧은 이름에 연도를 붙인 형태("실습 2026-11-19"). 다른 규칙은 그대로다. */
+function captureShortNameWithYear(raw: string): string {
+  const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw.trim());
+  return lab ? `실습 ${lab[1]}-${lab[2]}-${lab[3]}` : captureShortName(raw);
+}
+
+/**
+ * 사용자의 허용 캡처 목록(큐·overview 응답의 수집원 목록) 안에서 짧은 이름을 정한다.
+ * 짧은 이름이 겹치는 캡처에는 연도를 붙인다(실습망 같은 월·일이 다른 해에 있을 때).
+ */
+export function captureShortNames(ids: readonly string[]): Map<string, string> {
+  const byShort = new Map<string, string[]>();
+  for (const id of ids) {
+    const s = captureShortName(id);
+    byShort.set(s, [...(byShort.get(s) ?? []), id]);
+  }
+  const out = new Map<string, string>();
+  for (const [short, members] of byShort) {
+    const distinct = new Set(members);
+    for (const id of members) {
+      out.set(id, distinct.size > 1 ? captureShortNameWithYear(id) : short);
+    }
+  }
+  return out;
+}
+
+/** 짧은 이름 표(없으면 규칙 그대로) */
+export function shortNameOf(names: Map<string, string> | null | undefined, id: string | null | undefined): string {
+  if (!id) return '-';
+  return names?.get(id) ?? captureShortName(id);
+}

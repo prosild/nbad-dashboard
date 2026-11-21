@@ -9,6 +9,7 @@ import com.zeekad.dashboard.dto.DashboardOverviewResponse.SensorRow;
 import com.zeekad.dashboard.dto.DashboardOverviewResponse.Trend;
 import com.zeekad.dashboard.dto.DashboardOverviewResponse.Unbucketed;
 import com.zeekad.dashboard.dto.OperationsApiResponse;
+import com.zeekad.dashboard.dto.UnifiedQueueResponse;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.CaptureJobStat;
@@ -211,7 +212,10 @@ public class DashboardOverviewService {
         return new OperationsApiResponse(maskingService.shouldMask(role), cond.allowed(), cleanCaptureId, jobs, bundles,
                 feedback, slack, periodGiven ? cond.period() : null,
                 source == null || source.isBlank() ? null : source.trim().toLowerCase(Locale.ROOT),
-                cond.anchor(), truncated, jobsTotal, latestJobs);
+                cond.anchor(), truncated, jobsTotal, latestJobs,
+                cond.allowed().stream()
+                        .map(c -> new UnifiedQueueResponse.Source(c, timeContextService.sourceType(c), null))
+                        .toList());
     }
 
     /* ───────────────────────── 센서·캡처 상태 ───────────────────────── */

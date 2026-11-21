@@ -59,6 +59,10 @@ const OLD_TERMS = [
   '결정이 자동 처리에 반영됨',
   // T21: 발송 판단(would_send)을 "경보 발송 판단"으로 부르지 않는다
   '경보 발송 판단',
+  // T24: 현황판을 시간·수집원 기준으로 바꿨다. 캡처 기준 누적 화면의 용어는 남으면 안 된다.
+  '데이터 기준',
+  '캡처별 현황',
+  '판정 완료',
 ];
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
@@ -492,6 +496,47 @@ const operationsResponse = {
   ],
 };
 
+/** T24 현황판 overview(센서 하나·가져온 데이터 하나) */
+const overviewResponse = {
+  anchor: '2026-11-21T00:00:00Z',
+  anchorMode: 'now',
+  snapshot: false,
+  period: '24h',
+  timeZone: 'Asia/Seoul',
+  staleAfterSeconds: 900,
+  downAfterSeconds: 3600,
+  trend: {
+    bucket: '1h',
+    buckets: [
+      { start: '2026-11-20T22:00:00Z', end: '2026-11-20T23:00:00Z', partial: false, high: 1, medium: 0, low: 1, none: 0, total: 2 },
+      { start: '2026-11-20T23:00:00Z', end: '2026-11-21T00:00:00Z', partial: false, high: 0, medium: 1, low: 0, none: 1, total: 2 },
+    ],
+    unbucketed: { noDetectedAt: 0, afterAnchor: 0 },
+  },
+  sensors: [
+    {
+      sensorKey: 'lab-*',
+      label: '실습망 센서',
+      health: 'stale',
+      latestJob: { jobId: 70, captureId: 'lab-20261119', bundleId: 'zeekad-fusion/3', status: 'succeeded', startedAt: null, finishedAt: '2026-11-20T23:30:00Z', error: null },
+      activeCaptureId: 'lab-20261119',
+      lastScoredAt: '2026-11-20T23:30:00Z',
+      lastActivityAt: null,
+      total: 0,
+      high: 0,
+      alerted: 0,
+      failedJobs: 0,
+      captureCount: 1,
+    },
+  ],
+  captures: [
+    { captureId: 'lab-20261119', sourceType: 'live', sensorKey: 'lab-*', state: 'active', latestJob: null, lastScoredAt: '2026-11-20T23:30:00Z', lastActivityAt: null, total: 0, high: 0, alerted: 0, failedJobs: 0 },
+    { captureId: 'cic17-wed', sourceType: 'imported', sensorKey: null, state: 'failed', latestJob: { jobId: 1, captureId: 'cic17-wed', bundleId: 'zeekad-fusion/3', status: 'failed', startedAt: null, finishedAt: '2026-11-20T00:00:00Z', error: '근거 API 시간 초과' }, lastScoredAt: '2026-11-12T02:27:00Z', lastActivityAt: '2026-11-12T02:00:00Z', total: 4, high: 1, alerted: 1, failedJobs: 1 },
+  ],
+  alerting: { latestDeliveryMode: 'dry_run', latestDeliveryStatus: 'recorded', latestDryRun: true, latestCreatedAt: '2026-11-20T15:40:00Z', latestDeliveredAt: null, latestCaptureId: 'cic17-wed', summariesInPeriod: 1 },
+  maskedView: false,
+};
+
 const usersResponse = {
   users: [
     {
@@ -584,6 +629,7 @@ function renderAt(path: string, user: unknown, overrides: { queue?: unknown } = 
       }
       if (url.startsWith('/api/reviews')) return json(reviewsResponse(masked));
       if (url.startsWith('/api/operations')) return json({ ...operationsResponse, maskedView: masked });
+      if (url.startsWith('/api/dashboard/overview')) return json({ ...overviewResponse, maskedView: masked });
       if (url.startsWith('/api/admin/users')) return json(usersResponse);
       if (url.startsWith('/api/admin/audit-logs')) return json(auditResponse);
       return json({}, 404);
@@ -894,11 +940,18 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
   it('현황판(첫 화면)', async () => {
     const { container } = renderAt('/', viewerUser);
     expect(await screen.findByRole('heading', { name: '현황판' })).toBeInTheDocument();
-    expect(await screen.findByText('전체 인시던트')).toBeInTheDocument();
-    // 캡처는 표시 이름(zeek_AD Q65), 원래 ID는 툴팁
-    expect(screen.getAllByText('CIC-IDS2017 수요일').length).toBeGreaterThanOrEqual(1);
+    // T24: 시간·수집원 기준 KPI와 패널. 옛 "전체 인시던트"·"판정 완료"·"데이터 기준"·"캡처별 현황"은 없다(OLD_TERMS)
+    expect(await screen.findByText('탐지된 인시던트')).toBeInTheDocument();
+    for (const name of ['핵심 지표', '탐지 추이', '최근 인시던트', '수집원 상태', '경보 발송 상태']) {
+      expect(await screen.findByRole('region', { name })).toBeInTheDocument();
+    }
+    // 수집원은 짧은 이름이 보이고 전체 이름(zeek_AD Q65)·캡처 ID는 툴팁·판독기 글자에 있다
+    expect((await screen.findAllByText('CIC 수')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('실습망 센서')).toBeInTheDocument();
+    expect(screen.getByText('지연')).toBeInTheDocument();
+    expect(screen.getByText('실패')).toBeInTheDocument();
     expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('판정 없음').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Dry-run')).toBeInTheDocument();
     expectCleanText(container);
   });
 
@@ -910,6 +963,10 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     // T18b: 결론 집계의 모델·임계값 키도 탐지 모델 표시 이름 사전을 쓴다.
     expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('실패').length).toBeGreaterThanOrEqual(1);
+    // T24: 수집원 상태 표와 누적 표시
+    expect(await screen.findByRole('region', { name: '수집원 상태 표' })).toBeInTheDocument();
+    expect(screen.getByText('누적(기간 없음)')).toBeInTheDocument();
+    expect(screen.getAllByText('지연').length).toBeGreaterThanOrEqual(1);
     expectCleanText(container);
   });
 

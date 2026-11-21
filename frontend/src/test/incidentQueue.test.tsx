@@ -497,8 +497,10 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(row1).toHaveAccessibleName(/수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed/);
     const src1 = within(row1).getByTitle('가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
     expect(src1).not.toHaveAttribute('aria-label');
-    expect(within(src1).getByText('CIC-IDS2017 수요일')).not.toHaveAttribute('aria-hidden');
-    expect(within(row1).getByText('CIC-IDS2017 수요일')).toBeInTheDocument();
+    // T24(T23 review-4 M1): 칸에 보이는 글은 짧은 수집원 이름이다. 판독기에는 감추고(aria-hidden) 전체 이름을 sr-only 글자로 읽힌다.
+    expect(within(src1).getByText('CIC 수')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(src1).getByText('수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed')).toHaveClass('sr-only');
+    expect(within(row1).queryByText('CIC-IDS2017 수요일')).toBeNull();
     expect(within(row1).queryByText('가져온 데이터')).toBeNull();
     // 탐지 시각은 상대 표시만 글로, 발생 시각은 초 없이(기준 시각과 같은 해면 연도도 뺀다)
     expect(within(row1).queryByText('11-20 09:01')).toBeNull();
@@ -515,7 +517,7 @@ describe('통합 인시던트 큐(T23)', () => {
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;
     expect(within(row36).getByText('Low')).toBeInTheDocument();
     expect(row36).toHaveAccessibleName(new RegExp(`수집원: 실습망 센서 · ${escapeRe(LAB_NAME)} · 캡처 ID: lab-20261119`));
-    expect(within(row36).getByText(LAB_NAME)).toBeInTheDocument();
+    expect(within(row36).getByText('실습 11-19')).toBeInTheDocument();
     expect(within(row36).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
     const row59 = within(table).getByText('10.0.59.1').closest('tr') as HTMLElement;
     expect(within(row59).getByText('진행 중')).toBeInTheDocument();

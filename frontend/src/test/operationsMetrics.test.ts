@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { FeedbackSummaryRecord, ScoringJob } from '../types/api';
+import type { FeedbackSummaryRecord, OperationsApiResponse, ScoringJob } from '../types/api';
+import { latestSucceededJobs } from '../pages/OperationsPage';
 import {
   alertPrecisionSummaryText,
-  latestJobPerCapture,
-  latestSucceededJob,
-  failedJobCount,
-  modelStatuses,
   precisionSummaryText,
   precisionValue,
   selectSummaryRows,
@@ -113,8 +110,11 @@ describe('현황판 합계', () => {
     expect(precisionSummaryText(asRow)).toBe('정탐률 53.8% · 판정 13/100건(13.0%)');
     expect(alertPrecisionSummaryText(asRow)).toBe('표본 부족 · 경보 판정 4/12건(33.3%)');
 
-    const models = modelStatuses(modelRows);
-    expect(models).toEqual([{ model: 'tgn_recon', incidents: 40, resolved: 10, truePositive: 4, precision: 0.4 }]);
+    // T24: 현황판의 '탐지 모델 상태' 패널(modelStatuses)은 없어졌다. 탐지 모델별 행은 운영 현황 판정 집계 표에서 펼쳐 본다.
+    expect(modelRows.map((r) => [r.captureId, r.zeekadPickedBy, r.incidents])).toEqual([
+      ['cic17-wed', 'tgn_recon', 30],
+      ['syn1-thu', 'tgn_recon', 10],
+    ]);
   });
 
   it('한 캡처에 모든 모델 합계 행이 둘이면 최근 성공 탐지 작업의 모델 버전 행만 쓴다', () => {
@@ -136,16 +136,35 @@ describe('현황판 합계', () => {
     expect(modelRows.map((r) => r.incidents)).toEqual([20]);
   });
 
-  it('탐지 작업: 캡처마다 최근 작업, 최근 성공 작업, 실패 건수', () => {
-    const jobs = [
-      job({ jobId: 3, captureId: 'syn1-thu', status: 'failed', finishedAt: '2026-11-20T00:00:00Z' }),
-      job({ jobId: 2, captureId: 'syn1-thu', status: 'succeeded', finishedAt: '2026-11-19T00:00:00Z' }),
-      job({ jobId: 1, captureId: 'cic17-wed', status: 'succeeded', finishedAt: '2026-11-12T02:27:00Z' }),
-      job({ jobId: 4, captureId: 'cic17-wed', status: 'failed', finishedAt: null }),
+  it('T24: 누적 표의 모델 버전은 기간으로 거른 jobs가 아니라 latestJobs의 최신 성공 작업으로 고른다', () => {
+    const summaries = [
+      row({ captureId: 'cic17-wed', bundleId: 'zeekad-fusion/3', incidents: 79 }),
+      row({ captureId: 'cic17-wed', bundleId: 'zeekad-fusion/2', incidents: 50 }),
     ];
-    expect(latestJobPerCapture(jobs).map((j) => j.jobId)).toEqual([4, 3]);
-    expect(latestSucceededJob(jobs)?.jobId).toBe(2);
-    expect(failedJobCount(jobs)).toBe(2);
-    expect(latestSucceededJob([])).toBeNull();
+    const ref = (jobId: number, bundleId: string, status: string) => ({
+      jobId,
+      captureId: 'cic17-wed',
+      bundleId,
+      status,
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+    });
+    const base = {
+      maskedView: false,
+      allowedCaptures: ['cic17-wed'],
+      selectedCaptureId: null,
+      bundles: [],
+      feedbackSummaries: summaries,
+      slackSummaries: [],
+      latestJobs: [{ captureId: 'cic17-wed', latestEnded: ref(8, 'zeekad-fusion/3', 'failed'), latestSucceeded: ref(7, 'zeekad-fusion/2', 'succeeded') }],
+    } as unknown as OperationsApiResponse;
+    // 기간 1시간: 기간 안 작업 없음 / 기간 전체: 작업 있음. 어느 쪽이든 고른 행은 같다.
+    for (const jobs of [[], [job({ jobId: 5, bundleId: 'zeekad-fusion/3' })]]) {
+      const data = { ...base, jobs } as OperationsApiResponse;
+      const { allRows } = selectSummaryRows(data.feedbackSummaries, latestSucceededJobs(data));
+      expect(allRows.map((r) => r.bundleId)).toEqual(['zeekad-fusion/2']);
+    }
+    expect(latestSucceededJobs({ ...base, latestJobs: undefined } as OperationsApiResponse)).toEqual([]);
   });
 });

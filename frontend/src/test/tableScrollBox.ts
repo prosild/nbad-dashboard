@@ -23,10 +23,19 @@ export function describeTable(table: HTMLTableElement): string {
     .join(' · ');
 }
 
-/** 가로 스크롤 상자 조상이 없는 표 목록(설명 문자열). */
+/** 화면 판독기 전용 표(`sr-only`, T24 탐지 추이 구간 표)는 1px 상자 안이라 페이지를 넓히지 않는다. */
+function isScreenReaderOnly(table: Element): boolean {
+  for (let el: Element | null = table; el; el = el.parentElement) {
+    if ((el.getAttribute('class') ?? '').split(/\s+/).includes('sr-only')) return true;
+  }
+  return false;
+}
+
+/** 가로 스크롤 상자 조상이 없는 표 목록(설명 문자열). 화면 판독기 전용 표는 뺀다. */
 export function tablesOutsideScrollBox(root: ParentNode = document.body): string[] {
   const out: string[] = [];
   for (const table of Array.from(root.querySelectorAll('table'))) {
+    if (isScreenReaderOnly(table)) continue;
     let boxed = false;
     for (let el = table.parentElement; el; el = el.parentElement) {
       if (SCROLL_BOX_CLASS.test(el.getAttribute('class') ?? '')) {
