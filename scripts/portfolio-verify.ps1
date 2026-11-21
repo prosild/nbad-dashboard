@@ -1306,9 +1306,106 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True $rbOk "[T25e] V2가 적용된 DB로 T24 이미지가 정상으로 뜬다(되돌리기 가능)"
     Assert-True ($fwUp.ExitCode -eq 0 -and $fwLogin.Status -eq 200 -and $fwQueue.Status -eq 200 -and $null -ne $fwQueue.Json.summary.overdue) "[T25e] 새 이미지로 복귀"
 
+
+    # ───────── [T29] 기간 밖 수(독립 SQL)·수집원 마지막 탐지·공유 조회 계정 잠금 제외·응답 시간 ─────────
+    Write-Host "=== [T29] 기간 밖 안내·demo 잠금 제외 ==="
+    $t29 = New-Client "198.51.100.120"
+    Assert-Status (Login-Api $t29 "demo" $env:DEMO_PASSWORD) 200 "[T29] demo 로그인"
+    $t29IpHits = [System.Collections.Generic.List[string]]::new()
+
+    # [T29a] demo 큐 outsidePeriod = 독립 SQL(공개 캡처 최신 큐 중 (기준 − 길이, 기준] 밖, 탐지 시각 없음 포함) = 기간 전체 total − total
+    $t29All = Invoke-Http -Path "/api/incidents/queue?period=all&size=25" -Client $t29
+    Assert-Status $t29All 200 "[T29a] demo 큐 전체"
+    Find-UnmaskedIpv4 $t29All.Json "t29[all]" $t29IpHits
+    Assert-True ([long]$t29All.Json.outsidePeriod -eq 0) "[T29a] 기간 전체 outsidePeriod = 0" $t29All
+    foreach ($pk in @(@("24h", "24 hours"), @("7d", "7 days"))) {
+        $r = Invoke-Http -Path "/api/incidents/queue?period=$($pk[0])&size=25" -Client $t29
+        Assert-Status $r 200 "[T29a] demo 큐 $($pk[0])"
+        Find-UnmaskedIpv4 $r.Json "t29[$($pk[0])]" $t29IpHits
+        $sqlOut = [long](Invoke-Psql "zeekad" ("SELECT count(*) FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.incident_id, MIN(j.finished_at) AS d " +
+            "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id) fs " +
+            "ON fs.incident_id = lq.incident_id WHERE lq.capture_id = ANY($publicArr) " +
+            "AND NOT COALESCE(fs.d > $anchorExpr - interval '$($pk[1])' AND fs.d <= $anchorExpr, FALSE)")).Output.Trim()
+        $e2eLogs.Add("[T29a] demo queue period=$($pk[0]): total=$($r.Json.total) outsidePeriod=$($r.Json.outsidePeriod) newestOutsidePeriod=$([regex]::Match($r.Body, '"newestOutsidePeriod":("[^"]*"|null)').Groups[1].Value); independent SQL outside=$sqlOut; all-period total=$($t29All.Json.total) (참고: 2,180 - 52 = 2,128)")
+        Assert-True ([long]$r.Json.outsidePeriod -eq $sqlOut) "[T29a] $($pk[0]) outsidePeriod = 독립 SQL ($($r.Json.outsidePeriod) / $sqlOut)" $r
+        Assert-True ([long]$r.Json.outsidePeriod -eq ([long]$t29All.Json.total - [long]$r.Json.total)) "[T29a] $($pk[0]) outsidePeriod = 기간 전체 total - total" $r
+    }
+
+    # [T29b] sources의 수집원마다 lastDetectedAt = 독립 SQL(캡처별 최신 큐 탐지 시각 최대, epoch 초)
+    $src29 = @{}
+    foreach ($m in [regex]::Matches($t29All.Body, '"captureId":"([^"]+)","sourceType":"[^"]*","latestJobId":[^,]*,"lastDetectedAt":(null|"([^"]+)")')) {
+        $src29[$m.Groups[1].Value] = if ($m.Groups[2].Value -eq 'null') { 'null' } else { [string][long][Math]::Floor([DateTimeOffset]::Parse($m.Groups[3].Value, [Globalization.CultureInfo]::InvariantCulture).ToUnixTimeMilliseconds() / 1000) }
+    }
+    $ld29 = (Invoke-Psql "zeekad" ("SELECT lq.capture_id, COALESCE(floor(extract(epoch FROM MAX(fs.d)))::bigint::text, 'null') FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.incident_id, MIN(j.finished_at) AS d " +
+        "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id) fs " +
+        "ON fs.incident_id = lq.incident_id WHERE lq.capture_id = ANY($publicArr) GROUP BY lq.capture_id ORDER BY 1")).Output.Trim()
+    $ldLog29 = [System.Collections.Generic.List[string]]::new()
+    $ldBad29 = 0
+    foreach ($line in @($ld29 -split "`r?`n" | Where-Object { $_ })) {
+        $p = $line -split '\|'
+        $ldLog29.Add("$($p[0]) api=$($src29[$p[0]]) sql=$($p[1])")
+        if ($src29[$p[0]] -ne $p[1]) { $ldBad29++ }
+    }
+    $e2eLogs.Add("[T29b] demo sources lastDetectedAt (epoch s) vs independent SQL: $($ldLog29 -join '; '); hidden captures in sources=$(@($demoHiddenCaptures | Where-Object { $src29.ContainsKey($_) }).Count)")
+    Assert-True ($ldBad29 -eq 0 -and $ldLog29.Count -eq $src29.Count -and $src29.Count -gt 0) "[T29b] 수집원 lastDetectedAt = 독립 SQL"
+    Assert-True (@($demoHiddenCaptures | Where-Object { $src29.ContainsKey($_) }).Count -eq 0) "[T29b] 숨긴 캡처는 sources에 없다"
+
+    # [T29c] 응답 시간(데우기 1번 뒤 3번, 최댓값 1초 이하): 큐 24시간·전체·자산 검색, 현황판 큐 호출·overview
+    $t29Times = [ordered]@{}
+    $t29Slow = @()
+    foreach ($pth in @("/api/incidents/queue?period=24h&size=50", "/api/incidents/queue?period=all&size=50", "/api/incidents/queue?period=24h&size=50&asset=10", "/api/incidents/queue?period=24h&sort=detected&dir=desc&size=25", "/api/dashboard/overview?period=24h")) {
+        $warm = Invoke-Http -Path $pth -Client $t29
+        Assert-Status $warm 200 "[T29c] $pth (데우기)"
+        $ms = @()
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $pth -Client $t29
+            $sw.Stop()
+            Assert-Status $r 200 "[T29c] $pth"
+            Find-UnmaskedIpv4 $r.Json "t29[$pth]" $t29IpHits
+            $ms += [int]$sw.ElapsedMilliseconds
+        }
+        $max = ($ms | Measure-Object -Maximum).Maximum
+        $t29Times[$pth] = "[$($ms -join ', ')] max=$max ms"
+        if ($max -gt 1000) { $t29Slow += $pth }
+    }
+    $e2eLogs.Add("[T29c] response times (demo, warm 1 + 3 samples, includes curl): $(($t29Times.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; ')")
+    Assert-True ($t29Slow.Count -eq 0) "[T29c] 응답 시간 최댓값 1초 이하 (넘은 것: $($t29Slow -join ', '))"
+    $e2eLogs.Add("[T29c] demo unmasked IPv4 JSON paths=$($t29IpHits.Count)")
+    Assert-True ($t29IpHits.Count -eq 0) "[T29c] VIEWER 가려지지 않은 IPv4 0"
+
+    # [T29d] demo 잠금 제외: 같은 클라이언트 IP에서 틀린 비밀번호 6번 뒤 맞는 비밀번호로 로그인된다.
+    #        WAF 로그인 제한(IP당 10r/m, burst 5)에 걸리지 않게 7.5초 간격으로 보내고, 429면 판정하지 않고 12초 뒤 다시 보낸다.
+    $exempt29 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES-<unset>}"')) -IgnoreExitCode).Output.Trim()
+    $maxFail29 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_MAX_FAILED_ATTEMPTS-<unset>}"')) -IgnoreExitCode).Output.Trim()
+    $auditBase29 = [long](Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(MAX(id),0) FROM audit_logs").Output.Trim()
+    $lockIp29 = "198.51.100.131"
+    $codes29 = [System.Collections.Generic.List[string]]::new()
+    $final29 = $null
+    for ($k = 1; $k -le 7; $k++) {
+        $pw = if ($k -le 6) { "wrong-password-t29-$k" } else { $env:DEMO_PASSWORD }
+        for ($try = 1; $try -le 4; $try++) {
+            if ($k -gt 1 -or $try -gt 1) { Start-Sleep -Milliseconds $(if ($try -gt 1) { 12000 } else { 7500 }) }
+            $lc29 = New-Client $lockIp29
+            $res = Login-Api $lc29 "demo" $pw
+            if ($res.Status -ne 429) { break }
+            $codes29.Add("#$k try$try=429(retry)")
+        }
+        $codes29.Add("#$k=$($res.Status)$(if ($res.Json.code) { "/$($res.Json.code)" })")
+        if ($k -le 6) { Assert-ApiError $res 401 "INVALID_CREDENTIALS" "[T29d] demo 틀린 비밀번호 #$k (잠금 없이 401)" }
+        else { $final29 = $res }
+    }
+    $state29 = (Invoke-Psql "zeekad_dashboard" "SELECT failed_attempts, locked_until IS NULL FROM users WHERE username = 'demo'").Output.Trim()
+    $audit29 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*), count(*) FILTER (WHERE detail_json::text LIKE '%`"lockoutExempt`": true%' OR detail_json::text LIKE '%`"lockoutExempt`":true%') FROM audit_logs WHERE id > $auditBase29 AND actor_username = 'demo' GROUP BY action_type ORDER BY action_type").Output.Trim()
+    $e2eLogs.Add("[T29d] app env DASHBOARD_LOCKOUT_EXEMPT_USERNAMES='$exempt29' DASHBOARD_MAX_FAILED_ATTEMPTS='$maxFail29'; same client IP $lockIp29, 7.5 s apart: [$($codes29 -join ', ')]; demo failed_attempts|locked_until IS NULL after=$state29`n       final correct password: $(Format-Resp $final29 160)`n       audit since base (action|count|lockoutExempt=true): $($audit29 -replace "`r?`n", '; ')")
+    Assert-True ($exempt29 -eq 'demo') "[T29d] 공개 스택 앱 설정 DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo"
+    Assert-Status $final29 200 "[T29d] 틀린 비밀번호 6번 뒤 demo 정상 로그인"
+    Assert-True ($audit29 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $audit29 -notmatch 'ACCOUNT_LOCKED') "[T29d] LOGIN_FAILURE 6건(모두 lockoutExempt), ACCOUNT_LOCKED 0건"
+    Assert-True ($state29 -eq '0|t') "[T29d] demo failed_attempts 0·locked_until 없음"
+
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27]·[T29] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="

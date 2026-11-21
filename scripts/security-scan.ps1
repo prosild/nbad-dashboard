@@ -1359,6 +1359,115 @@ FROM v GROUP BY m ORDER BY m
                 $e2eLogs.Add("[13h] response times (analyst1, warm 1 + 3 samples, includes curl): $($t13 -join '; ')")
                 Assert-True ($slow13.Count -eq 0) "[13h] 응답 시간 최댓값 1초 이하 ($($slow13 -join ', '))"
 
+                # [14] 기간 밖 안내·공유 조회 계정 잠금 제외(T29). 큐 outsidePeriod = 독립 SQL(허용 캡처 최신 큐 중 기간 (기준-길이, 기준] 밖, 탐지 시각 없음 포함),
+                #      수집원 lastDetectedAt = 독립 SQL(캡처별 최신 큐 탐지 시각 최대), VIEWER IPv4 가림, 응답 시간, 기본 설정(목록 비움)에서는 계정이 잠긴다.
+                $q14A1 = Join-Path $tmpDir "q14-a1.cookies"
+                $q14V = Join-Path $tmpDir "q14-v.cookies"
+                Assert-Status (Login-Api "analyst1" $q14A1) 200 "[14] analyst1 로그인"
+                Assert-Status (Login-Api "viewer1" $q14V) 200 "[14] viewer1 로그인"
+                function Get-Anchor14($Resp) {
+                    $m = [regex]::Match($Resp.Body, '"anchor":"([^"]+)"')
+                    if (-not $m.Success) { throw "[14] 응답에 anchor 없음" }
+                    return $m.Groups[1].Value
+                }
+                function Get-Sources14($Resp) {
+                    $out = @{}
+                    foreach ($m in [regex]::Matches($Resp.Body, '"captureId":"([^"]+)","sourceType":"[^"]*","latestJobId":[^,]*,"lastDetectedAt":(null|"([^"]+)")')) {
+                        $out[$m.Groups[1].Value] = if ($m.Groups[2].Value -eq 'null') { $null } else { $m.Groups[3].Value }
+                    }
+                    return $out
+                }
+                function Get-Outside14Sql([string[]]$Captures, [string]$Anchor, [string]$Interval) {
+                    $in = ($Captures | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ","
+                    $a = $Anchor -replace "'", "''"
+                    return Invoke-ZeekadSelect ("SELECT count(*) FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
+                        "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
+                        "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id " +
+                        "WHERE lq.capture_id IN ($in) AND NOT COALESCE(fs.d > TIMESTAMPTZ '$a' - INTERVAL '$Interval' AND fs.d <= TIMESTAMPTZ '$a', FALSE)")
+                }
+                $periods14 = @{ "1h" = "1 hour"; "24h" = "24 hours"; "7d" = "7 days"; "30d" = "30 days" }
+                foreach ($who in @(@{ Name = "analyst1"; Jar = $q14A1 }, @{ Name = "viewer1"; Jar = $q14V })) {
+                    $all14 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=25" -CookieJar $who.Jar
+                    Assert-Status $all14 200 "[14a] $($who.Name) 큐 전체"
+                    $src14 = Get-Sources14 $all14
+                    $caps14 = @($src14.Keys | Sort-Object)
+                    Assert-True ($caps14.Count -gt 0) "[14a] $($who.Name) sources에 lastDetectedAt 있음" $all14
+                    Assert-True ([long]$all14.Json.outsidePeriod -eq 0) "[14a] $($who.Name) 기간 전체 outsidePeriod = 0" $all14
+                    foreach ($pk in @("24h", "7d")) {
+                        $cases14 = @(@{ Q = "period=$pk"; Caps = $caps14 }, @{ Q = "period=$pk&captureId=$($caps14[0])"; Caps = @($caps14[0]) })
+                        foreach ($c in $cases14) {
+                            $r14 = Invoke-Http -Url "$baseHttps/api/incidents/queue?$($c.Q)&size=25" -CookieJar $who.Jar
+                            Assert-Status $r14 200 "[14a] $($who.Name) $($c.Q)"
+                            $anchor14 = Get-Anchor14 $r14
+                            $sql14 = [long](Get-Outside14Sql $c.Caps $anchor14 $periods14[$pk])
+                            $allQ14 = $c.Q -replace "period=$pk", 'period=all'
+                            $allC = Invoke-Http -Url "$baseHttps/api/incidents/queue?$allQ14&size=25" -CookieJar $who.Jar
+                            $e2eLogs.Add("[14a] $($who.Name) $($c.Q): total=$($r14.Json.total) outsidePeriod=$($r14.Json.outsidePeriod) newestOutsidePeriod=$($r14.Json.newestOutsidePeriod) anchor=$anchor14; independent SQL outside=$sql14; all-period total=$($allC.Json.total)")
+                            Assert-True ([long]$r14.Json.outsidePeriod -eq $sql14) "[14a] $($who.Name) $($c.Q) outsidePeriod = 독립 SQL" $r14
+                            Assert-True ([long]$r14.Json.outsidePeriod -eq ([long]$allC.Json.total - [long]$r14.Json.total)) "[14a] $($who.Name) $($c.Q) outsidePeriod = 기간 전체 total - total" $r14
+                        }
+                    }
+                    # 수집원 마지막 탐지 = 독립 SQL(캡처별 최신 큐 탐지 시각 최대, epoch 초)
+                    $in14 = ($caps14 | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ","
+                    $ld14 = Invoke-ZeekadSelect ("SELECT lq.capture_id, COALESCE(floor(extract(epoch FROM MAX(fs.d)))::bigint::text, 'null') FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
+                        "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
+                        "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id WHERE lq.capture_id IN ($in14) GROUP BY lq.capture_id")
+                    $ldOk14 = $true
+                    $ldLog14 = [System.Collections.Generic.List[string]]::new()
+                    foreach ($line in @($ld14 -split "`r?`n" | Where-Object { $_ })) {
+                        $p = $line -split '\|'
+                        $api = $src14[$p[0]]
+                        $apiEpoch = if ($api) { [string][long][Math]::Floor([DateTimeOffset]::Parse($api, [Globalization.CultureInfo]::InvariantCulture).ToUnixTimeMilliseconds() / 1000) } else { 'null' }
+                        $ldLog14.Add("$($p[0]) api=$api ($apiEpoch) sql=$($p[1])")
+                        if ($apiEpoch -ne $p[1]) { $ldOk14 = $false }
+                    }
+                    $e2eLogs.Add("[14b] $($who.Name) sources lastDetectedAt vs independent SQL: $($ldLog14 -join '; ')")
+                    Assert-True ($ldOk14 -and $ldLog14.Count -eq $caps14.Count) "[14b] $($who.Name) 수집원 lastDetectedAt = 독립 SQL"
+                }
+                $v14 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=24h&size=100" -CookieJar $q14V
+                $v14b = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=7d&size=100&asset=10" -CookieJar $q14V
+                $vIp14 = @(Get-UnmaskedIpv4 ($v14.Body + $v14b.Body))
+                $e2eLogs.Add("[14c] viewer1 queue 24h / 7d asset=10 -> HTTP $($v14.Status)/$($v14b.Status) outsidePeriod=$($v14.Json.outsidePeriod)/$($v14b.Json.outsidePeriod) unmasked IPv4=[$($vIp14 -join ', ')]")
+                Assert-True ($v14.Status -eq 200 -and $v14b.Status -eq 200 -and $vIp14.Count -eq 0) "[14c] viewer1 응답에 가리지 않은 IPv4 없음"
+
+                # [14d] 응답 시간: 데우기 1번 뒤 3번, 최댓값 1초 이하(큐 24시간·전체·자산 검색, 현황판 큐 호출, 현황판 overview)
+                $t14 = [System.Collections.Generic.List[string]]::new()
+                $slow14 = [System.Collections.Generic.List[string]]::new()
+                foreach ($p in @("/api/incidents/queue?period=24h", "/api/incidents/queue?period=all", "/api/incidents/queue?period=24h&asset=10", "/api/incidents/queue?period=24h&sort=detected&dir=desc&size=25", "/api/dashboard/overview?period=24h")) {
+                    $null = Invoke-Http -Url "$baseHttps$p" -CookieJar $q14A1
+                    $ms = @()
+                    for ($k = 0; $k -lt 3; $k++) {
+                        $sw = [Diagnostics.Stopwatch]::StartNew()
+                        $r = Invoke-Http -Url "$baseHttps$p" -CookieJar $q14A1
+                        $sw.Stop()
+                        Assert-Status $r 200 "[14d] $p"
+                        $ms += [int]$sw.ElapsedMilliseconds
+                    }
+                    $max = ($ms | Measure-Object -Maximum).Maximum
+                    $t14.Add("$p=[$($ms -join ', ')] max=$max ms")
+                    if ($max -gt 1000) { $slow14.Add($p) }
+                }
+                $e2eLogs.Add("[14d] response times (analyst1, warm 1 + 3 samples, includes curl): $($t14 -join '; ')")
+                Assert-True ($slow14.Count -eq 0) "[14d] 응답 시간 최댓값 1초 이하 ($($slow14 -join ', '))"
+
+                # [14e] 기본 설정(DASHBOARD_LOCKOUT_EXEMPT_USERNAMES 비움)에서는 지금처럼 5번째 실패에 잠긴다(analyst2, 마지막 단계라 뒤 단계에 영향 없음)
+                $exempt14 = (Invoke-NativeCapture "docker" ($execPrefix + @('printf "%s" "${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES-<unset>}"')) -IgnoreExitCode).Output.Trim()
+                $auditBase14 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                $lockCodes14 = [System.Collections.Generic.List[string]]::new()
+                for ($k = 1; $k -le 5; $k++) {
+                    $jar = Join-Path $tmpDir "q14-lock-$k.cookies"
+                    $null = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $jar -SaveCookies
+                    $lr = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $jar -SaveCookies -Csrf -JsonBody @{ username = "analyst2"; password = "wrong-$(New-RandomToken 8)" }
+                    $lockCodes14.Add("$($lr.Status)")
+                }
+                $jarOk = Join-Path $tmpDir "q14-lock-ok.cookies"
+                $okRes14 = Login-Api "analyst2" $jarOk
+                $audit14 = Invoke-AuditSelect "SELECT action_type, count(*) FROM audit_logs WHERE id > $auditBase14 AND actor_username = 'analyst2' GROUP BY action_type ORDER BY action_type"
+                $e2eLogs.Add("[14e] app env DASHBOARD_LOCKOUT_EXEMPT_USERNAMES='$exempt14'; analyst2 wrong x5 -> HTTP [$($lockCodes14 -join ', ')]; correct password -> $(Format-Resp $okRes14 200); audit: $($audit14 -replace "`r?`n", '; ')")
+                Assert-True (($lockCodes14 -join ',') -eq '401,401,401,401,423') "[14e] 기본 설정 5번째 실패에 423 잠금"
+                Assert-ApiError $okRes14 423 "ACCOUNT_LOCKED" "[14e] 잠긴 뒤 맞는 비밀번호도 423"
+                Assert-True ($audit14 -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[14e] ACCOUNT_LOCKED 감사 1건"
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
