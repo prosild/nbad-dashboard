@@ -33,6 +33,11 @@ public class IncidentQueueItem {
     private boolean zeekadWouldSend;
     private String zeekadReviewAction;
     private boolean zeekadReviewPending;
+    /**
+     * 경보 발송(T21): 사건 알림 Slack 기록이 있는 인시던트. incident_id 기준, 상태 후속 알림(status:*)은 뺀다.
+     * dashboard.feedback_summary의 alerted와 같은 식이다(dry-run 기록·발송 실패 기록도 센다).
+     */
+    private boolean alerted;
 
     public Long getJobId() {
         return jobId;
@@ -216,6 +221,14 @@ public class IncidentQueueItem {
 
     public void setZeekadReviewPending(boolean zeekadReviewPending) {
         this.zeekadReviewPending = zeekadReviewPending;
+    }
+
+    public boolean isAlerted() {
+        return alerted;
+    }
+
+    public void setAlerted(boolean alerted) {
+        this.alerted = alerted;
     }
 
     public boolean isMultiModelFlagged() {

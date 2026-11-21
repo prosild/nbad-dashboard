@@ -49,7 +49,8 @@ class ZeekadReadMapperTest {
     void queriesAllThirteenContractViewsWithArrayAndJsonbTypeHandlers() {
         // v1: scoring_jobs & default latest succeeded job selection
         List<String> captures = zeekadReadMapper.findDistinctCaptureIds();
-        assertThat(captures).containsExactly("cic17-wed", "lab-20261118", "lab-fusion-v2", "syn1-tue");
+        // T21: 결정 반영 예시 캡처 syn1-wed 추가
+        assertThat(captures).containsExactly("cic17-wed", "lab-20261118", "lab-fusion-v2", "syn1-tue", "syn1-wed");
 
         ScoringJob latestCic17 = zeekadReadMapper.findLatestSucceededJobByCaptureId("cic17-wed");
         assertThat(latestCic17).isNotNull();
@@ -73,7 +74,8 @@ class ZeekadReadMapperTest {
         assertThat(rank1.getQueueRank()).isEqualTo(1);
         assertThat(rank1.getZeekadAlsoFlaggedBy()).containsExactly("autoencoder", "hbos");
         assertThat(rank1.getHostName()).containsExactly("dc01.corp.local", "ad-primary");
-        assertThat(rank1.getZeekadStatus()).isEqualTo("open");
+        // T21: 반영된 승인(계약) → 분석 중
+        assertThat(rank1.getZeekadStatus()).isEqualTo("investigating");
         assertThat(rank1.isHasReport()).isTrue();
         assertThat(rank1.isZeekadWouldSend()).isTrue();
 
@@ -152,8 +154,10 @@ class ZeekadReadMapperTest {
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(1);
         assertThat(zeekadReadMapper.findIncidentQueue(101L, null, "responder", null, null, null))
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(2);
-        assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, "open", null, null))
-                .extracting(IncidentQueueItem::getQueueRank).containsExactly(1);
+        // T21: rank 1은 반영된 승인(계약)대로 분석 중이다. 열림은 없다.
+        assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, "open", null, null)).isEmpty();
+        assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, "investigating", null, null))
+                .extracting(IncidentQueueItem::getQueueRank).containsExactly(1, 2);
         assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, null, false, null))
                 .extracting(IncidentQueueItem::getQueueRank).containsExactly(3);
         assertThat(zeekadReadMapper.findIncidentQueue(101L, null, null, null, null, true))
@@ -263,7 +267,8 @@ class ZeekadReadMapperTest {
                 .orElseThrow();
         assertThat(cicAll.getBundleId()).isEqualTo("zeekad-fusion/1");
         assertThat(cicAll.getIncidents()).isEqualTo(3L);
-        assertThat(cicAll.getAlerted()).isEqualTo(1L);
+        // T21: alerted는 zeek_AD 원본처럼 사건 알림 Slack 기록으로 센다(10.20.30.40 스레드 답글 사건 알림 포함, 발송 판단과 별개)
+        assertThat(cicAll.getAlerted()).isEqualTo(2L);
         assertThat(cicAll.getResolved()).isEqualTo(1L);
         assertThat(cicAll.getTruePositive()).isEqualTo(0L);
         assertThat(cicAll.getFalsePositive()).isEqualTo(0L);
@@ -272,7 +277,7 @@ class ZeekadReadMapperTest {
         assertThat(cicAll.getZeekadAlertPrecision()).isNull();
         assertThat(cicAll.getZeekadAlertResolvedRate()).isEqualTo(0.0d);
         assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 판정 1/3건(33.3%)");
-        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("판정 없음 · 경보 1건");
+        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("판정 없음 · 경보 2건");
 
         // 판정 0건 캡처(lab-fusion-v2)는 정탐률 null 처리
         List<FeedbackSummaryRecord> fusionSummaries = zeekadReadMapper.findRawFeedbackSummaries("lab-fusion-v2")
@@ -285,7 +290,8 @@ class ZeekadReadMapperTest {
                 .orElseThrow();
         assertThat(fusionAll.getBundleId()).isEqualTo("zeekad-fusion/3");
         assertThat(fusionAll.getIncidents()).isEqualTo(3L);
-        assertThat(fusionAll.getAlerted()).isEqualTo(1L);
+        // T21: 10.40.0.20의 601 기록을 계약대로 사건 알림(스레드 답글)으로 고쳐 2건
+        assertThat(fusionAll.getAlerted()).isEqualTo(2L);
         assertThat(fusionAll.getResolved()).isEqualTo(0L);
         assertThat(fusionAll.getZeekadPrecision()).isNull();
         assertThat(fusionAll.getZeekadAlertPrecision()).isNull();
@@ -354,6 +360,17 @@ class ZeekadReadMapperTest {
                     (?, ?, TRUE, 'policy', TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:00Z'),
                     (?, ?, TRUE, 'policy', TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:00Z')
                     """, tmpJobId, tmpInc1, tmpJobId, tmpInc2);
+            // T21: alerted는 사건 알림 Slack 기록으로 센다(발송 판단이 아니라). 두 사건 모두 사건 알림 dry-run 기록을 둔다.
+            jdbc.update("""
+                    INSERT INTO dashboard.raw_slack_deliveries
+                    (job_id, incident_id, zeekad_message_kind, zeekad_message_version, zeekad_delivery_mode,
+                     zeekad_delivery_status, slack_payload, created_at)
+                    VALUES
+                    (?, ?, 'incident', 'llm-report.v1', 'dry_run', 'recorded', '{"text":"a1"}' FORMAT JSON,
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:30Z'),
+                    (?, ?, 'incident', 'template.v1', 'dry_run', 'recorded', '{"text":"a2"}' FORMAT JSON,
+                     TIMESTAMP WITH TIME ZONE '2026-11-19 03:02:30Z')
+                    """, tmpJobId, tmpInc1, tmpJobId, tmpInc2);
             jdbc.update("""
                     INSERT INTO dashboard.raw_incident_status
                     (job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by)
@@ -380,6 +397,7 @@ class ZeekadReadMapperTest {
             assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("표본 부족 · 경보 판정 1/2건(50.0%)");
         } finally {
             jdbc.update("DELETE FROM dashboard.raw_incident_status WHERE incident_id IN (?, ?)", tmpInc1, tmpInc2);
+            jdbc.update("DELETE FROM dashboard.raw_slack_deliveries WHERE job_id = ?", tmpJobId);
             jdbc.update("DELETE FROM dashboard.raw_send_decisions WHERE job_id = ?", tmpJobId);
             jdbc.update("DELETE FROM dashboard.raw_incident_reports WHERE job_id = ?", tmpJobId);
             jdbc.update("DELETE FROM dashboard.raw_incident_queue WHERE job_id = ?", tmpJobId);

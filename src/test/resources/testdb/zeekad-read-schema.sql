@@ -236,41 +236,57 @@ LEFT JOIN dashboard.analyst_review_queue arq
  AND arq.incident_id = q.incident_id;
 
 CREATE OR REPLACE VIEW dashboard.feedback_summary AS
-WITH grouped AS (
+WITH q AS (
+    -- T21: zeek_AD 원본과 같은 alerted 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외). 이전에는 would_send로 셌다.
+    SELECT l.capture_id,
+           l.bundle_id,
+           l.zeekad_picked_by,
+           l.zeekad_status,
+           l.zeekad_resolution,
+           CASE WHEN EXISTS (
+               SELECT 1
+               FROM dashboard.slack_deliveries d
+               WHERE d.incident_id = l.incident_id
+                 AND d.zeekad_message_version IS NOT NULL
+                 AND d.zeekad_message_version NOT LIKE 'status:%'
+           ) THEN TRUE ELSE FALSE END AS alerted_flag
+    FROM dashboard.latest_incident_queue l
+),
+grouped AS (
     SELECT capture_id,
            bundle_id,
            zeekad_picked_by,
            COUNT(*) AS incidents,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN alerted_flag = TRUE THEN 1 ELSE 0 END) AS alerted,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
-    FROM dashboard.latest_incident_queue
+    FROM q
     GROUP BY capture_id, bundle_id, zeekad_picked_by
     UNION ALL
     SELECT capture_id,
            bundle_id,
            'all' AS zeekad_picked_by,
            COUNT(*) AS incidents,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN alerted_flag = TRUE THEN 1 ELSE 0 END) AS alerted,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
-    FROM dashboard.latest_incident_queue
+    FROM q
     GROUP BY capture_id, bundle_id
 )
 SELECT capture_id,

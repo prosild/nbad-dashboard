@@ -243,41 +243,57 @@ LEFT JOIN dashboard.analyst_review_queue arq
  AND arq.incident_id = q.incident_id;
 
 CREATE OR REPLACE VIEW dashboard.feedback_summary AS
-WITH grouped AS (
+WITH q AS (
+    -- T21: zeek_AD 원본과 같은 alerted 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외). 이전에는 would_send로 셌다.
+    SELECT l.capture_id,
+           l.bundle_id,
+           l.zeekad_picked_by,
+           l.zeekad_status,
+           l.zeekad_resolution,
+           CASE WHEN EXISTS (
+               SELECT 1
+               FROM dashboard.slack_deliveries d
+               WHERE d.incident_id = l.incident_id
+                 AND d.zeekad_message_version IS NOT NULL
+                 AND d.zeekad_message_version NOT LIKE 'status:%'
+           ) THEN TRUE ELSE FALSE END AS alerted_flag
+    FROM dashboard.latest_incident_queue l
+),
+grouped AS (
     SELECT capture_id,
            bundle_id,
            zeekad_picked_by,
            COUNT(*) AS incidents,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN alerted_flag = TRUE THEN 1 ELSE 0 END) AS alerted,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
-    FROM dashboard.latest_incident_queue
+    FROM q
     GROUP BY capture_id, bundle_id, zeekad_picked_by
     UNION ALL
     SELECT capture_id,
            bundle_id,
            'all'::TEXT AS zeekad_picked_by,
            COUNT(*) AS incidents,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE THEN 1 ELSE 0 END) AS alerted,
+           SUM(CASE WHEN alerted_flag = TRUE THEN 1 ELSE 0 END) AS alerted,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS true_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'false_positive' THEN 1 ELSE 0 END) AS false_positive,
            SUM(CASE WHEN zeekad_status = 'closed' AND zeekad_resolution = 'benign' THEN 1 ELSE 0 END) AS benign,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution IS NOT NULL THEN 1 ELSE 0 END) AS alerted_resolved,
-           SUM(CASE WHEN COALESCE(zeekad_would_send, FALSE) = TRUE
+           SUM(CASE WHEN alerted_flag = TRUE
                          AND zeekad_status = 'closed'
                          AND zeekad_resolution = 'true_positive' THEN 1 ELSE 0 END) AS alerted_true_positive
-    FROM dashboard.latest_incident_queue
+    FROM q
     GROUP BY capture_id, bundle_id
 )
 SELECT capture_id,
@@ -515,6 +531,10 @@ VALUES
     (201, 'syn1-tue', 'zeekad-fusion/1', 'succeeded',
      TIMESTAMPTZ '2026-11-16 04:00:00Z', TIMESTAMPTZ '2026-11-16 04:05:00Z',
      NULL, 1),
+    (211, 'syn1-wed', 'zeekad-fusion/1', 'succeeded',
+     TIMESTAMPTZ '2026-11-17 04:00:00Z',
+     TIMESTAMPTZ '2026-11-17 04:05:00Z',
+     NULL, 2),
     (501, 'lab-20261118', 'zeekad-fusion/1', 'succeeded',
      TIMESTAMPTZ '2026-11-18 00:05:00Z', TIMESTAMPTZ '2026-11-18 00:06:00Z',
      NULL, 1),
@@ -548,6 +568,16 @@ INSERT INTO dashboard.raw_incident_queue (
      '10.99.88.77', 'originator',
      TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:55:00Z',
      'iforest', ARRAY['autoencoder'], 320, ARRAY['syn-dc01.internal']),
+    (211, 'syn1-wed', 'zeekad-fusion/1', 1, 'syn1-wed|10.99.70.11|originator|1763352000',
+     '10.99.70.11', 'originator',
+     TIMESTAMPTZ '2026-11-17 03:30:00Z',
+     TIMESTAMPTZ '2026-11-17 03:50:00Z',
+     'hbos', NULL, 64, ARRAY['syn-backup01.internal']),
+    (211, 'syn1-wed', 'zeekad-fusion/1', 2, 'syn1-wed|10.99.70.12|responder|1763352300',
+     '10.99.70.12', 'responder',
+     TIMESTAMPTZ '2026-11-17 03:35:00Z',
+     TIMESTAMPTZ '2026-11-17 03:55:00Z',
+     'iforest', ARRAY['autoencoder'], 210, ARRAY['syn-file02.internal']),
     (501, 'lab-20261118', 'zeekad-fusion/1', 1, 'lab-20261118|10.20.0.15|originator|1763424000',
      '10.20.0.15', 'originator',
      TIMESTAMPTZ '2026-11-18 00:00:00Z', TIMESTAMPTZ '2026-11-18 00:05:00Z',
@@ -583,6 +613,8 @@ VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'autoencoder', 0.94, 3, 6),
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'autoencoder', 0.87, 2, 4),
     (201, 'syn1-tue|10.99.88.77|originator|1700001000', 'iforest', 0.89, 3, 5),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'hbos', 0.77, 2, 4),
+    (211, 'syn1-wed|10.99.70.12|responder|1763352300', 'iforest', 0.84, 3, 4),
     (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.86, 2, 4),
     (502, 'lab-20261118|10.20.0.25|responder|1763424300', 'hbos', 0.79, 1, 3),
     (502, 'lab-20261118|10.20.0.15|originator|1763424000', 'iforest', 0.93, 5, 6),
@@ -635,6 +667,22 @@ INSERT INTO dashboard.raw_incident_reports (
      'run-201', TIMESTAMPTZ '2026-11-16 04:06:00Z',
      '[{"id": "F1", "name": "smb_count", "value": "120"}]'::jsonb,
      '{"H": "10.99.88.77", "I1": "10.99.88.10"}'::jsonb),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'template', 'template.v1', 'evidence.v1',
+     '{"observation_summary": "H의 야간 대량 아웃바운드 전송"}'::jsonb,
+     TRUE, 'template_ok', '[]'::jsonb,
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     NULL, '[]'::jsonb,
+     'run-211', TIMESTAMPTZ '2026-11-17 04:05:30Z',
+     '[{"id": "F1", "name": "conn_count", "value": "64"}]'::jsonb,
+     '{"H": "10.99.70.11"}'::jsonb),
+    (211, 'syn1-wed|10.99.70.12|responder|1763352300', 'template', 'template.v1', 'evidence.v1',
+     '{"observation_summary": "H의 SMB 응답 증가"}'::jsonb,
+     TRUE, 'template_ok', '[]'::jsonb,
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     NULL, '[]'::jsonb,
+     'run-211', TIMESTAMPTZ '2026-11-17 04:06:00Z',
+     '[{"id": "F1", "name": "conn_count", "value": "210"}]'::jsonb,
+     '{"H": "10.99.70.12"}'::jsonb),
     (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'llm', 'llm-report.v1', 'evidence.v1',
      '{"observation_summary": "실습망 H에서 I1로 비정상 인증 시도", "claims": [{"claim": "짧은 시간 내 다수 인증 요청", "fact_ids": ["F1"]}]}'::jsonb,
      TRUE, 'verified', '[]'::jsonb,
@@ -693,6 +741,14 @@ INSERT INTO dashboard.raw_send_decisions (
      TRUE, '["신규 합성 공격 탐지"]'::jsonb, 'send', 'gemini-decision-1', 'send',
      0.91, '{"send": 0.91, "hold": 0.05, "analyst_review": 0.03, "need_more_evidence": 0.01}'::jsonb,
      NULL, 'run-201', TIMESTAMPTZ '2026-11-16 04:07:00Z'),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', FALSE, 'policy', 'POL-02', 'hold',
+     FALSE, '["단일 모델 탐지 보류"]'::jsonb, 'hold', 'gemini-decision-1', 'analyst_review',
+     0.58, '{"send": 0.20, "hold": 0.18, "analyst_review": 0.58, "need_more_evidence": 0.04}'::jsonb,
+     NULL, 'run-211', TIMESTAMPTZ '2026-11-17 04:06:30Z'),
+    (211, 'syn1-wed|10.99.70.12|responder|1763352300', FALSE, 'policy', 'POL-02', 'hold',
+     FALSE, '["다중 모델 탐지, 판단 엇갈림"]'::jsonb, 'send', 'gemini-decision-1', 'analyst_review',
+     0.61, '{"send": 0.25, "hold": 0.10, "analyst_review": 0.61, "need_more_evidence": 0.04}'::jsonb,
+     NULL, 'run-211', TIMESTAMPTZ '2026-11-17 04:07:00Z'),
     (501, 'lab-20261118|10.20.0.15|originator|1763424000', TRUE, 'policy', 'POL-01', 'send',
      TRUE, '["실습망 다중 모델 탐지"]'::jsonb, 'send', 'gemini-decision-1', 'send',
      0.89, '{"send": 0.89, "hold": 0.06, "analyst_review": 0.03, "need_more_evidence": 0.02}'::jsonb,
@@ -723,9 +779,9 @@ INSERT INTO dashboard.raw_slack_deliveries (
      '{"channel": "#sec-alerts", "text": "경보: 192.168.10.50 -> 203.0.113.45"}'::jsonb,
      NULL, NULL, NULL, TIMESTAMPTZ '2026-11-16 03:11:00Z',
      NULL, NULL),
-    (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'status', 'status.v1', 'dry_run', 'recorded',
+    (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'status', 'status:investigating', 'dry_run', 'recorded',
      '{"channel": "#sec-alerts", "text": "후속 상태 갱신: 192.168.10.50 추가 확인 중"}'::jsonb,
-     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-16 03:15:00Z',
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-16 04:00:31Z',
      'cic17-wed|192.168.10.50|originator|1700000000', TRUE),
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'incident', 'incident.v1', 'dry_run', 'recorded',
      '{"channel": "#sec-alerts", "text": "연관 스레드 답글: 10.20.30.40 SMB 응답"}'::jsonb,
@@ -739,10 +795,18 @@ INSERT INTO dashboard.raw_slack_deliveries (
      '{"channel": "#sec-alerts", "text": "결합 v2 경보: 10.40.0.10 -> 10.40.0.99"}'::jsonb,
      '1763514180.000100', TIMESTAMPTZ '2026-11-19 01:03:30Z', NULL, TIMESTAMPTZ '2026-11-19 01:03:30Z',
      NULL, FALSE),
-    (601, 'lab-fusion-v2|10.40.0.20|responder|1763514300', 'status', 'status.v1', 'live', 'delivered',
+    (601, 'lab-fusion-v2|10.40.0.20|responder|1763514300', 'incident', 'template.v1', 'live', 'delivered',
      '{"channel": "#sec-alerts", "text": "스레드 답글: 10.40.0.20 연관 응답"}'::jsonb,
      '1763514240.000200', TIMESTAMPTZ '2026-11-19 01:04:00Z', NULL, TIMESTAMPTZ '2026-11-19 01:04:00Z',
-     'lab-fusion-v2|10.40.0.10|originator|1763514000', TRUE);
+     'lab-fusion-v2|10.40.0.10|originator|1763514000', TRUE),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'status', 'status:investigating', 'dry_run', 'recorded',
+     '{"channel": "#sec-alerts", "text": "상태 변경: 10.99.70.11 분석 중"}'::jsonb,
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-17 04:20:31Z',
+     NULL, FALSE),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'status', 'status:closed', 'dry_run', 'recorded',
+     '{"channel": "#sec-alerts", "text": "상태 변경: 10.99.70.11 종결(오탐)"}'::jsonb,
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-17 04:20:32Z',
+     NULL, FALSE);
 
 INSERT INTO dashboard.raw_slack_summaries (
     job_id, capture_id, zeekad_message_version, zeekad_delivery_mode, zeekad_delivery_status,
@@ -763,14 +827,24 @@ VALUES
     (101, 'cic17-wed|172.16.5.99|originator|1700000600', 'closed', 'benign',
      TIMESTAMPTZ '2026-11-16 05:30:00Z', 'analyst1'),
     (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'investigating', NULL,
-     TIMESTAMPTZ '2026-11-18 00:08:00Z', 'admin');
+     TIMESTAMPTZ '2026-11-18 00:08:00Z', 'admin'),
+    (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'investigating', NULL,
+     TIMESTAMPTZ '2026-11-16 04:00:30Z', 'analyst1'),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'closed', 'false_positive',
+     TIMESTAMPTZ '2026-11-17 04:20:30Z', 'analyst2');
 
 INSERT INTO dashboard.raw_incident_status_history (job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at)
 VALUES
     (101, 'cic17-wed|10.20.30.40|responder|1700000300', 'open', 'investigating', NULL, 'analyst1',
      'SMB 응답 패턴 추가 확인 중', TIMESTAMPTZ '2026-11-16 05:00:00Z'),
     (501, 'lab-20261118|10.20.0.15|originator|1763424000', 'open', 'investigating', NULL, 'admin',
-     '실습망 초기 조사 시작', TIMESTAMPTZ '2026-11-18 00:08:00Z');
+     '실습망 초기 조사 시작', TIMESTAMPTZ '2026-11-18 00:08:00Z'),
+    (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'open', 'investigating', NULL, 'analyst1',
+     '192.168.10.50 도메인 컨트롤러 Kerberos 티켓 요청 급증 확인, 조사 진행', TIMESTAMPTZ '2026-11-16 04:00:30Z'),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'open', 'investigating', NULL, 'analyst2',
+     '정기 백업 작업 트래픽으로 확인(오탐)', TIMESTAMPTZ '2026-11-17 04:20:30Z'),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'investigating', 'closed', 'false_positive', 'analyst2',
+     '정기 백업 작업 트래픽으로 확인(오탐)', TIMESTAMPTZ '2026-11-17 04:20:31Z');
 
 INSERT INTO dashboard.raw_analyst_review_queue (
     job_id, incident_id, queue_rank, host_ip, zeekad_role, zeekad_review_reason,
@@ -803,4 +877,12 @@ INSERT INTO dashboard.raw_analyst_review_queue (
     (602, 'lab-fusion-v2|10.40.0.30|originator|1763514600', 3, '10.40.0.30', 'originator',
      '파이프라인 재개 반영 실패 상태 검증', TIMESTAMPTZ '2026-11-19 02:11:00Z',
      'dismiss', 'analyst1', TIMESTAMPTZ '2026-11-19 02:12:00Z',
-     NULL, TRUE);
+     NULL, TRUE),
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 1, '10.99.70.11', 'originator',
+     '판단 모델 analyst_review: 야간 대량 전송 검토', TIMESTAMPTZ '2026-11-17 04:06:30Z',
+     'dismiss', 'analyst2', TIMESTAMPTZ '2026-11-17 04:20:00Z',
+     TIMESTAMPTZ '2026-11-17 04:20:30Z', FALSE),
+    (211, 'syn1-wed|10.99.70.12|responder|1763352300', 2, '10.99.70.12', 'responder',
+     '판단 모델 analyst_review: SMB 응답 증가 검토', TIMESTAMPTZ '2026-11-17 04:07:00Z',
+     'confirm', 'analyst2', NOW() - INTERVAL '1 minute',
+     NULL, FALSE);

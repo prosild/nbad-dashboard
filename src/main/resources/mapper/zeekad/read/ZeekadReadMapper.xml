@@ -50,6 +50,7 @@
         <result property="zeekadWouldSend" column="zeekad_would_send"/>
         <result property="zeekadReviewAction" column="zeekad_review_action"/>
         <result property="zeekadReviewPending" column="zeekad_review_pending"/>
+        <result property="alerted" column="alerted"/>
     </resultMap>
 
     <resultMap id="incidentModelScoreMap" type="com.zeekad.dashboard.model.zeekad.IncidentModelScore">
@@ -254,7 +255,15 @@
                r.zeekad_verification_passed,
                COALESCE(lq.zeekad_would_send, FALSE) AS zeekad_would_send,
                lq.zeekad_review_action,
-               COALESCE(lq.zeekad_review_pending, FALSE) AS zeekad_review_pending
+               COALESCE(lq.zeekad_review_pending, FALSE) AS zeekad_review_pending,
+               <!-- T21 경보 발송: feedback_summary.alerted와 같은 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외) -->
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM dashboard.slack_deliveries sdl
+                   WHERE sdl.incident_id = lq.incident_id
+                     AND sdl.zeekad_message_version IS NOT NULL
+                     AND sdl.zeekad_message_version NOT LIKE 'status:%'
+               ) THEN TRUE ELSE FALSE END AS alerted
         FROM dashboard.latest_incident_queue lq
         LEFT JOIN dashboard.incident_reports r
                ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
@@ -308,7 +317,15 @@
                COALESCE(
                    lq.zeekad_review_pending,
                    CASE WHEN arq.incident_id IS NOT NULL AND arq.zeekad_review_action IS NULL THEN TRUE ELSE FALSE END
-               ) AS zeekad_review_pending
+               ) AS zeekad_review_pending,
+               <!-- T21 경보 발송: feedback_summary.alerted와 같은 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외) -->
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM dashboard.slack_deliveries sdl
+                   WHERE sdl.incident_id = q.incident_id
+                     AND sdl.zeekad_message_version IS NOT NULL
+                     AND sdl.zeekad_message_version NOT LIKE 'status:%'
+               ) THEN TRUE ELSE FALSE END AS alerted
         FROM dashboard.incident_queue q
         LEFT JOIN dashboard.latest_incident_queue lq
                ON lq.incident_id = q.incident_id
