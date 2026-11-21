@@ -38,7 +38,7 @@
 - **바깥에 여는 포트는 `nginx-waf` HTTP 하나뿐이고 NAS `127.0.0.1`에만 묶는다.** 그래서 이 포트에 접근할 수 있는 것은 같은 NAS의 DSM 역방향 프록시뿐이다. 아래 전달 헤더(`X-Forwarded-For`, `X-Forwarded-Proto`)를 믿는 근거가 이 전제다. 포트를 `0.0.0.0`이나 LAN 주소에 묶으면 이 전제가 깨진다.
 - **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, 스택 서브넷 `PORTFOLIO_SUBNET`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`). 앱에는 `X-Forwarded-For`를 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다.
 - **절대 URL**: 들어온 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
-- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*`)만 활성. 실습망 시험 캡처 `lab-20261201`(가짜 패킷)은 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, SPEC 결정 2026-11-21). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
+- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)만 활성. 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보이고, 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, SPEC 결정 2026-11-21). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **로그인 잠금 대신 속도 제한**: 공개 비밀번호 계정은 계정 잠금이 보호 효과 없이 남이 데모를 막는 수단이 되므로 `DASHBOARD_MAX_FAILED_ATTEMPTS=1000000`으로 사실상 끈다(`0`이나 작은 값은 오히려 첫 실패에 잠근다). 대신 nginx가 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
 - **세션 쿠키**: `DASHBOARD_COOKIE_SECURE=true` 그대로다(`Secure`·`HttpOnly`·`SameSite=Lax`). 브라우저는 DSM과 HTTPS로 통신하므로 문제없다.
 - **8443 리스너**: `nginx-waf`의 HTTPS 리스너(이미지 기본 자체 서명 인증서)는 스택 네트워크 안에서만 쓰인다(리허설 ZAP 대상). 바깥에 열지 않는다.
@@ -54,7 +54,7 @@
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
 | `docker/portfolio/nginx/*.conf.template` | 포트폴리오 전용 nginx 설정(실제 IP·전달 헤더·속도 제한). `compose.yml`에는 붙지 않는다 |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등) |
-| `scripts/portfolio-snapshot.ps1` | 이 PC에서 `zeekad` DB 스냅샷·매니페스트·비밀값 패턴 검사 |
+| `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(이 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
 | `scripts/portfolio-verify.ps1` | 이 PC 리허설(E2E [0]~[8], 재시드, ZAP [9]) |
 
 ## 2. 이 PC에서 준비
@@ -75,11 +75,18 @@ docker pull pgvector/pgvector:0.8.1-pg17
 ### 2.2 스냅샷 내보내기
 
 ```powershell
+# 공개 데모 원본(T22부터): 배포 VM zeekad-vm(Ubuntu 24.04)의 zeek_AD DB. WSL의 ssh 설정(~/.ssh/config의 zeekad-vm)을 쓴다.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-snapshot.ps1 -SshHost zeekad-vm
+# 이 PC Docker의 zeek_AD DB를 원본으로 쓸 때(T12~T21의 방식)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-snapshot.ps1
 ```
 
-- 원본은 이 PC의 `zeekad-postgres-1` 컨테이너(`zeek_AD` 운영 DB)다. 컨테이너 안 로컬 소켓 인증(`pg_dump -U postgres`)만 쓰며 `zeek_AD`의 `.env`·비밀번호를 읽지 않고 원본에 쓰지 않는다.
-- 결과(`build/portfolio/`, Git 제외): `zeekad.dump`(`pg_dump -Fc`), `zeekad.dump.sha256`, `manifest.json`(SHA-256, 내보낸 시각, 캡처별 `dashboard.latest_incident_queue` 건수 — 덤프 전후로 세어 같을 때만 기록), `source-globals.sql`(역할 비교용, 비밀번호 없음), `secret-scan.txt`(덤프·근거 API 이미지의 비밀값 패턴 위치·건수, 값은 남기지 않음).
+- 원본은 `-SshHost`가 있으면 그 호스트(배포 VM), 없으면 이 PC의 `zeekad-postgres-1` 컨테이너다. 어느 쪽이든 컨테이너 안 로컬 소켓 인증(`psql`·`pg_dump -U postgres`)만 쓰며 `zeek_AD`의 `.env`·비밀번호를 읽지 않고 원본에 쓰지 않는다.
+- VM 원본은 `wsl -d Ubuntu --exec bash -c "ssh zeekad-vm bash -s < <스크립트>"`로 보낸다. 원격 명령은 한 줄짜리 스크립트 파일(`build/portfolio/source-remote/NN.sh`)로 만들어 인용이 세 겹(PowerShell→WSL→ssh→원격 셸)으로 깨지는 것을 피한다. 보내는 명령은 `docker inspect`, `docker exec <pg> psql`(SELECT만), `pg_dump --version`, `pg_dump -Fc zeekad`(표준 출력), `pg_dumpall --globals-only --no-role-passwords`뿐이고 VM에 파일을 남기지 않는다. 덤프 바이트는 PowerShell을 거치지 않고 WSL bash가 바로 `/mnt/c/...` 파일에 쓴다. 보낸 명령 전체는 `build/portfolio/source-commands.txt`에 남는다. `zeekad` 밖의 DB(특히 VM 대시보드 앱 DB)는 덤프하지 않는다.
+- 원본 `pg_dump`가 복원 이미지(`pgvector/pgvector:0.8.1-pg17`) 서버보다 높은 버전이면 멈춘다.
+- 덤프 전후로 `dashboard.latest_incident_queue` 캡처별 건수를 센다. 파이프라인이 도는 중이라도 **공개할 캡처**(`-PublicCaptures`, 기본 `cic17-*,syn1-*,lab-20261119`)만 전후가 같으면 된다. 공개 캡처가 바뀌면 멈춘다. 그 밖의 캡처 변화는 `manifest.json`의 `nonPublicCountChanges`에 정보로 남는다.
+- 결과(`build/portfolio/`, Git 제외): `zeekad.dump`(`pg_dump -Fc`), `zeekad.dump.sha256`, `manifest.json`(원본 `sourceHost`·`sourceTransport`, SHA-256, 내보낸 시각, 버전, 공개·숨김 캡처, 캡처별 건수, 캡처별 최신 작업 `captureLatestJobs`: 작업 ID·번들·사건 수·첫·마지막 사건 시각·`feedback_summary` `'all'` 행 수·전체 작업 목록. `latest_incident_queue`에서 한 캡처에 작업이 둘 이상이면 멈춘다), `source-globals.sql`(역할 비교용, 비밀번호 없음), `source-commands.txt`, `secret-scan.txt`(덤프·근거 API 이미지의 비밀값 패턴 위치·건수, 값은 남기지 않음).
+- 새 스냅샷을 만들기 전에 이전 `build/portfolio/`를 `build/portfolio-pre-<작업 ID>/`로 옮겨 둔다(되돌리기용).
 - `secret-scan.txt`에서 Slack 웹훅·토큰·API 키처럼 보이는 것이 새로 나오면 배포하지 말고 먼저 확인한다(지우지 않는다).
 
 ### 2.3 리허설(NAS와 같은 구성)
@@ -282,7 +289,7 @@ grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1   # 아무것도 나
 - `DEMO_PASSWORD`는 포트폴리오 글에 공개할 값이다. 저장소·문서에는 적지 않는다. 나중에 바꾸려면 같은 방법으로 `.env`의 줄을 바꾸고 시드를 다시 실행한다(5절: `SET_PASSWORD` 하나만 한다).
 - 다른 비밀값(DB 비밀번호, 비활성 계정 비밀번호, `BOOTSTRAP_ADMIN_TOTP_SECRET`)은 출력하거나 다른 곳에 옮겨 적지 않는다. 운영 중 필요한 것은 시드 재실행뿐이며 시드는 `.env`를 읽는다.
 - 비밀값이 비어 있으면 기동되지 않는다: PostgreSQL 이미지가 빈 `POSTGRES_SUPERUSER_PASSWORD`로 초기화를 거부하고, `01-roles-databases.sh`가 빈 로그인 역할 비밀번호로 초기화를 멈춘다(그러면 `postgres`가 healthy가 되지 않아 `api`·`dashboard-app`·`nginx-waf`도 뜨지 않는다). 시드는 빈 `DEMO_PASSWORD`·부트스트랩 비밀번호·TOTP 시크릿이면 아무것도 하지 않고 끝난다. 부트스트랩 비밀번호가 빈 계정은 애초에 만들어지지 않는다.
-- 부트스트랩 계정은 `users` 표가 빈 첫 기동 때만 만들어진다. 첫 기동 뒤에 `BOOTSTRAP_*` 값을 바꿔도 이미 있는 계정 비밀번호는 바뀌지 않는다(바꾸려면 3.9의 초기화 재배포).
+- 부트스트랩 계정은 `users` 표가 빈 첫 기동 때만 만들어진다. 첫 기동 뒤에 `BOOTSTRAP_*` 값을 바꿔도 이미 있는 계정 비밀번호는 바뀌지 않는다(바꾸려면 3.9의 DB 볼륨 재생성. 이때 zeek_AD DB와 앱 DB가 둘 다 새로 만들어진다).
 
 ### 3.5 기동과 계정 시드
 
@@ -464,17 +471,69 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeeka
 ```
 
 - 확인이 끝나 더 필요 없으면 `docker image rm zeek-ad-dashboard-app:pre-<작업 ID>`로 보존 태그를 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다). 보존 파일 `*.pre-<작업 ID>`는 다음 갱신 전까지 둔다.
-- 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(T20: `demo` 허용 캡처 `*` → `cic17-*,syn1-*`)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
+- 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(예: T20 `demo` 허용 캡처 `*` → `cic17-*,syn1-*`. 데이터도 함께 바꾸는 T22 `cic17-*,syn1-*,lab-20261119`는 3.9)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
 - 작업자 도구로 실행할 때는 위 1·2단계를 작업 폴더의 스크립트(`handoff/<작업 ID>/tools/nas-step1.sh`·`nas-step2.sh`)로 저장해 `ssh ... "echo <base64> | base64 -d | bash"`처럼 보내고 출력을 `handoff/<작업 ID>/evidence/nas-update.txt`에 남긴다(T16·T20과 같다).
 
-### 3.9 스냅샷 갱신
+### 3.9 스냅샷(공개 데이터) 교체
 
-스냅샷은 DB를 처음 만들 때만 복원된다. 데이터를 새로 바꾸려면 DB 볼륨을 지우고 다시 만든다. 이때 `zeekad_dashboard`(계정·감사 로그)도 새로 만들어진다(공개 데모 데이터는 읽기 전용이라 주기적 리셋은 두지 않는다).
+스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다(받아들인다). 이 백업은 되돌리기용이다. 공개 데모 데이터는 읽기 전용이라 주기적 리셋은 두지 않는다.
 
-1. 이 PC: `scripts/portfolio-snapshot.ps1` → `secret-scan.txt` 확인 → (권장) `scripts/portfolio-verify.ps1` 리허설.
-2. 새 `zeekad.dump`, `zeekad.dump.sha256`, `manifest.json`을 NAS `snapshot/`에 덮어쓰고 `sha256sum -c`.
-3. 감사 로그를 남겨 둘 필요가 있으면 먼저 백업한다: `docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres pg_dump -U postgres -Fc zeekad_dashboard > ~/zeekad_dashboard-$(date +%Y%m%d).dump`.
-4. `down -v` → `up -d --wait` → 시드 두 번(3.5) → 3.6 확인.
+이 PC에서 먼저 한다: 2.2 스냅샷(VM 원본은 `-SshHost zeekad-vm`) → `secret-scan.txt` 확인 → 2.3 리허설(`-SnapshotDir build/portfolio`) 통과 → (실습망 등 처음 공개하는 데이터면) 공개 전 내용 확인. NAS에서는 `zeekad-portfolio` 프로젝트와 `/volume1/docker/zeekad-portfolio` 안에서만, sudo 없이, 아래 순서대로 하고 **단계마다 실패하면 멈추고 되돌린다.** `.env`는 읽거나 고치지 않는다(`DEMO_PASSWORD`는 그대로 쓰인다).
+
+```sh
+export PATH=/usr/local/bin:$PATH
+ID=<작업 ID 소문자, 예: t22>
+cd /volume1/docker/zeekad-portfolio || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+# 1) 기록: 다른 프로젝트의 컨테이너·네트워크·볼륨, 앱 이미지 ID(3.1·3.6 방식)
+mkdir -p ~/zeekad-portfolio-check
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | grep -v 'zeekad-portfolio' | sort > ~/zeekad-portfolio-check/$ID-containers-before.txt
+for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | grep -v '^zeekad-portfolio' | sort > ~/zeekad-portfolio-check/$ID-networks-before.txt
+docker volume ls --format '{{.Name}}' | grep -v '^zeekad-portfolio_' | sort > ~/zeekad-portfolio-check/$ID-volumes-before.txt
+docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local > ~/zeekad-portfolio-check/$ID-app-image-before.txt
+# 2) 보존: 스냅샷 세 파일과 바뀌는 배포 파일을 *.pre-$ID로(이미 있으면 덮지 않는다)
+for f in snapshot/zeekad.dump snapshot/zeekad.dump.sha256 snapshot/manifest.json docker/portfolio/seed/seed_demo.py compose.portfolio.yml; do
+  [ -e "$f.pre-$ID" ] || cp -p "$f" "$f.pre-$ID" || exit 2
+done
+# 3) 앱 DB 백업(NAS 안에만. 비밀번호 해시가 들어 있으므로 밖으로 옮기거나 내용을 출력하지 않는다)
+mkdir -p backup && chmod 700 backup || exit 3
+$C exec -T postgres pg_dump -U postgres -Fc zeekad_dashboard > backup/app-pre-$ID.dump || exit 3
+chmod 600 backup/app-pre-$ID.dump && test -s backup/app-pre-$ID.dump || exit 3
+# 4) 내리기(-v 없이)
+$C down || exit 4
+# 5) 이 프로젝트의 DB 볼륨 하나만 지운다(이름을 먼저 확인한다)
+docker volume ls --format '{{.Name}}' | grep '^zeekad-portfolio_'      # zeekad-portfolio_pgdata 하나여야 한다
+docker volume rm zeekad-portfolio_pgdata || exit 5
+```
+
+6) 이 PC에서 새 `zeekad.dump`·`zeekad.dump.sha256`·`manifest.json`과 바뀐 배포 파일을 `scp -O`로 보낸다(3.2). NAS에서 `(cd snapshot && sha256sum -c zeekad.dump.sha256)`가 `OK`인지 보고 `chmod 755 snapshot && chmod 644 snapshot/*`로 권한을 맞춘다(T13: 상속 ACL 때문에 컨테이너 postgres가 덤프를 못 읽는다).
+
+```sh
+# 7) 올리기: 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)가 다시 돈다
+$C up -d --wait || exit 7
+$C logs postgres | grep -E 'portfolio-restore|pg_restore: error'      # "portfolio-restore: done", 오류 줄 없음
+# 8) 시드 두 번: 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
+$C --profile seed run --rm demo-seed
+$C --profile seed run --rm demo-seed
+# 9) 대조: 다른 프로젝트의 컨테이너·네트워크·볼륨이 1)과 같고 앱 이미지가 그대로인지
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | grep -v 'zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-containers-before.txt - && echo "containers same"
+for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | grep -v '^zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-networks-before.txt - && echo "networks same"
+docker volume ls --format '{{.Name}}' | grep -v '^zeekad-portfolio_' | sort | diff ~/zeekad-portfolio-check/$ID-volumes-before.txt - && echo "volumes same"
+docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zeekad-portfolio-check/$ID-app-image-before.txt - && echo "app image same"
+```
+
+- 앱 코드가 바뀌지 않았으면 앱 이미지는 교체하지 않는다(바뀌었으면 3.8을 먼저 따로 한다).
+- 끝나면 3.6 확인과 4.4 공개 주소 확인을 한다. 공개 주소가 `502`면 3.8의 대처를 따른다.
+- **되돌리기**(어느 단계든 실패 시) 다음 순서로 한 뒤 멈춰 원인을 본다:
+  1. `$C down`
+  2. 새로 생긴 DB 볼륨을 지운다(`docker volume rm zeekad-portfolio_pgdata`, 없으면 건너뛴다)
+  3. `*.pre-$ID` 파일을 원래 이름으로 되돌린다(`for f in ...; do cp -p "$f.pre-$ID" "$f"; done`)
+  4. `$C up -d --wait`(이전 스냅샷이 복원된다)
+  5. `$C stop dashboard-app`
+  6. `$C exec -T postgres pg_restore -U postgres -d zeekad_dashboard --clean --if-exists < backup/app-pre-$ID.dump`
+  7. `$C start dashboard-app`. 시드는 돌리지 않는다(`demo`가 백업에 있다).
+  - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든다. 이때 지난 감사 로그는 백업에만 남는다.
+- 작업자 도구로 실행할 때는 단계를 작업 폴더 스크립트로 저장해 3.8처럼 보내고 출력을 `handoff/<작업 ID>/evidence/nas-replace.txt`(시드는 `nas-seed.txt`)에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
 
 ## 4. DSM 설정 (사용자)
 
@@ -526,7 +585,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 **같은 LAN(이 PC)에서 확인할 때**: 공유기에 NAT 루프백이 없으면 이 PC에서 공인 IP로는 접속되지 않는다. 대신 `curl.exe --resolve soc.<DDNS 이름>.synology.me:443:192.168.50.146 https://soc.<DDNS 이름>.synology.me/...`로 NAS의 DSM `443`에 직접 붙는다(인증서·역방향 프록시·헤더는 공개 경로와 같다). 브라우저가 필요한 항목은 `curl.exe`의 인증서 검증 성공(`--insecure` 없이 종료 코드 0)과 `Set-Cookie` 속성으로 대신한다. 이 PC의 모든 요청은 같은 클라이언트 IP(이 PC LAN IP)라 로그인 요청 사이에 7초 정도 간격을 두지 않으면 속도 제한(`429`)에 걸린다. 공개 IP 접속 자체와 방문자 공인 IP 기록(4.3)은 외부망(휴대전화 데이터 등)에서만 확인할 수 있다.
 
 - [ ] 브라우저 주소 표시줄에 인증서 경고가 없다(4.1 하위 도메인 인증서). `http://` 접속은 공유기가 `443`만 포워딩하므로 외부에서는 해당 없다.
-- [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 보이는 캡처 8개(`cic17-*` 4, `syn1-*` 4) 건수가 `snapshot/manifest.json`과 같다. `lab-20261201`은 캡처 목록에 없고, 직접 조회(목록 `captureId=lab-20261201`·그 캡처의 사건 상세)는 `403`이다. 첫 화면(`/`)은 관제 현황판이다. (리허설 [2]·[3])
+- [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 보이는 캡처(`snapshot/manifest.json`의 `publicCaptures`: `cic17-*` 4, `syn1-*` 4, `lab-20261119`) 건수가 매니페스트와 같고, `lab-20261119` 사건의 목록·상세·증적·AI 리포트가 보인다. 숨김 캡처(`hiddenCaptures`: `lab-20261201`, `lab-20261118` 등)는 캡처 목록에 없고, 직접 조회(목록 `captureId=<숨김 캡처>`·그 캡처의 사건 상세)는 `403`이다. 첫 화면(`/`)은 관제 현황판이다. (리허설 [2]·[3])
 - [ ] IP는 뒤 두 옥텟이 가려져 보인다(`192.168.*.*`). (리허설 [3])
 - [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
 - [ ] `viewer1`·`analyst1`·`analyst2`·`admin`은 로그인되지 않는다(비활성). (리허설 [5])
@@ -541,7 +600,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 
 ## 5. 계정 시드의 직접 SQL 단계와 위험
 
-시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, 다른 계정 모두 비활성)면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음). 바꿀 것이 있을 때만 바꾼다.
+시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*,lab-20261119`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, 다른 계정 모두 비활성)면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음). 바꿀 것이 있을 때만 바꾼다.
 
 가능한 단계는 앱 관리자 API로 한다(`admin` 로그인 + `.env`의 `BOOTSTRAP_ADMIN_TOTP_SECRET`으로 계산한 TOTP 코드, 감사 로그 `USER_ADMIN_CHANGE`):
 `demo` 생성(`CREATE_USER`), 역할·허용 캡처·표시 이름 수정(`UPDATE_USER`), 활성화·다른 계정 비활성화(`TOGGLE_ENABLED`, 상태를 읽고 필요할 때만 호출), 잠금 해제(`UNLOCK_ACCOUNT`).
