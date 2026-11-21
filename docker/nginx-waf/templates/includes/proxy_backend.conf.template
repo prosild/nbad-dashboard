@@ -2,12 +2,19 @@ proxy_set_header Host ${PROXY_HOST_HEADER};
 proxy_set_header Proxy "";
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;
+# 클라이언트 IP·스킴·포트 전달 헤더는 nginx가 정한 값으로 덮어쓴다(방문자가 보낸 값은 앱에 가지 않는다).
 proxy_set_header ${REAL_IP_PROXY_HEADER} $remote_addr;
 proxy_set_header X-Forwarded-For ${ZEEKAD_PROXY_X_FORWARDED_FOR};
 proxy_set_header X-Forwarded-Port ${ZEEKAD_PROXY_X_FORWARDED_PORT};
 proxy_set_header X-Forwarded-Proto ${NGINX_X_FORWARDED_PROTO};
+# 그 밖에 앱이 믿는 전달 헤더는 방문자가 붙인 값을 지운다(값이 빈 proxy_set_header는 그 헤더를 보내지 않는다).
+# Spring(forward-headers-strategy: framework)은 Forwarded를 X-Forwarded-*보다 먼저 보고, X-Forwarded-Host·Prefix·Ssl도
+# 요청 주소·리다이렉트 URL에 반영하므로 방문자가 감사 로그 IP나 Location을 바꾸지 못하게 한다.
+proxy_set_header Forwarded "";
+proxy_set_header X-Forwarded-Host "";
+proxy_set_header X-Forwarded-Prefix "";
+proxy_set_header X-Forwarded-Ssl "";
 include includes/client_identity.conf;
-include includes/proxy_backend_extra*.conf;
 
 proxy_http_version 1.1;
 proxy_buffering off;
@@ -16,7 +23,10 @@ proxy_read_timeout 36000s;
 proxy_redirect off;
 
 proxy_pass_header Authorization;
-proxy_pass ${BACKEND};
+# 업스트림 이름을 요청 때 다시 해석한다: proxy_pass에 변수를 쓰면 nginx.conf의 http 문맥 resolver(Dockerfile RESOLVER_CONFIG)로
+# 해석하고 valid 동안만 캐시한다. URI 부분이 없으므로 원래 요청 URI를 그대로 넘긴다(고정 proxy_pass와 같다).
+set $zeekad_backend ${BACKEND};
+proxy_pass $zeekad_backend;
 
 SET_REAL_IP_FROM
 real_ip_header ${REAL_IP_HEADER};

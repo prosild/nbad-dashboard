@@ -119,9 +119,9 @@ services:
       # 이것 하나만 연다. 127.0.0.1에만 묶어 DSM 역방향 프록시만 접근한다(LAN에서도 직접 접근 불가).
       - "127.0.0.1:${PORTFOLIO_HTTP_PORT:-18480}:8080"
     volumes:
-      # 포트폴리오 전용 nginx 설정(실제 IP·전달 헤더 규칙·로그인 속도 제한). 기존 compose.yml에는 붙이지 않는다.
+      # 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port 규칙·로그인 속도 제한). 기존 compose.yml에는 붙이지 않는다.
+      # 방문자가 붙인 Forwarded·X-Forwarded-Host/Prefix/Ssl 지우기는 공유 이미지 템플릿(proxy_backend.conf)이 모든 스택에서 한다.
       - ./docker/portfolio/nginx/zeekad-portfolio-http.conf.template:/etc/nginx/templates/conf.d/zeekad-portfolio-http.conf.template:ro
-      - ./docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template:/etc/nginx/templates/includes/proxy_backend_extra_portfolio.conf.template:ro
     environment:
       BACKEND: "http://dashboard-app:8080"
       PORT: "8080"
@@ -138,6 +138,7 @@ services:
       NGINX_X_FORWARDED_PROTO: "$$zeekad_forwarded_proto"
       ZEEKAD_PROXY_X_FORWARDED_PORT: "$$zeekad_forwarded_port"
       # X-Forwarded-For는 덧붙이지 않고 nginx가 정한 클라이언트 IP 하나로 덮어쓴다(방문자가 붙인 값이 감사 로그에 남지 않게).
+      # T14부터 이미지 기본값과 같지만 이 스택의 의도를 보이려고 남긴다.
       ZEEKAD_PROXY_X_FORWARDED_FOR: "$$remote_addr"
       # 실제 IP: 신뢰 범위는 127.0.0.1과 이 스택의 고정 서브넷뿐이다.
       REAL_IP_HEADER: "X-Forwarded-For"

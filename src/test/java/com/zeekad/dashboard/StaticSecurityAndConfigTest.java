@@ -234,7 +234,7 @@ class StaticSecurityAndConfigTest {
                 Path.of("docker/portfolio/initdb/01-roles-databases.sh"),
                 Path.of("docker/portfolio/initdb/02-restore-snapshot.sh"),
                 Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"),
-                Path.of("docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/proxy_backend.conf.template"),
                 Path.of("docker/portfolio/seed/seed_demo.py"),
                 Path.of("scripts/portfolio-snapshot.ps1"),
                 Path.of("scripts/portfolio-verify.ps1"),
@@ -268,10 +268,16 @@ class StaticSecurityAndConfigTest {
         assertThat(httpConf).contains("limit_req_status 429;", "real_ip_header X-Forwarded-For;",
                 "real_ip_recursive on;", "\"POST:/api/auth/login\" $binary_remote_addr;");
 
-        // 공유 WAF 템플릿은 변수로만 바뀌고 기존(VMware) 기본값은 이미지 ENV로 그대로 유지한다.
+        // 공유 WAF 템플릿은 변수로만 바뀌고 기본값은 이미지 ENV에 있다(T14: X-Forwarded-For는 모든 스택에서 덮어쓴다).
         String wafDockerfile = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8);
-        assertThat(wafDockerfile).contains("ZEEKAD_PROXY_X_FORWARDED_FOR=\\$proxy_add_x_forwarded_for",
+        assertThat(wafDockerfile).contains("ZEEKAD_PROXY_X_FORWARDED_FOR=\\$remote_addr",
                 "ZEEKAD_PROXY_X_FORWARDED_PORT=\\$forwarded_port");
+        // T14: 방문자가 붙인 전달 헤더 지우기는 포트폴리오 전용 파일에서 공유 템플릿으로 옮겼다.
+        String sharedProxyBackend = Files.readString(
+                Path.of("docker/nginx-waf/templates/includes/proxy_backend.conf.template"), StandardCharsets.UTF_8);
+        assertThat(sharedProxyBackend).contains("proxy_set_header Forwarded \"\";",
+                "proxy_set_header X-Forwarded-Host \"\";", "proxy_set_header X-Forwarded-Prefix \"\";",
+                "proxy_set_header X-Forwarded-Ssl \"\";");
 
         String envExample = Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8);
         Pattern filledSecret = Pattern.compile("(?m)^[A-Z0-9_]*(?:PASSWORD|SECRET)=\\S+");
@@ -297,6 +303,94 @@ class StaticSecurityAndConfigTest {
 
         String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
         assertThat(gitignore).contains("!.env.portfolio.example", "build/");
+    }
+
+    @Test
+    void wafClientIpAndForwardingHeadersAreNotSpoofableInAnyStack() throws IOException {
+        // (a) VMware 스택: WAF가 맨 앞이므로 127.0.0.1만 신뢰하고 사설망 대역을 신뢰하지 않는다.
+        String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
+        java.util.regex.Matcher realIpFrom = Pattern.compile("(?m)^\\s*SET_REAL_IP_FROM:\\s*\"([^\"]*)\"").matcher(compose);
+        assertThat(realIpFrom.find()).as("compose.yml nginx-waf SET_REAL_IP_FROM").isTrue();
+        assertThat(realIpFrom.group(1)).isEqualTo("127.0.0.1");
+        assertThat(realIpFrom.find()).as("SET_REAL_IP_FROM은 한 번만").isFalse();
+        assertThat(compose).doesNotContain("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "WAF_TRUSTED_PROXIES");
+        assertThat(compose).contains("REAL_IP_HEADER: \"X-Forwarded-For\"", "REAL_IP_RECURSIVE: \"on\"");
+
+        // (b) 앱에 넘기는 X-Forwarded-For 기본은 덮어쓰기($remote_addr)이고, 방문자 값 뒤에 덧붙이는 nginx 변수는 어디에도 없다.
+        String wafDockerfile = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8);
+        assertThat(wafDockerfile).contains("ZEEKAD_PROXY_X_FORWARDED_FOR=\\$remote_addr");
+        List<Path> nginxConfigFiles = new java.util.ArrayList<>();
+        try (Stream<Path> rootFiles = Files.list(Path.of("."))) {
+            rootFiles.filter(p -> p.getFileName().toString().matches("compose.*\\.ya?ml")).forEach(nginxConfigFiles::add);
+        }
+        try (Stream<Path> dockerFiles = Files.walk(Path.of("docker"))) {
+            dockerFiles.filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(".template") || p.toString().endsWith(".yml")
+                            || p.getFileName().toString().equals("Dockerfile"))
+                    .forEach(nginxConfigFiles::add);
+        }
+        assertThat(nginxConfigFiles).contains(Path.of("./compose.yml"), Path.of("./compose.portfolio.yml"),
+                Path.of("docker/nginx-waf/Dockerfile"), Path.of("docker/verify/compose.verify.yml"));
+        for (Path file : nginxConfigFiles) {
+            assertThat(Files.readString(file, StandardCharsets.UTF_8))
+                    .as("%s에 X-Forwarded-For 덧붙이기 변수가 없어야 합니다", file)
+                    .doesNotContain("$proxy_add_x_forwarded_for");
+        }
+
+        // (c) 공유 템플릿이 방문자가 붙인 전달 헤더 넷을 지우고, 같은 헤더를 두 번 설정하지 않는다.
+        String proxyBackend = Files.readString(
+                Path.of("docker/nginx-waf/templates/includes/proxy_backend.conf.template"), StandardCharsets.UTF_8);
+        assertThat(proxyBackend).contains("proxy_set_header Forwarded \"\";", "proxy_set_header X-Forwarded-Host \"\";",
+                "proxy_set_header X-Forwarded-Prefix \"\";", "proxy_set_header X-Forwarded-Ssl \"\";",
+                "proxy_set_header X-Forwarded-For ${ZEEKAD_PROXY_X_FORWARDED_FOR};",
+                "proxy_set_header ${REAL_IP_PROXY_HEADER} $remote_addr;");
+        List<String> headerNames = proxyBackend.lines()
+                .map(String::trim)
+                .filter(line -> line.startsWith("proxy_set_header "))
+                .map(line -> line.split("\\s+")[1].toLowerCase(java.util.Locale.ROOT))
+                .toList();
+        assertThat(headerNames).doesNotHaveDuplicates();
+
+        // (d) 업스트림 이름을 요청 때 다시 해석한다: 변수 proxy_pass + 이미지 nginx.conf의 resolver(RESOLVER_CONFIG).
+        assertThat(proxyBackend).contains("set $zeekad_backend ${BACKEND};", "proxy_pass $zeekad_backend;")
+                .doesNotContainPattern("proxy_pass\\s+\\$\\{BACKEND\\}");
+        assertThat(wafDockerfile).contains("RESOLVER_CONFIG=\"valid=10s ipv6=off\"")
+                .doesNotContainPattern("(?m)^\\s*(ENV\\s+)?RESOLVERS=");
+
+        // (e) 앱의 전달 헤더 신뢰는 "앱에는 WAF만 닿는다"에 기댄다: 어느 스택도 dashboard-app 포트를 호스트에 열지 않는다.
+        for (Path composeFile : List.of(Path.of("compose.yml"), Path.of("compose.portfolio.yml"),
+                Path.of("docker/verify/compose.verify.yml"))) {
+            String text = Files.readString(composeFile, StandardCharsets.UTF_8);
+            String appBlock = serviceBlock(text, "dashboard-app");
+            assertThat(appBlock).as("%s dashboard-app 서비스", composeFile).isNotEmpty();
+            assertThat(appBlock).as("%s dashboard-app에 ports:가 없어야 합니다", composeFile)
+                    .doesNotContainPattern("(?m)^\\s+ports:");
+        }
+
+        // (f) 포트폴리오 전용 전달 헤더 파일과 그 마운트·include가 없다(공유 템플릿으로 옮김).
+        assertThat(Path.of("docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template")).doesNotExist();
+        assertThat(Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8)).doesNotContain("proxy_backend_extra");
+        assertThat(proxyBackend).doesNotContain("proxy_backend_extra");
+        assertThat(wafDockerfile).doesNotContain("proxy_backend_extra");
+    }
+
+    private static String serviceBlock(String compose, String service) {
+        List<String> lines = compose.lines().toList();
+        StringBuilder block = new StringBuilder();
+        boolean inside = false;
+        for (String line : lines) {
+            if (line.equals("  " + service + ":")) {
+                inside = true;
+                continue;
+            }
+            if (inside && line.matches("^ {0,2}\\S.*") && !line.trim().startsWith("#")) {
+                break;
+            }
+            if (inside) {
+                block.append(line).append('\n');
+            }
+        }
+        return block.toString();
     }
 
     @Test

@@ -17,9 +17,16 @@
   - `/actuator/**` 경로는 앞단 Nginx에서 `403 Forbidden`으로 즉시 차단합니다.
   - `compose.yml`의 `ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"`로 CRS 허용 메서드(기본 `GET HEAD POST OPTIONS`)에 `PUT`만 더합니다. SPA의 사용자 수정 요청 `PUT /api/admin/users/{id}` 때문이며, 앱이 쓰지 않는 `DELETE`·`PATCH`는 허용하지 않습니다. `PARANOIA`·`BLOCKING_PARANOIA=1`, `ANOMALY_INBOUND=5`, `MODSEC_RULE_ENGINE=on`은 그대로이고 WAF 예외 규칙은 두지 않습니다.
   - `Server` 헤더 및 와일드카드 CORS 헤더를 제거하고(동일 Origin에서 SPA 정적 셸과 JSON API를 함께 서빙하므로 CORS 헤더 자체가 필요 없음), HTTPS 응답에 `Strict-Transport-Security` 헤더를 추가하며, 백엔드(`dashboard-app`)의 `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `COOP/COEP/CORP`, `Permissions-Policy` 헤더를 보존합니다.
+  - **클라이언트 IP 규칙**(`T14`): 이 스택은 WAF가 맨 앞이라 클라이언트가 직접 붙습니다. `compose.yml`은 `SET_REAL_IP_FROM: "127.0.0.1"`, `REAL_IP_HEADER: "X-Forwarded-For"`, `REAL_IP_RECURSIVE: "on"`이므로 `127.0.0.1` 밖에서 온 연결은 접속 주소가 곧 클라이언트 IP이고, 방문자가 보낸 `X-Real-IP`·`X-Forwarded-For`는 무시됩니다. 앞단 프록시용 설정 변수는 두지 않습니다.
+    - 사설망 대역(`10/8`·`172.16/12`·`192.168/16`)을 통째로 신뢰하면 안 됩니다. VMware NAT·Docker 게이트웨이처럼 같은 사설망에서 오는 누구나 헤더 하나로 감사 로그 `client_ip`와 ModSecurity 기록 IP를 바꿀 수 있기 때문입니다(`T14` 이전 설정에서 재현됨).
+    - 앞단 프록시(로드밸런서 등) 뒤에 둘 때는 포트폴리오 스택(`compose.portfolio.yml` + `docker/portfolio/nginx/zeekad-portfolio-http.conf.template`)처럼 `set_real_ip_from <그 프록시 주소만>`·`real_ip_header X-Forwarded-For`·`real_ip_recursive on`을 **http 문맥** conf 템플릿으로 따로 붙입니다. 이미지의 `SET_REAL_IP_FROM`은 `location` 안에 펼쳐져 realip가 늦게 적용되므로 ModSecurity 기록에 프록시 주소가 남을 수 있습니다. 신뢰 범위에는 실제 프록시 주소만 넣습니다.
+  - **앱에 넘기는 전달 헤더**(공유 템플릿 `includes/proxy_backend.conf.template`, 모든 스택 공통): `X-Forwarded-For`는 방문자 값 뒤에 덧붙이지 않고 nginx가 정한 클라이언트 IP(`$remote_addr`) 하나로 덮어씁니다. `X-Real-IP`·`X-Forwarded-Proto`·`X-Forwarded-Port`도 nginx가 정한 값으로 덮어쓰고, `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 빈 값으로 지워 앱에 보내지 않습니다.
+  - **업스트림 이름 재해석**: `proxy_pass`가 변수(`$zeekad_backend`)라 nginx가 `dashboard-app` 이름을 요청 때 Docker 내장 DNS(`127.0.0.11`, 이미지 `nginx.conf`의 `resolver`, `RESOLVER_CONFIG="valid=10s ipv6=off"`)로 다시 해석합니다. 앱 컨테이너를 다시 만들어 IP가 바뀌어도 `nginx-waf`를 재시작할 필요가 없습니다. 앱이 멈춘 동안에는 `502`(`/50x.html`)를 냅니다.
 - **`dashboard-app` (`Dockerfile`)**: `eclipse-temurin:17-jre-alpine` 기반 비루트(`appuser`) Spring Boot + MyBatis JSON REST API 서버이며, 같은 jar 안의 React SPA 정적 번들(`BOOT-INF/classes/static/index.html`, `static/assets/*`)도 함께 서빙합니다. 최종 이미지에는 Node.js·npm·`node_modules`가 없습니다(Node는 빌드 단계에서만 사용).
   - `expose: ["8080"]`으로 Docker 내부 네트워크(`dashboard-net`)에서만 접근 가능하며 호스트 포트를 직접 열지 않습니다.
-  - `server.forward-headers-strategy: framework`로 앞단 WAF가 전달하는 `X-Forwarded-Proto`, `X-Forwarded-For`, `X-Real-IP`, `Host`를 처리합니다.
+  - `server.forward-headers-strategy: framework`로 앞단 WAF가 보낸 전달 헤더(`Forwarded`가 있으면 그것, 없으면 `X-Forwarded-Proto`·`X-Forwarded-Host`·`X-Forwarded-Port`·`X-Forwarded-Prefix`)를 요청 주소·리다이렉트 URL에 반영하고, 클라이언트 IP는 `X-Forwarded-For`의 **맨 왼쪽** 값을 씁니다(감사 로그 `client_ip`). `X-Real-IP`는 앱이 쓰지 않습니다.
+  - 앱은 받은 전달 헤더를 그대로 믿으므로, 그 값이 안전한 것은 "앱에는 `nginx-waf`만 닿는다"는 전제 덕분입니다. 따라서 `dashboard-app` 포트(`8080`)를 호스트나 WAF 밖으로 열면(`ports:`) 안 됩니다. 정적 테스트가 세 compose 파일의 `dashboard-app`에 `ports:`가 없는지 확인합니다.
+  - 이 전제의 한계: 같은 Docker 네트워크의 다른 컨테이너(`zeek_AD`의 `api`·파이프라인·PostgreSQL 등)는 `dashboard-app:8080`에 직접 붙어 전달 헤더를 꾸밀 수 있습니다. 그 컨테이너가 탈취되면 감사 로그 IP를 바꿀 수 있습니다. 근본 대책(앱이 WAF에서 온 전달 헤더만 믿게 하기, WAF↔앱 전용 내부 네트워크 등)은 후속 과제입니다.
   - 프로덕션 `bootJar`에는 H2 드라이버 및 `application-test.yml`이 포함되지 않습니다.
 
 ### 1.3 SPA 라우팅과 `/api/**` 경계
@@ -213,5 +220,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 - 단계: CycloneDX SBOM → 이미지 빌드 → Trivy(SBOM / FS(`frontend/package-lock.json` npm 포함, `frontend/node_modules`·`frontend/dist` 제외) / 앱·WAF 이미지) → PostgreSQL 17 + WAF E2E → OWASP ZAP 베이스라인.
 - E2E는 JSON API로 진행합니다: `GET /api/auth/csrf`로 `XSRF-TOKEN`을 받고 `X-XSRF-TOKEN` 헤더 + JSON 본문으로 `POST /api/auth/login`, 관리자는 `POST /api/auth/totp/verify`. 응답은 JSON 필드로 판정하고, WAF 차단은 `403` + 앱 JSON 오류가 아님 + `nginx-waf` ModSecurity 감사 로그의 규칙 ID로 판정합니다. 결과는 `waf-e2e-verification.txt`에 남습니다.
 - ZAP은 정보성 경고만 있어도 종료 코드 `2`이므로 `zap-baseline.json`의 위험 등급별 경고 수로 판정합니다. High·Medium·Low가 하나라도 있으면 실패이며, 유일한 허용 예외는 모든 인스턴스가 `XSRF-TOKEN`인 Low `10010`(Cookie No HttpOnly Flag)입니다(이중 제출 CSRF 설계상 JS가 읽어야 하는 쿠키).
+- E2E `[9]`(`T14`)는 클라이언트 IP·전달 헤더 위조를 봅니다: 전달 헤더 없이 로그인한 `viewer1`의 감사 로그 `client_ip`를 기준 B로 잡고, `X-Real-IP`·`X-Forwarded-For`·`Forwarded: for=`를 하나씩(그리고 `X-Forwarded-Host`·`X-Forwarded-Prefix`까지 모두) 붙인 로그인 성공·실패, 조합 헤더를 붙인 WAF 차단 요청의 ModSecurity `client_ip`가 모두 B인지, `X-Forwarded-Host`·`Forwarded: host=`·`X-Forwarded-Prefix`를 붙인 비인증 리다이렉트 `Location`이 헤더 없을 때와 같은지 확인합니다. 감사 로그는 `verify-postgres`에서 읽기 전용 `SELECT`로 읽습니다.
 - E2E는 `127.0.0.1`로 접속하므로 모든 요청에 CRS `920350`(숫자 IP Host, 3점)이 붙습니다. 실제 배포에서는 `WAF_SERVER_NAME`의 호스트명으로 접속하는 것을 권장합니다.
 - 실행 시점에만 난수 비밀번호를 생성해 `docker/verify/compose.verify.yml`을 기동하고, 검증 완료 후 `docker compose down -v`로 임시 컨테이너와 볼륨을 완전히 삭제합니다.

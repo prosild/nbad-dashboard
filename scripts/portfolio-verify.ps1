@@ -622,10 +622,10 @@ try {
     $auditIp = "203.0.113.90"
     $ac = New-Client $auditIp
     [void](Invoke-Http -Path "/api/auth/csrf" -Client $ac)
-    $acRes = Invoke-Http -Path "/api/auth/login" -Method POST -Client $ac -Xff "1.2.3.4, $auditIp" -Csrf -JsonBody @{ username = "demo"; password = $env:DEMO_PASSWORD } -ExtraHeaders @("Forwarded: for=192.0.2.66", "X-Real-IP: 192.0.2.67")
+    $acRes = Invoke-Http -Path "/api/auth/login" -Method POST -Client $ac -Xff "1.2.3.4, $auditIp" -Csrf -JsonBody @{ username = "demo"; password = $env:DEMO_PASSWORD } -ExtraHeaders @("Forwarded: for=192.0.2.66", "X-Real-IP: 192.0.2.67", "X-Forwarded-Prefix: /evil")
     Assert-Status $acRes 200 "위조 X-Forwarded-For·Forwarded·X-Real-IP를 붙인 demo 로그인"
     $auditRow = (Invoke-Psql "zeekad_dashboard" "SELECT client_ip FROM audit_logs WHERE action_type = 'LOGIN_SUCCESS' AND actor_username = 'demo' ORDER BY id DESC LIMIT 1").Output.Trim()
-    $e2eLogs.Add("[7d] demo login with X-Forwarded-For: 1.2.3.4, $auditIp + Forwarded: for=192.0.2.66 + X-Real-IP: 192.0.2.67 -> HTTP $($acRes.Status); latest LOGIN_SUCCESS audit client_ip=$auditRow")
+    $e2eLogs.Add("[7d] demo login with X-Forwarded-For: 1.2.3.4, $auditIp + Forwarded: for=192.0.2.66 + X-Real-IP: 192.0.2.67 + X-Forwarded-Prefix: /evil -> HTTP $($acRes.Status); latest LOGIN_SUCCESS audit client_ip=$auditRow")
     Assert-True ($auditRow -eq $auditIp) "감사 로그 IP가 위조 값이 아니라 클라이언트 IP($auditIp)"
 
     Write-Host "=== [8] WAF 차단 ==="

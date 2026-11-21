@@ -36,7 +36,7 @@
 ### 1.1 보안 전제와 설정 요약
 
 - **바깥에 여는 포트는 `nginx-waf` HTTP 하나뿐이고 NAS `127.0.0.1`에만 묶는다.** 그래서 이 포트에 접근할 수 있는 것은 같은 NAS의 DSM 역방향 프록시뿐이다. 아래 전달 헤더(`X-Forwarded-For`, `X-Forwarded-Proto`)를 믿는 근거가 이 전제다. 포트를 `0.0.0.0`이나 LAN 주소에 묶으면 이 전제가 깨진다.
-- **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, 스택 서브넷 `PORTFOLIO_SUBNET`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`). 앱에는 `X-Forwarded-For`를 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다.
+- **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, 스택 서브넷 `PORTFOLIO_SUBNET`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`, 포트폴리오 전용 http 문맥 설정). 앱에 넘기는 헤더는 `T14`부터 모든 스택이 같은 공유 규칙(WAF 이미지 템플릿 `includes/proxy_backend.conf.template`)을 쓴다: `X-Forwarded-For`는 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다. VMware 스택(`compose.yml`)은 `127.0.0.1`만 신뢰한다(`docs/deployment-guide.md` 1.2).
 - **절대 URL**: 들어온 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
 - **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)만 활성. 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보이고, 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, SPEC 결정 2026-11-21). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **로그인 잠금 대신 속도 제한**: 공개 비밀번호 계정은 계정 잠금이 보호 효과 없이 남이 데모를 막는 수단이 되므로 `DASHBOARD_MAX_FAILED_ATTEMPTS=1000000`으로 사실상 끈다(`0`이나 작은 값은 오히려 첫 실패에 잠근다). 대신 nginx가 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
@@ -52,7 +52,7 @@
 | `.env.portfolio.example` | 환경 변수 목록(비밀값은 빈 값) |
 | `docker/portfolio/initdb/01-roles-databases.sh` | 역할·DB·DB 수준 ACL 생성(zeek_AD `01-roles-databases.sh`와 같은 역할 집합) |
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
-| `docker/portfolio/nginx/*.conf.template` | 포트폴리오 전용 nginx 설정(실제 IP·전달 헤더·속도 제한). `compose.yml`에는 붙지 않는다 |
+| `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(이 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
 | `scripts/portfolio-verify.ps1` | 이 PC 리허설(E2E [0]~[8], 재시드, ZAP [9]) |
@@ -344,31 +344,38 @@ docker image rm zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-p
 
 새 이미지 `tar`를 옮겨 `docker load` → `docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait`. DB 볼륨은 유지되므로 계정·감사 로그가 그대로다.
 
-#### 앱 이미지만 갱신(`dashboard-app` 하나, T16 → T21 정리)
+#### 서비스 하나의 이미지 갱신(`dashboard-app` 또는 `nginx-waf`, T16 → T21 → T14 정리)
 
-대시보드 코드만 바뀌었을 때는 `zeek-ad-dashboard-app:local` 하나만 옮기고 `dashboard-app`만 다시 만든다. 5GB 파이프라인 `tar`는 다시 만들지 않는다. DB 볼륨·`.env`·다른 컨테이너는 그대로 둔다. `.env`는 읽거나 고치지 않고 `--env-file` 인자로만 넘긴다.
+대시보드 코드만 바뀌었을 때는 앱 이미지 `zeek-ad-dashboard-app:local` 하나만, WAF 설정만 바뀌었을 때는 WAF 이미지 `zeek-ad-dashboard-waf:local` 하나만 옮기고 그 서비스만 다시 만든다. 5GB 파이프라인 `tar`는 다시 만들지 않는다. DB 볼륨·`.env`·다른 컨테이너는 그대로 둔다. `.env`는 읽거나 고치지 않고 `--env-file` 인자로만 넘긴다. 아래 명령은 서비스 이름 `SVC`와 이미지 이름 `IMG` 두 변수로 쓴다.
 
-규칙(T21):
+| `SVC` | `IMG` |
+|---|---|
+| `dashboard-app` | `zeek-ad-dashboard-app` |
+| `nginx-waf` | `zeek-ad-dashboard-waf` |
 
-- **보존 이름은 `pre-<작업 ID>` 하나로 쓴다.** 작업 ID는 소문자로 쓴다(예: `T21` → `pre-t21`). 이미지는 `zeek-ad-dashboard-app:pre-<작업 ID>`, 교체한 파일은 같은 폴더의 `<파일>.pre-<작업 ID>`다. 아래 명령은 `ID`(예: `t21`) 변수 하나로 이 이름을 만든다.
+규칙(T21·T14):
+
+- **보존 이름은 `pre-<작업 ID>` 하나로 쓴다.** 작업 ID는 소문자로 쓴다(예: `T14` → `pre-t14`). 이미지는 `<IMG>:pre-<작업 ID>`, 교체한 파일은 같은 폴더의 `<파일>.pre-<작업 ID>`다. 아래 명령은 `ID`(예: `t14`) 변수로 이 이름을 만든다.
 - **NAS 명령은 단계마다 실패하면 멈춘다**(`|| exit <번호>`). 멈추면 반복하지 말고 번호로 어느 단계인지 보고, 필요하면 아래 롤백을 한다.
 - **compose·시드 같은 파일 교체**: 새 파일을 `images/<작업 ID>-files/`에 sha256 목록과 함께 먼저 올리고, NAS에서 원래 파일을 같은 폴더에 `*.pre-<작업 ID>`로 보존한 뒤(이미 있으면 덮지 않는다) sha256을 대조하고 바꾼다. 바꾼 뒤 `docker compose ... config --quiet`로 문법을 확인한다.
+- **이미지 적재와 파일 교체를 모두 끝낸 뒤에 `up`을 한다**(1단계 → 2단계). 새 이미지와 옛 compose가 섞여 뜨는 구간을 만들지 않는다.
+- **저장소에서 지운 파일은 NAS에서 지우지 않는다.** 되돌릴 때 쓰는 `*.pre-<작업 ID>` compose가 그 파일을 마운트할 수 있다(T14: `docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template`). 새 compose가 마운트하지 않으면 쓰이지 않는다.
 
-이 PC(PowerShell, 저장소 루트). 2.1의 앱 이미지 빌드와 2.3 리허설을 먼저 한다:
+이 PC(PowerShell, 저장소 루트). 2.1의 해당 이미지 빌드와 2.3 리허설을 먼저 한다:
 
 ```powershell
-$ID = 't21'   # 작업 ID(소문자)
+$ID = 't14'; $SVC = 'nginx-waf'; $IMG = 'zeek-ad-dashboard-waf'   # 앱이면 'dashboard-app', 'zeek-ad-dashboard-app'
 New-Item -ItemType Directory -Force build/portfolio-images | Out-Null
-docker save -o build/portfolio-images/zeek-ad-dashboard-app.tar zeek-ad-dashboard-app:local
+docker save -o "build/portfolio-images/$IMG.tar" "${IMG}:local"
 if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
 # 2.4와 같은 방식(LF UTF-8, tar 안 Config digest). 네 이미지 목록(images.sha256·image-ids.txt)을 덮어쓰지 않게 이름을 따로 쓴다.
-$h = (Get-FileHash -Algorithm SHA256 build/portfolio-images/zeek-ad-dashboard-app.tar).Hash.ToLower()
-[IO.File]::WriteAllText("$PWD/build/portfolio-images/app-image.sha256", "$h  zeek-ad-dashboard-app.tar`n", [Text.UTF8Encoding]::new($false))
-$manifest = (tar -xOf build/portfolio-images/zeek-ad-dashboard-app.tar manifest.json | Out-String) | ConvertFrom-Json
+$h = (Get-FileHash -Algorithm SHA256 "build/portfolio-images/$IMG.tar").Hash.ToLower()
+[IO.File]::WriteAllText("$PWD/build/portfolio-images/$IMG-image.sha256", "$h  $IMG.tar`n", [Text.UTF8Encoding]::new($false))
+$manifest = (tar -xOf "build/portfolio-images/$IMG.tar" manifest.json | Out-String) | ConvertFrom-Json
 if (@($manifest)[0].Config -notmatch '([0-9a-f]{64})') { throw "Config digest not found" }
-[IO.File]::WriteAllText("$PWD/build/portfolio-images/app-image-id.txt", "sha256:$($Matches[1]) zeek-ad-dashboard-app:local`n", [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText("$PWD/build/portfolio-images/$IMG-image-id.txt", "sha256:$($Matches[1]) ${IMG}:local`n", [Text.UTF8Encoding]::new($false))
 $nas = "psdev93@192.168.50.146"; $dst = "/volume1/docker/zeekad-portfolio"
-scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/app-image.sha256 build/portfolio-images/app-image-id.txt "${nas}:${dst}/images/"
+scp -O "build/portfolio-images/$IMG.tar" "build/portfolio-images/$IMG-image.sha256" "build/portfolio-images/$IMG-image-id.txt" "${nas}:${dst}/images/"
 if ($LASTEXITCODE -ne 0) { throw "scp image failed" }
 
 # (파일 교체가 있을 때만) 바꿀 파일을 images/<ID>-files/에 sha256 목록과 함께 올린다. 경로는 저장소 기준 상대 경로, 올릴 때는 파일 이름만 쓴다.
@@ -383,28 +390,28 @@ scp -O (Get-ChildItem $stage).FullName "${nas}:${dst}/images/$ID-files/"
 if ($LASTEXITCODE -ne 0) { throw "scp files failed" }
 ```
 
-NAS(셸). 1단계(기록·보존·적재·파일 교체). `ID`와 `FILES`(저장소 기준 상대 경로, 파일 교체가 없으면 빈 값)를 먼저 정한다:
+NAS(셸). 1단계(기록·보존·적재·파일 교체). `ID`·`SVC`·`IMG`와 `FILES`(저장소 기준 상대 경로, 파일 교체가 없으면 빈 값)를 먼저 정한다:
 
 ```sh
 set -u
 export PATH=$PATH:/usr/local/bin
-ID=t21
+ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf   # 앱이면 SVC=dashboard-app; IMG=zeek-ad-dashboard-app
 FILES="compose.portfolio.yml"   # 예: "compose.portfolio.yml docker/portfolio/seed/seed_demo.py", 없으면 ""
 cd /volume1/docker/zeekad-portfolio || exit 1
 mkdir -p ~/zeekad-portfolio-check && C=~/zeekad-portfolio-check
 # 1) 전 상태 기록
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/$ID-containers-before.txt || exit 1
 docker volume ls > $C/$ID-volumes-before.txt || exit 1
-# 2) 롤백 준비: 지금 dashboard-app이 쓰는 이미지 ID를 남기고 pre-<ID> 태그로 보존한다
-APP=$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q dashboard-app) || exit 2
-OLD=$(docker inspect --format '{{.Image}}' "$APP") || exit 2
-echo "$OLD" > $C/$ID-old-app-image-id.txt
-docker tag "$OLD" zeek-ad-dashboard-app:pre-$ID || exit 2
+# 2) 롤백 준비: 지금 그 서비스가 쓰는 이미지 ID를 남기고 pre-<ID> 태그로 보존한다
+CID=$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q $SVC < /dev/null) || exit 2
+OLD=$(docker inspect --format '{{.Image}}' "$CID") || exit 2
+echo "$OLD" > $C/$ID-old-$SVC-image-id.txt
+docker tag "$OLD" $IMG:pre-$ID || exit 2
 # 3) 무결성 확인 → 적재 → ID 대조
-(cd images && sha256sum -c app-image.sha256) || exit 3
-docker load -i images/zeek-ad-dashboard-app.tar || exit 4
-printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local)" zeek-ad-dashboard-app:local | diff - images/app-image-id.txt || exit 5
-echo "app image ID matches"
+(cd images && sha256sum -c $IMG-image.sha256) || exit 3
+docker load -i images/$IMG.tar || exit 4
+printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' $IMG:local)" $IMG:local | diff - images/$IMG-image-id.txt || exit 5
+echo "$IMG image ID matches"
 # 4) 파일 교체: 같은 폴더에 *.pre-<ID>로 보존(이미 있으면 덮지 않는다) → sha256 대조 → 교체 → compose 문법 확인
 if [ -n "$FILES" ]; then
   (cd images/$ID-files && sha256sum -c files.sha256) || exit 6
@@ -413,7 +420,7 @@ if [ -n "$FILES" ]; then
     cp "images/$ID-files/$(basename "$f")" "$f" || exit 8
     sha256sum "$f" "$f.pre-$ID"
   done
-  docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env config --quiet || exit 9
+  docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env config --quiet < /dev/null || exit 9
 fi
 ```
 
@@ -422,20 +429,21 @@ fi
 ```sh
 set -u
 export PATH=$PATH:/usr/local/bin
-ID=t21
+ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf
 cd /volume1/docker/zeekad-portfolio || exit 1
 C=~/zeekad-portfolio-check
-# 5) dashboard-app만 다시 만든다
-docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app || exit 10
-# 6) 후 상태 기록·비교: dashboard-app 줄만 달라야 하고 볼륨은 같아야 한다
+# 5) 그 서비스만 다시 만든다
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps $SVC < /dev/null || exit 10
+# 6) 후 상태 기록·비교: 그 서비스 줄만 달라야 하고 볼륨은 같아야 한다
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/$ID-containers-after.txt || exit 11
 docker volume ls > $C/$ID-volumes-after.txt || exit 11
-grep -v dashboard-app $C/$ID-containers-before.txt > $C/$ID-others-before.txt
-grep -v dashboard-app $C/$ID-containers-after.txt > $C/$ID-others-after.txt
+grep -v -- "-$SVC-" $C/$ID-containers-before.txt > $C/$ID-others-before.txt
+grep -v -- "-$SVC-" $C/$ID-containers-after.txt > $C/$ID-others-after.txt
 diff $C/$ID-others-before.txt $C/$ID-others-after.txt || exit 12
 echo "other containers unchanged"
 diff $C/$ID-volumes-before.txt $C/$ID-volumes-after.txt || exit 13
 echo "volumes unchanged"
+docker image inspect --format '{{.Id}}' $IMG:local; docker inspect --format '{{.Image}}' "$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q $SVC < /dev/null)"   # 같아야 한다
 # 7) 3.6 확인(WAF 경유)
 H='Host: soc.psdev93.synology.me'; P='X-Forwarded-Proto: https'
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -H "$P" http://127.0.0.1:18480/login)
@@ -445,12 +453,12 @@ echo "login via nginx-waf: $CODE"
 
 그 뒤 4.4의 공개 주소 확인을 한다.
 
-**공개 주소(또는 7단계)가 502일 때**: `nginx-waf`는 시작할 때 한 번만 `dashboard-app` 이름을 IP로 해석해 두므로, `dashboard-app`을 다시 만들어 IP가 바뀌면 옛 IP로 보내 502가 난다(근본 수정은 `T14`). 대처는 한 번만 한다.
+**공개 주소(또는 7단계)가 502일 때**: `T14`부터 `nginx-waf`는 `dashboard-app` 이름을 요청 때 Docker 내장 DNS로 다시 해석하므로(`valid=10s`) 앱을 다시 만들어 IP가 바뀌어도 보통 생기지 않는다. 앱이 멈췄거나 막 다시 뜬 직후라면 10초쯤 기다려 한 번 더 확인한다. 그래도 502면 아래 대처를 한 번만 한다.
 
 1. 같은 프로젝트의 `nginx-waf`만 다시 시작한다(다른 컨테이너·볼륨·`.env`는 건드리지 않는다):
    ```sh
    cd /volume1/docker/zeekad-portfolio || exit 1
-   docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env restart nginx-waf || exit 15
+   docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env restart nginx-waf < /dev/null || exit 15
    curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: soc.psdev93.synology.me' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18480/login
    ```
    재시작은 컨테이너를 다시 만들지 않으므로 6단계의 비교에서 `nginx-waf` 줄(ID·이미지·생성 시각)은 그대로다. 상태(`State`) 시각만 바뀐다.
@@ -461,18 +469,21 @@ echo "login via nginx-waf: $CODE"
 ```sh
 set -u
 export PATH=$PATH:/usr/local/bin
-ID=t21
+ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf
 FILES="compose.portfolio.yml"   # 1단계와 같은 값
+NEED="docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template"   # 되돌릴 compose가 마운트하는 파일(T14). 없으면 ""
 cd /volume1/docker/zeekad-portfolio || exit 1
+# 0) 되돌릴 compose(*.pre-<ID>)가 마운트하는 파일이 있는지 먼저 확인한다(없으면 되돌린 compose가 뜨지 않는다)
+for f in $NEED; do [ -f "$f" ] || { echo "missing $f"; exit 19; }; done
 for f in $FILES; do [ -f "$f.pre-$ID" ] && cp -p "$f.pre-$ID" "$f"; done
-docker tag zeek-ad-dashboard-app:pre-$ID zeek-ad-dashboard-app:local || exit 20
-docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app || exit 21
-docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeekad-portfolio-check/$ID-old-app-image-id.txt   # 같아야 한다
+docker tag $IMG:pre-$ID $IMG:local || exit 20
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps $SVC < /dev/null || exit 21
+docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check/$ID-old-$SVC-image-id.txt   # 같아야 한다
 ```
 
-- 확인이 끝나 더 필요 없으면 `docker image rm zeek-ad-dashboard-app:pre-<작업 ID>`로 보존 태그를 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다). 보존 파일 `*.pre-<작업 ID>`는 다음 갱신 전까지 둔다.
+- 확인이 끝나 더 필요 없으면 `docker image rm <IMG>:pre-<작업 ID>`로 보존 태그를 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다). 보존 파일 `*.pre-<작업 ID>`는 다음 갱신 전까지 둔다.
 - 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(예: T20 `demo` 허용 캡처 `*` → `cic17-*,syn1-*`. 데이터도 함께 바꾸는 T22 `cic17-*,syn1-*,lab-20261119`는 3.9)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
-- 작업자 도구로 실행할 때는 위 1·2단계를 작업 폴더의 스크립트(`handoff/<작업 ID>/tools/nas-step1.sh`·`nas-step2.sh`)로 저장해 `ssh ... "echo <base64> | base64 -d | bash"`처럼 보내고 출력을 `handoff/<작업 ID>/evidence/nas-update.txt`에 남긴다(T16·T20과 같다).
+- 작업자 도구로 실행할 때는 위 1·2단계를 작업 폴더의 스크립트(`handoff/<작업 ID>/tools/nas-step1.sh`·`nas-step2.sh`)로 저장한다. 스크립트를 표준 입력으로 bash에 넘기면(`echo <base64> | base64 -d | bash`, `ssh ... 'bash -s' < 파일`) `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버려 뒤 단계가 실행되지 않은 채 exit 0으로 끝날 수 있다(T22에서 겪음). 그래서 NAS의 확인 폴더에 파일로 풀고 표준 입력을 닫아 실행한다: `ssh ... "echo <base64> | base64 -d > ~/zeekad-portfolio-check/<ID>-step1.sh && bash ~/zeekad-portfolio-check/<ID>-step1.sh < /dev/null"`. 출력은 `handoff/<작업 ID>/evidence/nas-update.txt`에 남긴다(T22 `handoff/T22/tools/nas-run.ps1`과 같다).
 
 ### 3.9 스냅샷(공개 데이터) 교체
 
@@ -513,12 +524,14 @@ docker volume rm zeekad-portfolio_pgdata || exit 5
 6) 이 PC에서 새 `zeekad.dump`·`zeekad.dump.sha256`·`manifest.json`과 바뀐 배포 파일을 `scp -O`로 보낸다(3.2). NAS에서 `(cd snapshot && sha256sum -c zeekad.dump.sha256)`가 `OK`인지 보고 `chmod 755 snapshot && chmod 644 snapshot/*`로 권한을 맞춘다(T13: 상속 ACL 때문에 컨테이너 postgres가 덤프를 못 읽는다).
 
 ```sh
-# 7) 올리기: 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)가 다시 돈다
-$C up -d --wait < /dev/null || exit 7
-$C logs postgres | grep -E 'portfolio-restore|pg_restore: error'      # "portfolio-restore: done", 오류 줄 없음
-# 8) 시드 두 번(7 직후 바로): 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
-$C --profile seed run --rm demo-seed < /dev/null
-$C --profile seed run --rm demo-seed < /dev/null
+# 7) 올리기(nginx-waf는 빼고): 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)가 다시 돈다. 공개 경로는 아직 열지 않는다
+$C up -d --wait postgres api dashboard-app < /dev/null || exit 7
+$C logs postgres < /dev/null | grep -E 'portfolio-restore|pg_restore: error'      # "portfolio-restore: done", 오류 줄 없음
+# 8) 시드 두 번(시드는 dashboard-app에 직접 붙으므로 nginx-waf가 없어도 된다): 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
+$C --profile seed run --rm demo-seed < /dev/null || exit 8
+$C --profile seed run --rm demo-seed < /dev/null || exit 8
+# 8b) 시드가 끝난 뒤에 공개 경로(nginx-waf)를 연다
+$C up -d --wait nginx-waf < /dev/null || exit 8
 # 9) 대조: 다른 프로젝트의 컨테이너·네트워크·볼륨이 1)과 같고 앱 이미지가 그대로인지
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | grep -v 'zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-containers-before.txt - && echo "containers same"
 for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | grep -v '^zeekad-portfolio' | sort | diff ~/zeekad-portfolio-check/$ID-networks-before.txt - && echo "networks same"
@@ -527,17 +540,18 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
 ```
 
 - 앱 코드가 바뀌지 않았으면 앱 이미지는 교체하지 않는다(바뀌었으면 3.8을 먼저 따로 한다).
-- 7과 8 사이에는 새 앱 DB의 부트스트랩 계정(`viewer1`·`analyst1`·`analyst2`·`admin`)이 활성이다(비공개 무작위 비밀번호, `admin`은 TOTP). `demo`는 아직 없다. 7이 끝나면 바로 8을 실행해 이 틈을 짧게 둔다(T22: 약 5분).
+- 7과 8 사이에는 새 앱 DB의 부트스트랩 계정(`viewer1`·`analyst1`·`analyst2`·`admin`)이 활성이다(비공개 무작위 비밀번호, `admin`은 TOTP). `demo`는 아직 없다. 그래서 7에서는 `nginx-waf`를 띄우지 않고, 시드 두 번으로 그 계정들을 비활성으로 만든 뒤(8) `nginx-waf`를 띄운다(8b). 공개 경로에서 부트스트랩 계정이 활성인 틈이 없다(T22 검토 L1. T22 때는 이 틈이 약 5분 있었다).
 - 끝나면 3.6 확인과 4.4 공개 주소 확인을 한다. 공개 주소가 `502`면 3.8의 대처를 따른다.
-- **되돌리기**(어느 단계든 실패 시) 다음 순서로 한 뒤 멈춰 원인을 본다:
-  1. `$C down`
+- **되돌리기**(어느 단계든 실패 시) 다음 순서로 한 뒤 멈춰 원인을 본다. compose를 부르는 줄에는 모두 `< /dev/null`을 붙인다(위 표준 입력 주의):
+  1. `$C down < /dev/null`
   2. 새로 생긴 DB 볼륨을 지운다(`docker volume rm zeekad-portfolio_pgdata`, 없으면 건너뛴다)
   3. `*.pre-$ID` 파일을 원래 이름으로 되돌린다(`for f in ...; do cp -p "$f.pre-$ID" "$f"; done`)
-  4. `$C up -d --wait`(이전 스냅샷이 복원된다)
+  4. `$C up -d --wait postgres api dashboard-app < /dev/null`(이전 스냅샷이 복원된다. 앱 DB를 되돌리기 전이므로 `nginx-waf`는 아직 띄우지 않는다)
   5. `$C stop dashboard-app < /dev/null`
   6. `$C exec -T postgres pg_restore -U postgres -d zeekad_dashboard --clean --if-exists < backup/app-pre-$ID.dump`
-  7. `$C start dashboard-app`. 시드는 돌리지 않는다(`demo`가 백업에 있다).
-  - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든다. 이때 지난 감사 로그는 백업에만 남는다.
+  7. `$C start dashboard-app < /dev/null`. 시드는 돌리지 않는다(`demo`가 백업에 있다).
+  8. `$C up -d --wait nginx-waf < /dev/null`
+  - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든 뒤 8을 한다. 이때 지난 감사 로그는 백업에만 남는다.
 - 작업자 도구로 실행할 때는 단계를 작업 폴더 스크립트로 저장해 NAS의 `~/zeekad-portfolio-check/<작업 ID>-step-<단계>.sh`로 풀고 `bash <그 파일> < /dev/null`로 실행한다(표준 입력으로 넘기지 않는다, 예: `handoff/T22/tools/nas-run.ps1`). 출력은 `handoff/<작업 ID>/evidence/nas-replace.txt`(시드는 `nas-seed.txt`)에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
 
 ## 4. DSM 설정 (사용자)
