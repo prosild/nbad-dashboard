@@ -80,6 +80,10 @@ foreach ($f in @("zeekad.dump", "zeekad.dump.sha256", "manifest.json", "source-g
 $manifest = [IO.File]::ReadAllText($manifestPath, $utf8NoBom) | ConvertFrom-Json
 $expectedCounts = [ordered]@{}
 foreach ($p in $manifest.captureIncidentCounts.PSObject.Properties) { $expectedCounts[$p.Name] = [int]$p.Value }
+# T20: demo 허용 캡처는 시드 기본값 cic17-*,syn1-*(실습망 시험 캡처 lab-20261201을 시연에서 숨김, SPEC 결정 2026-11-21).
+$demoPatterns = @("cic17-*", "syn1-*")
+$demoVisibleCaptures = @($expectedCounts.Keys | Where-Object { $cap = $_; @($demoPatterns | Where-Object { $cap -like $_ }).Count -gt 0 })
+$demoHiddenCapture = "lab-20261201"
 foreach ($img in @("zeek-ad-dashboard-app:local", "zeek-ad-dashboard-waf:local", "zeekad-pipeline:dev", "pgvector/pgvector:0.8.1-pg17")) {
     [void](Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", $img))
 }
@@ -89,6 +93,8 @@ $secretNames = @("POSTGRES_SUPERUSER_PASSWORD", "ZEEKAD_API_PASSWORD", "DASHBOAR
     "DASHBOARD_APP_PASSWORD", "DEMO_PASSWORD", "BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD",
     "BOOTSTRAP_ANALYST2_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD")
 foreach ($name in $secretNames) { Set-Item -Path "env:$name" -Value (New-RandomToken 24) }
+# demo 허용 캡처는 시드 기본값을 쓴다(셸에 남은 값이 Compose 보간을 덮지 않게 지운다).
+Remove-Item -Path "env:DEMO_CAPTURE_PATTERNS" -ErrorAction SilentlyContinue
 $env:BOOTSTRAP_ADMIN_TOTP_SECRET = New-RandomBase32 32
 $env:PORTFOLIO_SNAPSHOT_DIR = $SnapshotFullDir
 $env:PORTFOLIO_HTTP_PORT = "$WafHttpPort"
@@ -397,13 +403,30 @@ try {
     Assert-True ($sessionLine -and $sessionLine -match '(?i)\bSecure\b' -and $sessionLine -match '(?i)\bHttpOnly\b' -and $sessionLine -match '(?i)\bSameSite=Lax\b') "ZEEKAD_SESSION 쿠키 Secure/HttpOnly/SameSite=Lax" $demoLogin
     $me = Invoke-Http -Path "/api/auth/me" -Client $demo
     $e2eLogs.Add("[2b] demo GET /api/auth/me -> $(Format-Resp $me 400)")
+    $mePatterns = @($me.Json.user.allowedCapturePatterns | Sort-Object)
     Assert-True ($me.Status -eq 200 -and $me.Json.authenticated -eq $true -and $me.Json.user.role -eq "VIEWER" -and $me.Json.user.maskedView -eq $true -and
-        @($me.Json.user.allowedCapturePatterns).Count -eq 1 -and @($me.Json.user.allowedCapturePatterns)[0] -eq "*") "demo /api/auth/me role=VIEWER, maskedView=true, allowedCapturePatterns=[*]" $me
+        ($mePatterns -join ',') -eq ($demoPatterns -join ',')) "demo /api/auth/me role=VIEWER, maskedView=true, allowedCapturePatterns=[$($demoPatterns -join ',')]" $me
 
     Write-Host "=== [3] 스냅샷 데이터·마스킹·증적·리포트·운영 상태 ==="
     $ipHits = [System.Collections.Generic.List[string]]::new()
     $queueByCapture = [ordered]@{}
-    foreach ($cap in $expectedCounts.Keys) {
+    $e2eLogs.Add("[3-scope] manifest captures=[$($expectedCounts.Keys -join ', ')] demo visible=[$($demoVisibleCaptures -join ', ')]")
+    Assert-True ($demoVisibleCaptures.Count -eq 8 -and -not ($demoVisibleCaptures -contains $demoHiddenCapture)) "demo에게 보이는 캡처 8개($demoHiddenCapture 제외)"
+    $defaultQueue = Invoke-Http -Path "/api/incidents" -Client $demo
+    Assert-Status $defaultQueue 200 "demo 인시던트 목록(캡처 지정 없음)"
+    $demoAllowed = @($defaultQueue.Json.allowedCaptures | Sort-Object)
+    $e2eLogs.Add("[3-scope] demo GET /api/incidents -> HTTP $($defaultQueue.Status) allowedCaptures=[$($demoAllowed -join ', ')]")
+    Assert-True (($demoAllowed -join ',') -eq ((@($demoVisibleCaptures) | Sort-Object) -join ',')) "demo 캡처 목록 = 보이는 캡처 8개($demoHiddenCapture 없음)" $defaultQueue
+    $hiddenQueue = Invoke-Http -Path "/api/incidents?captureId=$demoHiddenCapture" -Client $demo
+    $e2eLogs.Add("[3-scope] demo GET /api/incidents?captureId=$demoHiddenCapture -> $(Format-Resp $hiddenQueue 200)")
+    Assert-Status $hiddenQueue 403 "demo $demoHiddenCapture 목록 직접 조회 거부"
+    $hiddenRow = (Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE capture_id = '$demoHiddenCapture' ORDER BY queue_rank LIMIT 1").Output.Trim()
+    Assert-True ($hiddenRow -match '^\d+/\d+$') "$demoHiddenCapture 인시던트가 스냅샷에 있음(직접 조회 대상)"
+    $hiddenJob, $hiddenRank = $hiddenRow -split '/'
+    $hiddenDetail = Invoke-Http -Path "/api/incidents/$hiddenJob/rank/$hiddenRank" -Client $demo
+    $e2eLogs.Add("[3-scope] demo GET /api/incidents/$hiddenJob/rank/$hiddenRank ($demoHiddenCapture) -> $(Format-Resp $hiddenDetail 200)")
+    Assert-Status $hiddenDetail 403 "demo $demoHiddenCapture 상세 직접 조회 거부"
+    foreach ($cap in $demoVisibleCaptures) {
         $q = Invoke-Http -Path "/api/incidents?captureId=$cap" -Client $demo
         Assert-Status $q 200 "demo 인시던트 목록 $cap"
         $items = @($q.Json.incidents)
@@ -456,6 +479,7 @@ try {
     $fb = @($ops.Json.feedbackSummaries)
     $e2eLogs.Add("[3c] demo GET /api/operations -> HTTP $($ops.Status) feedbackSummaries=$($fb.Count) captures=[$((@($fb | ForEach-Object { $_.captureId }) | Select-Object -Unique) -join ', ')] slackSummaries=$(@($ops.Json.slackSummaries).Count) bundles=$(@($ops.Json.bundles).Count)")
     Assert-True ($fb.Count -gt 0) "/api/operations feedbackSummaries 있음" $ops
+    Assert-True (-not $ops.Body.Contains($demoHiddenCapture)) "demo /api/operations에 $demoHiddenCapture 없음" $ops
     $e2eLogs.Add("[3d] details checked=$($detailTargets.Count) evidence.available=$evidenceOk report.present=$reportOk sendDecision=$sendDecisionCount slackDeliveries=$slackCount; unmasked IPv4 JSON paths=$($ipHits.Count)$(if ($ipHits.Count) { ' ' + (($ipHits | Select-Object -First 20) -join ', ') })")
     Assert-True ($ipHits.Count -eq 0) "demo 응답(큐·상세·운영) 전체에 가려지지 않은 IPv4 없음"
 

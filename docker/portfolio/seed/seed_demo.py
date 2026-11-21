@@ -1,4 +1,7 @@
-"""포트폴리오 스택 계정 시드: 공개 데모 계정 demo(VIEWER, 허용 캡처 *)만 활성으로 두고 나머지 계정은 비활성으로 만든다.
+"""포트폴리오 스택 계정 시드: 공개 데모 계정 demo(VIEWER)만 활성으로 두고 나머지 계정은 비활성으로 만든다.
+
+demo의 허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*
+(lab-20261201 같은 실습망 시험 캡처를 시연 화면에서 숨긴다, SPEC 결정 2026-11-21). 패턴이 바뀌면 관리자 API로 갱신한다.
 
 compose.portfolio.yml의 demo-seed 서비스(zeekad-pipeline 이미지의 Python)로 실행한다. 다시 실행해도 안전하다(멱등).
 1. zeekad_dashboard를 dashboard_app 계정으로 읽어 현재 상태를 확인한다. 이미 목표 상태면 아무것도 바꾸지 않고 끝낸다.
@@ -27,7 +30,7 @@ import psycopg
 
 DEMO_USERNAME = "demo"
 DEMO_ROLE = "VIEWER"
-DEMO_PATTERNS = ["*"]
+DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*"
 ADMIN_USERNAME = "admin"
 SEED_ACTOR = "portfolio-seed"
 
@@ -41,6 +44,15 @@ def env(name, required=True, default=None):
 
 def log(message):
     print(f"seed: {message}", flush=True)
+
+
+def demo_patterns():
+    """DEMO_CAPTURE_PATTERNS(쉼표 구분)를 정리한 목록. 비어 있으면 기본값. 순서는 DB 조회 순서와 같게 정렬한다."""
+    raw = os.environ.get("DEMO_CAPTURE_PATTERNS", "").strip() or DEFAULT_DEMO_PATTERNS
+    patterns = sorted({p.strip() for p in raw.split(",") if p.strip()})
+    if not patterns:
+        sys.exit("seed: DEMO_CAPTURE_PATTERNS has no pattern")
+    return patterns
 
 
 class Db:
@@ -158,13 +170,14 @@ def totp_code(secret, at=None):
     return f"{binary % 1000000:06d}"
 
 
-def demo_problems(users, demo_password, demo_display_name, db):
+def demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db):
     """demo 계정이 목표 상태와 다른 점. 값(비밀번호·해시)은 담지 않는다."""
     demo = users.get(DEMO_USERNAME)
     if demo is None:
         return ["missing"]
     problems = []
-    if demo["role"] != DEMO_ROLE or list(demo["patterns"]) != DEMO_PATTERNS or demo["display_name"] != demo_display_name:
+    if (demo["role"] != DEMO_ROLE or sorted(demo["patterns"]) != demo_capture_patterns
+            or demo["display_name"] != demo_display_name):
         problems.append("access")
     if not demo["enabled"]:
         problems.append("disabled")
@@ -183,6 +196,7 @@ def describe(users):
 def main():
     demo_password = env("DEMO_PASSWORD")
     demo_display_name = env("DEMO_DISPLAY_NAME", default="포트폴리오 방문자 (읽기 전용)")
+    demo_capture_patterns = demo_patterns()
     admin_password = env("BOOTSTRAP_ADMIN_PASSWORD")
     admin_totp_secret = env("BOOTSTRAP_ADMIN_TOTP_SECRET")
     for name in ("BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD"):
@@ -193,10 +207,11 @@ def main():
     users = db.read_users()
     audit_before = db.audit_count()
     log(f"current users: {describe(users)}")
+    log(f"demo capture patterns target: {demo_capture_patterns}")
     if ADMIN_USERNAME not in users:
         sys.exit("seed: bootstrap account admin is missing (BOOTSTRAP_ADMIN_PASSWORD must be set before the first app start)")
 
-    problems = demo_problems(users, demo_password, demo_display_name, db)
+    problems = demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db)
     others_enabled = [name for name, u in users.items() if name not in (DEMO_USERNAME, ADMIN_USERNAME) and u["enabled"]]
     admin_enabled = users[ADMIN_USERNAME]["enabled"]
     log(f"plan: demo={problems or 'ok'}, enabled non-demo accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
@@ -217,7 +232,7 @@ def main():
     try:
         if api_needed:
             run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret,
-                          demo_password, demo_display_name, problems)
+                          demo_password, demo_display_name, demo_capture_patterns, problems)
     finally:
         # 3) admin 비활성화는 API가 막으므로(자기 계정) SQL로.
         if db.read_users()[ADMIN_USERNAME]["enabled"]:
@@ -225,7 +240,7 @@ def main():
                           "UPDATE users SET enabled = FALSE, updated_at = now() WHERE username = %s", (ADMIN_USERNAME,))
 
     users = db.read_users()
-    remaining = demo_problems(users, demo_password, demo_display_name, db)
+    remaining = demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db)
     still_enabled = [name for name, u in users.items() if name != DEMO_USERNAME and u["enabled"]]
     log(f"final users: {describe(users)}")
     if remaining or still_enabled:
@@ -234,7 +249,7 @@ def main():
 
 
 def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret,
-                  demo_password, demo_display_name, problems):
+                  demo_password, demo_display_name, demo_capture_patterns, problems):
     if not admin_enabled:
         db.sql_change("TEMP_ENABLE", ADMIN_USERNAME, "admin API session for seeding; disabled again right after",
                       "UPDATE users SET enabled = TRUE, failed_attempts = 0, locked_until = NULL, updated_at = now()"
@@ -246,12 +261,12 @@ def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret
     if demo is None:
         api.call("POST", "/api/admin/users", {"username": DEMO_USERNAME, "displayName": demo_display_name,
                                               "password": demo_password, "role": DEMO_ROLE,
-                                              "capturePatterns": DEMO_PATTERNS}, csrf=True, expect=201)
+                                              "capturePatterns": demo_capture_patterns}, csrf=True, expect=201)
         log("API CREATE_USER demo")
     else:
         if "access" in problems:
             api.call("PUT", f"/api/admin/users/{demo['id']}", {"displayName": demo_display_name, "role": DEMO_ROLE,
-                                                                "capturePatterns": DEMO_PATTERNS}, csrf=True)
+                                                                "capturePatterns": demo_capture_patterns}, csrf=True)
             log("API UPDATE_USER demo")
         if not demo["enabled"]:
             api.call("POST", f"/api/admin/users/{demo['id']}/toggle-enabled", csrf=True)

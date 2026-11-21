@@ -406,12 +406,13 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     Assert-True ($ct -match "^text/css") "$asset text/css Content-Type" $assetRes
                 }
                 # 운영 화면의 고정 안내 문구는 SSR HTML이 아니라 SPA 번들에 있다(데이터 필드 아님).
-                $bundleNotices = @("분석가 결론 집계", "놓친 공격(재현율)", "전체 (all)")
+                $bundleNotices = @("현황판", "분석가 판정 집계", "미탐(재현율)은 이 집계로 알 수 없음", "모든 모델 합계", "표본 부족")
                 foreach ($notice in $bundleNotices) {
                     Assert-True ($bundleText.Contains($notice)) "SPA 번들 운영 화면 문구 '$notice'"
                 }
                 Assert-True (-not $bundleText.Contains("정확도")) "SPA 번들에 '정확도' 문구 없음"
-                $e2eLogs.Add("[1e] SPA bundle operations notices present: $($bundleNotices -join ' | '); '정확도' absent")
+                Assert-True (-not $bundleText.Contains("정밀도")) "SPA 번들에 옛 표기 '정밀도' 없음(T20 정탐률로 바꿈)"
+                $e2eLogs.Add("[1e] SPA bundle operations notices present: $($bundleNotices -join ' | '); '정확도'·'정밀도' absent")
 
                 # [2] /api/** 는 SPA로 폴백하지 않는다
                 $unauthApi = Invoke-Http -Url "$baseHttps/api/incidents"
@@ -500,7 +501,8 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $vAllRow = @($vFeedback | Where-Object { $_.allModel -eq $true -and $_.captureId -eq "cic17-wed" })
                 $e2eLogs.Add("[4c-ops] viewer1 GET /api/operations -> HTTP $($viewerOps.Status) allowedCaptures=[$(@($viewerOps.Json.allowedCaptures) -join ', ')] feedback captures=[$($vCaptures -join ', ')] all-row precisionSummaryText=[$(@($vAllRow | ForEach-Object { $_.precisionSummaryText }) -join ' | ')]")
                 Assert-True ($vFeedback.Count -gt 0 -and $vCaptures.Count -eq 1 -and $vCaptures[0] -eq "cic17-wed") "viewer1 feedback_summary 허용 캡처(cic17-wed)만 노출" $viewerOps
-                Assert-True (@($vAllRow | Where-Object { $_.precisionSummaryText -eq "정밀도 0.00, 결론 1/3 (33.3%)" }).Count -eq 1) "viewer1 feedback_summary '정밀도 0.00, 결론 1/3 (33.3%)'" $viewerOps
+                # T20: 판정 1건(10건 미만)이라 정탐률 대신 표본 부족(docs/ui-terminology.md '운영 지표 정의')
+                Assert-True (@($vAllRow | Where-Object { $_.precisionSummaryText -eq "표본 부족 · 판정 1/3건(33.3%)" }).Count -eq 1) "viewer1 feedback_summary '표본 부족 · 판정 1/3건(33.3%)'" $viewerOps
                 foreach ($forbidden in @("syn1-tue", "lab-20261118", "lab-fusion-v2", "정확도")) {
                     Assert-True (-not $viewerOps.Body.Contains($forbidden)) "viewer1 /api/operations에 '$forbidden' 없음" $viewerOps
                 }
@@ -628,7 +630,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 foreach ($cap in @("cic17-wed", "syn1-tue", "lab-20261118", "lab-fusion-v2")) {
                     Assert-True ($oCaptures -contains $cap) "admin feedback_summary 전체 캡처($cap)" $opsPage
                 }
-                Assert-True (($oTexts -contains "정밀도 1.00, 결론 1/2 (50.0%)") -and ($oTexts -contains "정밀도 1.00, 결론 1/1 (100.0%)")) "admin 정밀도 비율('정밀도 1.00, 결론 1/2 (50.0%)', '정밀도 1.00, 결론 1/1 (100.0%)')" $opsPage
+                Assert-True (($oTexts -contains "표본 부족 · 판정 1/2건(50.0%)") -and ($oTexts -contains "표본 부족 · 판정 1/1건(100.0%)")) "admin 정탐률 문장('표본 부족 · 판정 1/2건(50.0%)', '표본 부족 · 판정 1/1건(100.0%)')" $opsPage
                 Assert-True (-not $opsPage.Body.Contains("정확도")) "admin /api/operations에 '정확도' 없음" $opsPage
 
                 $fusionDetail = Invoke-Http -Url "$baseHttps/api/incidents/602/rank/1" -CookieJar $adminCookies
