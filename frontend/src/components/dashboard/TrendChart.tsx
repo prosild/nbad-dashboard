@@ -162,7 +162,10 @@ export function TrendChart({ trend }: { trend: DashboardTrend }) {
           흐린 막대: 일부 구간
         </li>
       </ul>
-      <table className="sr-only">
+      {/* 표에 sr-only를 바로 주면 표는 내용 폭(휴대폰에서 ~460px)보다 좁아지지 않아 페이지가 가로로 넘친다(T24 휴대폰 측정).
+          1px·overflow hidden 상자로 감싸 넘침을 가둔다. */}
+      <div className="sr-only" data-trend-table>
+      <table>
         <caption>탐지 추이 구간별 인시던트 수</caption>
         <thead>
           <tr>
@@ -190,6 +193,7 @@ export function TrendChart({ trend }: { trend: DashboardTrend }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

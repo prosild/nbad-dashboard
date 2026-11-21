@@ -460,8 +460,10 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     await waitFor(() => expect(trend.querySelectorAll('[data-bucket]')).toHaveLength(24));
     expect(trend.querySelectorAll('[data-bucket][data-partial="true"]')).toHaveLength(1);
     expect(trend.querySelector('[data-bucket] title')?.textContent).toContain('KST');
-    const table = trend.querySelector('table.sr-only') as HTMLTableElement;
+    // 표 자체가 아니라 감싼 상자가 sr-only여야 한다(표는 내용 폭보다 좁아지지 않아 휴대폰에서 페이지가 넘쳤다).
+    const table = trend.querySelector('div.sr-only[data-trend-table] > table') as HTMLTableElement;
     expect(table).not.toBeNull();
+    expect(table).not.toHaveClass('sr-only');
     expect(table.caption?.textContent).toBe('탐지 추이 구간별 인시던트 수');
     expect(table.querySelectorAll('tbody tr')).toHaveLength(24);
     expect(trend.querySelector('[data-axis-max]')).toHaveTextContent('5');
