@@ -780,7 +780,9 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(screen.getByText('시각 기준 KST')).toBeInTheDocument();
     // T18: 표와 휴대폰 목록이 함께 DOM에 있으므로 표 범위로 좁힌다. 함께 탐지 수는 '+2' 글 대신 읽기 프로그램용 글로 같은 값을 단언한다.
     const table = screen.getByRole('table');
-    expect(within(table).getAllByText('2017-07-05 22:45:00').length).toBeGreaterThanOrEqual(1);
+    // T23 7절: 표의 발생 시각은 초 없이(해가 기준 시각과 다르면 연도 포함), 전체 구간(초 포함)은 칸 툴팁에 있다. 둘 다 KST다.
+    expect(within(table).getAllByText('2017-07-05 22:45').length).toBeGreaterThanOrEqual(1);
+    expect(within(table).getAllByTitle(/^발생 구간 2017-07-05 22:45:00/).length).toBeGreaterThanOrEqual(1);
     expect(within(table).getAllByText('목적지').length).toBeGreaterThanOrEqual(1);
     expect(within(table).getAllByText('교차 탐지 모델 2개').length).toBeGreaterThanOrEqual(1);
     expectCleanText(container);

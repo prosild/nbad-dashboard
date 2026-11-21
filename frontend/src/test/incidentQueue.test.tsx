@@ -490,8 +490,14 @@ describe('통합 인시던트 큐(T23)', () => {
     // 탐지 시각: 기준 시각(01:30Z)에서 1시간 29분 전 → "1시간 전", 절대 시각은 툴팁(KST)
     expect(within(row1).getByText('1시간 전')).toBeInTheDocument();
     expect(within(row1).getByTitle('탐지 시각 2026-11-20 09:01:00')).toBeInTheDocument();
-    expect(within(row1).getByText('가져온 데이터')).toBeInTheDocument();
+    // T23 7절: 수집원은 한 줄(아이콘 + 표시 이름). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 있다.
+    const src1 = within(row1).getByLabelText('수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
+    expect(src1).toHaveAttribute('title', '가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
     expect(within(row1).getByText('CIC-IDS2017 수요일')).toBeInTheDocument();
+    expect(within(row1).queryByText('가져온 데이터')).toBeNull();
+    // 탐지 시각은 상대 표시만 글로, 발생 시각은 초 없이(기준 시각과 같은 해면 연도도 뺀다)
+    expect(within(row1).queryByText('11-20 09:01')).toBeNull();
+    expect(within(row1).getByText('11-18 09:01')).toBeInTheDocument();
     expect(within(row1).queryByText('진행 중')).toBeNull();
     // T21: 행 칩은 발송 판단(wouldSend)이다
     expect(within(row1).getByRole('img', { name: '발송 판단: 발송' })).toBeInTheDocument();
@@ -503,7 +509,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row4).getByRole('img', { name: '검증 실패' })).toBeInTheDocument();
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;
     expect(within(row36).getByText('Low')).toBeInTheDocument();
-    expect(within(row36).getByText('실습망 센서')).toBeInTheDocument();
+    expect(within(row36).getByLabelText(`수집원: 실습망 센서 · ${LAB_NAME} · 캡처 ID: lab-20261119`)).toBeInTheDocument();
     expect(within(row36).getByText(LAB_NAME)).toBeInTheDocument();
     expect(within(row36).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
     const row59 = within(table).getByText('10.0.59.1').closest('tr') as HTMLElement;
@@ -541,6 +547,52 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(firstItem).getByText('신규')).toBeInTheDocument();
     const ongoingItem = items.find((li) => within(li).queryByText('10.0.59.1'));
     expect(ongoingItem && within(ongoingItem).getByText('진행 중')).toBeInTheDocument();
+  });
+});
+
+describe('목록 밀도(T23 7절)', () => {
+  const hidden2xl = (el: HTMLElement) => el.className.split(/\s+/).includes('hidden') && el.className.includes('2xl:table-cell');
+
+  it('1536px 미만에서 통신 방향·세션 수는 숨김 클래스를 쓰지만, 지금 정렬 기준인 열(세션 수)에는 붙이지 않는다', async () => {
+    const first = renderQueue();
+    await ready();
+    const conn = header(/세션 수 기준 정렬/);
+    expect(hidden2xl(conn)).toBe(true);
+    const roleTh = within(screen.getByRole('table')).getAllByRole('columnheader').find((h) => h.textContent?.trim() === '통신 방향') as HTMLElement;
+    expect(hidden2xl(roleTh)).toBe(true);
+    first.unmount();
+
+    renderQueue('/incidents?sort=connections&dir=desc');
+    await ready();
+    const sortedTh = header(/세션 수 기준 정렬/);
+    expect(sortedTh.className.split(/\s+/)).not.toContain('hidden');
+    const firstRow = within(screen.getByRole('table')).getAllByRole('row')[1];
+    const connCell = firstRow.querySelector('[data-col="connections"]') as HTMLElement;
+    expect(connCell.className.split(/\s+/)).not.toContain('hidden');
+  });
+
+  it.each(['priority', 'detected', 'start', 'status'])('정렬 기준 %s 열에는 숨김 클래스가 없다', async (key) => {
+    renderQueue(`/incidents?sort=${key}`);
+    await ready();
+    const th = within(screen.getByRole('table'))
+      .getAllByRole('columnheader')
+      .find((h) => h.getAttribute('aria-sort') !== 'none') as HTMLElement;
+    expect(th).toBeDefined();
+    expect(th.className.split(/\s+/)).not.toContain('hidden');
+  });
+
+  it('행의 칸은 한 줄(줄바꿈 없음)이고 긴 자산 이름은 말줄임·툴팁이다', async () => {
+    const long = unified({ ...base(1), hostName: ['very-long-asset-name-for-t23-density-check.corp.example.local', 'second'] }, { priority: 'high' });
+    renderQueue('/incidents', { items: [long] });
+    await ready();
+    const row = within(screen.getByRole('table')).getAllByRole('row')[1];
+    for (const td of within(row).getAllByRole('cell')) {
+      expect(td.className).toContain('soc-td-compact');
+    }
+    const name = within(row).getByText('very-long-asset-name-for-t23-density-check.corp.example.local');
+    expect(name.className).toContain('truncate');
+    expect(name).toHaveAttribute('title', 'very-long-asset-name-for-t23-density-check.corp.example.local, second');
+    expect(within(row).getByLabelText(/^수집원: /).className).toMatch(/max-w-/);
   });
 });
 

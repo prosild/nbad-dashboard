@@ -10,11 +10,13 @@ import {
   BellRing,
   ChevronLeft,
   ChevronRight,
+  Database,
   FileText,
   FileX,
   Filter,
   Info,
   Lock,
+  Radio,
   RotateCcw,
   ShieldCheck,
   X,
@@ -893,7 +895,7 @@ function SortHeader({
     <th
       scope="col"
       aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      className={`soc-th-compact ${align === 'right' ? 'text-right' : ''} ${className}`}
+      className={`soc-th-compact px-1.5 2xl:px-2 ${align === 'right' ? 'text-right' : ''} ${className}`}
       title={title}
     >
       <button
@@ -924,25 +926,47 @@ function isNewRow(item: UnifiedQueueItem, highlightAfter: string | null): boolea
 }
 
 /** 탐지 시각: 기준 시각에서 얼마 전인지 + 절대 시각(보조 글자·툴팁) */
+/** 탐지 시각: 기준 시각에서 얼마 전인지만 글로 보이고 절대 시각(KST)은 툴팁에 둔다(T23 7절 목록 밀도). */
 function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string | null }) {
   if (!item.detectedAt) {
     return <span className="text-slate-500">-</span>;
   }
   return (
-    <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="whitespace-nowrap">
-      <span className="text-slate-200">{formatRelativeTo(item.detectedAt, anchor)}</span>
-      <span className="ml-1.5 text-[11px] tabular-nums text-slate-500">{formatDateTime(item.detectedAt).slice(5, 16)}</span>
+    <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="whitespace-nowrap text-slate-200">
+      {formatRelativeTo(item.detectedAt, anchor)}
     </span>
   );
 }
 
+/**
+ * 수집원(한 줄): 종류 아이콘 + 표시 이름(넘치면 말줄임). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 둔다.
+ * 종류 문구는 수집원 조건과 상세 헤더에 글자로 보인다.
+ */
 function SourceCell({ item }: { item: UnifiedQueueItem }) {
+  const info = captureInfo(item.captureId);
+  const typeText = SOURCE_TYPE_LABEL[item.sourceType] ?? '-';
+  const label = `${typeText} · ${info.text} · 캡처 ID: ${item.captureId}`;
+  const Icon = item.sourceType === 'live' ? Radio : Database;
   return (
-    <div className="flex max-w-[15rem] flex-col items-start gap-0.5">
-      <SourceTypeBadge type={item.sourceType} />
-      <CaptureName id={item.captureId} className="max-w-full truncate text-[11px] text-slate-400" />
-    </div>
+    <span
+      title={label}
+      aria-label={`수집원: ${label}`}
+      className="flex max-w-[5.5rem] items-center gap-1 2xl:max-w-[13rem]"
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+      <span aria-hidden="true" className="min-w-0 truncate text-slate-300">
+        {info.text}
+      </span>
+    </span>
   );
+}
+
+/** 발생 시각(한 줄): 초를 빼고, 기준 시각과 같은 해면 연도를 뺀다(해가 다르면 연도를 보인다). 전체 구간은 칸 툴팁. */
+function compactOccurrence(iso: string | null, anchor: string | null): string {
+  const full = formatDateTime(iso);
+  if (full.length !== 19) return full;
+  const anchorYear = anchor ? formatDateTime(anchor).slice(0, 4) : '';
+  return full.slice(0, 4) === anchorYear ? full.slice(5, 16) : full.slice(0, 16);
 }
 
 function QueueTable({
@@ -980,8 +1004,10 @@ function QueueTable({
   }
 
   const headerProps = { sortKey, sortDir, onSort };
+  // 1536px(2xl) 미만에서 통신 방향·세션 수는 숨긴다(값은 상세·행 툴팁에 있다). 지금 정렬 기준인 열은 숨기지 않는다.
+  const connectionsCell = sortKey === 'connections' ? '' : 'hidden 2xl:table-cell';
   return (
-    <div className="hidden overflow-x-auto md:block">
+    <div className="hidden overflow-x-auto md:block" data-queue-table-wrap="">
       <table className="w-full border-collapse text-left">
         <caption className="sr-only">인시던트 목록. 호스트 링크나 행을 누르거나 행에서 Enter 키를 누르면 인시던트 상세로 갑니다.</caption>
         <thead>
@@ -993,13 +1019,13 @@ function QueueTable({
               title="인시던트가 처음 탐지된 분석 완료 시각"
               {...headerProps}
             />
-            <th scope="col" className="soc-th-compact">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
               호스트
             </th>
-            <th scope="col" className="soc-th-compact">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
               수집원
             </th>
-            <th scope="col" className="soc-th-compact hidden 2xl:table-cell">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2 hidden 2xl:table-cell">
               통신 방향
             </th>
             <SortHeader
@@ -1008,21 +1034,21 @@ function QueueTable({
               title="트래픽이 관측된 시각(원본 그대로)"
               {...headerProps}
             />
-            <th scope="col" className="soc-th-compact">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
               탐지 모델
             </th>
-            <th scope="col" className="soc-th-compact" title="AI 분석 리포트 · 검증 · 발송 판단">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2" title="AI 분석 리포트 · 검증 · 발송 판단">
               리포트·판단
             </th>
             <SortHeader column="status" label="상태 · 판정" {...headerProps} />
-            <th scope="col" className="soc-th-compact hidden lg:table-cell">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2 hidden lg:table-cell">
               에스컬레이션
             </th>
             <SortHeader
               column="connections"
               label="세션 수"
               align="right"
-              className="hidden xl:table-cell"
+              className={connectionsCell}
               {...headerProps}
             />
           </tr>
@@ -1046,17 +1072,17 @@ function QueueTable({
                 }}
                 className="cursor-pointer transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/70"
               >
-                <td className="soc-td-compact">
+                <td className="soc-td-compact px-1.5 2xl:px-2">
                   <div className="flex items-center gap-1">
                     <PriorityBadge priority={item.priority} />
                     {isNewRow(item, highlightAfter) && <NewRowBadge />}
                   </div>
                 </td>
-                <td className="soc-td-compact tabular-nums">
+                <td className="soc-td-compact px-1.5 2xl:px-2 tabular-nums">
                   <DetectedCell item={item} anchor={anchor} />
                 </td>
-                <td className="soc-td-compact">
-                  <div className="flex max-w-[17rem] items-baseline gap-2">
+                <td className="soc-td-compact px-1.5 2xl:px-2">
+                  <div className="flex max-w-[8.5rem] items-baseline gap-1.5 2xl:max-w-[17rem]">
                     {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
                     <Link
                       to={url}
@@ -1077,36 +1103,36 @@ function QueueTable({
                     )}
                   </div>
                 </td>
-                <td className="soc-td-compact">
+                <td className="soc-td-compact px-1.5 2xl:px-2">
                   <SourceCell item={item} />
                 </td>
-                <td className="soc-td-compact hidden text-slate-300 2xl:table-cell">
+                <td className="soc-td-compact px-1.5 2xl:px-2 hidden text-slate-300 2xl:table-cell">
                   <CodeLabel dict="hostRole" value={item.zeekadRole} />
                 </td>
                 <td
-                  className="soc-td-compact tabular-nums"
+                  className="soc-td-compact px-1.5 2xl:px-2 tabular-nums"
                   title={`발생 구간 ${formatDateTimeRange(item.eventStart, item.eventEnd)}`}
                 >
-                  <span className="text-slate-200">{formatDateTime(item.eventStart)}</span>
-                  <span className="mx-1.5 text-slate-600" aria-hidden="true">
+                  <span className="text-slate-200">{compactOccurrence(item.eventStart, anchor)}</span>
+                  <span className="mx-1 text-slate-600" aria-hidden="true">
                     ·
                   </span>
                   <span className="text-slate-400">{formatDuration(item.eventStart, item.eventEnd)}</span>
                   {item.ongoing && (
-                    <span className="ml-1.5 inline-block align-middle">
+                    <span className="ml-1 inline-block align-middle">
                       <OngoingBadge snapshot={snapshot} />
                     </span>
                   )}
                 </td>
-                <td className="soc-td-compact">
+                <td className="soc-td-compact px-1.5 2xl:px-2">
                   <DetectionModelName id={item.zeekadPickedBy} className="font-semibold text-slate-100" />
                   <AlsoFlagged models={item.zeekadAlsoFlaggedBy} />
                 </td>
-                <td className="soc-td-compact">
+                <td className="soc-td-compact px-1.5 2xl:px-2">
                   <SignalChips item={item} />
                 </td>
                 <td
-                  className="soc-td-compact"
+                  className="soc-td-compact px-1.5 2xl:px-2"
                   title={item.statusUpdatedAt ? `상태 갱신 ${formatDateTime(item.statusUpdatedAt)}` : undefined}
                 >
                   <div className="flex items-center gap-1">
@@ -1114,10 +1140,10 @@ function QueueTable({
                     <ResolutionBadge resolution={item.zeekadResolution} />
                   </div>
                 </td>
-                <td className="soc-td-compact hidden lg:table-cell">
+                <td className="soc-td-compact px-1.5 2xl:px-2 hidden lg:table-cell">
                   <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />
                 </td>
-                <td className="soc-td-compact soc-num hidden text-slate-300 xl:table-cell">
+                <td className={`soc-td-compact px-1.5 2xl:px-2 soc-num text-slate-300 ${connectionsCell}`} data-col="connections">
                   {formatNumber(item.connectionCount)}
                 </td>
               </tr>
@@ -1138,7 +1164,7 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
   return (
     <span
       title={`교차 탐지: ${list.map((m) => labelText('detectionModel', m)).join(', ')}`}
-      className="ml-1.5 rounded border border-slate-700 bg-slate-800/80 px-1 text-[11px] tabular-nums text-slate-300"
+      className="ml-1 rounded border border-slate-700 bg-slate-800/80 px-1 text-[11px] tabular-nums text-slate-300"
     >
       <span aria-hidden="true">+{list.length}</span>
       <span className="sr-only">교차 탐지 모델 {list.length}개</span>
@@ -1153,7 +1179,7 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
   const hasReport = item.zeekadReportJobId !== null;
   const kind = labelText('reportKind', item.zeekadReportKind);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-0.5 2xl:gap-1">
       {hasReport ? (
         <span
           role="img"
