@@ -111,6 +111,7 @@ cp .env.example .env
 | `DASHBOARD_TIME_ANCHOR` | 기준 시각(T23). 인시던트 큐의 상대 기간(최근 1시간·24시간·7일·30일)을 이 시각에서 거꾸로 센다. `now` = 서버 현재 시각(데이터가 계속 들어오는 운영). `latest-data` = 그 사용자가 볼 수 있는 캡처의 성공 탐지 작업 완료 시각 최대값(데이터가 더 늘지 않는 고정 스냅샷, 과거 데이터 조사용). `latest-data`면 모든 화면 맨 위에 "고정 스냅샷 · 기준 시각"을 보이고 새 인시던트 자동 갱신을 끈다. 다른 값이면 앱이 시작하지 않는다 | `now` | `now` |
 | `DASHBOARD_LIVE_CAPTURE_PATTERNS` | 수집원 분류(T23). 맞는 캡처는 "실습망 센서", 나머지는 "가져온 데이터". 쉼표 목록, 패턴 문법은 허용 캡처와 같다(`접두어*`). 잘못된 패턴이면 시작하지 않는다 | `lab-*` | `lab-*` |
 | `DASHBOARD_SENSOR_STALE_AFTER`, `DASHBOARD_SENSOR_DOWN_AFTER` | 센서 상태(T24). 기준 시각 − 센서의 마지막 채점이 stale 이하면 정상, down 이하면 지연, 넘으면 중단(가장 최근 끝난 작업이 실패면 실패). Spring Duration(`15m`, `PT15M`). 0 이하이거나 stale ≥ down이면 시작하지 않는다. `compose.yml`은 넘기지 않아 기본값을 쓴다(바꾸려면 `dashboard-app` environment에 더한다) | `15m`, `1h` | `15m`, `1h` |
+| `DASHBOARD_SLA_ACK_HIGH`, `DASHBOARD_SLA_ACK_MEDIUM`, `DASHBOARD_SLA_ACK_LOW` | 착수 목표(T25). 실습망 신규 인시던트가 탐지 뒤 지금 우선순위의 목표를 넘기면 "착수 지연"(가져온 데이터는 따지지 않는다). Spring Duration(`30m`, `4h`). 0 이하이거나 high ≤ medium ≤ low가 아니면 시작하지 않는다. `compose.yml`은 넘기지 않아 기본값을 쓴다 | `30m`, `4h`, `24h` | `30m`, `4h`, `24h` |
 | `DASHBOARD_BOOTSTRAP_PASSWORD` | `users` 테이블이 비어 있을 때 4계정 시드용 공통 비밀번호 | 초기 기동 후 비움 권장 | 초기 기동 후 비움 권장 |
 | `BOOTSTRAP_VIEWER1_PASSWORD` ~ `BOOTSTRAP_ADMIN_PASSWORD` | 계정별 개별 부트스트랩 비밀번호(선택) | 선택 | 선택 |
 | `BOOTSTRAP_ADMIN_TOTP_SECRET` | `admin` TOTP Base32 시크릿(비우면 `/login/totp/setup`에서 등록) | 선택 | 선택 |

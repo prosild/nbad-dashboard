@@ -77,6 +77,10 @@ const ALLOWED_ABBREVIATIONS = new Set([
   'Slack',
   'TOTP',
   'KST',
+  // T25 처리 시간 지표의 업계 약어(docs/ui-terminology.md "처리 흐름 용어")
+  'MTTD',
+  'MTTA',
+  'MTTR',
 ]);
 
 function visibleText(root: HTMLElement): string {
@@ -420,7 +424,30 @@ const reviewsResponse = (masked: boolean) => ({
   ],
 });
 
+/** T25 처리 시간·담당 현황 블록 */
+const t25Stat = (n: number, median: number | null) => ({ n, medianSeconds: median, p90Seconds: median, excluded: 1, smallSample: n > 0 && n < 10 });
+
 const operationsResponse = {
+  handlingTimes: {
+    detection: t25Stat(4, 3600),
+    acknowledge: t25Stat(12, 600),
+    resolve: {
+      all: t25Stat(3, 7200),
+      byResolution: [
+        { resolution: 'true_positive', stat: t25Stat(1, 3600) },
+        { resolution: 'false_positive', stat: t25Stat(0, null) },
+        { resolution: 'benign', stat: t25Stat(1, 2400) },
+        { resolution: 'none', stat: t25Stat(1, 7200) },
+      ],
+    },
+  },
+  workload: {
+    unclosed: 3,
+    assigned: 1,
+    unassigned: 2,
+    ackOverdue: 1,
+    byAssignee: [{ username: 'analyst1', displayName: '분석가1', enabled: false, open: 1, investigating: 0 }],
+  },
   maskedView: true,
   allowedCaptures: ['cic17-wed'],
   selectedCaptureId: null,
@@ -967,6 +994,17 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(await screen.findByRole('region', { name: '수집원 상태 표' })).toBeInTheDocument();
     expect(screen.getByText('누적(기간 없음)')).toBeInTheDocument();
     expect(screen.getAllByText('지연').length).toBeGreaterThanOrEqual(1);
+    // T25 처리 흐름 용어(docs/ui-terminology.md "처리 흐름 용어")
+    const handling = screen.getByRole('region', { name: '처리 시간' });
+    for (const term of ['탐지 지연(MTTD)', '착수 시간(MTTA)', '처리 시간(MTTR)', '중앙값', 'p90', '제외', '표본 부족', '판정 없음', '실습망만']) {
+      expect(handling, term).toHaveTextContent(term);
+    }
+    const workload = screen.getByRole('region', { name: '담당 현황' });
+    for (const term of ['미종결', '배정', '미배정', '착수 지연', '담당자', '비활성']) {
+      expect(workload, term).toHaveTextContent(term);
+    }
+    // 지표 이름에 평균을 쓰지 않는다(중앙값·p90)
+    for (const th of within(handling).getAllByRole('rowheader')) expect(th.textContent).not.toContain('평균');
     expectCleanText(container);
   });
 

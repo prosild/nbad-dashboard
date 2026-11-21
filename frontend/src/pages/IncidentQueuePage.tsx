@@ -19,11 +19,14 @@ import {
   Radio,
   RotateCcw,
   ShieldCheck,
+  UserCheck,
   X,
 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
+import { useAuth } from '../auth/AuthContext';
 import { AppShell } from '../components/AppShell';
+import { AckOverdueBadge, AssigneeName, elapsedText } from '../components/incident/AssignmentBits';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
@@ -60,6 +63,7 @@ import {
   parseQueueQuery,
   periodLabel,
   PRIORITY_VALUES,
+  parseAssignee,
   queueApiParams,
   STRIP_FILTER_KEYS,
   type Period,
@@ -133,6 +137,9 @@ function useNewIncidentCount(enabled: boolean, since: string | null, paramsKey: 
 
 export function IncidentQueuePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+  /** 담당 선택(T25): VIEWER는 담당자가 될 수 없어 "내 담당"을 보이지 않는다 */
+  const canBeAssignee = user?.role === 'ANALYST' || user?.role === 'ADMIN';
   const [data, setData] = useState<UnifiedQueueResponse | null>(null);
   /** data를 받은 요청의 쿼리 키(지금 URL과 같을 때만 URL을 고친다) */
   const [dataKey, setDataKey] = useState<string | null>(null);
@@ -290,8 +297,9 @@ export function IncidentQueuePage() {
     if (query.priority) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', query.priority)}` });
     if (query.reviewPending) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
     if (query.alerted) list.push({ key: 'alerted', label: '경보 발송만' });
+    if (query.overdue) list.push({ key: 'overdue', label: '착수 지연만' });
     return list;
-  }, [query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted]);
+  }, [query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted, query.overdue]);
 
   function toggleStripFilter(key: (typeof STRIP_FILTER_KEYS)[number], value: string) {
     const current = searchParams.get(key);
@@ -300,7 +308,7 @@ export function IncidentQueuePage() {
 
   const panelFilterCount = PANEL_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
   const anyFilter =
-    chips.length > 0 || query.source !== null || query.captureId !== null;
+    chips.length > 0 || query.source !== null || query.captureId !== null || query.assignee !== null;
   const sourceValue = sourceSelectValue(query.source, query.captureId);
   const items = data?.items ?? [];
 
@@ -332,6 +340,7 @@ export function IncidentQueuePage() {
           priorityFilter={query.priority}
           reviewPendingFilter={query.reviewPending}
           alertedFilter={query.alerted}
+          overdueFilter={query.overdue}
           onToggle={toggleStripFilter}
         />
 
@@ -340,6 +349,12 @@ export function IncidentQueuePage() {
             <PeriodButtons value={query.period} onChange={handlePeriod} />
 
             <SourceField sources={data?.sources ?? []} value={sourceValue} onChange={handleSource} />
+
+            <AssigneeField
+              value={query.assignee}
+              showMine={canBeAssignee}
+              onChange={(v) => updateParams({ assignee: parseAssignee(v) })}
+            />
 
             <span className="hidden h-5 w-px bg-slate-800 sm:block" aria-hidden="true" />
 
@@ -641,15 +656,18 @@ function SummaryStrip({
   priorityFilter,
   reviewPendingFilter,
   alertedFilter,
+  overdueFilter,
   onToggle,
 }: {
   summary: UnifiedQueueResponse['summary'] | null;
   priorityFilter: Priority | null;
   reviewPendingFilter: boolean;
   alertedFilter: boolean;
-  onToggle: (key: 'priority' | 'reviewPending' | 'alerted', value: string) => void;
+  overdueFilter: boolean;
+  onToggle: (key: 'priority' | 'reviewPending' | 'alerted' | 'overdue', value: string) => void;
 }) {
-  const s = summary ?? { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {} };
+  const s = summary ?? { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {}, overdue: 0 };
+  const overdue = s.overdue ?? 0;
   const priorityDot: Record<Priority, string> = {
     high: 'bg-rose-400',
     medium: 'bg-slate-200',
@@ -716,6 +734,18 @@ function SummaryStrip({
         <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(s.alerted)}</span>
       </StripButton>
 
+      <StripButton
+        pressed={overdueFilter}
+        onClick={() => onToggle('overdue', 'true')}
+        ariaLabel={`착수 지연 ${overdue}건만 보기`}
+        title="실습망 신규 인시던트가 우선순위별 착수 목표 시간을 넘긴 수"
+      >
+        <span className="text-slate-400">착수 지연</span>
+        <span className={`text-base font-bold tabular-nums ${overdue > 0 ? 'text-rose-300' : 'text-slate-300'}`}>
+          {formatNumber(overdue)}
+        </span>
+      </StripButton>
+
       <details className="relative ml-auto">
         <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-400 transition hover:text-slate-100 [&::-webkit-details-marker]:hidden">
           <Info className="h-3.5 w-3.5" aria-hidden="true" />
@@ -742,6 +772,10 @@ function SummaryStrip({
           <p className="mt-2 text-slate-400">
             기본 정렬은 우선순위, 같으면 탐지 시각 최근 순입니다. 기간은 탐지 시각(인시던트가 처음 탐지된 분석 완료
             시각) 기준입니다.
+          </p>
+          <p className="mt-2 text-slate-400">
+            착수 목표: 실습망 신규 인시던트는 탐지 뒤 High 30분·Medium 4시간·Low 24시간(기본값) 안에 조사를 시작해야
+            합니다. 넘기면 &lsquo;착수 지연&rsquo;입니다. 가져온 데이터는 재생 데이터라 따지지 않습니다.
           </p>
         </div>
       </details>
@@ -846,14 +880,34 @@ function isNewRow(item: UnifiedQueueItem, highlightAfter: string | null): boolea
   return new Date(item.detectedAt).getTime() > new Date(highlightAfter).getTime();
 }
 
-/** 탐지 시각: 기준 시각에서 얼마 전인지만 글로 보이고 절대 시각(KST)은 툴팁에 둔다(T23 7절 목록 밀도). */
+/**
+ * 탐지 · 경과(T25, 한 줄): 탐지 시각(같은 해면 연도 생략)과 기준 시각까지의 경과. 종결이면 "처리 N"(종결 − 탐지).
+ * 착수 지연이면 빨간 "착수 지연" 표지를 단다. 전체 탐지 시각(KST)은 툴팁에 둔다.
+ */
 function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string | null }) {
   if (!item.detectedAt) {
     return <span className="text-slate-500">-</span>;
   }
+  const el = elapsedText(item.detectedAt, item.zeekadStatus, item.statusUpdatedAt, anchor);
   return (
-    <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="whitespace-nowrap text-slate-200">
-      {formatRelativeTo(item.detectedAt, anchor)}
+    <span className="inline-flex items-center gap-1 whitespace-nowrap" data-detected-cell="">
+      <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="text-slate-300">
+        {compactOccurrence(item.detectedAt, anchor)}
+      </span>
+      {el && (
+        <>
+          <span className="text-slate-600" aria-hidden="true">
+            ·
+          </span>
+          <span
+            className={el.kind === 'handled' ? 'text-slate-400' : 'text-slate-100'}
+            title={el.kind === 'handled' ? '처리 시간: 종결 시각 − 탐지 시각' : '탐지 뒤 경과(기준 시각까지)'}
+          >
+            {el.text}
+          </span>
+        </>
+      )}
+      {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} />}
     </span>
   );
 }
@@ -924,8 +978,10 @@ function QueueTable({
   }
 
   const headerProps = { sortKey, sortDir, onSort };
-  // 1536px(2xl) 미만에서 통신 방향·세션 수는 숨긴다(값은 상세·행 툴팁에 있다). 지금 정렬 기준인 열은 숨기지 않는다.
+  // 1536px(2xl) 미만에서 통신 방향·세션 수·발생 시각 · 지속은 숨긴다(값은 상세·행 툴팁에 있다). T25: 담당 칸을 더하며
+  // 1280px 행을 한 줄로 두려고 발생 시각 · 지속도 2xl부터 보인다. 지금 정렬 기준인 열은 숨기지 않는다.
   const connectionsCell = sortKey === 'connections' ? '' : 'hidden 2xl:table-cell';
+  const occurrenceCell = sortKey === 'start' ? '' : 'hidden 2xl:table-cell';
   return (
     <div className="hidden overflow-x-auto md:block" data-queue-table-wrap="">
       <table className="w-full border-collapse text-left">
@@ -935,8 +991,8 @@ function QueueTable({
             <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
             <SortHeader
               column="detected"
-              label="탐지 시각"
-              title="인시던트가 처음 탐지된 분석 완료 시각"
+              label="탐지 · 경과"
+              title="인시던트가 처음 탐지된 분석 완료 시각과 그 뒤 지난 시간(종결이면 처리 시간)"
               {...headerProps}
             />
             <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
@@ -952,6 +1008,7 @@ function QueueTable({
               column="start"
               label="발생 시각 · 지속"
               title="트래픽이 관측된 시각(원본 그대로)"
+              className={occurrenceCell}
               {...headerProps}
             />
             <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
@@ -961,6 +1018,9 @@ function QueueTable({
               리포트·판단
             </th>
             <SortHeader column="status" label="상태 · 판정" {...headerProps} />
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2" title="이 인시던트를 맡은 분석가">
+              담당
+            </th>
             <th scope="col" className="soc-th-compact px-1.5 2xl:px-2 hidden lg:table-cell">
               에스컬레이션
             </th>
@@ -1030,8 +1090,9 @@ function QueueTable({
                   <CodeLabel dict="hostRole" value={item.zeekadRole} />
                 </td>
                 <td
-                  className="soc-td-compact px-1.5 2xl:px-2 tabular-nums"
+                  className={`soc-td-compact px-1.5 2xl:px-2 tabular-nums ${occurrenceCell}`}
                   title={`발생 구간 ${formatDateTimeRange(item.eventStart, item.eventEnd)}`}
+                  data-col="occurrence"
                 >
                   <span className="text-slate-200">{compactOccurrence(item.eventStart, anchor)}</span>
                   <span className="mx-1 text-slate-600" aria-hidden="true">
@@ -1059,6 +1120,9 @@ function QueueTable({
                     <IncidentStatusBadge status={item.zeekadStatus} />
                     <ResolutionBadge resolution={item.zeekadResolution} />
                   </div>
+                </td>
+                <td className="soc-td-compact px-1.5 2xl:px-2" data-col="assignee">
+                  <AssigneeName assignee={item.assignee} className="max-w-[6.5rem] text-xs 2xl:max-w-[10rem]" />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2 hidden lg:table-cell">
                   <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />
@@ -1158,7 +1222,47 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
   );
 }
 
+/* ───────────────────────── 담당 선택(T25) ───────────────────────── */
+
+/** 담당 조건: 전체 · 내 담당 · 미배정. VIEWER에게는 "내 담당"을 보이지 않는다(담당자가 될 수 없다). */
+function AssigneeField({
+  value,
+  showMine,
+  onChange,
+}: {
+  value: 'me' | 'none' | null;
+  showMine: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-slate-400">
+      <UserCheck className="h-3.5 w-3.5" aria-hidden="true" />
+      <span>담당</span>
+      <select
+        aria-label="담당"
+        value={value === 'me' && !showMine ? '' : (value ?? '')}
+        onChange={(e) => onChange(e.target.value)}
+        className="soc-select py-1 text-xs"
+      >
+        <option value="">전체</option>
+        {showMine && <option value="me">내 담당</option>}
+        <option value="none">미배정</option>
+      </select>
+    </label>
+  );
+}
+
 /* ───────────────────────── 휴대폰 목록 ───────────────────────── */
+
+function MobileElapsed({ item, anchor }: { item: UnifiedQueueItem; anchor: string | null }) {
+  const el = elapsedText(item.detectedAt, item.zeekadStatus, item.statusUpdatedAt, anchor);
+  if (!el) return null;
+  return (
+    <span className="tabular-nums text-slate-300">
+      {el.kind === 'elapsed' ? `경과 ${el.text}` : el.text}
+    </span>
+  );
+}
 
 function QueueMobileList({
   rows,
@@ -1191,6 +1295,12 @@ function QueueMobileList({
               <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-400" title={`탐지 시각 ${formatDateTime(item.detectedAt)}`}>
                 탐지 {formatRelativeTo(item.detectedAt, anchor)}
               </span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-mobile-handling="">
+              <span className="text-[11px] text-slate-500">담당</span>
+              <AssigneeName assignee={item.assignee} className="max-w-[9rem] text-xs" />
+              <MobileElapsed item={item} anchor={anchor} />
+              {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} />}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               {/* T26: 링크의 접근성 이름에 "수집원: 종류 표시 이름 · 캡처 ID"가 들어가게 판독기용 글자를 더한다 */}

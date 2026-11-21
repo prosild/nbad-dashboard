@@ -6,6 +6,7 @@ import { dashboardApi, operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { SensorHealthBadge, SourceStatusTable, sensorHealthTooltip } from '../components/dashboard/SourceStatus';
+import { HandlingTimesPanel, WorkloadPanel } from '../components/dashboard/HandlingPanels';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
   CaptureName,
@@ -142,6 +143,13 @@ export function OperationsPage() {
     return { totalsRow: totalsAsRow(sumAllRows(allRows)) };
   }, [data]);
   const scope = period === 'all' ? '전체 기간' : `최근 ${periodLabel(period)}`;
+  /** 착수 지연 수(T25)를 누르면 같은 수집원 조건의 큐 착수 지연(기간 전체)로 간다 */
+  const overdueLink = useMemo(() => {
+    const q = new URLSearchParams({ period: 'all', overdue: 'true' });
+    if (captureId) q.set('captureId', captureId);
+    else if (source) q.set('source', source);
+    return `/incidents?${q.toString()}`;
+  }, [captureId, source]);
   const sensors = overview?.sensors ?? [];
   const importedFailed = (overview?.captures ?? []).filter((c) => c.sensorKey === null && c.state === 'failed').length;
   const importedCount = (overview?.captures ?? []).filter((c) => c.sensorKey === null).length;
@@ -287,6 +295,9 @@ export function OperationsPage() {
                 <SourceStatusTable overview={overview} shortNames={shortNames} />
               </section>
             )}
+
+            {data?.handlingTimes && <HandlingTimesPanel times={data.handlingTimes} scope={scope} />}
+            {data?.workload && <WorkloadPanel workload={data.workload} overdueLink={overdueLink} />}
 
             <section className="soc-card space-y-3 p-4" aria-label="분석가 판정 집계">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">

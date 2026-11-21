@@ -5,10 +5,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
-import type { IncidentDetailView, IncidentQueueItem, IncidentQueueMeta, QueueNeighborsResponse, UnifiedQueueItem } from '../types/api';
+import type {
+  AssignmentHistoryItem,
+  IncidentAssignment,
+  IncidentDetailView,
+  IncidentQueueItem,
+  IncidentQueueMeta,
+  QueueNeighborsResponse,
+  UnifiedQueueItem,
+} from '../types/api';
 import { formatSessionDuration } from '../utils/format';
 import { fakeNeighbors, unified } from './fakeQueueServer';
 import { expectAllTablesInScrollBox, tablesOutsideScrollBox } from './tableScrollBox';
+import { assignmentKindLabel, buildTimeline } from '../components/incident/HistoryTimeline';
 
 /** T19 인시던트 상세: 요약 헤더·조치 패널·탭·오탐 종결 안전장치·주요 세션 열·이전·다음 */
 
@@ -254,6 +263,20 @@ interface Setup {
   onPost?: (url: string, body: Record<string, unknown>, state: { detail: IncidentDetailView }) => void;
   /** T21: 이동 목록(T23: GET /api/incidents/queue/neighbors) 조회가 실패할 횟수 */
   listFailures?: number;
+  /** T25: 상세 응답의 담당·담당 이력·담당을 바꿀 수 있는지(없으면 미배정·없음·분석가면 true) */
+  assignment?: IncidentAssignment | null;
+  assignmentHistory?: AssignmentHistoryItem[];
+  canAssign?: boolean;
+  /** T25: POST 응답을 직접 정한다(없으면 성공). 담당 지정 409 시험용 */
+  postResponse?: (url: string, body: Record<string, unknown>, state: DetailState) => Response | undefined;
+  /** T25: GET .../assignees 응답 */
+  assignees?: { username: string; displayName: string }[];
+}
+
+interface DetailState {
+  detail: IncidentDetailView;
+  assignment: IncidentAssignment | null;
+  assignmentHistory: AssignmentHistoryItem[];
 }
 
 const DEFAULT_META: IncidentQueueMeta = {
@@ -273,15 +296,24 @@ function listItem(overrides: Partial<IncidentQueueItem>, priority: UnifiedQueueI
 function renderDetail(path: string, setup: Setup = {}) {
   document.cookie = 'XSRF-TOKEN=detail-test-token; path=/';
   const role = setup.role ?? 'ANALYST';
-  const state = { detail: (setup.detail ?? ((d) => d))(baseDetail()) };
+  const state: DetailState = {
+    detail: (setup.detail ?? ((d) => d))(baseDetail()),
+    assignment: setup.assignment ?? null,
+    assignmentHistory: setup.assignmentHistory ?? [],
+  };
   const listCalls: string[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url === '/api/auth/me') return json({ authenticated: true, user: userOf(role) });
     if (init?.method === 'POST') {
       const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      const custom = setup.postResponse?.(url, body, state);
+      if (custom) return custom;
       setup.onPost?.(url, body, state);
       return json({ succeeded: true, code: 'OK', message: '처리했습니다' });
+    }
+    if (/\/assignees$/.test(url)) {
+      return json({ assignees: setup.assignees ?? [] });
     }
     if (url === '/api/time-context') {
       return json({ anchor: '2026-11-21T00:00:00Z', anchorMode: setup.snapshot ? 'latest-data' : 'now', snapshot: Boolean(setup.snapshot) });
@@ -295,6 +327,9 @@ function renderDetail(path: string, setup: Setup = {}) {
         canDecideReview: role !== 'VIEWER',
         detail: { ...d, incident },
         queueMeta: setup.meta === undefined ? DEFAULT_META : setup.meta,
+        assignment: state.assignment ?? { assignee: null, assignedAt: null, assignedByDisplay: null },
+        assignmentHistory: state.assignmentHistory,
+        canAssign: setup.canAssign ?? (role !== 'VIEWER' && d.currentStatus !== 'closed'),
       });
     }
     if (url.startsWith('/api/incidents/queue/neighbors')) {
@@ -447,7 +482,8 @@ describe('인시던트 상세 화면(T19)', () => {
     await screen.findByRole('tab', { name: '요약', selected: true });
     const a = actions();
     expect(within(a).getAllByText('분석 중').length).toBeGreaterThanOrEqual(1);
-    expect(within(a).getByText('읽기 전용 계정입니다. 상태 변경과 에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
+    // T25: 담당 지정도 분석가 계정에서 한다
+    expect(within(a).getByText('읽기 전용 계정입니다. 담당 지정·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
     expect(within(a).queryByRole('textbox')).toBeNull();
     expect(within(a).queryByRole('combobox')).toBeNull();
     expect(within(a).queryByRole('button', { name: '종결 처리' })).toBeNull();
@@ -759,7 +795,8 @@ describe('인시던트 상세 화면(T19)', () => {
     // T21: 각 항목은 그 변경의 변경자다("마지막 변경자" 아님)
     expect(items[4]).toHaveTextContent('변경자 분석가1 (analyst1)');
     expect(items[4]).not.toHaveTextContent('마지막 변경자');
-    expect(document.body.textContent).not.toContain('담당자');
+    // T25: "담당자"는 이제 담당 칸의 개념이다. 상태 변경 항목의 변경자를 담당자로 부르지 않는다는 원래 뜻만 지킨다.
+    for (const li of items) expect(li).not.toHaveTextContent('담당자');
   });
 
   it('이전·다음: 목록이 넘긴 from= 쿼리(기간·수집원·거르기·정렬)로 서버 neighbors를 부르고, 목록으로 돌아가면 그 쿼리로 간다', async () => {
@@ -1030,5 +1067,205 @@ describe('T21: 결정 반영 상태·반영 지연·오탐 미리 채움·이력
     await waitFor(() => expect(within(nav).queryByRole('alert')).toBeNull());
     expect(listCalls.length).toBe(2);
     expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('href', '/incidents/42/rank/2');
+  });
+});
+
+describe('T25 담당 칸·경과·타임라인', () => {
+  const kim = { username: 'analyst2', displayName: '김분석', enabled: true };
+  const me = { username: 'analyst1', displayName: '분석가1', enabled: true };
+  const openDetail = (d: IncidentDetailView): IncidentDetailView => ({
+    ...d,
+    currentStatus: 'open',
+    currentResolution: null,
+    canTransition: true,
+    nextAllowedStatus: 'investigating',
+  });
+  const assignmentArea = () => within(actions()).getByRole('group', { name: '담당' });
+
+  it('분석가·미배정: "미배정"과 내가 맡기·담당자 변경 버튼, 해제는 없다. 조사 시작 자동 지정 안내', async () => {
+    renderDetail('/incidents/42/rank/1', { detail: openDetail });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const g = assignmentArea();
+    expect(within(g).getByText('미배정')).toBeInTheDocument();
+    expect(within(g).getByRole('button', { name: '내가 맡기' })).toBeInTheDocument();
+    expect(within(g).getByRole('button', { name: '담당자 변경' })).toBeInTheDocument();
+    expect(within(g).queryByRole('button', { name: '담당 해제' })).toBeNull();
+    expect(within(actions()).getByRole('note', { name: '담당자 자동 지정 안내' })).toHaveTextContent(
+      '조사를 시작하면 내가 담당자로 지정됩니다.',
+    );
+  });
+
+  it('내가 맡기: expected = 화면이 본 담당자(null)로 보내고 다시 불러온다. 내 담당이면 내가 맡기는 없고 해제가 있다', async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = renderDetail('/incidents/42/rank/1', {
+      detail: openDetail,
+      onPost: (url, body, state) => {
+        if (url.endsWith('/assignment')) {
+          (state as DetailState).assignment = {
+            assignee: body.assignee ? me : null,
+            assignedAt: '2026-11-20T00:00:00Z',
+            assignedByDisplay: '분석가1 (analyst1)',
+          };
+        }
+      },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    await user.click(within(assignmentArea()).getByRole('button', { name: '내가 맡기' }));
+    const calls = posts(fetchMock, '/api/incidents/42/rank/1/assignment');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String((calls[0][1] as RequestInit).body))).toEqual({ assignee: 'analyst1', expected: null });
+    await waitFor(() => expect(within(assignmentArea()).getByText('분석가1')).toBeInTheDocument());
+    expect(within(assignmentArea()).queryByRole('button', { name: '내가 맡기' })).toBeNull();
+    expect(within(assignmentArea()).getByRole('button', { name: '담당 해제' })).toBeInTheDocument();
+    // 담당이 있으면 자동 지정 안내는 없다
+    expect(within(actions()).queryByRole('note', { name: '담당자 자동 지정 안내' })).toBeNull();
+  });
+
+  it('담당자 변경: assignees 목록에서 고르고 지정. 지금 담당자는 목록에서 뺀다. 비활성 담당자는 "비활성" 표지', async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = renderDetail('/incidents/42/rank/1', {
+      detail: openDetail,
+      assignment: { assignee: { ...kim, enabled: false }, assignedAt: '2026-11-20T00:00:00Z', assignedByDisplay: '관리자 (admin)' },
+      assignees: [
+        { username: 'analyst1', displayName: '분석가1' },
+        { username: 'analyst2', displayName: '김분석' },
+      ],
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const g = assignmentArea();
+    expect(within(g).getByText('김분석')).toBeInTheDocument();
+    expect(within(g).getByText('비활성')).toBeInTheDocument();
+    await user.click(within(g).getByRole('button', { name: '담당자 변경' }));
+    const select = await within(g).findByLabelText('새 담당자');
+    await waitFor(() => expect(within(select).getAllByRole('option')).toHaveLength(2));
+    expect(within(select).queryByRole('option', { name: /김분석/ })).toBeNull();
+    await user.selectOptions(select, 'analyst1');
+    await user.click(within(g).getByRole('button', { name: '지정' }));
+    const calls = posts(fetchMock, '/api/incidents/42/rank/1/assignment');
+    expect(JSON.parse(String((calls[0][1] as RequestInit).body))).toEqual({ assignee: 'analyst1', expected: 'analyst2' });
+  });
+
+  it('409: 서버 문장을 보이고 상세를 다시 불러 바뀐 값을 보인다', async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = renderDetail('/incidents/42/rank/1', {
+      detail: openDetail,
+      postResponse: (url, _body, state) => {
+        if (!url.endsWith('/assignment')) return undefined;
+        state.assignment = { assignee: kim, assignedAt: '2026-11-20T00:00:00Z', assignedByDisplay: '김분석 (analyst2)' };
+        return json({ status: 409, code: 'ASSIGNMENT_CONFLICT', message: '다른 사용자가 먼저 담당자를 바꿨습니다.' }, 409);
+      },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const detailCalls = () => fetchMock.mock.calls.filter(([u]) => u === '/api/incidents/42/rank/1').length;
+    const before = detailCalls();
+    await user.click(within(assignmentArea()).getByRole('button', { name: '내가 맡기' }));
+    expect(await within(assignmentArea()).findByRole('alert')).toHaveTextContent('다른 사용자가 먼저 담당자를 바꿨습니다.');
+    await waitFor(() => expect(detailCalls()).toBeGreaterThan(before));
+    await waitFor(() => expect(within(assignmentArea()).getByText('김분석')).toBeInTheDocument());
+  });
+
+  it('조회자: 담당자 이름은 보이고 버튼은 없다. 종결이면 분석가도 읽기만', async () => {
+    const first = renderDetail('/incidents/42/rank/1', {
+      role: 'VIEWER',
+      detail: (d) => ({ ...d, canTransition: false, nextAllowedStatus: null, analystReview: { ...d.analystReview, canDecide: false } }),
+      assignment: { assignee: kim, assignedAt: '2026-11-20T00:00:00Z', assignedByDisplay: '김분석 (analyst2)' },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(within(assignmentArea()).getByText('김분석')).toBeInTheDocument();
+    expect(within(assignmentArea()).queryAllByRole('button')).toHaveLength(0);
+    first.unmount();
+
+    renderDetail('/incidents/42/rank/1', {
+      detail: (d) => ({ ...d, currentStatus: 'closed', currentResolution: 'benign', canTransition: false, nextAllowedStatus: null }),
+      assignment: { assignee: me, assignedAt: '2026-11-20T00:00:00Z', assignedByDisplay: '분석가1 (analyst1)' },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(within(assignmentArea()).queryAllByRole('button')).toHaveLength(0);
+    expect(within(assignmentArea()).getByText('종결된 인시던트라 담당자를 바꾸지 않습니다.')).toBeInTheDocument();
+  });
+
+  it('머리: 미종결이면 경과와 착수 지연, 종결이면 처리 시간', async () => {
+    const first = renderDetail('/incidents/42/rank/1', {
+      detail: openDetail,
+      meta: {
+        ...DEFAULT_META,
+        sourceType: 'live',
+        detectedAt: '2026-11-20T21:00:00Z',
+        anchor: '2026-11-21T00:12:00Z',
+        ackDueAt: '2026-11-20T21:30:00Z',
+        ackOverdue: true,
+      },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(within(header()).getByText('경과')).toBeInTheDocument();
+    expect(within(header()).getByText('3시간 12분')).toBeInTheDocument();
+    expect(within(header()).getByText('착수 지연')).toBeInTheDocument();
+    first.unmount();
+
+    renderDetail('/incidents/42/rank/1', {
+      detail: (d) => ({
+        ...d,
+        currentStatus: 'closed',
+        currentResolution: 'benign',
+        canTransition: false,
+        nextAllowedStatus: null,
+        statusUpdatedAt: '2026-11-12T06:30:00Z',
+      }),
+      meta: { ...DEFAULT_META, detectedAt: '2026-11-12T02:27:00Z', anchor: '2026-11-21T00:00:00Z' },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(within(header()).getByText('처리')).toBeInTheDocument();
+    expect(within(header()).getByText('4시간 3분')).toBeInTheDocument();
+    expect(within(header()).queryByText('착수 지연')).toBeNull();
+  });
+
+  it('이력 타임라인: 담당 변경을 상태 변경과 시간순으로, 종류 표지(지정·변경·해제)와 변경자를 보인다', async () => {
+    const user = userEvent.setup();
+    renderDetail('/incidents/42/rank/1', {
+      assignmentHistory: [
+        { jobId: 42, from: kim, to: null, actorDisplay: '김분석 (analyst2)', reason: 'manual', changedAt: '2026-11-19T00:00:00Z' },
+        { jobId: 42, from: me, to: kim, actorDisplay: '관리자 (admin)', reason: 'manual', changedAt: '2026-11-18T03:00:00Z' },
+        { jobId: 42, from: null, to: me, actorDisplay: '분석가1 (analyst1)', reason: 'auto_on_start', changedAt: '2026-11-18T01:59:00Z' },
+      ],
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    await user.click(screen.getByRole('tab', { name: '이력' }));
+    const items = within(screen.getByRole('list', { name: '이력 타임라인' })).getAllByRole('listitem');
+    const texts = items.map((li) => li.textContent ?? '');
+    const iAssign = texts.findIndex((t) => t.includes('담당 지정'));
+    const iChange = texts.findIndex((t) => t.includes('담당 변경'));
+    const iClear = texts.findIndex((t) => t.includes('담당 해제'));
+    expect(iAssign).toBeGreaterThanOrEqual(0);
+    expect(iAssign).toBeLessThan(iChange);
+    expect(iChange).toBeLessThan(iClear);
+    expect(texts[iAssign]).toContain('미배정');
+    expect(texts[iAssign]).toContain('조사 시작 때 자동 지정');
+    expect(texts[iChange]).toContain('변경자 관리자 (admin)');
+    expect(texts[iClear]).toMatch(/김분석.*미배정/);
+  });
+});
+
+describe('T25 buildTimeline 합치기', () => {
+  it('상태·담당 이력을 시각으로 섞고, 같은 시각이면 상태 → 담당 순서, 시각 없음은 맨 뒤', () => {
+    const status = [
+      { jobId: 1, fromStatus: 'open', toStatus: 'investigating', resolution: null, actorDisplay: 'a', reason: 'r', changedAt: '2026-11-18T01:00:00Z' },
+    ];
+    const review = { present: false } as IncidentDetailView['analystReview'];
+    const a = { username: 'a', displayName: 'A', enabled: true };
+    const assignments: AssignmentHistoryItem[] = [
+      { jobId: 1, from: null, to: a, actorDisplay: 'a', reason: 'auto_on_start', changedAt: '2026-11-18T01:00:00Z' },
+      { jobId: 1, from: null, to: null, actorDisplay: 'a', reason: 'manual', changedAt: null },
+      { jobId: 1, from: a, to: null, actorDisplay: 'a', reason: 'manual', changedAt: '2026-11-17T00:00:00Z' },
+    ];
+    const ev = buildTimeline(status as never, review, assignments);
+    expect(ev.map((e) => `${e.kind}@${e.at}`)).toEqual([
+      'assignment@2026-11-17T00:00:00Z',
+      'status@2026-11-18T01:00:00Z',
+      'assignment@2026-11-18T01:00:00Z',
+      'assignment@null',
+    ]);
+    expect(assignmentKindLabel(assignments[0])).toBe('담당 지정');
+    expect(assignmentKindLabel(assignments[2])).toBe('담당 해제');
+    expect(assignmentKindLabel({ ...assignments[2], to: { username: 'b', displayName: 'B', enabled: true } })).toBe('담당 변경');
   });
 });

@@ -16,6 +16,7 @@ import {
   SourceTypeBadge,
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
+import { AckOverdueBadge, elapsedText } from './AssignmentBits';
 
 function Field({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
@@ -46,6 +47,8 @@ export function DetailHeader({
   const priority = meta?.priority ?? null;
   const jobWhen = detail.job ? (detail.job.finishedAt ?? detail.job.startedAt) : null;
   const capture = captureInfo(incident.captureId);
+  // T25: 미종결이면 탐지 뒤 경과(기준 시각까지), 종결이면 처리 시간(종결 = 상태 갱신 시각)
+  const elapsed = elapsedText(meta?.detectedAt ?? null, detail.currentStatus, detail.statusUpdatedAt, meta?.anchor ?? null);
   const timeTitle = [
     // T20: 캡처 표시 이름(zeek_AD Q65)과 원래 ID. 헤더 배치는 바꾸지 않고 툴팁에만 둔다.
     `캡처 ${capture.text}${capture.known && capture.raw ? ` · ${capture.raw}` : ''}`,
@@ -104,6 +107,17 @@ export function DetailHeader({
         <Field label="탐지" title="인시던트가 처음 탐지된 분석 완료 시각">
           <span className="tabular-nums text-slate-200">{formatDateTime(meta?.detectedAt ?? null)}</span>
         </Field>
+        {elapsed && (
+          <Field
+            label={elapsed.kind === 'handled' ? '처리' : '경과'}
+            title={elapsed.kind === 'handled' ? '처리 시간: 종결 시각 − 탐지 시각' : '탐지 뒤 경과(기준 시각까지)'}
+          >
+            <span className="tabular-nums text-slate-200" data-detail-elapsed="">
+              {elapsed.kind === 'handled' ? elapsed.text.replace(/^처리 /, '') : elapsed.text}
+            </span>
+            {meta?.ackOverdue && <AckOverdueBadge dueAt={meta?.ackDueAt} />}
+          </Field>
+        )}
         <Field label="캡처 내 순위">
           <span className="tabular-nums text-slate-200">{incident.queueRank}위</span>
         </Field>

@@ -198,7 +198,9 @@ export function IncidentDetailPage() {
   );
 
   const readOnly = user?.role === 'VIEWER';
-  const timeline = current ? buildTimeline(current.statusHistory, current.analystReview) : [];
+  const timeline = current
+    ? buildTimeline(current.statusHistory, current.analystReview, data?.assignmentHistory ?? [])
+    : [];
 
   return (
     <AppShell
@@ -242,6 +244,10 @@ export function IncidentDetailPage() {
                 readOnly={readOnly}
                 onRefresh={loadDetail}
                 onShowHistory={() => selectTab('history')}
+                assignment={data?.assignment ?? null}
+                assignmentHistory={data?.assignmentHistory ?? []}
+                canAssign={Boolean(data?.canAssign)}
+                currentUsername={user?.username ?? null}
               />
             </aside>
 
@@ -293,7 +299,7 @@ export function IncidentDetailPage() {
                   {t.key === 'decision' && <SendDecisionSection sendDecision={current.sendDecision} />}
                   {t.key === 'slack' && <SlackThreadsSection threadGroups={current.slackThreadGroups} />}
                   {t.key === 'history' && (
-                    <HistoryTimeline events={timeline} emptyText="아직 상태 변경·에스컬레이션 이력이 없습니다." />
+                    <HistoryTimeline events={timeline} emptyText="아직 상태 변경·에스컬레이션·담당 이력이 없습니다." />
                   )}
                 </div>
               ))}

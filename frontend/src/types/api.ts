@@ -115,6 +115,13 @@ export interface IncidentQueueResponse {
 export type QueuePriority = 'high' | 'medium' | 'low';
 export type SourceType = 'live' | 'imported';
 
+/** T25 담당자 한 사람. enabled=false면 "비활성" 표지 */
+export interface AssigneeRef {
+  username: string;
+  displayName: string;
+  enabled: boolean;
+}
+
 /** 통합 큐 한 행: 큐 행 필드 + 서버가 계산한 탐지 시각·수집원 종류·우선순위·진행 중 */
 export interface UnifiedQueueItem extends IncidentQueueItem {
   detectedAt: string | null;
@@ -122,6 +129,12 @@ export interface UnifiedQueueItem extends IncidentQueueItem {
   /** 종결이면 null */
   priority: QueuePriority | null;
   ongoing: boolean;
+  /** T25 담당자(없으면 null = 미배정) */
+  assignee?: AssigneeRef | null;
+  /** T25 착수 목표 시각(실습망·신규·우선순위 있음이 아니면 null) */
+  ackDueAt?: string | null;
+  /** T25 착수 지연 */
+  ackOverdue?: boolean;
 }
 
 export interface UnifiedQueueSummary {
@@ -132,6 +145,8 @@ export interface UnifiedQueueSummary {
   reviewPending: number;
   alerted: number;
   byStatus: Record<string, number>;
+  /** T25 착수 지연 수(띠 축을 뺀 집합) */
+  overdue?: number;
 }
 
 export interface QueueSource {
@@ -193,6 +208,32 @@ export interface IncidentQueueMeta {
   ongoing: boolean;
   latestJobId: number | null;
   latestQueueRank: number | null;
+  /** T25: 경과를 셀 기준 시각, 착수 목표 시각, 착수 지연 */
+  anchor?: string | null;
+  ackDueAt?: string | null;
+  ackOverdue?: boolean;
+}
+
+/** T25 현재 담당. assignee가 null이면 미배정 */
+export interface IncidentAssignment {
+  assignee: AssigneeRef | null;
+  assignedAt: string | null;
+  assignedByDisplay: string | null;
+}
+
+/** T25 담당 변경 이력 한 행(from·to가 null이면 미배정). reason: manual · auto_on_start */
+export interface AssignmentHistoryItem {
+  jobId: number | null;
+  from: AssigneeRef | null;
+  to: AssigneeRef | null;
+  actorDisplay: string | null;
+  reason: string;
+  changedAt: string | null;
+}
+
+export interface AssigneeCandidate {
+  username: string;
+  displayName: string;
 }
 
 export interface IncidentModelScore {
@@ -387,6 +428,10 @@ export interface IncidentDetailApiResponse {
   detail: IncidentDetailView;
   /** T23: 수집원·탐지 시각·서버 우선순위·진행 중(없으면 null) */
   queueMeta?: IncidentQueueMeta | null;
+  /** T25: 현재 담당, 담당 이력(시간 역순), 담당을 바꿀 수 있는지(분석가·관리자이고 종결 아님) */
+  assignment?: IncidentAssignment | null;
+  assignmentHistory?: AssignmentHistoryItem[];
+  canAssign?: boolean;
 }
 
 export interface AnalystReviewItem {
@@ -486,6 +531,47 @@ export interface OperationsApiResponse {
   latestJobs?: LatestJobs[];
   /** 허용 캡처 전체와 수집원 종류(조건 줄 선택지) */
   sources?: QueueSource[];
+  /** T25: period가 있을 때만 */
+  handlingTimes?: HandlingTimes;
+  /** T25: 지금의 담당 현황(기간 무관) */
+  workload?: Workload;
+}
+
+/** T25 한 지표: 건수, 중앙값·p90(초, n = 0이면 null), 제외, 표본 부족 */
+export interface TimeStat {
+  n: number;
+  medianSeconds: number | null;
+  p90Seconds: number | null;
+  excluded: number;
+  smallSample: boolean;
+}
+
+export interface ResolutionStat {
+  /** true_positive · false_positive · benign · none */
+  resolution: string;
+  stat: TimeStat;
+}
+
+export interface HandlingTimes {
+  detection: TimeStat;
+  acknowledge: TimeStat;
+  resolve: { all: TimeStat; byResolution: ResolutionStat[] };
+}
+
+export interface AssigneeLoad {
+  username: string;
+  displayName: string;
+  enabled: boolean;
+  open: number;
+  investigating: number;
+}
+
+export interface Workload {
+  unclosed: number;
+  assigned: number;
+  unassigned: number;
+  ackOverdue: number;
+  byAssignee: AssigneeLoad[];
 }
 
 /** T24 탐지 작업 요약(VIEWER면 오류 글의 IP가 가려진다). error는 실패 작업에만 있다 */

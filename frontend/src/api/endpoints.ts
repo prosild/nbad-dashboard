@@ -1,6 +1,8 @@
 import { apiRequest } from './client';
 import type {
   ActionResultResponse,
+  AssigneeCandidate,
+  IncidentAssignment,
   AdminAuditLogsResponse,
   AdminUserMutationResponse,
   AdminUsersListResponse,
@@ -116,6 +118,15 @@ export const incidentsApi = {
       method: 'POST',
       body,
     }),
+  /** T25 담당 지정·변경·해제. assignee null = 해제, expected = 화면이 본 담당자 */
+  assign: (jobId: number | string, queueRank: number | string, body: { assignee: string | null; expected: string | null }) =>
+    apiRequest<{ assignment: IncidentAssignment }>(`/api/incidents/${jobId}/rank/${queueRank}/assignment`, {
+      method: 'POST',
+      body,
+    }),
+  /** T25 담당자가 될 수 있는 사용자(분석가·관리자만 부른다) */
+  assignees: (jobId: number | string, queueRank: number | string) =>
+    apiRequest<{ assignees: AssigneeCandidate[] }>(`/api/incidents/${jobId}/rank/${queueRank}/assignees`),
 };
 
 export const timeApi = {

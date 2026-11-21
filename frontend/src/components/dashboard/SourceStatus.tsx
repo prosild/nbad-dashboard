@@ -421,7 +421,7 @@ function SensorTableRows({
         <td className="soc-td soc-num">{formatNumber(sensor.high)}</td>
         <td className="soc-td soc-num">{formatNumber(sensor.alerted)}</td>
         <td className="soc-td soc-num">{formatNumber(sensor.failedJobs)}</td>
-        <td className="soc-td max-w-xs break-all text-amber-200">{sensor.latestJob?.error || '-'}</td>
+        <ErrorCell error={sensor.latestJob?.error} />
       </tr>
       {captures.map((c) => (
         <CaptureTableRow key={c.captureId} row={c} anchor={anchor} shortNames={shortNames} indent />
@@ -466,7 +466,22 @@ function CaptureTableRow({
       <td className="soc-td soc-num">{formatNumber(row.high)}</td>
       <td className="soc-td soc-num">{formatNumber(row.alerted)}</td>
       <td className="soc-td soc-num">{formatNumber(row.failedJobs)}</td>
-      <td className="soc-td max-w-xs break-all text-amber-200">{row.latestJob?.error || '-'}</td>
+      <ErrorCell error={row.latestJob?.error} />
     </tr>
+  );
+}
+
+/**
+ * 수집원 상태 표의 오류 칸(T25, T24 후속): 한 줄 말줄임, 전체 글은 툴팁. 서버가 VIEWER에게는 IPv4를 가린 글을 주므로
+ * 툴팁도 가려진 글이다.
+ */
+function ErrorCell({ error }: { error: string | null | undefined }) {
+  if (!error) {
+    return <td className="soc-td text-amber-200">-</td>;
+  }
+  return (
+    <td className="soc-td max-w-xs text-amber-200" title={error} data-error-cell="">
+      <span className="block truncate">{error}</span>
+    </td>
   );
 }

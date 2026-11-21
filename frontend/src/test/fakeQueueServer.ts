@@ -23,11 +23,15 @@ export interface FakeQueueOptions {
   availableModels?: string[];
   availableRoles?: string[];
   maskedView?: boolean;
+  /** T25: assignee=me가 가리킬 로그인 사용자 이름(기본 analyst1) */
+  me?: string;
 }
 
 export function unified(
   base: IncidentQueueItem,
-  extra: Partial<Pick<UnifiedQueueItem, 'detectedAt' | 'sourceType' | 'priority' | 'ongoing'>> = {},
+  extra: Partial<
+    Pick<UnifiedQueueItem, 'detectedAt' | 'sourceType' | 'priority' | 'ongoing' | 'assignee' | 'ackDueAt' | 'ackOverdue'>
+  > = {},
 ): UnifiedQueueItem {
   return {
     ...base,
@@ -35,6 +39,9 @@ export function unified(
     sourceType: extra.sourceType ?? (base.captureId.startsWith('lab-') ? 'live' : 'imported'),
     priority: extra.priority === undefined ? 'low' : extra.priority,
     ongoing: extra.ongoing ?? false,
+    assignee: extra.assignee ?? null,
+    ackDueAt: extra.ackDueAt ?? null,
+    ackOverdue: extra.ackOverdue ?? false,
   };
 }
 
@@ -110,6 +117,9 @@ function filterBase(items: UnifiedQueueItem[], p: URLSearchParams, opts: FakeQue
     if (p.get('hasReport') === 'false' && it.hasReport) return false;
     if (p.get('wouldSend') === 'true' && !it.zeekadWouldSend) return false;
     if (p.get('wouldSend') === 'false' && it.zeekadWouldSend) return false;
+    // T25 담당 조건(일반 조건)
+    if (p.get('assignee') === 'me' && it.assignee?.username !== (opts.me ?? 'analyst1')) return false;
+    if (p.get('assignee') === 'none' && it.assignee) return false;
     const asset = (p.get('asset') ?? '').toLowerCase();
     if (asset && !it.hostIp.toLowerCase().includes(asset) && !it.hostName.some((h) => h.toLowerCase().includes(asset)))
       return false;
@@ -122,6 +132,7 @@ function filterStrip(items: UnifiedQueueItem[], p: URLSearchParams): UnifiedQueu
     if (p.get('priority') && it.priority !== p.get('priority')) return false;
     if (p.get('reviewPending') === 'true' && !it.zeekadReviewPending) return false;
     if (p.get('alerted') === 'true' && !it.alerted) return false;
+    if (p.get('overdue') === 'true' && !it.ackOverdue) return false;
     return true;
   });
 }
@@ -162,6 +173,7 @@ export function fakeQueue(url: string, opts: FakeQueueOptions): UnifiedQueueResp
       reviewPending: base.filter((i) => i.zeekadReviewPending).length,
       alerted: base.filter((i) => i.alerted).length,
       byStatus,
+      overdue: base.filter((i) => i.ackOverdue).length,
     },
     anchor: opts.anchor ?? '2026-11-21T00:00:00Z',
     anchorMode: opts.snapshot ? 'latest-data' : 'now',

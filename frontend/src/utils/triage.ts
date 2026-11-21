@@ -93,8 +93,15 @@ export function parseSource(raw: string | null | undefined): SourceType | null {
 
 /** 필터 패널의 거르기(칩으로 보인다) */
 export const PANEL_FILTER_KEYS = ['pickedBy', 'role', 'status', 'hasReport', 'wouldSend', 'asset'] as const;
-/** 요약 띠의 거르기(띠를 눌러 켜고 끈다) */
-export const STRIP_FILTER_KEYS = ['priority', 'reviewPending', 'alerted'] as const;
+/** 요약 띠의 거르기(띠를 눌러 켜고 끈다). overdue = 착수 지연(T25) */
+export const STRIP_FILTER_KEYS = ['priority', 'reviewPending', 'alerted', 'overdue'] as const;
+
+/** 담당 조건(T25): 전체(null) · 내 담당 · 미배정 */
+export type AssigneeFilter = 'me' | 'none';
+
+export function parseAssignee(raw: string | null | undefined): AssigneeFilter | null {
+  return raw === 'me' || raw === 'none' ? raw : null;
+}
 
 export interface QueueQuery {
   period: Period;
@@ -103,6 +110,10 @@ export interface QueueQuery {
   priority: Priority | null;
   reviewPending: boolean;
   alerted: boolean;
+  /** T25 착수 지연만 */
+  overdue: boolean;
+  /** T25 담당 조건 */
+  assignee: AssigneeFilter | null;
   pickedBy: string;
   role: string;
   status: string;
@@ -129,6 +140,8 @@ export function parseQueueQuery(params: URLSearchParams): QueueQuery {
     priority: PRIORITY_VALUES.includes(priorityRaw as Priority) ? (priorityRaw as Priority) : null,
     reviewPending: params.get('reviewPending') === 'true',
     alerted: params.get('alerted') === 'true',
+    overdue: params.get('overdue') === 'true',
+    assignee: parseAssignee(params.get('assignee')),
     pickedBy: params.get('pickedBy') ?? '',
     role: params.get('role') ?? '',
     status: params.get('status') ?? '',
@@ -155,6 +168,8 @@ export function queueApiParams(
     priority: q.priority ?? undefined,
     reviewPending: q.reviewPending ? 'true' : undefined,
     alerted: q.alerted ? 'true' : undefined,
+    overdue: q.overdue ? 'true' : undefined,
+    assignee: q.assignee ?? undefined,
     pickedBy: q.pickedBy || undefined,
     role: q.role || undefined,
     status: q.status || undefined,

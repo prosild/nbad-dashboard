@@ -186,13 +186,14 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(screen.getByRole('button', { name: '24시간' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('열: 우선순위·탐지 시각·호스트·수집원·발생 시각·탐지 모델·리포트·상태·에스컬레이션·세션 수. 캡처 안 순위 열은 없다', async () => {
+  it('열: 우선순위·탐지 · 경과·호스트·수집원·발생 시각·탐지 모델·리포트·상태·담당·에스컬레이션·세션 수. 캡처 안 순위 열은 없다', async () => {
     renderQueue();
     await ready();
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    // T25: "탐지 시각" → "탐지 · 경과", 상태 · 판정 뒤에 "담당"
     expect(headers).toEqual([
       '우선순위',
-      '탐지 시각',
+      '탐지 · 경과',
       '호스트',
       '수집원',
       '통신 방향',
@@ -200,6 +201,7 @@ describe('통합 인시던트 큐(T23)', () => {
       '탐지 모델',
       '리포트·판단',
       '상태 · 판정',
+      '담당',
       '에스컬레이션',
       '세션 수',
     ]);
@@ -489,9 +491,10 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row1).getByText('ws-01.lab')).toHaveAttribute('title', 'ws-01.lab, WS-01$');
     expect(within(row1).getByText('외 1')).toBeInTheDocument();
     expect(row1).toHaveAttribute('title', '통신 방향 출발지 · 세션 10건 · 에스컬레이션 -');
-    // 탐지 시각: 기준 시각(01:30Z)에서 1시간 29분 전 → "1시간 전", 절대 시각은 툴팁(KST)
-    expect(within(row1).getByText('1시간 전')).toBeInTheDocument();
-    expect(within(row1).getByTitle('탐지 시각 2026-11-20 09:01:00')).toBeInTheDocument();
+    // T25 탐지 · 경과: 탐지 시각(같은 해면 연도 생략)과 기준 시각(01:30Z)까지 경과 1시간 29분. 전체 시각은 툴팁(KST)
+    expect(within(row1).getByText('1시간 29분')).toBeInTheDocument();
+    expect(within(row1).queryByText('1시간 전')).toBeNull();
+    expect(within(row1).getByTitle('탐지 시각 2026-11-20 09:01:00')).toHaveTextContent('11-20 09:01');
     // T23 7절: 수집원은 한 줄(아이콘 + 표시 이름). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 있다.
     // T26(T23 review-4 L2): 역할 없는 span의 aria-label 속성이 아니라, 실제로 계산된 행의 접근성 이름에 들어 있어야 한다.
     expect(row1).toHaveAccessibleName(/수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed/);
@@ -502,8 +505,8 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(src1).getByText('수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed')).toHaveClass('sr-only');
     expect(within(row1).queryByText('CIC-IDS2017 수요일')).toBeNull();
     expect(within(row1).queryByText('가져온 데이터')).toBeNull();
-    // 탐지 시각은 상대 표시만 글로, 발생 시각은 초 없이(기준 시각과 같은 해면 연도도 뺀다)
-    expect(within(row1).queryByText('11-20 09:01')).toBeNull();
+    // 탐지 시각과 발생 시각은 초 없이(기준 시각과 같은 해면 연도도 뺀다). T25: 탐지 시각도 글로 보인다(경과와 함께)
+    expect(within(row1).getByText('11-20 09:01')).toBeInTheDocument();
     expect(within(row1).getByText('11-18 09:01')).toBeInTheDocument();
     expect(within(row1).queryByText('진행 중')).toBeNull();
     // T21: 행 칩은 발송 판단(wouldSend)이다
@@ -754,5 +757,124 @@ describe('옛 용어 회귀(T23)', () => {
     expect(headers).not.toContain('순위');
     expect(document.body.textContent).not.toMatch(/탐지 작업 #/);
     expect(document.body.textContent).not.toMatch(/\d+위/);
+  });
+});
+
+describe('T25 큐: 담당·탐지 · 경과·착수 지연', () => {
+  const kim = { username: 'analyst2', displayName: '김분석', enabled: true };
+  const me = { username: 'analyst1', displayName: '분석가1', enabled: true };
+  /** 1: 내 담당·착수 지연(실습망 High), 2: 김분석(비활성), 3: 미배정, 10: 종결(처리 시간) */
+  function t25Items(): UnifiedQueueItem[] {
+    const live = (i: number) => ({ ...base(i), captureId: 'lab-20261119', jobId: 50 });
+    return [
+      unified(live(1), {
+        detectedAt: '2026-11-20T21:00:00Z',
+        priority: 'high',
+        assignee: me,
+        ackDueAt: '2026-11-20T21:30:00Z',
+        ackOverdue: true,
+      }),
+      unified(live(2), { detectedAt: '2026-11-20T23:00:00Z', priority: 'high', assignee: { ...kim, enabled: false } }),
+      unified(live(3), { detectedAt: '2026-11-20T23:30:00Z', priority: 'medium' }),
+      unified({ ...live(10), statusUpdatedAt: '2026-11-20T04:03:00Z' }, { detectedAt: '2026-11-20T00:00:00Z', priority: null }),
+    ];
+  }
+  const row = (ip: string) => within(screen.getByRole('table')).getByText(ip).closest('tr') as HTMLElement;
+
+  it('행: 담당 칸(이름·미배정·비활성), 탐지 · 경과(종결이면 처리 N), 착수 지연 표지', async () => {
+    renderQueue('/incidents', { items: t25Items(), anchor: '2026-11-21T00:12:00Z' });
+    await ready();
+    const r1 = row('10.0.1.1');
+    expect(within(r1).getByText('분석가1')).toBeInTheDocument();
+    expect(within(r1).getByText('3시간 12분')).toBeInTheDocument();
+    expect(within(r1).getByText('착수 지연')).toBeInTheDocument();
+    expect(within(r1).getByText('착수 지연').closest('[title]')).toHaveAttribute('title', expect.stringContaining('착수 목표'));
+    const r2 = row('10.0.2.1');
+    expect(within(r2).getByText('김분석')).toBeInTheDocument();
+    expect(within(r2).getByText('비활성')).toBeInTheDocument();
+    expect(within(r2).queryByText('착수 지연')).toBeNull();
+    expect(within(row('10.0.3.1')).getByText('미배정')).toBeInTheDocument();
+    const r10 = row('10.0.10.1');
+    expect(within(r10).getByText('처리 4시간 3분')).toBeInTheDocument();
+    // 1280px 행 한 줄: 발생 시각 · 지속·세션 수·통신 방향은 2xl부터 보인다(지금 정렬 기준이면 숨기지 않는다)
+    expect(r1.querySelector('[data-col="occurrence"]')).toHaveClass('hidden', '2xl:table-cell');
+    expect(r1.querySelector('[data-col="connections"]')).toHaveClass('hidden', '2xl:table-cell');
+    expect(r1.querySelector('[data-col="assignee"]')).not.toHaveClass('hidden');
+    expectAllTablesInScrollBox();
+  });
+
+  it('정렬 기준이 발생 시각이면 그 칸을 숨기지 않는다', async () => {
+    renderQueue('/incidents?sort=start', { items: t25Items() });
+    await ready();
+    expect(row('10.0.1.1').querySelector('[data-col="occurrence"]')).not.toHaveClass('hidden');
+  });
+
+  it('요약 띠 "착수 지연 N"을 누르면 overdue=true가 걸리고 칩이 생긴다. 다시 누르면 풀린다', async () => {
+    const user = userEvent.setup();
+    const { queueCalls } = renderQueue('/incidents', { items: t25Items() });
+    await ready();
+    const chip = screen.getByRole('button', { name: '착수 지연 1건만 보기' });
+    await user.click(chip);
+    expect(params().get('overdue')).toBe('true');
+    await waitFor(() => expect(lastCall(queueCalls).get('overdue')).toBe('true'));
+    await waitFor(() => expect(tableIds()).toEqual([1]));
+    expect(screen.getByRole('button', { name: '착수 지연만 필터 지우기' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '착수 지연 1건만 보기' }));
+    expect(params().get('overdue')).toBeNull();
+  });
+
+  it('담당 선택: 전체·내 담당·미배정. 고르면 assignee가 URL과 API에 실린다', async () => {
+    const user = userEvent.setup();
+    const { queueCalls } = renderQueue('/incidents', { items: t25Items() });
+    await ready();
+    const select = screen.getByRole('combobox', { name: '담당' });
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['전체', '내 담당', '미배정']);
+    await user.selectOptions(select, 'me');
+    expect(params().get('assignee')).toBe('me');
+    await waitFor(() => expect(lastCall(queueCalls).get('assignee')).toBe('me'));
+    await waitFor(() => expect(tableIds()).toEqual([1]));
+    await user.selectOptions(select, 'none');
+    await waitFor(() => expect(tableIds().sort((a, b) => a - b)).toEqual([3, 10]));
+    await user.selectOptions(select, '');
+    expect(params().get('assignee')).toBeNull();
+  });
+
+  it('조회자에게는 "내 담당"이 없다', async () => {
+    const viewerMe = { ...meResponse, user: { ...meResponse.user, username: 'demo', role: 'VIEWER', maskedView: true } };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/auth/me') return json(viewerMe);
+      if (url === '/api/time-context') return json({ anchor: '2026-11-21T00:00:00Z', anchorMode: 'now', snapshot: false });
+      if (url.startsWith('/api/incidents/queue/new-count')) return json(fakeNewCount(url, { items: t25Items() }));
+      if (url.startsWith('/api/incidents/queue')) return json(fakeQueue(url, { items: t25Items() }));
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <MemoryRouter initialEntries={['/incidents']}>
+        <ToastProvider>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+    await ready();
+    const select = screen.getByRole('combobox', { name: '담당' });
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['전체', '미배정']);
+  });
+
+  it('휴대폰 카드: 담당·경과·착수 지연을 보인다', async () => {
+    renderQueue('/incidents', { items: t25Items(), anchor: '2026-11-21T00:12:00Z' });
+    await ready();
+    const list = screen.getByRole('list', { name: '인시던트 목록' });
+    const card = within(list).getAllByRole('listitem').find((li) => li.textContent?.includes('10.0.1.1')) as HTMLElement;
+    const handling = card.querySelector('[data-mobile-handling]') as HTMLElement;
+    expect(within(handling).getByText('분석가1')).toBeInTheDocument();
+    expect(within(handling).getByText('경과 3시간 12분')).toBeInTheDocument();
+    expect(within(handling).getByText('착수 지연')).toBeInTheDocument();
+    const closedCard = within(list).getAllByRole('listitem').find((li) => li.textContent?.includes('10.0.10.1')) as HTMLElement;
+    expect(within(closedCard).getByText('처리 4시간 3분')).toBeInTheDocument();
+    expect(within(closedCard).getByText('미배정')).toBeInTheDocument();
   });
 });

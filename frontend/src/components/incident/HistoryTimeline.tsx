@@ -1,5 +1,5 @@
-import { ArrowRight, CheckCircle2, ClipboardCheck, GitPullRequestArrow, AlertTriangle } from 'lucide-react';
-import type { AnalystReviewView, StatusHistoryItem } from '../../types/api';
+import { ArrowRight, CheckCircle2, ClipboardCheck, GitPullRequestArrow, AlertTriangle, UserCheck } from 'lucide-react';
+import type { AnalystReviewView, AssignmentHistoryItem, StatusHistoryItem } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { reviewReasonText } from '../../utils/labels';
 import { CodeLabel, LookupText, ResolutionBadge, ReviewActionBadge } from '../StatusBadge';
@@ -9,7 +9,15 @@ export type TimelineEvent =
   | { kind: 'reviewRequested'; at: string | null; reason: string | null }
   | { kind: 'reviewDecided'; at: string | null; action: string | null; analyst: string | null }
   | { kind: 'reviewResumed'; at: string | null }
-  | { kind: 'reviewResumeFailed'; at: string | null };
+  | { kind: 'reviewResumeFailed'; at: string | null }
+  | { kind: 'assignment'; at: string | null; item: AssignmentHistoryItem };
+
+/** 담당 변경 종류(T25): 미배정 → 사람 = 지정, 사람 → 미배정 = 해제, 사람 → 사람 = 변경 */
+export function assignmentKindLabel(item: AssignmentHistoryItem): string {
+  if (!item.from) return '담당 지정';
+  if (!item.to) return '담당 해제';
+  return '담당 변경';
+}
 
 function timeOf(iso: string | null): number {
   if (!iso) return Number.POSITIVE_INFINITY;
@@ -19,10 +27,14 @@ function timeOf(iso: string | null): number {
 
 /**
  * 상태 변경 이력과 에스컬레이션 요청·결정·반영을 시간 순서 하나로 합친다(T19 L7). 오래된 것이 위.
- * 시각이 없는 항목은 맨 뒤, 같은 시각은 원래 순서(상태 이력 → 요청 → 결정 → 반영)를 지킨다.
- * 반영 실패는 시각이 없어 결정 시각에 붙인다.
+ * 시각이 없는 항목은 맨 뒤, 같은 시각은 원래 순서(상태 이력 → 요청 → 결정 → 반영 → 담당 변경)를 지킨다.
+ * 반영 실패는 시각이 없어 결정 시각에 붙인다. T25: 담당 변경 이력도 같은 줄에 종류 표지로 넣는다.
  */
-export function buildTimeline(statusHistory: StatusHistoryItem[], review: AnalystReviewView): TimelineEvent[] {
+export function buildTimeline(
+  statusHistory: StatusHistoryItem[],
+  review: AnalystReviewView,
+  assignmentHistory: AssignmentHistoryItem[] = [],
+): TimelineEvent[] {
   const events: TimelineEvent[] = statusHistory.map((item) => ({ kind: 'status', at: item.changedAt, item }));
   if (review.present) {
     events.push({ kind: 'reviewRequested', at: review.requestedAt, reason: review.reviewReason });
@@ -39,6 +51,9 @@ export function buildTimeline(statusHistory: StatusHistoryItem[], review: Analys
         events.push({ kind: 'reviewResumeFailed', at: review.decidedAt });
       }
     }
+  }
+  for (const item of assignmentHistory) {
+    events.push({ kind: 'assignment', at: item.changedAt, item });
   }
   return events
     .map((ev, idx) => ({ ev, idx }))
@@ -96,6 +111,27 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
       return <div className="font-semibold text-slate-100">결정 반영됨(파이프라인)</div>;
     case 'reviewResumeFailed':
       return <div className="font-semibold text-amber-200">결정 반영 실패(관리자 확인 필요)</div>;
+    case 'assignment':
+      return (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="rounded border border-slate-700 px-1.5 text-[11px] text-slate-300">{assignmentKindLabel(ev.item)}</span>
+            <span className="text-slate-400" data-raw="">
+              {ev.item.from ? ev.item.from.displayName : '미배정'}
+            </span>
+            <ArrowRight className="h-3 w-3 text-slate-600" aria-hidden="true" />
+            <span className="font-semibold text-slate-100" data-raw="">
+              {ev.item.to ? ev.item.to.displayName : '미배정'}
+            </span>
+            {ev.item.reason === 'auto_on_start' && (
+              <span className="text-[11px] text-slate-400">조사 시작 때 자동 지정</span>
+            )}
+          </div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            변경자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+          </div>
+        </>
+      );
     default:
       return null;
   }
@@ -107,6 +143,7 @@ const ICONS = {
   reviewDecided: CheckCircle2,
   reviewResumed: CheckCircle2,
   reviewResumeFailed: AlertTriangle,
+  assignment: UserCheck,
 } as const;
 
 export function HistoryTimeline({

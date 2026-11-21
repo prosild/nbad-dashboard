@@ -760,3 +760,124 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     );
   });
 });
+
+describe('T25 운영 현황: 처리 시간·담당 현황', () => {
+  const stat = (n: number, median: number | null, p90: number | null, excluded = 0) => ({
+    n,
+    medianSeconds: median,
+    p90Seconds: p90,
+    excluded,
+    smallSample: n > 0 && n < 10,
+  });
+  const handlingTimes = {
+    detection: stat(12, 3600, 7500, 1),
+    acknowledge: stat(3, 600, 1800, 2),
+    resolve: {
+      all: stat(0, null, null),
+      byResolution: [
+        { resolution: 'true_positive', stat: stat(0, null, null) },
+        { resolution: 'false_positive', stat: stat(0, null, null) },
+        { resolution: 'benign', stat: stat(0, null, null) },
+        { resolution: 'none', stat: stat(0, null, null) },
+      ],
+    },
+  };
+  const workload = {
+    unclosed: 5,
+    assigned: 3,
+    unassigned: 2,
+    ackOverdue: 1,
+    byAssignee: [
+      { username: 'analyst2', displayName: '김분석', enabled: true, open: 1, investigating: 1 },
+      { username: 'old1', displayName: '퇴사자', enabled: false, open: 1, investigating: 0 },
+    ],
+  };
+  const withBlocks = (extra: Record<string, unknown>) => (url: string) =>
+    json({ ...fakeOperations(url), ...extra });
+
+  it('처리 시간: 지표 셋과 판정별 하위 행, 건수·중앙값·p90·제외·표본 부족, 0건은 "-"', async () => {
+    renderAt('/operations', { operations: withBlocks({ handlingTimes, workload }) });
+    const panel = await screen.findByRole('region', { name: '처리 시간' });
+    const det = panel.querySelector('[data-metric="detection"]') as HTMLElement;
+    expect(det).toHaveTextContent('탐지 지연(MTTD)');
+    expect(det).toHaveTextContent('실습망만');
+    expect(det).toHaveTextContent('1시간');
+    expect(det).toHaveTextContent('2시간 5분');
+    expect(within(det).queryByText('표본 부족')).toBeNull();
+    const ack = panel.querySelector('[data-metric="acknowledge"]') as HTMLElement;
+    expect(within(ack).getByText('10분')).toBeInTheDocument();
+    expect(within(ack).getByText('30분')).toBeInTheDocument();
+    expect(within(ack).getByText('표본 부족')).toBeInTheDocument();
+    expect(within(ack).getAllByRole('cell')[3]).toHaveTextContent('2');
+    const res = panel.querySelector('[data-metric="resolve"]') as HTMLElement;
+    expect(within(res).getAllByText('-')).toHaveLength(2);
+    expect(Array.from(panel.querySelectorAll('[data-resolution]')).map((r) => r.querySelector('th')?.textContent)).toEqual([
+      '정탐',
+      '오탐',
+      '정상',
+      '판정 없음',
+    ]);
+    expect(panel).toHaveTextContent('최근 7일');
+    expectAllTablesInScrollBox();
+  });
+
+  it('담당 현황: 미종결·배정·미배정·착수 지연(큐 링크), 담당자별 표(비활성 표지)', async () => {
+    renderAt('/operations?source=live', { operations: withBlocks({ handlingTimes, workload }) });
+    const panel = await screen.findByRole('region', { name: '담당 현황' });
+    expect(panel).toHaveTextContent('미종결5');
+    expect(panel).toHaveTextContent('배정3');
+    expect(panel).toHaveTextContent('미배정2');
+    const link = within(panel).getByRole('link', { name: '착수 지연 1건 인시던트 큐에서 보기' });
+    expect(Object.fromEntries(new URLSearchParams((link.getAttribute('href') ?? '').split('?')[1]))).toEqual({
+      period: 'all',
+      overdue: 'true',
+      source: 'live',
+    });
+    const table = within(panel).getByRole('table');
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('김분석');
+    expect(rows[0]).toHaveTextContent('2');
+    expect(within(rows[1]).getByText('비활성')).toBeInTheDocument();
+    expectAllTablesInScrollBox();
+  });
+
+  it('담당이 없으면 "담당 중인 인시던트 없음", period 없는 응답(handlingTimes 없음)이면 처리 시간 패널이 없다', async () => {
+    renderAt('/operations', {
+      operations: withBlocks({ workload: { unclosed: 4, assigned: 0, unassigned: 4, ackOverdue: 0, byAssignee: [] } }),
+    });
+    const panel = await screen.findByRole('region', { name: '담당 현황' });
+    expect(within(panel).getByText('담당 중인 인시던트 없음')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '처리 시간' })).toBeNull();
+  });
+});
+
+describe('T25 현황판·운영 현황 후속(T24 수락 때 정한 것)', () => {
+  it('최근 인시던트 행의 탐지 모델 이름은 640px 미만에서도 보인다(숨김 클래스 없음)', async () => {
+    renderAt('/');
+    const panel = await screen.findByRole('region', { name: '최근 인시던트' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-recent-row]').length).toBeGreaterThan(0));
+    for (const row of Array.from(panel.querySelectorAll('[data-recent-row]'))) {
+      expect(row.querySelector('.hidden')).toBeNull();
+    }
+  });
+
+  it('경보 발송 상태의 최근 일일 요약은 짧은 수집원 이름이고, 전체 이름은 툴팁·판독기 글자다', async () => {
+    renderAt('/');
+    const panel = await screen.findByRole('region', { name: '경보 발송 상태' });
+    const cap = await waitFor(() => panel.querySelector('[data-alerting-capture]') as HTMLElement);
+    expect(cap).toHaveTextContent('실습 11-20');
+    expect(cap.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^실습 11-20$/);
+    expect(cap).toHaveAttribute('title', '실습망 2026-11-20 · 캡처 ID: lab-20261120');
+    expect(within(cap).getByText('수집원: 실습망 2026-11-20 · 캡처 ID: lab-20261120')).toHaveClass('sr-only');
+  });
+
+  it('수집원 상태 표의 오류 칸은 한 줄 말줄임이고 전체 글은 툴팁이다(VIEWER면 서버가 가린 글)', async () => {
+    renderAt('/operations');
+    const section = await screen.findByRole('region', { name: '수집원 상태 표' });
+    const table = await within(section).findByRole('table');
+    const cell = (table.querySelector('[data-capture-row="syn1-thu"]') as HTMLElement).querySelector('[data-error-cell]') as HTMLElement;
+    expect(cell).toHaveAttribute('title', '근거 API 시간 초과 10.0.0.*');
+    expect(cell.querySelector('span')).toHaveClass('block', 'truncate');
+    expect(cell).not.toHaveClass('break-all');
+  });
+});

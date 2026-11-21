@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, ClipboardCheck, History, Info, RefreshCw, Wrench } from 'lucide-react';
 import { ApiError } from '../../api/client';
 import { incidentsApi } from '../../api/endpoints';
-import type { IncidentDetailView } from '../../types/api';
+import type { AssignmentHistoryItem, IncidentAssignment, IncidentDetailView } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { labelText, reviewReasonText } from '../../utils/labels';
 import {
@@ -25,6 +25,7 @@ import {
   ReviewActionBadge,
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
+import { AssignmentSection } from './AssignmentSection';
 import { buildTimeline, HistoryTimeline } from './HistoryTimeline';
 import { ReviewDecisionButtons } from './ReviewDecisionButtons';
 
@@ -45,12 +46,21 @@ export function ActionPanel({
   readOnly,
   onRefresh,
   onShowHistory,
+  assignment = null,
+  assignmentHistory = [],
+  canAssign = false,
+  currentUsername = null,
 }: {
   detail: IncidentDetailView;
   /** 조회자 계정이면 true */
   readOnly: boolean;
   onRefresh: () => Promise<void>;
   onShowHistory: () => void;
+  /** T25 현재 담당·담당 이력·바꿀 수 있는지(서버 값)·로그인 사용자 */
+  assignment?: IncidentAssignment | null;
+  assignmentHistory?: AssignmentHistoryItem[];
+  canAssign?: boolean;
+  currentUsername?: string | null;
 }) {
   const { notify } = useToast();
   const { incident, analystReview, currentStatus, nextAllowedStatus } = detail;
@@ -117,7 +127,9 @@ export function ActionPanel({
     }
   }
 
-  const statusEvents = buildTimeline(detail.statusHistory, analystReview);
+  const statusEvents = buildTimeline(detail.statusHistory, analystReview, assignmentHistory);
+  /** T25: 조사를 시작하면 미배정일 때 시작한 사람이 담당자가 된다 */
+  const autoAssignHint = nextAllowedStatus === 'investigating' && !assignment?.assignee;
   const recent = statusEvents.slice(-RECENT_HISTORY).reverse();
 
   return (
@@ -143,10 +155,20 @@ export function ActionPanel({
         </div>
       )}
 
+      <AssignmentSection
+        jobId={incident.jobId}
+        queueRank={incident.queueRank}
+        assignment={assignment}
+        canAssign={!readOnly && canAssign}
+        closed={isClosedStatus(currentStatus)}
+        currentUsername={currentUsername}
+        onRefresh={onRefresh}
+      />
+
       {readOnly && (
         <p className="flex items-start gap-1.5 text-xs text-slate-400">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          읽기 전용 계정입니다. 상태 변경과 에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.
+          읽기 전용 계정입니다. 담당 지정·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.
         </p>
       )}
 
@@ -156,6 +178,17 @@ export function ActionPanel({
           <h3 className="soc-subhead">
             상태 변경: {labelText('incidentStatus', currentStatus)} → {labelText('incidentStatus', nextAllowedStatus)}
           </h3>
+
+          {autoAssignHint && (
+            <p
+              role="note"
+              aria-label="담당자 자동 지정 안내"
+              className="flex items-start gap-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-300"
+            >
+              <Info className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
+              조사를 시작하면 내가 담당자로 지정됩니다.
+            </p>
+          )}
 
           {phase === 'pending' && (
             <p

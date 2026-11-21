@@ -204,7 +204,7 @@ export function DashboardPage() {
                 />
                 <SourceStatusList overview={overview} shortNames={shortNames} period={cond.period} />
               </section>
-              <AlertingPanel overview={overview} period={cond.period} className="xl:col-span-2" />
+              <AlertingPanel overview={overview} period={cond.period} shortNames={shortNames} className="xl:col-span-2" />
             </div>
 
             <p className="text-right text-xs text-slate-400">
@@ -450,7 +450,8 @@ function RecentPanel({
                     <span aria-hidden="true">{shortNameOf(shortNames, item.captureId)}</span>
                     <span className="sr-only">{`수집원: ${info.text} · 캡처 ID: ${item.captureId}`}</span>
                   </span>
-                  <DetectionModelName id={item.zeekadPickedBy} className="hidden text-slate-300 sm:inline" />
+                  {/* T25(T24 후속): 640px 미만에서도 탐지 모델 이름을 보인다(줄은 flex-wrap으로 넘긴다) */}
+                  <DetectionModelName id={item.zeekadPickedBy} className="min-w-0 break-words text-slate-300" />
                   <span className="ml-auto flex shrink-0 items-center gap-2">
                     <span className="whitespace-nowrap tabular-nums text-slate-400" title={`탐지 시각 ${formatDateTime(item.detectedAt)}`}>
                       {formatRelativeTo(item.detectedAt, queue.anchor)}
@@ -469,7 +470,17 @@ function RecentPanel({
 
 /* ───────────────────────── 경보 발송 상태 ───────────────────────── */
 
-function AlertingPanel({ overview, period, className = '' }: { overview: DashboardOverviewResponse; period: Period; className?: string }) {
+function AlertingPanel({
+  overview,
+  period,
+  shortNames,
+  className = '',
+}: {
+  overview: DashboardOverviewResponse;
+  period: Period;
+  shortNames: Map<string, string>;
+  className?: string;
+}) {
   const a = overview.alerting;
   const latestAt = a.latestDeliveredAt ?? a.latestCreatedAt;
   return (
@@ -493,7 +504,17 @@ function AlertingPanel({ overview, period, className = '' }: { overview: Dashboa
         <dt className="text-slate-400">최근 일일 요약</dt>
         <dd className="tabular-nums text-slate-100">
           {latestAt ? formatDateTime(latestAt) : '기록 없음'}
-          {a.latestCaptureId && <span className="ml-2 text-slate-400">{captureInfo(a.latestCaptureId).text}</span>}
+          {/* T25(T24 후속): 보이는 글은 짧은 수집원 이름, 전체 이름은 툴팁·판독기 글자 */}
+          {a.latestCaptureId && (
+            <span
+              className="ml-2 text-slate-400"
+              title={`${captureInfo(a.latestCaptureId).text} · 캡처 ID: ${a.latestCaptureId}`}
+              data-alerting-capture=""
+            >
+              <span aria-hidden="true">{shortNameOf(shortNames, a.latestCaptureId)}</span>
+              <span className="sr-only">{`수집원: ${captureInfo(a.latestCaptureId).text} · 캡처 ID: ${a.latestCaptureId}`}</span>
+            </span>
+          )}
         </dd>
         <dt className="text-slate-400">{periodScopeText(period)} 일일 요약</dt>
         <dd className="tabular-nums text-slate-100">{formatNumber(a.summariesInPeriod)}건</dd>

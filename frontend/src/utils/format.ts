@@ -155,3 +155,41 @@ export function formatRelativeTo(iso: string | null | undefined, referenceIso: s
   }
   return `${formatNumber(Math.floor(hours / 24))}일 전`;
 }
+
+/**
+ * 경과·처리 시간(T25): 사람이 읽는 길이. 1분 미만 "1분 미만", 1시간 미만 "N분", 1일 미만 "N시간 M분"(0분이면 "N시간"),
+ * 그 이상 "N일 M시간"(0시간이면 "N일"). 음수·없음은 "-".
+ */
+export function formatElapsed(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+    return '-';
+  }
+  const totalMinutes = Math.floor(seconds / 60);
+  if (totalMinutes < 1) {
+    return '1분 미만';
+  }
+  if (totalMinutes < 60) {
+    return `${totalMinutes}분`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes > 0 ? `${totalHours}시간 ${minutes}분` : `${totalHours}시간`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours > 0 ? `${formatNumber(days)}일 ${hours}시간` : `${formatNumber(days)}일`;
+}
+
+/** 두 ISO 시각의 차이(초). 하나라도 없거나 잘못되면 null */
+export function secondsBetween(fromIso: string | null | undefined, toIso: string | null | undefined): number | null {
+  if (!fromIso || !toIso) {
+    return null;
+  }
+  const from = new Date(fromIso).getTime();
+  const to = new Date(toIso).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to)) {
+    return null;
+  }
+  return Math.floor((to - from) / 1000);
+}
