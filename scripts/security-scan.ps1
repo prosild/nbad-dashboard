@@ -210,7 +210,8 @@ if (-not $SkipE2E -or -not $SkipZap) {
                         $JsonBody = $null,
                         [string]$RawCookie = "",
                         [string]$ProbeId = "",
-                        [switch]$PathAsIs
+                        [switch]$PathAsIs,
+                        [string[]]$ExtraHeaders = @()
                     )
                     $script:httpSeq++
                     $hdrFile = Join-Path $tmpDir "resp-$($script:httpSeq).hdr"
@@ -224,6 +225,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     if ($RawCookie) { $curlArgs += @("-b", $RawCookie) }
                     if ($ProbeId) { $curlArgs += @("-H", "X-E2E-Probe: $ProbeId") }
                     $curlArgs += @("-H", "Accept: application/json, text/html;q=0.9, */*;q=0.8")
+                    foreach ($h in $ExtraHeaders) { $curlArgs += @("-H", $h) }
                     if ($Csrf) {
                         $token = Get-JarCookie $CookieJar "XSRF-TOKEN"
                         if (-not $token) { throw "쿠키 파일에 XSRF-TOKEN이 없습니다: $Url" }
@@ -323,8 +325,9 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     $interrupted = $logLine -match '"is_interrupted":true'
                     $logCode = [regex]::Match($logLine, '"http_code":(\d+)').Groups[1].Value
                     $uniqueId = [regex]::Match($logLine, '"unique_id":"([^"]+)"').Groups[1].Value
+                    $logClientIp = [regex]::Match($logLine, '"client_ip":"([^"]+)"').Groups[1].Value
                     Assert-True ($ruleIds.Count -gt 0 -and $interrupted -and $logCode -eq "403") "$What (WAF 로그 차단 규칙 ID·interrupted·403)"
-                    return "WAF log: unique_id=$uniqueId is_interrupted=true http_code=$logCode ruleIds=[$($ruleIds -join ', ')]"
+                    return "WAF log: unique_id=$uniqueId client_ip=$logClientIp is_interrupted=true http_code=$logCode ruleIds=[$($ruleIds -join ', ')]"
                 }
 
                 function Redact-Cookies([string]$Text) {
@@ -691,6 +694,116 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $immutableCheck = $immutableRes.Output
                 $e2eLogs.Add("[8] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
                 Assert-True ($immutableCheck -match "audit_logs is append-only") "PostgreSQL audit_logs 불변 트리거"
+
+                # [9] 클라이언트 IP·전달 헤더 위조(T14): 방문자가 붙인 X-Real-IP·X-Forwarded-For·Forwarded·X-Forwarded-Host/Prefix가
+                #     감사 로그 client_ip, 리다이렉트 Location, ModSecurity 기록 IP를 바꾸지 못해야 한다.
+                #     감사 로그는 verify-postgres에서 읽기 전용 SELECT로 보고, 기준 id 뒤의 viewer1 행을 id 순으로 각 요청과 짝짓는다.
+                #     관측값을 모두 기록한 다음에 단언한다(실패해도 어떤 헤더가 통했는지 남는다).
+                function Invoke-AuditSelect([string]$Sql) {
+                    return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-AtF", "|", "-c", $Sql))).Output.Trim()
+                }
+                function Test-DocRangeIp([string]$Ip) { return ($Ip -match '^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$') }
+                $script:auditCursor = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                $e2eLogs.Add("[9] audit_logs base id (before [9]) = $($script:auditCursor)")
+                function Get-NewViewerAudit {
+                    $out = Invoke-AuditSelect "SELECT id, action_type, COALESCE(client_ip,'') FROM audit_logs WHERE id > $($script:auditCursor) AND actor_username = 'viewer1' ORDER BY id"
+                    $rows = @($out -split "`r?`n" | Where-Object { $_ } | ForEach-Object {
+                        $p = $_ -split '\|'
+                        [pscustomobject]@{ Id = [long]$p[0]; Action = $p[1]; ClientIp = $p[2] }
+                    })
+                    if ($rows.Count) { $script:auditCursor = $rows[-1].Id }
+                    return $rows
+                }
+                $script:ip9Seq = 0
+                function Invoke-Ip9Login([string]$Label, [string[]]$Headers, [string]$Password) {
+                    $script:ip9Seq++
+                    $jar = Join-Path $tmpDir "ip9-$($script:ip9Seq).cookies"
+                    # CSRF 토큰은 전달 헤더 없이 받는다(위조 헤더가 쿠키 경로 등을 바꿔 로그인 자체를 막는 일을 피한다).
+                    $csrfRes = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $jar -SaveCookies
+                    $res = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $jar -SaveCookies -Csrf `
+                        -JsonBody @{ username = "viewer1"; password = $Password } -ExtraHeaders $Headers
+                    $rows = @(Get-NewViewerAudit)
+                    return [pscustomobject]@{ Label = $Label; Headers = $Headers; CsrfStatus = $csrfRes.Status; Status = $res.Status; Rows = $rows }
+                }
+                function Format-Ip9Rows($Rows) {
+                    if (-not $Rows.Count) { return "(no viewer1 audit row)" }
+                    return (($Rows | ForEach-Object { "#$($_.Id) $($_.Action) client_ip=$($_.ClientIp)" }) -join "; ")
+                }
+
+                # 9a 기준
+                $ip9Base = Invoke-Ip9Login "9a baseline (no forwarding headers)" @() $bootstrapPwd
+                $ip9BaseRow = @($ip9Base.Rows | Where-Object { $_.Action -eq "LOGIN_SUCCESS" }) | Select-Object -Last 1
+                $ipB = if ($ip9BaseRow) { $ip9BaseRow.ClientIp } else { "" }
+                $e2eLogs.Add("[9a] viewer1 login without forwarding headers -> HTTP $($ip9Base.Status); audit: $(Format-Ip9Rows $ip9Base.Rows); B=$ipB")
+
+                # 9b 헤더 하나씩(IP 계열) + 조합
+                $ip9Combined = @("X-Real-IP: 203.0.113.7", "X-Forwarded-For: 198.51.100.8", "Forwarded: for=192.0.2.9", "X-Forwarded-Host: evil.example", "X-Forwarded-Prefix: /evil")
+                $ip9Cases = @(
+                    @{ Label = "9b X-Real-IP only"; Headers = @("X-Real-IP: 203.0.113.7"); Single = $true },
+                    @{ Label = "9b X-Forwarded-For only"; Headers = @("X-Forwarded-For: 198.51.100.8"); Single = $true },
+                    @{ Label = "9b Forwarded: for= only"; Headers = @("Forwarded: for=192.0.2.9"); Single = $true },
+                    @{ Label = "9b combined (3 IP headers + X-Forwarded-Host + X-Forwarded-Prefix)"; Headers = $ip9Combined; Single = $false }
+                )
+                $ip9Results = [System.Collections.Generic.List[object]]::new()
+                $ip9SpoofWorked = 0
+                $ip9Undecided = 0
+                foreach ($case in $ip9Cases) {
+                    $r = Invoke-Ip9Login $case.Label $case.Headers $bootstrapPwd
+                    $okRow = @($r.Rows | Where-Object { $_.Action -eq "LOGIN_SUCCESS" }) | Select-Object -Last 1
+                    $ip = if ($okRow) { $okRow.ClientIp } else { "" }
+                    $verdict = if ($r.Status -ne 200) { "UNDECIDED(login HTTP $($r.Status))" }
+                        elseif (-not $okRow) { "UNDECIDED(no LOGIN_SUCCESS row)" }
+                        elseif ($ip -eq $ipB) { "NOT_SPOOFED(=B)" }
+                        elseif (Test-DocRangeIp $ip) { "SPOOFED($ip)" }
+                        else { "DIFFERENT_FROM_B($ip)" }
+                    if ($case.Single -and $verdict.StartsWith("SPOOFED")) { $ip9SpoofWorked++ }
+                    if ($case.Single -and $verdict.StartsWith("UNDECIDED")) { $ip9Undecided++ }
+                    $ip9Results.Add([pscustomobject]@{ Label = $case.Label; Status = $r.Status; Ip = $ip; Verdict = $verdict })
+                    $e2eLogs.Add("[$($case.Label)] headers=[$($case.Headers -join ' | ')] -> csrf HTTP $($r.CsrfStatus), login HTTP $($r.Status); audit: $(Format-Ip9Rows $r.Rows); verdict=$verdict")
+                }
+                $e2eLogs.Add("[9b] summary: IP-header single requests spoofed=$ip9SpoofWorked undecided=$ip9Undecided (of 3)")
+
+                # 9c 위조 헤더 + 틀린 비밀번호 1회(잠금 한도 5회에 닿지 않게)
+                $ip9Fail = Invoke-Ip9Login "9c combined headers, wrong password" $ip9Combined "wrong-$(New-RandomToken 8)"
+                $failRow = @($ip9Fail.Rows | Where-Object { $_.Action -eq "LOGIN_FAILURE" }) | Select-Object -Last 1
+                $failIp = if ($failRow) { $failRow.ClientIp } else { "" }
+                $e2eLogs.Add("[9c] viewer1 wrong password with combined headers -> HTTP $($ip9Fail.Status); audit: $(Format-Ip9Rows $ip9Fail.Rows)")
+
+                # 9d 비인증 리다이렉트 Location(호스트·경로 위조 단독)
+                $redirBase = Invoke-Http -Url "$baseHttps/incidents"
+                $redirBaseLoc = Get-HeaderValue $redirBase "Location"
+                $e2eLogs.Add("[9d] unauthenticated GET /incidents (no forwarding headers) -> HTTP $($redirBase.Status) Location=$redirBaseLoc")
+                $redirResults = [System.Collections.Generic.List[object]]::new()
+                foreach ($h in @("X-Forwarded-Host: evil.example", "Forwarded: host=evil.example;proto=http", "X-Forwarded-Prefix: /evil")) {
+                    $rr = Invoke-Http -Url "$baseHttps/incidents" -ExtraHeaders @($h)
+                    $rrLoc = Get-HeaderValue $rr "Location"
+                    $redirResults.Add([pscustomobject]@{ Header = $h; Status = $rr.Status; Location = $rrLoc })
+                    $e2eLogs.Add("[9d] unauthenticated GET /incidents with '$h' -> HTTP $($rr.Status) Location=$rrLoc")
+                }
+
+                # 9e 조합 헤더를 붙인 WAF 차단 요청의 ModSecurity 기록 IP
+                $wafIpEvidence = ""
+                $wafIpError = ""
+                try {
+                    $wafIpRes = Invoke-Http -Url "$baseHttps/api/incidents?asset=%27%20OR%201%3D1--" -ProbeId "e2e-ip9-sqli" -ExtraHeaders $ip9Combined
+                    $wafIpEvidence = Assert-WafBlocked $wafIpRes "e2e-ip9-sqli" "WAF query SQLi with forged forwarding headers"
+                } catch { $wafIpError = $_.Exception.Message }
+                $wafLogIp = [regex]::Match($wafIpEvidence, 'client_ip=(\S+)').Groups[1].Value
+                $e2eLogs.Add("[9e] WAF block with combined forged headers: $(if ($wafIpEvidence) { $wafIpEvidence } else { "ERROR $wafIpError" }); ModSecurity client_ip=$wafLogIp")
+
+                # 단언(관측값 기록 뒤)
+                Assert-Status $ip9Base 200 "[9a] 전달 헤더 없는 viewer1 로그인"
+                Assert-True ([bool]$ipB -and -not (Test-DocRangeIp $ipB)) "[9a] 기준 IP B가 있고 문서용 대역이 아님 (B=$ipB)"
+                foreach ($res9 in $ip9Results) {
+                    Assert-True ($res9.Status -eq 200 -and $res9.Ip -eq $ipB) "[$($res9.Label)] 로그인 200이고 감사 로그 client_ip=B (실제 HTTP $($res9.Status), client_ip=$($res9.Ip), B=$ipB)"
+                }
+                Assert-True ($ip9Fail.Status -eq 401 -and $failIp -eq $ipB) "[9c] 위조 헤더 실패 로그인 401이고 LOGIN_FAILURE client_ip=B (실제 HTTP $($ip9Fail.Status), client_ip=$failIp)"
+                Assert-Status $redirBase 302 "[9d] 비인증 GET /incidents"
+                foreach ($rr in $redirResults) {
+                    Assert-True ($rr.Status -eq 302 -and $rr.Location -eq $redirBaseLoc -and $rr.Location -notmatch 'evil') "[9d] '$($rr.Header)' Location이 헤더 없는 Location과 같고 evil 없음 (실제 $($rr.Status) $($rr.Location))"
+                }
+                Assert-True (-not $wafIpError) "[9e] 조합 헤더 WAF 차단 확인 ($wafIpError)"
+                Assert-True ($wafLogIp -eq $ipB) "[9e] ModSecurity 감사 로그 client_ip=B (실제 $wafLogIp, B=$ipB)"
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
