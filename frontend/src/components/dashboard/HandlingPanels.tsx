@@ -60,7 +60,7 @@ export function HandlingTimesPanel({ times, scope }: { times: HandlingTimes; sco
           중앙값·p90 · 기준 시각 기준
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full min-w-[34rem] border-collapse text-left text-xs">
           <thead>
             <tr>
@@ -140,7 +140,7 @@ export function WorkloadPanel({ workload, overdueLink }: { workload: Workload; o
       {workload.byAssignee.length === 0 ? (
         <p className="text-xs text-slate-400">담당 중인 인시던트 없음</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-[22rem] border-collapse text-left text-xs">
             <caption className="sr-only">담당자별 미종결 인시던트 수</caption>
             <thead>

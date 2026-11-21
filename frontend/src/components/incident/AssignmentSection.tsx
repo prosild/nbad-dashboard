@@ -72,7 +72,7 @@ export function AssignmentSection({
     }
   }
 
-  const options = (candidates ?? []).filter((c) => c.username !== assignee?.username);
+  const options = (candidates ?? []).filter((c) => c.username.toLowerCase() !== (assignee?.username ?? "").toLowerCase());
 
   return (
     <div className="space-y-2" aria-label="담당" role="group">
