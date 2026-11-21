@@ -1173,12 +1173,12 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($fw27 -match '(?m)^3\|incident refs\|t$') "[T27a] 앱 DB에 V3 적용"
     Assert-True ($latestIds27.Count -gt 0 -and $missing27.Count -eq 0) "[T27a] 시작 동기화 뒤 최신 큐 모든 인시던트에 번호"
 
-    # [T27b] 첫 묶음(created_at 최소) 번호 순서 = 탐지 시각(NULL 마지막)·capture_id·incident_id 순(독립 SQL, 문자열은 C 순서)
+    # [T27b] 첫 묶음(created_at 최소) 번호 순서 = 탐지 시각(NULL 마지막)·capture_id·incident_id 순(독립 SQL, 문자열은 코드 순서 ucs_basic)
     $batch27 = @((Invoke-Psql "zeekad_dashboard" "SELECT incident_id FROM incident_refs WHERE created_at = (SELECT MIN(created_at) FROM incident_refs) ORDER BY incident_no").Output.Trim() -split "`r?`n" | Where-Object { $_ })
     $expected27 = @((Invoke-Psql "zeekad" ("SELECT lq.incident_id FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
         "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
         "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id " +
-        "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE `"C`" ASC, lq.incident_id COLLATE `"C`" ASC")).Output.Trim() -split "`r?`n" | Where-Object { $_ })
+        "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE ucs_basic ASC, lq.incident_id COLLATE ucs_basic ASC")).Output.Trim() -split "`r?`n" | Where-Object { $_ })
     $bset27 = @{}; foreach ($b in $batch27) { $bset27[$b] = $true }
     $expInBatch27 = @($expected27 | Where-Object { $bset27.ContainsKey($_) })
     $orderOk27 = (($batch27 -join '|') -eq ($expInBatch27 -join '|'))

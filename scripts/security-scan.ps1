@@ -1293,7 +1293,7 @@ FROM v GROUP BY m ORDER BY m
                 $expected13 = @((Invoke-ZeekadSelect ("SELECT lq.incident_id FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
                     "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
                     "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id " +
-                    "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE `"C`" ASC, lq.incident_id COLLATE `"C`" ASC")) -split "`r?`n" | Where-Object { $_ })
+                    "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE ucs_basic ASC, lq.incident_id COLLATE ucs_basic ASC")) -split "`r?`n" | Where-Object { $_ })
                 $batchSet13 = @{}; foreach ($b in $batch13) { $batchSet13[$b] = $true }
                 $expectedInBatch13 = @($expected13 | Where-Object { $batchSet13.ContainsKey($_) })
                 $e2eLogs.Add("[13c] incident_refs (count, min, max, batches) = $refsCount13`n      first batch ($($batch13.Count)) by incident_no: $($batch13 -join ' ; ')`n      independent order (latest queue $($expected13.Count)): $($expectedInBatch13 -join ' ; ')")
