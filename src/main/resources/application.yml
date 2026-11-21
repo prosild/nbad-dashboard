@@ -74,6 +74,8 @@ dashboard:
     bcrypt-strength: 12
     max-failed-attempts: ${DASHBOARD_MAX_FAILED_ATTEMPTS:5}
     lockout-minutes: ${DASHBOARD_LOCKOUT_MINUTES:15}
+    # T29: 잠금 제외 공유 조회 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 VIEWER 계정만 넣는다.
+    lockout-exempt-usernames: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:}
     idle-timeout-minutes: ${DASHBOARD_IDLE_TIMEOUT_MINUTES:30}
     absolute-timeout-minutes: ${DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES:480}
     totp-issuer: "zeek_AD Dashboard"

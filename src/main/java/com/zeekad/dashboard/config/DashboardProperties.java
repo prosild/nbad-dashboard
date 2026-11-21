@@ -3,6 +3,11 @@ package com.zeekad.dashboard.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 대시보드 애플리케이션 환경 설정 바인딩.
@@ -238,6 +243,11 @@ public class DashboardProperties {
         private long idleTimeoutMinutes = 30;
         private long absoluteTimeoutMinutes = 480;
         private String totpIssuer = "zeek_AD Dashboard";
+        /**
+         * T29 잠금 제외 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 공유 조회(VIEWER) 계정만 넣는다.
+         * 역할 판정은 로그인 때 DB 역할로 하며 VIEWER가 아니면 목록에 있어도 잠긴다(DashboardAuthenticationProvider).
+         */
+        private List<String> lockoutExemptUsernames = new ArrayList<>();
 
         public int getBcryptStrength() {
             return bcryptStrength;
@@ -285,6 +295,29 @@ public class DashboardProperties {
 
         public void setTotpIssuer(String totpIssuer) {
             this.totpIssuer = totpIssuer;
+        }
+
+        public List<String> getLockoutExemptUsernames() {
+            return lockoutExemptUsernames;
+        }
+
+        public void setLockoutExemptUsernames(List<String> lockoutExemptUsernames) {
+            this.lockoutExemptUsernames = lockoutExemptUsernames == null ? new ArrayList<>() : lockoutExemptUsernames;
+        }
+
+        /** 정규화한 잠금 제외 이름(앞뒤 공백 제거·소문자, 빈 항목 버림) */
+        public Set<String> normalizedLockoutExemptUsernames() {
+            return lockoutExemptUsernames.stream()
+                    .filter(v -> v != null)
+                    .map(v -> v.trim().toLowerCase(Locale.ROOT))
+                    .filter(v -> !v.isEmpty())
+                    .collect(Collectors.toUnmodifiableSet());
+        }
+
+        /** 저장 이름(DB users.username)이 잠금 제외 목록에 있는가(대소문자 무시). 역할은 따로 본다. */
+        public boolean isLockoutExemptName(String storedUsername) {
+            return storedUsername != null
+                    && normalizedLockoutExemptUsernames().contains(storedUsername.trim().toLowerCase(Locale.ROOT));
         }
     }
 

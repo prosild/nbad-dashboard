@@ -103,6 +103,16 @@ public interface ZeekadReadMapper {
 
     OffsetDateTime findMaxUnifiedDetectedAt(@Param("c") UnifiedQueueCriteria criteria);
 
+    /** T29 기간 조건 없이 한 번 훑어 기간 안·전체 수와 기간 안 최대·기간 시작 이하 최대 탐지 시각. c의 기간 조건은 비워 넘긴다 */
+    com.zeekad.dashboard.model.zeekad.UnifiedQueuePeriodSplit splitUnifiedQueueByPeriod(
+            @Param("c") UnifiedQueueCriteria criteria,
+            @Param("after") OffsetDateTime after,
+            @Param("until") OffsetDateTime until);
+
+    /** T29 캡처별 최신 큐 인시던트의 가장 늦은 탐지 시각 */
+    List<com.zeekad.dashboard.model.zeekad.CaptureLastDetected> findCaptureLastDetected(
+            @Param("captureIds") List<String> captureIds);
+
     OffsetDateTime findMaxSucceededFinishedAt(@Param("captureIds") List<String> captureIds);
 
     List<CaptureQueueStat> findCaptureQueueStats(@Param("captureIds") List<String> captureIds);

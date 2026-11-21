@@ -9,9 +9,11 @@ import com.zeekad.dashboard.dto.UnifiedQueueResponse;
 import com.zeekad.dashboard.dto.UnifiedQueueRow;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.model.UserRole;
+import com.zeekad.dashboard.model.zeekad.CaptureLastDetected;
 import com.zeekad.dashboard.model.zeekad.CaptureQueueStat;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueuePeriodSplit;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
@@ -136,11 +138,19 @@ public class IncidentQueueService {
         for (CaptureQueueStat s : stats) {
             statByCapture.put(s.getCaptureId(), s);
         }
+        // T29 수집원 목록 마지막 탐지(허용 캡처만)
+        Map<String, OffsetDateTime> lastDetected = new HashMap<>();
+        if (!scope.allowed().isEmpty()) {
+            for (CaptureLastDetected d : zeekadReadMapper.findCaptureLastDetected(scope.allowed())) {
+                lastDetected.put(d.getCaptureId(), d.getLastDetectedAt());
+            }
+        }
         List<UnifiedQueueResponse.Source> sources = scope.allowed().stream()
                 .map(cap -> new UnifiedQueueResponse.Source(
                         cap,
                         timeContextService.sourceType(cap),
-                        statByCapture.get(cap) != null ? statByCapture.get(cap).getLatestJobId() : null))
+                        statByCapture.get(cap) != null ? statByCapture.get(cap).getLatestJobId() : null,
+                        lastDetected.get(cap)))
                 .toList();
         List<String> models = scope.allowed().isEmpty() ? List.of() : zeekadReadMapper.findDistinctLatestPickedBy(scope.allowed());
         List<String> roles = scope.allowed().isEmpty() ? List.of() : zeekadReadMapper.findDistinctLatestRoles(scope.allowed());
@@ -148,7 +158,7 @@ public class IncidentQueueService {
         if (scope.captureIds().isEmpty()) {
             return new UnifiedQueueResponse(List.of(), 0, 1, size, 1, emptySummary(), scope.anchor(),
                     timeContextService.mode(), timeContextService.isSnapshot(), scope.period(), null, null,
-                    sources, masked, models, roles);
+                    0L, sources, masked, models, roles);
         }
 
         long total;
@@ -158,10 +168,30 @@ public class IncidentQueueService {
         List<IncidentQueueItem> pageMasked;
         UnifiedQueueResponse.Summary summary;
         OffsetDateTime latestDetectedAt;
+        // T29 기간 밖: outsidePeriod = 기간 전체 total − 지금 total(같은 조건, 띠 축 포함), 기간 전체면 0.
+        // newestOutsidePeriod = 기간 시작 이하에 탐지된 행(같은 조건)의 최대 탐지 시각. 알 수 없으면 null.
+        Long outsidePeriod = 0L;
+        OffsetDateTime newestOutsidePeriod = null;
+        boolean periodApplied = !"all".equals(scope.period());
 
         if (scope.asset() == null) {
             UnifiedQueueCriteria c = scope.criteria();
-            total = zeekadReadMapper.countUnifiedQueue(c);
+            if (periodApplied) {
+                // 기간 조건을 WHERE에서 빼고 한 번 훑어 기간 안 수·전체 수·두 최대 시각을 같이 센다
+                UnifiedQueueCriteria noPeriod = c.copy();
+                noPeriod.setDetectedAfter(null);
+                noPeriod.setDetectedUntil(null);
+                UnifiedQueuePeriodSplit split = zeekadReadMapper.splitUnifiedQueueByPeriod(
+                        noPeriod, c.getDetectedAfter(), c.getDetectedUntil());
+                total = split == null ? 0 : split.getInPeriod();
+                long all = split == null ? 0 : split.getTotalAll();
+                outsidePeriod = all - total;
+                latestDetectedAt = split == null ? null : split.getLatestInPeriod();
+                newestOutsidePeriod = split == null ? null : split.getNewestBeforePeriod();
+            } else {
+                total = zeekadReadMapper.countUnifiedQueue(c);
+                latestDetectedAt = total > 0 ? zeekadReadMapper.findMaxUnifiedDetectedAt(c) : null;
+            }
             pageCount = pageCount(total, size);
             page = clampPage(params.page(), pageCount);
             UnifiedQueueCriteria paged = c.copy();
@@ -174,9 +204,35 @@ public class IncidentQueueService {
             UnifiedQueueCriteria summaryCriteria = c.copy();
             summaryCriteria.setApplyStripFilters(false);
             summary = toSummary(zeekadReadMapper.summarizeUnifiedQueue(summaryCriteria));
-            latestDetectedAt = zeekadReadMapper.findMaxUnifiedDetectedAt(c);
         } else {
-            List<Masked> base = assetFiltered(scope.criteria(), scope.asset(), scope.role());
+            List<Masked> base = null;
+            if (periodApplied) {
+                // 기간 없는 목록을 한 번 읽어 Java에서 기간 안·밖으로 나눈다.
+                // 상한을 넘으면 지금처럼 기간 목록만 읽고 기간 밖 수는 모름(null)
+                UnifiedQueueCriteria noPeriod = scope.criteria().copy();
+                noPeriod.setDetectedAfter(null);
+                noPeriod.setDetectedUntil(null);
+                List<Masked> allRows = assetFilteredOrNull(noPeriod, scope.asset(), scope.role());
+                if (allRows != null) {
+                    OffsetDateTime after = scope.criteria().getDetectedAfter();
+                    OffsetDateTime until = scope.criteria().getDetectedUntil();
+                    base = allRows.stream().filter(m -> inPeriod(m.record().getDetectedAt(), after, until)).toList();
+                    List<Masked> allFiltered = applyStripFilters(allRows, noPeriod);
+                    long inCount = allFiltered.stream()
+                            .filter(m -> inPeriod(m.record().getDetectedAt(), after, until)).count();
+                    outsidePeriod = allFiltered.size() - inCount;
+                    newestOutsidePeriod = allFiltered.stream()
+                            .map(m -> m.record().getDetectedAt())
+                            .filter(d -> d != null && !d.isAfter(after))
+                            .max(OffsetDateTime::compareTo)
+                            .orElse(null);
+                } else {
+                    outsidePeriod = null;
+                }
+            }
+            if (base == null) {
+                base = assetFiltered(scope.criteria(), scope.asset(), scope.role());
+            }
             summary = summarize(base, scope.criteria());
             List<Masked> filtered = applyStripFilters(base, scope.criteria());
             total = filtered.size();
@@ -192,23 +248,6 @@ public class IncidentQueueService {
                     .filter(Objects::nonNull)
                     .max(OffsetDateTime::compareTo)
                     .orElse(null);
-        }
-
-        OffsetDateTime newestOutsidePeriod = null;
-        if (total == 0 && !"all".equals(scope.period())) {
-            UnifiedQueueCriteria noPeriod = scope.criteria().copy();
-            noPeriod.setDetectedAfter(null);
-            noPeriod.setDetectedUntil(null);
-            if (scope.asset() == null) {
-                newestOutsidePeriod = zeekadReadMapper.findMaxUnifiedDetectedAt(noPeriod);
-            } else {
-                newestOutsidePeriod = applyStripFilters(assetFilteredOrEmpty(noPeriod, scope.asset(), scope.role()), noPeriod)
-                        .stream()
-                        .map(m -> m.record().getDetectedAt())
-                        .filter(Objects::nonNull)
-                        .max(OffsetDateTime::compareTo)
-                        .orElse(null);
-            }
         }
 
         // T25 담당자: 이 쪽의 incident_id들로 대시보드 DB를 한 번 읽는다
@@ -235,7 +274,7 @@ public class IncidentQueueService {
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
                 timeContextService.mode(), timeContextService.isSnapshot(), scope.period(), latestDetectedAt,
-                newestOutsidePeriod, sources, masked, models, roles);
+                newestOutsidePeriod, outsidePeriod, sources, masked, models, roles);
     }
 
     /* ───────────────────────── 새 인시던트 수 ───────────────────────── */
@@ -557,12 +596,20 @@ public class IncidentQueueService {
         return out;
     }
 
-    private List<Masked> assetFilteredOrEmpty(UnifiedQueueCriteria criteria, String asset, UserRole role) {
+    /** 상한을 넘으면 null(기간 밖 수를 알 수 없음) */
+    private List<Masked> assetFilteredOrNull(UnifiedQueueCriteria criteria, String asset, UserRole role) {
         try {
             return assetFiltered(criteria, asset, role);
         } catch (QueueQueryException e) {
-            return List.of();
+            return null;
         }
+    }
+
+    /** SQL 기간 조건(unifiedQueueFilters)과 같은 판정: after &lt; detected_at &lt;= until */
+    private static boolean inPeriod(OffsetDateTime detectedAt, OffsetDateTime after, OffsetDateTime until) {
+        return detectedAt != null
+                && (after == null || detectedAt.isAfter(after))
+                && (until == null || !detectedAt.isAfter(until));
     }
 
     private static List<Masked> applyStripFilters(List<Masked> rows, UnifiedQueueCriteria c) {

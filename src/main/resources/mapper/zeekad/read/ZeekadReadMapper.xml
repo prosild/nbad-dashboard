@@ -789,6 +789,52 @@
         </where>
     </select>
 
+    <!-- T29 기간 밖 수: 기간 조건을 WHERE 대신 집계 안 CASE로 옮겨 한 번 훑어 기간 안 수와 전체 수를 같이 센다.
+         기간은 최적화 경계(OFFSET 0 ROWS) 바깥 조건이라 기반 집계 비용은 같다. c의 detectedAfter·detectedUntil은 비워 넘긴다.
+         기간 안 = (after, until], 기간 시작 이하 = detected_at &lt;= after(탐지 시각 없음·기준 시각 뒤는 어느 쪽 최대에도 들지 않는다). -->
+    <resultMap id="unifiedQueuePeriodSplitMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueuePeriodSplit">
+        <result property="inPeriod" column="in_period" javaType="java.lang.Long"/>
+        <result property="totalAll" column="total_all" javaType="java.lang.Long"/>
+        <result property="latestInPeriod" column="latest_in_period"/>
+        <result property="newestBeforePeriod" column="newest_before_period"/>
+    </resultMap>
+
+    <select id="splitUnifiedQueueByPeriod" resultMap="unifiedQueuePeriodSplitMap">
+        SELECT SUM(CASE WHEN b.detected_at &gt; #{after} AND b.detected_at &lt;= #{until} THEN 1 ELSE 0 END) AS in_period,
+               COUNT(*) AS total_all,
+               MAX(CASE WHEN b.detected_at &gt; #{after} AND b.detected_at &lt;= #{until} THEN b.detected_at END) AS latest_in_period,
+               MAX(CASE WHEN b.detected_at &lt;= #{after} THEN b.detected_at END) AS newest_before_period
+        FROM (<include refid="unifiedQueueBase"/>) b
+        <where>
+            <include refid="unifiedQueueFilters"/>
+        </where>
+    </select>
+
+    <!-- T29 수집원 목록 마지막 탐지: 캡처별 최신 큐 인시던트의 탐지 시각(unifiedQueueBase fs와 같은 정의) 최대 -->
+    <resultMap id="captureLastDetectedMap" type="com.zeekad.dashboard.model.zeekad.CaptureLastDetected">
+        <result property="captureId" column="capture_id"/>
+        <result property="lastDetectedAt" column="last_detected_at"/>
+    </resultMap>
+
+    <select id="findCaptureLastDetected" resultMap="captureLastDetectedMap">
+        SELECT lq.capture_id, MAX(fs.detected_at) AS last_detected_at
+        FROM dashboard.latest_incident_queue lq
+        JOIN (
+            SELECT q.incident_id, MIN(j.finished_at) AS detected_at
+            FROM dashboard.incident_queue q
+            JOIN dashboard.scoring_jobs j
+              ON j.job_id = q.job_id
+             AND j.status = 'succeeded'
+             AND j.finished_at IS NOT NULL
+            WHERE q.capture_id IN
+            <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+            GROUP BY q.incident_id
+        ) fs ON fs.incident_id = lq.incident_id
+        WHERE lq.capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+        GROUP BY lq.capture_id
+    </select>
+
     <select id="findMaxSucceededFinishedAt" resultType="java.time.OffsetDateTime">
         SELECT MAX(finished_at)
         FROM dashboard.scoring_jobs

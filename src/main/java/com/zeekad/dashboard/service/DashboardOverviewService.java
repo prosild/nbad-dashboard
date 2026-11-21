@@ -218,7 +218,7 @@ public class DashboardOverviewService {
                 source == null || source.isBlank() ? null : source.trim().toLowerCase(Locale.ROOT),
                 cond.anchor(), truncated, jobsTotal, latestJobs,
                 cond.allowed().stream()
-                        .map(c -> new UnifiedQueueResponse.Source(c, timeContextService.sourceType(c), null))
+                        .map(c -> new UnifiedQueueResponse.Source(c, timeContextService.sourceType(c), null, null))
                         .toList(),
                 handling.handlingTimes(), handling.workload());
     }
