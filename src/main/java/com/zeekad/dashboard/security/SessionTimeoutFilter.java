@@ -71,6 +71,11 @@ public class SessionTimeoutFilter extends OncePerRequestFilter {
                             "세션이 만료되었습니다. 다시 로그인해 주세요.");
                     return;
                 }
+                // T27: 화면 경로를 새로 연 요청이면 셸을 200으로 준다(화면이 원래 주소를 싣고 로그인으로 보낸다)
+                if (SpaShell.isShellRequest(request)) {
+                    SpaShell.forward(request, response);
+                    return;
+                }
                 response.sendRedirect(request.getContextPath() + "/login?expired");
                 return;
             }

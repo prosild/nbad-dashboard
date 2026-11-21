@@ -194,14 +194,17 @@ class SecurityAuthSessionTest {
         assertThat(logoutRes.getResponse().getHeaders("Set-Cookie"))
                 .anyMatch(h -> h.contains("ZEEKAD_SESSION=") && h.contains("Max-Age=0") && h.contains("SameSite=Lax"));
 
-        // 비-API 유휴 만료 리다이렉트 확인
+        // 비-API 유휴 만료: T27부터 화면 경로는 302 대신 셸 200(세션은 무효화), 화면이 원래 주소를 싣고 로그인으로 보낸다
         MvcResult fourthLogin = performLogin(username, "ValidPass!99");
         MockHttpSession fourthSession = (MockHttpSession) fourthLogin.getRequest().getSession(false);
         fourthSession.setAttribute(SessionAttributes.SESSION_LAST_ACCESSED_AT,
                 Instant.now().minusSeconds(31 * 60L).toEpochMilli());
         mockMvc.perform(get("/").session(fourthSession))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login?expired"));
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
+        assertThat(fourthSession.isInvalid()).isTrue();
 
         // 세션 쿠키 보안 설정 확인
         assertThat(serverProperties.getServlet().getSession().getCookie().getHttpOnly()).isTrue();

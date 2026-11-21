@@ -27,11 +27,14 @@ public class IncidentQueryService {
     private final UserMapper userMapper;
     private final CaptureAccessService captureAccessService;
     private final MaskingService maskingService;
+    private final IncidentRefService incidentRefService;
 
     public IncidentQueryService(ZeekadReadMapper zeekadReadMapper,
                                 UserMapper userMapper,
                                 CaptureAccessService captureAccessService,
-                                MaskingService maskingService) {
+                                MaskingService maskingService,
+                                IncidentRefService incidentRefService) {
+        this.incidentRefService = incidentRefService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.userMapper = userMapper;
         this.captureAccessService = captureAccessService;
@@ -150,9 +153,15 @@ public class IncidentQueryService {
 
         UserRole userRole = principal != null ? principal.getRole() : UserRole.VIEWER;
         Map<String, String> userDisplayMap = loadUserDisplayMap();
-        List<AnalystReviewItem> reviews = zeekadReadMapper.findAnalystReviewQueue(cleanCaptureId, pendingOnly).stream()
+        List<AnalystReviewItem> allowedRows = zeekadReadMapper.findAnalystReviewQueue(cleanCaptureId, pendingOnly).stream()
                 .filter(r -> principal != null && principal.isCaptureAllowed(r.getCaptureId()))
+                .toList();
+        // T27 인시던트 번호: 가리기 전 원본 incident_id로 한 번 읽는다(옛 작업에만 있는 인시던트는 행만 매긴다)
+        Map<String, Long> numbers = incidentRefService.numbersFor(
+                allowedRows.stream().map(AnalystReviewItem::getIncidentId).toList());
+        List<AnalystReviewItem> reviews = allowedRows.stream()
                 .map(r -> {
+                    r.setIncidentNo(numbers.get(r.getIncidentId()));
                     AnalystReviewItem masked = maskingService.maskAnalystReviewItem(r, userRole);
                     if (masked.getAnalyst() != null && !masked.getAnalyst().isBlank()) {
                         masked.setAnalystDisplay(formatActorDisplay(masked.getAnalyst(), userDisplayMap));

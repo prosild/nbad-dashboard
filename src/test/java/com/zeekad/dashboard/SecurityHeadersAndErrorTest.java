@@ -94,10 +94,28 @@ class SecurityHeadersAndErrorTest {
                 .andReturn();
         assertSafeSpaHtml(indexResult.getResponse().getContentAsString());
 
-        // 비인증 브라우저 SPA 경로는 /login 리다이렉트, 비인증 API는 401 JSON 반환
+        // T27: 비인증 브라우저 SPA 경로는 302 대신 셸 200(데이터 없음, 보안 헤더, no-store). 화면이 원래 주소를 싣고 /login으로 보낸다.
+        // 비인증 API는 401 JSON 그대로
         mockMvc.perform(get("/incidents"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
+        mockMvc.perform(get("/incidents/1042"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
+        // 화면 경로가 아닌 곳(정적 파일 아님)은 지금 동작 그대로 /login 리다이렉트
+        mockMvc.perform(get("/nope"))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrlPattern("**/login"));
+        mockMvc.perform(get("/incidents/abc"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/login"));
+        // POST는 셸 대상이 아니다
+        mockMvc.perform(post("/incidents"))
+                .andExpect(status().is4xxClientError());
 
         mockMvc.perform(get("/api/incidents"))
                 .andExpect(status().isUnauthorized())

@@ -93,6 +93,8 @@ class T24DashboardOverviewIntegrationTest {
     @Autowired private MaskingService maskingService;
     @Autowired private MutableTestClock clock;
     @Autowired private com.zeekad.dashboard.service.IncidentAssignmentService incidentAssignmentService;
+    @Autowired
+    private com.zeekad.dashboard.service.IncidentRefService incidentRefService;
     @Autowired @Qualifier("zeekadReadDataSource") private DataSource zeekadReadDataSource;
 
     @AfterEach
@@ -504,7 +506,7 @@ class T24DashboardOverviewIntegrationTest {
         TimeContextService tcs = new TimeContextService(props, zeekadReadMapper, clock);
         com.zeekad.dashboard.service.AckTargetService ack = new com.zeekad.dashboard.service.AckTargetService(props, tcs);
         IncidentQueueService qs = new IncidentQueueService(zeekadReadMapper, captureAccessService, maskingService, tcs,
-                ack, incidentAssignmentService);
+                ack, incidentAssignmentService, incidentRefService);
         return new DashboardOverviewService(zeekadReadMapper, qs, tcs, maskingService,
                 new com.zeekad.dashboard.service.HandlingMetricsService(zeekadReadMapper, tcs, ack, incidentAssignmentService));
     }

@@ -216,6 +216,7 @@ public class MaskingService {
         copy.setDecidedAt(item.getDecidedAt());
         copy.setZeekadReviewResumedAt(item.getZeekadReviewResumedAt());
         copy.setZeekadReviewResumeFailed(item.getZeekadReviewResumeFailed());
+        copy.setIncidentNo(item.getIncidentNo());
         return copy;
     }
 

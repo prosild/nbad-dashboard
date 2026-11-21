@@ -145,4 +145,21 @@ public interface ZeekadReadMapper {
     java.util.List<com.zeekad.dashboard.model.zeekad.HandlingPoint> findHandlingPoints(
             @Param("c") com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria c,
             @Param("after") java.time.OffsetDateTime after);
+
+    /* ───────────── T27 인시던트 번호 ───────────── */
+
+    /**
+     * 번호 후보: latest_incident_queue 전체(모든 캡처)의 incident_id·capture_id·탐지 시각.
+     * 탐지 시각은 통합 큐(unifiedQueueBase의 fs.detected_at)와 같은 정의다.
+     */
+    List<com.zeekad.dashboard.model.IncidentRef> findLatestIncidentRefCandidates();
+
+    /** 번호 후보(행만): 주어진 incident_id가 든 성공 작업 기준의 캡처·탐지 시각. 성공 작업에 없으면 결과에 없다 */
+    List<com.zeekad.dashboard.model.IncidentRef> findIncidentRefCandidatesByIds(@Param("incidentIds") String[] incidentIds);
+
+    /** 최신 큐에서의 위치(없으면 null) */
+    com.zeekad.dashboard.model.zeekad.IncidentLocation findLatestLocationByIncidentId(@Param("incidentId") String incidentId);
+
+    /** 그 인시던트가 든 가장 최근 성공 작업의 위치(없으면 null) */
+    com.zeekad.dashboard.model.zeekad.IncidentLocation findLastSucceededLocationByIncidentId(@Param("incidentId") String incidentId);
 }

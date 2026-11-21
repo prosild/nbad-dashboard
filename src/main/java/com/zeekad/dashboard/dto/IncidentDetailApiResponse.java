@@ -14,6 +14,8 @@ public record IncidentDetailApiResponse(
         /* T25: 현재 담당, 담당 이력(시간 역순), 담당을 바꿀 수 있는지(ANALYST·ADMIN이고 종결이 아님) */
         AssignmentDtos.Assignment assignment,
         java.util.List<AssignmentDtos.HistoryItem> assignmentHistory,
-        boolean canAssign
+        boolean canAssign,
+        /* T27: 인시던트 번호(매기지 못했으면 null) */
+        Long incidentNo
 ) {
 }

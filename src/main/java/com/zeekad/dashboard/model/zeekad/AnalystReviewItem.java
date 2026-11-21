@@ -22,6 +22,16 @@ public class AnalystReviewItem {
     private OffsetDateTime decidedAt;
     private OffsetDateTime zeekadReviewResumedAt;
     private Boolean zeekadReviewResumeFailed;
+    /** T27 인시던트 번호(대시보드 DB, 매기지 못했으면 null) */
+    private Long incidentNo;
+
+    public Long getIncidentNo() {
+        return incidentNo;
+    }
+
+    public void setIncidentNo(Long incidentNo) {
+        this.incidentNo = incidentNo;
+    }
 
     public Long getJobId() {
         return jobId;

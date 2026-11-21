@@ -15,7 +15,9 @@ import com.zeekad.dashboard.service.IncidentAssignmentService;
 import com.zeekad.dashboard.service.IncidentDetailService;
 import com.zeekad.dashboard.service.IncidentDetailView;
 import com.zeekad.dashboard.service.IncidentQueryService;
+import com.zeekad.dashboard.service.IncidentNoLocationService;
 import com.zeekad.dashboard.service.IncidentQueueService;
+import com.zeekad.dashboard.service.IncidentRefService;
 import com.zeekad.dashboard.service.IncidentTransitionService;
 import com.zeekad.dashboard.service.MaskingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,6 +46,8 @@ public class IncidentApiController {
     private final MaskingService maskingService;
     private final IncidentQueueService incidentQueueService;
     private final IncidentAssignmentService incidentAssignmentService;
+    private final IncidentRefService incidentRefService;
+    private final IncidentNoLocationService incidentNoLocationService;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
@@ -52,7 +56,11 @@ public class IncidentApiController {
                                  ClientIpResolver clientIpResolver,
                                  MaskingService maskingService,
                                  IncidentQueueService incidentQueueService,
-                                 IncidentAssignmentService incidentAssignmentService) {
+                                 IncidentAssignmentService incidentAssignmentService,
+                                 IncidentRefService incidentRefService,
+                                 IncidentNoLocationService incidentNoLocationService) {
+        this.incidentRefService = incidentRefService;
+        this.incidentNoLocationService = incidentNoLocationService;
         this.incidentAssignmentService = incidentAssignmentService;
         this.incidentQueryService = incidentQueryService;
         this.incidentDetailService = incidentDetailService;
@@ -93,6 +101,20 @@ public class IncidentApiController {
         ));
     }
 
+    /**
+     * T27 인시던트 번호 → 지금 위치. 최신 큐에 있으면 그 작업·순위(latest=true), 없으면 그 인시던트가 든 가장 최근 성공 작업(latest=false).
+     * 번호 형식이 틀리면 400(감사 없음). 없는 번호·허용 밖 캡처·zeekad에 없는 인시던트는 같은 403과 ACCESS_DENIED_IDOR 감사.
+     */
+    @GetMapping("/no/{incidentNo}")
+    public ResponseEntity<IncidentNoLocationService.Location> locateByNo(
+            @PathVariable("incidentNo") String incidentNo,
+            Authentication authentication,
+            HttpServletRequest request) {
+        DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+        return ResponseEntity.ok(incidentNoLocationService.locate(principal, incidentNo, clientIp));
+    }
+
     @GetMapping("/{jobId}/rank/{queueRank}")
     public ResponseEntity<IncidentDetailApiResponse> detail(
             @PathVariable("jobId") Long jobId,
@@ -114,7 +136,8 @@ public class IncidentApiController {
                 incidentQueueService.metaFor(principal, jobId, queueRank),
                 incidentAssignmentService.currentView(incidentId, displayMap),
                 incidentAssignmentService.historyView(incidentId, displayMap),
-                canDecideReview && !closed));
+                canDecideReview && !closed,
+                incidentRefService.numberFor(incidentId)));
     }
 
     /** T25 담당자 지정·변경·해제. 본문 { assignee: username|null, expected: username|null }. CSRF 필요 */

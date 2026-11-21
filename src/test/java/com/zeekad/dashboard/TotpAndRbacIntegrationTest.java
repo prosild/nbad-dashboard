@@ -100,9 +100,12 @@ class TotpAndRbacIntegrationTest {
         mockMvc.perform(get("/api/incidents").session(session))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("TOTP_SETUP_REQUIRED"));
+        // T27: 화면 경로는 302 대신 셸 200, 화면이 원래 주소를 싣고 OTP 등록 화면으로 보낸다
         mockMvc.perform(get("/admin/users").session(session))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login/totp/setup"));
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
 
         // GET /api/auth/totp/setup 조회 시 새 시크릿 생성 및 DB 저장 확인
         mockMvc.perform(get("/api/auth/totp/setup").session(session))
@@ -165,8 +168,10 @@ class TotpAndRbacIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("TOTP_VERIFICATION_REQUIRED"));
         mockMvc.perform(get("/admin/audit-logs").session(secondSession))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login/totp"));
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
 
         String secondCode = totpService.generateCode(adminAfter.getTotpSecret(), clock.instant());
         mockMvc.perform(post("/api/auth/totp/verify")

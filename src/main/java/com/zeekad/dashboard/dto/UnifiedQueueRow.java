@@ -19,9 +19,15 @@ public class UnifiedQueueRow {
     private final AssignmentDtos.Assignee assignee;
     private final OffsetDateTime ackDueAt;
     private final boolean ackOverdue;
+    private final Long incidentNo;
 
     public UnifiedQueueRow(IncidentQueueItem item, OffsetDateTime detectedAt, String sourceType, String priority, boolean ongoing,
                            AssignmentDtos.Assignee assignee, OffsetDateTime ackDueAt, boolean ackOverdue) {
+        this(item, detectedAt, sourceType, priority, ongoing, assignee, ackDueAt, ackOverdue, null);
+    }
+
+    public UnifiedQueueRow(IncidentQueueItem item, OffsetDateTime detectedAt, String sourceType, String priority, boolean ongoing,
+                           AssignmentDtos.Assignee assignee, OffsetDateTime ackDueAt, boolean ackOverdue, Long incidentNo) {
         this.item = item;
         this.detectedAt = detectedAt;
         this.sourceType = sourceType;
@@ -30,6 +36,12 @@ public class UnifiedQueueRow {
         this.assignee = assignee;
         this.ackDueAt = ackDueAt;
         this.ackOverdue = ackOverdue;
+        this.incidentNo = incidentNo;
+    }
+
+    /** T27 인시던트 번호(매기지 못했으면 null) */
+    public Long getIncidentNo() {
+        return incidentNo;
     }
 
     /** T25 담당자(없으면 null) */

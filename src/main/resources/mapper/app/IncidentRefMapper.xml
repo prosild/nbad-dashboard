@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- T27 인시던트 번호. #{}만 쓴다. -->
+<mapper namespace="com.zeekad.dashboard.mapper.app.IncidentRefMapper">
+
+    <resultMap id="refMap" type="com.zeekad.dashboard.model.IncidentRef">
+        <id property="incidentNo" column="incident_no"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="detectedAt" column="detected_at"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <select id="findByIncidentIds" resultMap="refMap">
+        SELECT incident_no, incident_id, capture_id, detected_at, created_at
+        FROM incident_refs
+        WHERE incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+    </select>
+
+    <select id="findByNo" resultMap="refMap">
+        SELECT incident_no, incident_id, capture_id, detected_at, created_at
+        FROM incident_refs
+        WHERE incident_no = #{incidentNo}
+    </select>
+
+    <!-- 한 행씩 넣는다(번호가 서비스가 정한 순서대로 매겨지게). 충돌은 예외 없이 0행이다. -->
+    <insert id="insertIfAbsent">
+        INSERT INTO incident_refs (incident_id, capture_id, detected_at, created_at)
+        VALUES (#{incidentId}, #{captureId}, #{detectedAt}, #{createdAt})
+        ON CONFLICT DO NOTHING
+    </insert>
+</mapper>

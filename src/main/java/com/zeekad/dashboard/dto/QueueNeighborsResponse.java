@@ -6,7 +6,7 @@ package com.zeekad.dashboard.dto;
  */
 public record QueueNeighborsResponse(Key current, Integer position, long total, Key prev, Key next) {
 
-    /** 상세 주소 키. hostIp는 이동 버튼 툴팁용이며 VIEWER에게는 마스킹된 값이다. */
-    public record Key(long jobId, int queueRank, String hostIp) {
+    /** 상세 주소 키. hostIp는 이동 버튼 툴팁용이며 VIEWER에게는 마스킹된 값이다. incidentNo는 T27 인시던트 번호(없으면 null) */
+    public record Key(long jobId, int queueRank, String hostIp, Long incidentNo) {
     }
 }

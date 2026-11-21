@@ -63,13 +63,16 @@ public class IncidentQueueService {
     private final TimeContextService timeContextService;
     private final AckTargetService ackTargetService;
     private final IncidentAssignmentService incidentAssignmentService;
+    private final IncidentRefService incidentRefService;
 
     public IncidentQueueService(ZeekadReadMapper zeekadReadMapper,
                                 CaptureAccessService captureAccessService,
                                 MaskingService maskingService,
                                 TimeContextService timeContextService,
                                 AckTargetService ackTargetService,
-                                IncidentAssignmentService incidentAssignmentService) {
+                                IncidentAssignmentService incidentAssignmentService,
+                                IncidentRefService incidentRefService) {
+        this.incidentRefService = incidentRefService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.captureAccessService = captureAccessService;
         this.maskingService = maskingService;
@@ -209,8 +212,10 @@ public class IncidentQueueService {
         }
 
         // T25 담당자: 이 쪽의 incident_id들로 대시보드 DB를 한 번 읽는다
-        Map<String, AssignmentDtos.Assignee> assignees = incidentAssignmentService.assigneesFor(
-                pageRecords.stream().map(UnifiedQueueRecord::getIncidentId).toList());
+        List<String> pageIds = pageRecords.stream().map(UnifiedQueueRecord::getIncidentId).toList();
+        Map<String, AssignmentDtos.Assignee> assignees = incidentAssignmentService.assigneesFor(pageIds);
+        // T27 인시던트 번호: 이 쪽의 incident_id들로 한 번 읽는다(없으면 동기화, 실패해도 null)
+        Map<String, Long> numbers = incidentRefService.numbersFor(pageIds);
         List<UnifiedQueueRow> items = new ArrayList<>(pageRecords.size());
         for (int i = 0; i < pageRecords.size(); i++) {
             UnifiedQueueRecord record = pageRecords.get(i);
@@ -224,7 +229,8 @@ public class IncidentQueueService {
                     isOngoing(record, statByCapture.get(record.getCaptureId()), scope.anchor()),
                     assignees.get(record.getIncidentId()),
                     due,
-                    AckTargetService.isOverdue(due, scope.anchor())));
+                    AckTargetService.isOverdue(due, scope.anchor()),
+                    numbers.get(record.getIncidentId())));
         }
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
@@ -269,8 +275,9 @@ public class IncidentQueueService {
         Scope scope = resolveScope(principal, params, clientIp, true);
 
         UnifiedQueueRecord latest = findLatestRow(scope.allowed(), viewed.getCaptureId(), viewed.getIncidentId());
-        QueueNeighborsResponse.Key current = latest == null ? null : key(latest, scope.role());
         if (scope.captureIds().isEmpty()) {
+            QueueNeighborsResponse.Key current = latest == null ? null
+                    : key(latest, scope.role(), incidentRefService.numbersFor(List.of(latest.getIncidentId())));
             return new QueueNeighborsResponse(current, null, 0, null, null);
         }
 
@@ -291,11 +298,22 @@ public class IncidentQueueService {
                 }
             }
         }
+        UnifiedQueueRecord prevRow = index > 0 ? ordered.get(index - 1) : null;
+        UnifiedQueueRecord nextRow = index >= 0 && index < ordered.size() - 1 ? ordered.get(index + 1) : null;
+        // T27 인시던트 번호: 지금·이전·다음을 한 번에 읽는다
+        List<String> keyIds = new ArrayList<>();
+        for (UnifiedQueueRecord r : new UnifiedQueueRecord[]{latest, prevRow, nextRow}) {
+            if (r != null) {
+                keyIds.add(r.getIncidentId());
+            }
+        }
+        Map<String, Long> numbers = incidentRefService.numbersFor(keyIds);
+        QueueNeighborsResponse.Key current = latest == null ? null : key(latest, scope.role(), numbers);
         if (index < 0) {
             return new QueueNeighborsResponse(current, null, ordered.size(), null, null);
         }
-        QueueNeighborsResponse.Key prev = index > 0 ? key(ordered.get(index - 1), scope.role()) : null;
-        QueueNeighborsResponse.Key next = index < ordered.size() - 1 ? key(ordered.get(index + 1), scope.role()) : null;
+        QueueNeighborsResponse.Key prev = prevRow == null ? null : key(prevRow, scope.role(), numbers);
+        QueueNeighborsResponse.Key next = nextRow == null ? null : key(nextRow, scope.role(), numbers);
         return new QueueNeighborsResponse(current, index + 1, ordered.size(), prev, next);
     }
 
@@ -387,9 +405,9 @@ public class IncidentQueueService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private QueueNeighborsResponse.Key key(UnifiedQueueRecord r, UserRole role) {
+    private QueueNeighborsResponse.Key key(UnifiedQueueRecord r, UserRole role, Map<String, Long> numbers) {
         String host = maskingService.shouldMask(role) ? maskingService.maskIp(r.getHostIp()) : r.getHostIp();
-        return new QueueNeighborsResponse.Key(r.getJobId(), r.getQueueRank(), host);
+        return new QueueNeighborsResponse.Key(r.getJobId(), r.getQueueRank(), host, numbers.get(r.getIncidentId()));
     }
 
     /** 진행 중: 실습망 센서 · 종결 아님 · 이 인시던트의 event_end = 캡처 최신 작업의 최대 event_end · 그 값 ≥ 기준 시각 −15분 */

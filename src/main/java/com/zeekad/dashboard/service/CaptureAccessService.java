@@ -101,6 +101,18 @@ public class CaptureAccessService {
         return item;
     }
 
+    /**
+     * T27 번호 API 거부: 없는 번호·허용 밖 캡처·zeekad에 없는 인시던트를 같은 403으로 막고 사유를 구분해 IDOR 감사한다.
+     * 감사 상세에 요청 번호(requestedIncidentNo)를 남긴다. 응답은 사유와 상관없이 같다(번호가 있는지 드러내지 않는다).
+     */
+    public void denyIncidentNo(DashboardUserPrincipal principal,
+                               String captureId,
+                               long incidentNo,
+                               String reason,
+                               String clientIp) {
+        recordIdorAndThrow(principal, captureId, null, null, reason, clientIp, Map.of("requestedIncidentNo", incidentNo));
+    }
+
     public void recordUnmaskedViewIfPrivileged(DashboardUserPrincipal principal,
                                                String captureId,
                                                Long jobId,
@@ -129,6 +141,16 @@ public class CaptureAccessService {
                                     String incidentId,
                                     String reason,
                                     String clientIp) {
+        recordIdorAndThrow(principal, captureId, jobId, incidentId, reason, clientIp, Map.of());
+    }
+
+    private void recordIdorAndThrow(DashboardUserPrincipal principal,
+                                    String captureId,
+                                    Long jobId,
+                                    String incidentId,
+                                    String reason,
+                                    String clientIp,
+                                    Map<String, Object> extra) {
         String actor = principal != null ? principal.getUsername() : "anonymous";
         String role = principal != null && principal.getRole() != null ? principal.getRole().name() : "UNKNOWN";
         Map<String, Object> detail = new LinkedHashMap<>();
@@ -142,6 +164,7 @@ public class CaptureAccessService {
         if (incidentId != null) {
             detail.put("requestedIncidentId", incidentId);
         }
+        detail.putAll(extra);
         auditService.record(
                 actor,
                 role,

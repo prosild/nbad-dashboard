@@ -968,4 +968,61 @@
         ORDER BY created_at DESC, job_id DESC
     </select>
 
+    <!-- ───────────── T27 인시던트 번호 ───────────── -->
+
+    <resultMap id="incidentRefCandidateMap" type="com.zeekad.dashboard.model.IncidentRef">
+        <result property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="detectedAt" column="detected_at"/>
+    </resultMap>
+
+    <!-- 탐지 시각: 그 incident_id가 든 성공 작업 중 가장 이른 완료 시각(unifiedQueueBase의 fs와 같은 정의, 캡처 안에서). 정렬은 Java가 한다. -->
+    <select id="findLatestIncidentRefCandidates" resultMap="incidentRefCandidateMap">
+        SELECT lq.incident_id, lq.capture_id, fs.detected_at
+        FROM dashboard.latest_incident_queue lq
+        LEFT JOIN (
+            SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS detected_at
+            FROM dashboard.incident_queue q
+            JOIN dashboard.scoring_jobs j
+              ON j.job_id = q.job_id
+             AND j.status = 'succeeded'
+             AND j.finished_at IS NOT NULL
+            GROUP BY q.capture_id, q.incident_id
+        ) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id
+    </select>
+
+    <select id="findIncidentRefCandidatesByIds" resultMap="incidentRefCandidateMap">
+        SELECT q.incident_id, MIN(q.capture_id) AS capture_id, MIN(j.finished_at) AS detected_at
+        FROM dashboard.incident_queue q
+        JOIN dashboard.scoring_jobs j
+          ON j.job_id = q.job_id
+         AND j.status = 'succeeded'
+        WHERE q.incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        GROUP BY q.incident_id
+    </select>
+
+    <resultMap id="incidentLocationMap" type="com.zeekad.dashboard.model.zeekad.IncidentLocation">
+        <result property="jobId" column="job_id"/>
+        <result property="queueRank" column="queue_rank"/>
+    </resultMap>
+
+    <select id="findLatestLocationByIncidentId" resultMap="incidentLocationMap">
+        SELECT lq.job_id, lq.queue_rank
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.incident_id = #{incidentId}
+        ORDER BY lq.job_id DESC, lq.queue_rank ASC
+        LIMIT 1
+    </select>
+
+    <select id="findLastSucceededLocationByIncidentId" resultMap="incidentLocationMap">
+        SELECT q.job_id, q.queue_rank
+        FROM dashboard.incident_queue q
+        JOIN dashboard.scoring_jobs j
+          ON j.job_id = q.job_id
+         AND j.status = 'succeeded'
+        WHERE q.incident_id = #{incidentId}
+        ORDER BY q.job_id DESC, q.queue_rank ASC
+        LIMIT 1
+    </select>
+
 </mapper>

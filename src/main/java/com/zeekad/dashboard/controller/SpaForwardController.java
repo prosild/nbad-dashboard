@@ -17,6 +17,8 @@ public class SpaForwardController {
             "/login/totp/setup",
             "/incidents",
             "/incidents/{jobId}/rank/{queueRank}",
+            // T27 인시던트 번호 고정 주소(숫자만)
+            "/incidents/{incidentNo:[0-9]+}",
             "/reviews",
             "/operations",
             "/admin/users",

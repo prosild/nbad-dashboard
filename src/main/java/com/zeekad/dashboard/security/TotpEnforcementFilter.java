@@ -56,6 +56,11 @@ public class TotpEnforcementFilter extends OncePerRequestFilter {
                             message);
                     return;
                 }
+                // T27: 화면 경로를 새로 연 요청이면 셸을 200으로 준다(화면이 원래 주소를 싣고 OTP 화면으로 보낸다)
+                if (SpaShell.isShellRequest(request)) {
+                    SpaShell.forward(request, response);
+                    return;
+                }
                 String target = totpEnabled ? "/login/totp" : "/login/totp/setup";
                 response.sendRedirect(request.getContextPath() + target);
                 return;

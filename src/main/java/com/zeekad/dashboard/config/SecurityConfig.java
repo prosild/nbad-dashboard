@@ -22,6 +22,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.savedrequest.NullRequestCache;
+import com.zeekad.dashboard.security.SpaShell;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
@@ -121,7 +123,12 @@ public class SecurityConfig {
                         "FORBIDDEN",
                         "요청하신 기능을 수행할 권한이 없습니다.");
 
+        AuthenticationEntryPoint spaShellEntryPoint = (request, response, authException) ->
+                SpaShell.forward(request, response);
+
         http
+                // T27: 원래 주소를 서버 세션에 저장하지 않는다(익명 요청마다 세션을 만들지 않게)
+                .requestCache(cache -> cache.requestCache(new NullRequestCache()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/index.html", "/assets/**", "/favicon.ico", "/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/login", "/api/auth/csrf", "/api/auth/me").permitAll()
@@ -162,6 +169,8 @@ public class SecurityConfig {
                 )
                 .exceptionHandling(ex -> ex
                         .defaultAuthenticationEntryPointFor(apiEntryPoint, apiRequestMatcher)
+                        // T27: 화면 경로를 새로 연 비로그인 GET·HEAD는 302 대신 셸 200(화면이 원래 주소를 싣고 로그인으로 보낸다)
+                        .defaultAuthenticationEntryPointFor(spaShellEntryPoint, SpaShell::isShellRequest)
                         .defaultAuthenticationEntryPointFor(
                                 new LoginUrlAuthenticationEntryPoint("/login"), AnyRequestMatcher.INSTANCE)
                         .defaultAccessDeniedHandlerFor(jsonAccessDeniedHandler, apiRequestMatcher)
