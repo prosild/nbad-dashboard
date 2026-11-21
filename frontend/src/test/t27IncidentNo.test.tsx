@@ -261,7 +261,7 @@ describe('T27 큐·에스컬레이션 링크와 번호 칸', () => {
     expect(head.className.split(/\s+/)).toEqual(expect.arrayContaining(['hidden', '2xl:table-cell']));
     const link = within(table).getByRole('link', { name: /인시던트 번호 1042, 인시던트 상세: 10\.0\.0\.3/ });
     expect(link.getAttribute('href')).toMatch(/^\/incidents\/1042\?from=/);
-    // 폭 단계(설계자 답 2): 호스트 이름 2.5 → 4rem(2xl) → 제한 없음(1920, 칸 15rem), 담당 4.5 → 6 → 7.5rem, 탐지 시각은 1920px부터
+    // 폭 단계(T27): 호스트 이름 2.5 → 4rem(2xl) → 제한 없음(1920, 칸 15rem), 담당 4.5 → 6 → 7.5rem, 탐지 시각은 1920px부터
     const name = table.querySelector('[data-host-name]') as HTMLElement | null;
     if (name) expect(name.className.split(/\s+/)).toEqual(expect.arrayContaining(['max-w-[2.5rem]', '2xl:max-w-[4rem]', 'min-[1920px]:max-w-none']));
     expect((table.querySelector('[data-col="assignee"] > span') as HTMLElement).className.split(/\s+/)).toEqual(

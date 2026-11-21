@@ -221,7 +221,7 @@ public class MaskingService {
     }
 
     /**
-     * 탐지 작업(T24, 빈틈 검토 H2): VIEWER면 오류 글 안의 IPv4를 가린다. 나머지 값은 그대로다.
+     * 탐지 작업(T24): VIEWER면 오류 글 안의 IPv4를 가린다. 나머지 값은 그대로다.
      * 현황판 overview와 /api/operations(jobs[].error, latestJobs) 두 곳에 같이 쓴다.
      */
     public ScoringJob maskScoringJob(ScoringJob job, UserRole role) {

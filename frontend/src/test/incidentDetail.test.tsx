@@ -888,7 +888,7 @@ describe('인시던트 상세 화면(T19)', () => {
 });
 
 describe('T19 순수 함수', () => {
-  it('세션 지속 시간 표기(L6)', () => {
+  it('세션 지속 시간 표기(T19)', () => {
     expect(formatSessionDuration(0)).toBe('1ms 미만');
     expect(formatSessionDuration(0.0004)).toBe('1ms 미만');
     expect(formatSessionDuration(0.001)).toBe('1ms');

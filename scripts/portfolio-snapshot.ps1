@@ -4,8 +4,8 @@
     [string]$Database = "zeekad",
     [string]$RestoreImage = "pgvector/pgvector:0.8.1-pg17",
     [string]$PipelineImage = "zeekad-pipeline:dev",
-    # 원본 선택(T22): 비어 있으면 이 PC Docker의 $SourceContainer. 값이 있으면 WSL($WslDistro)의 ssh로
-    # 그 호스트(예: 배포 VM zeekad-vm)의 $SourceContainer를 읽는다. 원격에는 docker ps/inspect/exec(psql 조회,
+    # 원본 선택(T22): 비어 있으면 로컬 Docker의 $SourceContainer. 값이 있으면 WSL($WslDistro)의 ssh로
+    # 그 호스트(예: <배포 VM>)의 $SourceContainer를 읽는다. 원격에는 docker ps/inspect/exec(psql 조회,
     # pg_dump, pg_dumpall --globals-only)만 보내고 파일을 남기지 않는다(덤프는 ssh 표준 출력으로 받는다).
     [string]$SshHost = "",
     [string]$WslDistro = "Ubuntu",
@@ -16,7 +16,7 @@
 
 # 포트폴리오 배포용 zeek_AD DB 스냅샷 내보내기(읽기 전용).
 # - 원본 컨테이너 안의 로컬 소켓 인증(psql/pg_dump -U postgres)만 쓴다. zeek_AD의 .env나 비밀번호는 읽지 않는다.
-# - 원본 컨테이너에는 아무것도 쓰지 않는다(덤프는 표준 출력으로 받아 이 PC 파일에 쓴다).
+# - 원본 컨테이너에는 아무것도 쓰지 않는다(덤프는 표준 출력으로 받아 로컬 파일에 쓴다).
 # - 원본에 보낸 명령은 <OutDir>/source-commands.txt에 그대로 남는다(원격이면 보낸 스크립트 원문).
 # - 결과: <OutDir>/zeekad.dump(pg_dump -Fc), zeekad.dump.sha256(sha256sum -c 형식), manifest.json,
 #   source-globals.sql(pg_dumpall --globals-only --no-role-passwords, 역할 비교용),

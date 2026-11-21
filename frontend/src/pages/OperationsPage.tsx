@@ -71,7 +71,7 @@ function groupSummaries(rows: FeedbackSummaryRecord[]): SummaryGroup[] {
 /** 운영 현황 기본 기간(T24) */
 export const OPERATIONS_DEFAULT_PERIOD: Period = '7d';
 
-/** 누적 판정 표의 모델 버전 선택용: latestJobs의 최신 성공 작업(기간 무관, 빈틈 검토 M2) */
+/** 누적 판정 표의 모델 버전 선택용: latestJobs의 최신 성공 작업(기간 무관) */
 export function latestSucceededJobs(data: OperationsApiResponse): ScoringJob[] {
   return (data.latestJobs ?? [])
     .map((l) => l.latestSucceeded)

@@ -109,7 +109,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     });
   });
 
-  it('/reviews의 오탐 종결도 상세와 같이 메모 필수와 확인 단계를 거친다(T19 M4)', async () => {
+  it('/reviews의 오탐 종결도 상세와 같이 메모 필수와 확인 단계를 거친다(T19)', async () => {
     const incidentId = 'cic17-wed|192.168.10.5|originator|100';
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();

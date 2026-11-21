@@ -13,7 +13,7 @@ import { SourceSelect } from '../components/ConditionBar';
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
  * 데이터 원문을 그대로 보여 주는 요소(data-raw: 인시던트 ID, 모델 종류·식별자, 모델 버전, 사람 표시, 원본 증적, 리포트 버전 값)만 검사에서 뺀다.
- * T18b: 관제 표준 용어로 바꾸기 전의 풀어 쓴 옛 표기(OLD_TERMS)도 남으면 안 된다(SPEC 결정 2026-11-21).
+ * T18b: 관제 표준 용어로 바꾸기 전의 풀어 쓴 옛 표기(OLD_TERMS)도 남으면 안 된다(2026-11-21 결정).
  */
 const FORBIDDEN = ['dashboard.', 'zeekad_', 'job_id', 'queue_rank', 'evidence.v1', '단계 5'];
 /** T17·T18 표기 중 T18b에서 관제 표준 용어로 바꾼 것. "종료"는 세션 상태 설명(정상 종료 등)에 남으므로 뺀다. */
@@ -891,7 +891,7 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(within(panel()).getByText('증적 요약')).toBeInTheDocument();
     expect(within(panel()).getByText('식별 안 됨')).toBeInTheDocument();
     expect(within(panel()).getByText('http')).not.toHaveAttribute('data-unregistered');
-    // T19: 관측 계정은 이름·종류·마지막 관측만(출처 로그·관측 횟수·처음 관측은 사용자 결정으로 뺐다)
+    // T19: 관측 계정은 이름·종류·마지막 관측만(출처 로그·관측 횟수·처음 관측은 화면에서 뺐다)
     expect(within(panel()).getByRole('columnheader', { name: '종류' })).toBeInTheDocument();
     expect(within(panel()).getByText('컴퓨터 계정')).toBeInTheDocument();
     expect(within(panel()).getByText('2017-07-06 05:00:33')).toBeInTheDocument();

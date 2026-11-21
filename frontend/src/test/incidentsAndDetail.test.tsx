@@ -358,7 +358,7 @@ describe('인시던트 목록 및 상세 화면', () => {
     await openTab('증적');
     expect(within(panel()).getByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
 
-    // 발송 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 사용자 결정으로 뺐다)
+    // 발송 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 2026-11-21 결정으로 뺐다)
     await openTab('발송 판단');
     expect(within(panel()).getByText('선택 확률')).toBeInTheDocument();
     expect(within(panel()).getByText('74.0%')).toBeInTheDocument();

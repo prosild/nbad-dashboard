@@ -5,7 +5,7 @@ import { expect } from 'vitest';
  * 그래야 넓은 표가 휴대폰에서 페이지 전체를 넓히지(축소해 보이게 하지) 않는다.
  *
  * 한계: jsdom은 CSS를 적용하지 않으므로 클래스만 본다. 표가 아닌 넘침(줄바꿈되지 않는 긴 글자, `whitespace-nowrap` flex 행,
- * 넓은 SVG 등)은 여기서 잡을 수 없고 휴대폰 측정 도구(`handoff/tools/ui-capture/mobile-check.js`)로만 잡힌다.
+ * 넓은 SVG 등)은 여기서 잡을 수 없고 실제 휴대폰 폭 브라우저 측정으로만 잡힌다.
  */
 const SCROLL_BOX_CLASS = /(^|\s)overflow-x-(auto|scroll)(\s|$)/;
 

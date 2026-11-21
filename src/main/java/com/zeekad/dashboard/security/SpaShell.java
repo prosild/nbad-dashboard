@@ -14,7 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * T27(설계자 답 1): 화면 경로를 새로 연 페이지 요청이 인증 없음·세션 만료·ADMIN OTP 미완료일 때
+ * T27: 화면 경로를 새로 연 페이지 요청이 인증 없음·세션 만료·ADMIN OTP 미완료일 때
  * 302 대신 SPA 셸(index.html, 데이터 없음)을 200으로 준다. 화면의 RequireAuth가 그 순간의 주소를 라우터 상태에 실어
  * 로그인·OTP 화면으로 보낸다(원래 주소를 URL 쿼리나 서버 세션에 두지 않는다).
  *

@@ -30,7 +30,7 @@
   - 프로덕션 `bootJar`에는 H2 드라이버와 `application-test.yml`이 들어가지 않습니다.
 
 ### 1.3 SPA 라우팅과 `/api/**` 경계
-- **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다. 비인증 사용자는 `/login`을 제외한 화면 경로에서 `302 /login`으로 이동합니다. `/admin/**` 화면은 `ADMIN`만 열 수 있습니다.
+- **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/incidents/{인시던트 번호}`(`T27`, 숫자만), `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다(목록은 `SpaForwardController`). `T27`부터 이 화면 경로의 GET·HEAD는 인증이 없거나 세션이 끝났거나 `ADMIN` TOTP를 마치지 않았어도 `302` 대신 데이터 없는 SPA 셸을 `200`(`Cache-Control: no-store`)으로 줍니다(`SpaShell`). 화면이 원래 주소를 들고 로그인·TOTP 화면으로 보냅니다. 데이터는 `/api/**`가 막으므로 셸에는 업무 정보가 없습니다. `/admin/**` 화면의 데이터는 `ADMIN`만 받습니다.
 - **정적 자산**: `/assets/*.js`·`/assets/*.css`·`/index.html`은 인증 없이 받습니다(`Content-Type` `text/javascript`·`text/css`, `X-Content-Type-Options: nosniff`). CSP는 `script-src 'self'; style-src 'self'`로 인라인 스크립트·스타일을 허용하지 않습니다.
 - **JSON API (`/api/**`)**: SPA 폴백 대상이 아닙니다. 비인증 요청은 `401` JSON(`code: UNAUTHENTICATED`), 인증된 세션의 없는 경로는 `404` JSON(`code: NOT_FOUND`)이며 `index.html`을 돌려주지 않습니다. 관리자는 1차 로그인 뒤 TOTP 검증 전까지 업무 API가 `403`(`TOTP_VERIFICATION_REQUIRED`)입니다.
 - **CSRF**: SPA는 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키(`Secure; SameSite=Lax`, JS가 읽도록 HttpOnly 아님)를 받고 쓰기 요청마다 그 값을 `X-XSRF-TOKEN` 헤더로 보냅니다(이중 제출). 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다. 로그인·TOTP 뒤에는 토큰이 바뀌므로 클라이언트는 요청마다 최신 쿠키 값을 씁니다.
@@ -43,7 +43,10 @@
 대시보드는 PostgreSQL 17 서버 하나(Compose 배포: `postgres:5432` 등 서비스명, 로컬 개발: `127.0.0.1:55432`) 안에서 논리 DB와 계정을 셋으로 나눠 씁니다.
 
 1. **대시보드 자체 DB (`zeekad_dashboard`, 계정 `dashboard_app`)**
-   - 대시보드가 시작할 때 Flyway(`classpath:db/migration/postgresql`)가 `users`, `user_capture_access`, `audit_logs` 테이블과 `audit_logs` `UPDATE`/`DELETE` 차단 트리거(`trg_audit_logs_immutable`)를 만듭니다.
+   - 대시보드가 시작할 때 Flyway(`classpath:db/migration/postgresql`)가 다음을 만듭니다.
+     - `V1`: `users`, `user_capture_access`, `audit_logs` 테이블과 `audit_logs` `UPDATE`/`DELETE` 차단 트리거(`trg_audit_logs_immutable`)
+     - `V2`(`T25`): 담당자 `incident_assignments`와 추가만 하는 이력 `incident_assignment_history`(변경·삭제 차단 트리거)
+     - `V3`(`T27`): 인시던트 번호 `incident_refs`(추가만, 변경·삭제 차단 트리거)
    - `dashboard_app` 계정은 `zeekad_dashboard` 데이터베이스의 DDL/DML 권한만 있습니다.
 2. **`zeekad` 읽기 전용 계정 (`dashboard_ro`)**
    - `zeekad` 데이터베이스의 `dashboard` 스키마에 있는 데이터 계약 뷰 14종(v1 5종 · v2 7종 · v2.1 `latest_incident_queue` 1종 · migration 017 `feedback_summary` 1종)의 `SELECT` 권한만 줍니다.
@@ -220,7 +223,7 @@ docker compose up -d nginx-waf
 외부 PostgreSQL 없이 Docker Compose 오버라이드(`docker/verify/compose.verify.yml`)로 실제 PostgreSQL 17 + Flyway + `latest_incident_queue` + `dashboard.transition_incident` + `dashboard.decide_review` + Slack 스레드 + WAF + Trivy + OWASP ZAP을 한 번에 검증합니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "handoff/<ID>/evidence"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "build/security-evidence"
 ```
 - 단계: CycloneDX SBOM → 이미지 빌드 → Trivy(SBOM / FS(`frontend/package-lock.json` npm 포함, `frontend/node_modules`·`frontend/dist` 제외) / 앱·WAF 이미지) → PostgreSQL 17 + WAF E2E → OWASP ZAP 베이스라인.
 - E2E는 JSON API로 진행합니다: `GET /api/auth/csrf`로 `XSRF-TOKEN`을 받고 `X-XSRF-TOKEN` 헤더 + JSON 본문으로 `POST /api/auth/login`, 관리자는 `POST /api/auth/totp/verify`. 응답은 JSON 필드로 판정하고 WAF 차단은 `403` + 앱 JSON 오류가 아님 + `nginx-waf` ModSecurity 감사 로그의 규칙 ID로 판정합니다. 결과는 `waf-e2e-verification.txt`에 남습니다.

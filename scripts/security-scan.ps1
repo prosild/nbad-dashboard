@@ -381,7 +381,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($loginGet.Headers -notmatch "(?im)^Server:\s*nginx") "Server: nginx 헤더 비노출" $loginGet
                 Assert-True ($loginGet.Headers -notmatch "(?im)^Access-Control-Allow-Origin:\s*\*") "와일드카드 CORS 헤더 비노출" $loginGet
 
-                # T27(설계자 답 1): 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store, 데이터 없음). 화면이 원래 주소를 싣고 로그인으로 보낸다.
+                # T27: 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store, 데이터 없음). 화면이 원래 주소를 싣고 로그인으로 보낸다.
                 #      그 경로의 API는 401 JSON 그대로, 화면 경로가 아닌 곳은 지금처럼 302 /login.
                 foreach ($pair in @(@("/", "/api/auth/me-not-public"), @("/incidents/101/rank/1", "/api/incidents/101/rank/1"), @("/incidents/1", "/api/incidents/no/1"))) {
                     $protectedPath = $pair[0]
@@ -1498,7 +1498,7 @@ FROM v GROUP BY m ORDER BY m
             $zapExit = $zapRes.ExitCode
 
             # ZAP은 정보성 경고만 있어도 exit 2가 되므로 판정은 zap-baseline.json의 위험 등급별 경고 수로 한다.
-            # 유일한 예외(SPEC.md '결정' 2026-11-20): 모든 인스턴스의 param이 정확히 XSRF-TOKEN인 Low 10010(Cookie No HttpOnly Flag)만 허용한다.
+            # 유일한 예외(2026-11-20 결정, docs/security-verification-report.md 남은 위험): 모든 인스턴스의 param이 정확히 XSRF-TOKEN인 Low 10010(Cookie No HttpOnly Flag)만 허용한다.
             # SPA 이중 제출 CSRF 방식상 JS가 XSRF-TOKEN 쿠키를 읽어야 한다. ZAP 설정으로 10010을 끄지 않고 여기서 판정한다.
             $riskCounts = [ordered]@{ High = 0; Medium = 0; Low = 0; Informational = 0 }
             $allowedLines = [System.Collections.Generic.List[string]]::new()

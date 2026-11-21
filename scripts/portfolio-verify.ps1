@@ -8,7 +8,7 @@
     [switch]$SkipZap
 )
 
-# 포트폴리오 스택 리허설 검증(이 PC). compose.portfolio.yml을 NAS와 같은 구성으로 띄우고(프로젝트 이름만 다름),
+# 포트폴리오 스택 리허설 검증(로컬 PC). compose.portfolio.yml을 NAS와 같은 구성으로 띄우고(프로젝트 이름만 다름),
 # 계정 시드를 두 번 실행한 뒤 DSM 역방향 프록시를 흉내 낸 요청으로 E2E [0]~[8]과 ZAP 베이스라인 [9]를 확인하고 down -v로 정리한다.
 # - DSM 흉내: http://127.0.0.1:<WAF 포트>에 Host: <PublicHost>, X-Forwarded-Proto: https, X-Forwarded-For: <클라이언트 IP>.
 # - 세션·CSRF 쿠키는 Secure라 HTTP 요청에 클라이언트가 보내지 않으므로 Set-Cookie에서 값을 읽어 Cookie 헤더를 직접 만든다
@@ -81,7 +81,7 @@ $manifest = [IO.File]::ReadAllText($manifestPath, $utf8NoBom) | ConvertFrom-Json
 $expectedCounts = [ordered]@{}
 foreach ($p in $manifest.captureIncidentCounts.PSObject.Properties) { $expectedCounts[$p.Name] = [int]$p.Value }
 # T22: demo 허용 캡처는 시드 기본값 cic17-*,syn1-*,lab-20261119(공개 데모는 배포 VM 스냅샷. Kali 실습망 lab-20261119만 공개,
-#      시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 등 나머지는 숨김, SPEC 결정 2026-11-21). 정확한 ID는 그 캡처만, 접두사*는 접두사 일치.
+#      시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 등 나머지는 숨김, 2026-11-21 결정). 정확한 ID는 그 캡처만, 접두사*는 접두사 일치.
 $demoPatterns = @("cic17-*", "syn1-*", "lab-20261119")
 $demoLabCapture = "lab-20261119"
 function Test-DemoPattern([string]$CaptureId) {
@@ -400,7 +400,7 @@ try {
     Assert-True ([bool](Get-HeaderValue $loginGet "Referrer-Policy")) "Referrer-Policy" $loginGet
     Assert-True ($loginGet.Headers -notmatch "(?im)^Server:\s*nginx") "Server: nginx 헤더 비노출" $loginGet
     $locationOk = "^(/login|https://$([regex]::Escape($PublicHost))(:443)?/login)$"
-    # T27(설계자 답 1): 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store). 리다이렉트 Location 위조 확인은 화면 경로가 아닌 /nope로 한다.
+    # T27: 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store). 리다이렉트 Location 위조 확인은 화면 경로가 아닌 /nope로 한다.
     $rootShell = Invoke-Http -Path "/"
     $e2eLogs.Add("[1b] unauthenticated GET / -> HTTP $($rootShell.Status) Cache-Control=$(Get-HeaderValue $rootShell 'Cache-Control') shell=$(Test-SpaShell $rootShell)")
     Assert-True ($rootShell.Status -eq 200 -and (Test-SpaShell $rootShell) -and (Get-HeaderValue $rootShell "Cache-Control") -match "no-store") "비인증 GET / 셸 200(no-store)" $rootShell
@@ -627,8 +627,8 @@ try {
     Assert-True ($apiAnchorMicros -eq $anchorMicros -and $tcAnchorMicros -eq $anchorMicros) "[T23b] 기준 시각 = 공개 캡처 성공 작업 finished_at 최대 (API=$apiAnchorMicros, SQL=$anchorMicros, time-context=$tcAnchorMicros us)"
     Assert-True ($all.First.Json.snapshot -eq $true -and $all.First.Json.anchorMode -eq 'latest-data' -and $tc.Json.snapshot -eq $true) "[T23b] latest-data 고정 스냅샷"
 
-    # [T23c] 기본 24시간: 캡처별 수 = 인계 기대값 SQL(구현 SQL을 복사하지 않음)
-    # 인계의 기대값 SQL(:public = 공개 캡처, :anchor = 위 SQL 기준 시각). 구현 SQL을 복사하지 않았다.
+    # [T23c] 기본 24시간: 캡처별 수 = T23에서 정한 기대값 SQL(구현 SQL을 복사하지 않음)
+    # T23 정의의 기대값 SQL(:public = 공개 캡처, :anchor = 위 SQL 기준 시각). 구현 SQL을 복사하지 않았다.
     $anchorExpr = "to_timestamp($anchorMicros / 1000000.0)"
     $expect24Sql = "WITH first_seen AS (SELECT q.incident_id, MIN(j.finished_at) AS detected_at FROM dashboard.incident_queue q " +
         "JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id) " +
@@ -1017,7 +1017,7 @@ try {
     Assert-True ($fwRows -match '(?m)^2\|incident assignments\|t?$' -and $t25Tables -eq 'incident_assignment_history,incident_assignments') "[T25a] 앱 DB에 V2 적용"
 
     # [T25b] handlingTimes(period=all·7d) = 독립 SQL(percentile_disc), workload.ackOverdue = 큐 overdue=true total = summary.overdue = 독립 SQL
-    #        (고정 스냅샷이라 정확히 같아야 한다). 구현 SQL을 복사하지 않고 정의(인계 3절)대로 다시 쓴다.
+    #        (고정 스냅샷이라 정확히 같아야 한다). 구현 SQL을 복사하지 않고 T25 정의대로 다시 쓴다.
     function Get-T25HandlingSql([string]$Period) {
         $range = if ($Period -eq 'all') { { param($x) "TRUE" } } else { { param($x) "($x > $anchorExpr - interval '7 days' AND $x <= $anchorExpr)" } }
         return @"

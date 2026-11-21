@@ -198,7 +198,7 @@ function SensorItem({
   period: string;
 }) {
   // "지난 날짜"로 접는 것은 ended뿐이다. 수집 중(active)과 실패(failed)·기록 없음(none) 캡처는 펼쳐 둔다
-  // (오늘 캡처가 실패하면 서버 상태는 failed라 active로만 고르면 지난 날짜에 묻혔다, T24 review-2 M1).
+  // (오늘 캡처가 실패하면 서버 상태는 failed라 active로만 고르면 지난 날짜에 묻혔다, T24).
   const active = captures.filter((c) => c.state !== 'ended');
   const others = captures.filter((c) => c.state === 'ended');
   return (

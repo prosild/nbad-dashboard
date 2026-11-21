@@ -3,7 +3,7 @@ import type { SlackDeliveryView, SlackThreadGroup } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge } from '../StatusBadge';
 
-/** Slack 발송 한 건: 시각·종류·채널 재알림·전송 결과. 원본 페이로드와 ts·parent 값은 화면에 두지 않는다(사용자 결정 2026-11-21). */
+/** Slack 발송 한 건: 시각·종류·채널 재알림·전송 결과. 원본 페이로드와 ts·parent 값은 화면에 두지 않는다(2026-11-21 결정). */
 function SlackDeliveryCard({ item, isReply }: { item: SlackDeliveryView; isReply: boolean }) {
   return (
     <div

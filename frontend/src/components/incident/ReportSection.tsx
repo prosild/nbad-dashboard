@@ -6,7 +6,7 @@ import { FactChips } from './FactChips';
 
 /**
  * AI 리포트 조각들. 요약 탭과 AI 리포트 탭이 같은 조각을 쓴다.
- * 생성 정보(요청·응답 모델, 토큰, 소요 시간, 리포트·입력 버전, 실행 ID)와 가명 대응표는 화면에 두지 않는다(사용자 결정 2026-11-21).
+ * 생성 정보(요청·응답 모델, 토큰, 소요 시간, 리포트·입력 버전, 실행 ID)와 가명 대응표는 화면에 두지 않는다(2026-11-21 결정).
  */
 
 export function ReportClaims({ report }: { report: ReportView }) {

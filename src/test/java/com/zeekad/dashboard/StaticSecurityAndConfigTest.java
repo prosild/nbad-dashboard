@@ -129,7 +129,20 @@ class StaticSecurityAndConfigTest {
         assertThat(dockerfile).contains("COPY src/main").doesNotContain("COPY src/test");
 
         String dockerignore = Files.readString(Path.of(".dockerignore"), StandardCharsets.UTF_8);
-        assertThat(dockerignore).contains(".git", ".env", "*.key", "*.pem", "handoff", "security-reports");
+        // 허용 목록 방식: 첫 규칙이 "*"(모두 뺌)이고, 다시 넣는("!") 항목은 Dockerfile이 복사하는 빌드 입력뿐이다.
+        java.util.List<String> ignoreRules = dockerignore.lines().map(String::trim)
+                .filter(line -> !line.isEmpty() && !line.startsWith("#")).toList();
+        assertThat(ignoreRules).as(".dockerignore 첫 규칙은 *").first().isEqualTo("*");
+        assertThat(ignoreRules.stream().filter(line -> line.startsWith("!")).toList())
+                .as(".dockerignore가 다시 넣는 항목은 빌드 입력뿐")
+                .containsExactlyInAnyOrder("!frontend", "!gradlew", "!settings.gradle", "!build.gradle", "!gradle", "!src/main");
+        assertThat(ignoreRules)
+                .as("빌드 입력 안의 산출물·캐시·비밀값 모양 파일은 다시 뺀다")
+                .contains("frontend/node_modules", "frontend/dist", "frontend/.vite",
+                        "**/.env*", "**/*.key", "**/*.pem", "**/*.crt");
+        assertThat(ignoreRules.indexOf("**/.env*"))
+                .as("비밀값 모양 제외는 다시 넣기(!) 뒤에 있어야 효과가 있다")
+                .isGreaterThan(ignoreRules.indexOf("!src/main"));
 
         String compose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8);
         assertThat(compose).contains("dashboard-app:", "nginx-waf:", "host.docker.internal:host-gateway");
@@ -419,7 +432,7 @@ class StaticSecurityAndConfigTest {
         }
 
         assertThat(targets.size()).isGreaterThan(1);
-        // 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(SPEC 결정 2026-11-21, T20). 허용은 이 파일 하나뿐이다.
+        // 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(2026-11-21 결정, T20). 허용은 이 파일 하나뿐이다.
         Path captureNameDictionary = Path.of("frontend/src/utils/labels.ts");
         assertThat(captureNameDictionary).exists();
         for (Path file : targets) {

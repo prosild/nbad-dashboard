@@ -1,7 +1,7 @@
 /**
  * 표시 이름 사전: zeek_AD·API 코드 값 → 화면 표시 이름.
  * 화면은 코드 값을 이 사전으로만 보여 준다. 같은 내용을 docs/ui-terminology.md '표시 이름 사전' 절에 사람이 읽을 수 있게 남긴다.
- * 탐지 모델 이름은 zeek_AD 데이터 계약 v2 '모델 표시 이름'(SPEC 결정 2026-11-21)을 따른다(`detectionModel`, `DETECTION_MODEL_INFO`).
+ * 탐지 모델 이름은 zeek_AD 데이터 계약 v2 '모델 표시 이름'(2026-11-21 결정)을 따른다(`detectionModel`, `DETECTION_MODEL_INFO`).
  * 모델 버전 값(zeekad-fusion/N)은 바꾸지 않으므로 여기에 넣지 않는다.
  */
 
@@ -368,7 +368,7 @@ const CAPTURE_FORMAT_TOOLTIP = {
 
 /**
  * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-21). 키는 캡처 ID다.
- * 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(SPEC 결정 2026-11-21, StaticSecurityAndConfigTest 허용 파일).
+ * 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(2026-11-21 결정, StaticSecurityAndConfigTest 허용 파일).
  * 표에 없는 새 lab-*는 덧붙임 없이 보인다.
  */
 export const LAB_CAPTURE_NOTES: Record<string, { note: string; description: string }> = {
@@ -431,7 +431,7 @@ export function captureText(id: string | null | undefined): string {
 }
 
 /**
- * 짧은 수집원 이름(T24, T23 review-4 M1). 좁은 칸(인시던트 큐 수집원 칸, 현황판, 운영 현황 수집원 상태)에 쓴다.
+ * 짧은 수집원 이름(T24). 좁은 칸(인시던트 큐 수집원 칸, 현황판, 운영 현황 수집원 상태)에 쓴다.
  * 전체 이름·캡처 ID는 툴팁·화면 판독기 글자에 둔다. 규칙: `cic17-<요일>` → "CIC 수", `syn1-<요일>` → "CIC+APT 수",
  * `lab-YYYYMMDD` → "실습 MM-DD", 규칙 밖 → 캡처 ID 그대로. 실습망 날짜는 UTC다(전체 이름 툴팁의 설명 유지).
  */

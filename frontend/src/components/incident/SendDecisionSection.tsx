@@ -8,7 +8,7 @@ import { CodeLabel, LookupText, SocBadge, WouldSendBadge } from '../StatusBadge'
 /**
  * 발송 판단 탭(T19, T21 이름 정리): 최종 결과 + 세 의견(규칙·AI 리포트·판단 모델) 한 줄씩.
  * 의견이 갈릴 때만 강조하고, 같으면 "세 의견 모두 …" 한 줄을 먼저 보이고 펼친다.
- * 정책 ID·판단 모델 ID·선택지별 확률 막대는 화면에 두지 않는다(사용자 결정 2026-11-21). 판단 모델은 선택 확률 숫자 하나만.
+ * 정책 ID·판단 모델 ID·선택지별 확률 막대는 화면에 두지 않는다(2026-11-21 결정). 판단 모델은 선택 확률 숫자 하나만.
  */
 export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisionView }) {
   const agree = !sendDecision.opinionMismatch;

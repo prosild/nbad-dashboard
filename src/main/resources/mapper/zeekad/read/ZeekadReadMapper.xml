@@ -634,7 +634,7 @@
         WHERE lq.capture_id IN <include refid="unifiedCaptureIn"/>
         <!-- T24: 최적화 경계(결과는 같다). 이 부분 질의를 바깥 b.detected_at 기간 조건과 합치지 않게 한다.
              합치면 PostgreSQL이 fs 집계 행 수를 아주 작게 잡아 중첩 반복 계획을 고른다. 통계 없는 스냅샷 복원(리허설·공개 데모)에서
-             기간 30일 큐가 60초를 넘겼다(경계를 두면 0.2초 안쪽, handoff/T24 보고서). 표준 문법이라 H2도 받는다. -->
+             기간 30일 큐가 60초를 넘겼다(경계를 두면 0.2초 안쪽, T24 측정). 표준 문법이라 H2도 받는다. -->
         OFFSET 0 ROWS
     </sql>
 

@@ -3,7 +3,7 @@ import type { QueuePriority, SourceType } from '../types/api';
 /**
  * 인시던트 큐(T23 통합 큐)의 URL 쿼리 해석과 API 파라미터 만들기.
  * 우선순위 계산·정렬·쪽 나눔·요약은 서버(GET /api/incidents/queue)가 한다. 화면은 서버 값을 그대로 보인다.
- * 우선순위 규칙은 SPEC.md 결정 2026-11-21 "자동 분류 우선순위 규칙 수정"이며 서버 SQL(ZeekadReadMapper.xml unifiedQueueBase)에 한 번만 있다.
+ * 우선순위 규칙은 2026-11-21 결정 "자동 분류 우선순위 규칙 수정"(docs/design-decisions.md)이며 서버 SQL(ZeekadReadMapper.xml unifiedQueueBase)에 한 번만 있다.
  */
 
 export type Priority = QueuePriority;

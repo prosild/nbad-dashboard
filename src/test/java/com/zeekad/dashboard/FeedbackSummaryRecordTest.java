@@ -117,7 +117,7 @@ class FeedbackSummaryRecordTest {
         assertThat(FeedbackSummaryRecord.fromRawMap(ten).getPrecisionSummaryText())
                 .isEqualTo("정탐률 60.0% · 판정 10/1,234건(0.8%)");
 
-        // 인계 예시 형식: 판정 18건 중 정탐 비율, 판정률
+        // 예시 형식: 판정 18건 중 정탐 비율, 판정률
         Map<String, Object> example = new LinkedHashMap<>();
         example.put("incidents", 50L);
         example.put("resolved", 18L);

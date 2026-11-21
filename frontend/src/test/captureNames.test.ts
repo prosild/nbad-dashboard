@@ -53,7 +53,7 @@ describe('캡처 표시 이름', () => {
   });
 });
 
-describe('짧은 수집원 이름(T24, T23 review-4 M1)', () => {
+describe('짧은 수집원 이름(T24)', () => {
   it('세 계열과 규칙 밖', () => {
     expect(captureShortName('cic17-wed')).toBe('CIC 수');
     expect(captureShortName('cic17-mon')).toBe('CIC 월');

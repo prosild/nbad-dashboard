@@ -548,7 +548,7 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     expect(within(rows[1]).getByText('가져온 데이터')).toBeInTheDocument();
   });
 
-  it('수집원 상태: 오늘 캡처가 실패하면(state=failed) 지난 날짜에 접지 않고 실패 표시와 함께 펼쳐 둔다(review-2 M1)', async () => {
+  it('수집원 상태: 오늘 캡처가 실패하면(state=failed) 지난 날짜에 접지 않고 실패 표시와 함께 펼쳐 둔다(T24)', async () => {
     const sensors = [{ ...SENSOR, health: 'failed' as const, latestJob: jobRef(61, 'lab-20261120', 'failed', 3, '수집 중단') }];
     const captures = CAPTURES.map((c) => (c.captureId === 'lab-20261120' ? { ...c, state: 'failed' as const } : c));
     renderAt('/', { overview: (url) => json(fakeOverview(url, { sensors, captures })) });
@@ -853,7 +853,7 @@ describe('T25 운영 현황: 처리 시간·담당 현황', () => {
   });
 });
 
-describe('T25 현황판·운영 현황 후속(T24 수락 때 정한 것)', () => {
+describe('T25 현황판·운영 현황 후속(T24 뒤에 정한 것)', () => {
   it('T27 최근 인시던트 링크는 번호가 있으면 번호 주소(from= 유지), 없으면 옛 주소다', async () => {
     const numbered = ITEMS.map((it, i) => ({ ...it, incidentNo: i % 2 === 0 ? 900 + i : null }));
     renderAt('/', { queue: (url) => json(fakeQueue(url, { items: numbered, anchor: ANCHOR, periodFilter })) });

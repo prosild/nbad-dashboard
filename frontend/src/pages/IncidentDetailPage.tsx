@@ -108,7 +108,7 @@ export function IncidentDetailPage() {
   const tab: DetailTab = isDetailTab(rawTab) ? rawTab : 'summary';
   const fromQuery = searchParams.get('from');
 
-  // 허용 밖 tab은 요약으로 보이고 URL을 고친다(L2).
+  // 허용 밖 tab은 요약으로 보이고 URL을 고친다.
   useEffect(() => {
     if (rawTab !== null && !isDetailTab(rawTab)) {
       const next = new URLSearchParams(searchParams);
@@ -320,7 +320,7 @@ export function IncidentDetailPage() {
           <LoadingPanel label="인시던트 정보를 불러오는 중..." />
         ) : current ? (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-            {/* 조치 패널: 넓은 화면은 오른쪽 고정, 좁은 화면은 헤더 바로 아래. 길면 패널 안에서 스크롤(L3). */}
+            {/* 조치 패널: 넓은 화면은 오른쪽 고정, 좁은 화면은 헤더 바로 아래. 길면 패널 안에서 스크롤. */}
             <aside
               aria-label="조치 패널"
               className="xl:sticky xl:top-[8.5rem] xl:col-start-2 xl:row-start-1 xl:max-h-[calc(100vh-9.5rem)] xl:self-start xl:overflow-y-auto"
@@ -369,7 +369,7 @@ export function IncidentDetailPage() {
                 })}
               </div>
 
-              {/* 비활성 탭도 숨긴 채 DOM에 둔다(용어 회귀·XSS 검사가 모든 탭을 덮도록, M5). */}
+              {/* 비활성 탭도 숨긴 채 DOM에 둔다(용어 회귀·XSS 검사가 모든 탭을 덮도록). */}
               {DETAIL_TABS.map((t) => (
                 <div
                   key={t.key}

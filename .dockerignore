@@ -1,21 +1,16 @@
-.git
-.gradle
-build
-handoff
-AGENTS.md
-CLAUDE.md
-CODEX.md
-GEMINI.md
-SPEC.md
-SESSION_HANDOFF.md
-DECISION_LOG.md
-agent-roles
-.env
-.env.*
-*.key
-*.pem
-*.crt
-security-reports
+# 빌드 맥락 허용 목록: 모두 빼고 Dockerfile이 복사하는 빌드 입력만 다시 넣는다.
+*
+!frontend
+!gradlew
+!settings.gradle
+!build.gradle
+!gradle
+!src/main
+# 빌드 입력 안에서도 빌드 산출물·로컬 캐시·비밀값 모양 파일은 넣지 않는다.
 frontend/node_modules
 frontend/dist
 frontend/.vite
+**/.env*
+**/*.key
+**/*.pem
+**/*.crt

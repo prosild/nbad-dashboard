@@ -470,7 +470,7 @@ describe('통합 인시던트 큐(T23)', () => {
     );
   });
 
-  it('행 안에 상세로 가는 실제 링크가 있어 화면 판독기가 링크로 인식한다(T18 L3). 링크를 누르면 상세로 간다', async () => {
+  it('행 안에 상세로 가는 실제 링크가 있어 화면 판독기가 링크로 인식한다(T18). 링크를 누르면 상세로 간다', async () => {
     const user = userEvent.setup();
     renderQueue('/incidents?status=open');
     await ready();
@@ -497,11 +497,11 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row1).queryByText('1시간 전')).toBeNull();
     expect(within(row1).getByTitle('탐지 시각 2026-11-20 09:01:00')).toHaveTextContent('11-20 09:01');
     // T23 7절: 수집원은 한 줄(아이콘 + 표시 이름). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 있다.
-    // T26(T23 review-4 L2): 역할 없는 span의 aria-label 속성이 아니라, 실제로 계산된 행의 접근성 이름에 들어 있어야 한다.
+    // T26: 역할 없는 span의 aria-label 속성이 아니라, 실제로 계산된 행의 접근성 이름에 들어 있어야 한다.
     expect(row1).toHaveAccessibleName(/수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed/);
     const src1 = within(row1).getByTitle('가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
     expect(src1).not.toHaveAttribute('aria-label');
-    // T24(T23 review-4 M1): 칸에 보이는 글은 짧은 수집원 이름이다. 판독기에는 감추고(aria-hidden) 전체 이름을 sr-only 글자로 읽힌다.
+    // T24: 칸에 보이는 글은 짧은 수집원 이름이다. 판독기에는 감추고(aria-hidden) 전체 이름을 sr-only 글자로 읽힌다.
     expect(within(src1).getByText('CIC 수')).toHaveAttribute('aria-hidden', 'true');
     expect(within(src1).getByText('수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed')).toHaveClass('sr-only');
     expect(within(row1).queryByText('CIC-IDS2017 수요일')).toBeNull();
@@ -554,7 +554,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(firstItem).getByText('탐지 38분 전')).toBeInTheDocument();
     expect(within(firstItem).getByText('실습망 센서')).toBeInTheDocument();
     expect(within(firstItem).getByText(LAB_NAME)).toBeInTheDocument();
-    // T26(T23 review-4 L2): 휴대폰 목록 링크의 접근성 이름에도 수집원 종류·표시 이름·캡처 ID가 들어간다
+    // T26: 휴대폰 목록 링크의 접근성 이름에도 수집원 종류·표시 이름·캡처 ID가 들어간다
     expect(link).toHaveAccessibleName(new RegExp(`수집원: ?실습망 센서 ?${escapeRe(LAB_NAME)} · 캡처 ID: lab-`));
     expect(within(firstItem).getByText('2026-11-18 09:52:00')).toBeInTheDocument();
     expect(within(firstItem).getByText('신규')).toBeInTheDocument();

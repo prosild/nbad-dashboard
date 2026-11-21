@@ -934,7 +934,7 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
 
 /**
  * 수집원(한 줄): 종류 아이콘 + 짧은 수집원 이름(T24, "CIC 수"·"실습 11-19"). 종류 문구·전체 이름·캡처 ID는 툴팁에 둔다.
- * T26(T23 review-4 L2): 역할 없는 span의 aria-label은 화면 판독기가 읽지 않을 수 있어 sr-only 글자를 쓴다.
+ * T26: 역할 없는 span의 aria-label은 화면 판독기가 읽지 않을 수 있어 sr-only 글자를 쓴다.
  * T24: 보이는 짧은 이름은 판독기에서 감추고(aria-hidden), 판독기 글자에 "수집원: 종류 · 전체 이름 · 캡처 ID"를 둔다.
  */
 function SourceCell({ item, shortNames }: { item: UnifiedQueueItem; shortNames: Map<string, string> }) {
@@ -1093,7 +1093,7 @@ function QueueTable({
                   {/* T27: 호스트 칸 최대 폭은 1920px부터 15rem. IP는 그대로이고 호스트 이름 최대 폭은
                       1536px 미만 2.5rem · 1536~1919px 4rem · 1920px부터 제한 없음(칸 최대 폭 안에서 말줄임) */}
                   <div className="flex items-baseline gap-1.5 min-[1920px]:max-w-[15rem]">
-                    {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
+                    {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18). 행 클릭과 겹치지 않게 전파를 막는다. */}
                     <Link
                       to={url}
                       onClick={(e) => e.stopPropagation()}

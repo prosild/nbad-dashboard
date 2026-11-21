@@ -319,7 +319,7 @@ export function toSessionRow(raw: Record<string, unknown>): SessionRow {
 }
 
 /**
- * 주요 세션 표. 바이트는 세션 기준(출발지·목적지)이라 증적 요약의 송신·수신 바이트(대상 호스트 기준)와 다르다(M2).
+ * 주요 세션 표. 바이트는 세션 기준(출발지·목적지)이라 증적 요약의 송신·수신 바이트(대상 호스트 기준)와 다르다.
  * 세션 상태는 사전 표시 + 원 코드 툴팁, Zeek 세션 ID는 행 툴팁. VIEWER 마스킹은 서버가 하므로 받은 값을 그대로 쓴다.
  */
 export function SessionTable({ rows }: { rows: Array<Record<string, unknown>> }) {

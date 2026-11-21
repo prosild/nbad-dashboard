@@ -117,7 +117,7 @@ export function formatPercent(ratio: number | null | undefined, decimals = 1): s
 
 /**
  * 세션(주요 세션 표) 지속 시간(초 단위 값): 1ms 미만은 "1ms 미만", 1초 미만은 정수 ms,
- * 1분 미만은 소수 한 자리 초, 그 이상은 "m분 s초"(T19 L6).
+ * 1분 미만은 소수 한 자리 초, 그 이상은 "m분 s초"(T19).
  */
 export function formatSessionDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
