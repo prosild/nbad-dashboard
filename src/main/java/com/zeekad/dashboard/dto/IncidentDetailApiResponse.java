@@ -8,6 +8,8 @@ import com.zeekad.dashboard.service.IncidentDetailView;
 public record IncidentDetailApiResponse(
         boolean maskedView,
         boolean canDecideReview,
-        IncidentDetailView detail
+        IncidentDetailView detail,
+        /* T23: 수집원·탐지 시각·서버 우선순위·진행 중 */
+        IncidentQueueMeta queueMeta
 ) {
 }

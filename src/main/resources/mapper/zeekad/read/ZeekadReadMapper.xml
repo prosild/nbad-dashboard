@@ -527,4 +527,274 @@
         ORDER BY capture_id ASC, bundle_id DESC, zeekad_picked_by ASC
     </select>
 
+    <!-- ───────────── T23 통합 인시던트 큐 ─────────────
+         허용 캡처(c.captureIds, 서버 계산)의 최신 작업 행(latest_incident_queue)을 합쳐 거르기·우선순위·정렬·쪽 나눔·요약을 SQL로 한다.
+         #{}만 쓰고 정렬 키·방향은 choose 허용 목록으로 고른다(달러 치환 금지).
+         탐지 시각(detected_at) = 그 incident_id가 처음 나온 성공 작업(finished_at 있음)의 완료 시각 최소값.
+         incident_id의 첫 부분이 캡처 ID라 캡처 사이에 겹치지 않는다(기존 조인도 incident_id만 쓴다).
+         우선순위는 옛 화면 규칙(triage.ts computePriority)과 같다: 종결 = NULL / 발송 판단 발송 또는 에스컬레이션 대기 = high /
+         교차 탐지 1개 이상(NULL·빈 배열은 0) 또는 AI 리포트 있음 = medium / 그 밖 = low. 상태 NULL·빈 값은 open, 대소문자 무시. -->
+
+    <resultMap id="unifiedQueueMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord" extends="incidentQueueMap">
+        <result property="detectedAt" column="detected_at"/>
+        <result property="priority" column="priority"/>
+    </resultMap>
+
+    <resultMap id="unifiedQueueSummaryMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow">
+        <result property="total" column="total" javaType="java.lang.Long"/>
+        <result property="high" column="high" javaType="java.lang.Long"/>
+        <result property="medium" column="medium" javaType="java.lang.Long"/>
+        <result property="low" column="low" javaType="java.lang.Long"/>
+        <result property="reviewPending" column="review_pending" javaType="java.lang.Long"/>
+        <result property="alerted" column="alerted" javaType="java.lang.Long"/>
+        <result property="statusOpen" column="status_open" javaType="java.lang.Long"/>
+        <result property="statusInvestigating" column="status_investigating" javaType="java.lang.Long"/>
+        <result property="statusClosed" column="status_closed" javaType="java.lang.Long"/>
+        <result property="statusOther" column="status_other" javaType="java.lang.Long"/>
+    </resultMap>
+
+    <resultMap id="captureQueueStatMap" type="com.zeekad.dashboard.model.zeekad.CaptureQueueStat">
+        <result property="captureId" column="capture_id"/>
+        <result property="latestJobId" column="latest_job_id"/>
+        <result property="maxEventEnd" column="max_event_end"/>
+    </resultMap>
+
+    <sql id="unifiedCaptureIn">
+        <foreach collection="c.captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    </sql>
+
+    <sql id="unifiedQueueBase">
+        SELECT lq.job_id,
+               lq.capture_id,
+               lq.bundle_id,
+               lq.queue_rank,
+               lq.incident_id,
+               lq.host_ip,
+               lq.zeekad_role,
+               lq.event_start,
+               lq.event_end,
+               lq.zeekad_picked_by,
+               lq.zeekad_also_flagged_by,
+               lq.connection_count,
+               lq.host_name,
+               COALESCE(lq.zeekad_status, 'open') AS zeekad_status,
+               CASE WHEN TRIM(COALESCE(lq.zeekad_status, '')) = '' THEN 'open'
+                    ELSE LOWER(TRIM(lq.zeekad_status)) END AS status_norm,
+               lq.zeekad_resolution,
+               lq.status_updated_at,
+               lq.zeekad_report_job_id,
+               CASE WHEN lq.zeekad_report_job_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_report,
+               lq.zeekad_report_kind,
+               r.zeekad_verification_passed,
+               COALESCE(lq.zeekad_would_send, FALSE) AS zeekad_would_send,
+               lq.zeekad_review_action,
+               COALESCE(lq.zeekad_review_pending, FALSE) AS zeekad_review_pending,
+               <!-- T21 경보 발송과 같은 식(findLatestIncidentQueue와 같다) -->
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM dashboard.slack_deliveries sdl
+                   WHERE sdl.incident_id = lq.incident_id
+                     AND sdl.zeekad_message_version IS NOT NULL
+                     AND sdl.zeekad_message_version NOT LIKE 'status:%'
+               ) THEN TRUE ELSE FALSE END AS alerted,
+               fs.detected_at,
+               CASE
+                   WHEN LOWER(TRIM(COALESCE(lq.zeekad_status, ''))) = 'closed' THEN NULL
+                   WHEN COALESCE(lq.zeekad_would_send, FALSE) = TRUE OR COALESCE(lq.zeekad_review_pending, FALSE) = TRUE THEN 'high'
+                   WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) &gt;= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN 'medium'
+                   ELSE 'low'
+               END AS priority,
+               CASE
+                   WHEN LOWER(TRIM(COALESCE(lq.zeekad_status, ''))) = 'closed' THEN NULL
+                   WHEN COALESCE(lq.zeekad_would_send, FALSE) = TRUE OR COALESCE(lq.zeekad_review_pending, FALSE) = TRUE THEN 0
+                   WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) &gt;= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN 1
+                   ELSE 2
+               END AS priority_order,
+               <!-- 상태 정렬 순서: 신규 0, 분석 중 1, 등록 안 된 값 2, 종결 3 -->
+               CASE
+                   WHEN TRIM(COALESCE(lq.zeekad_status, '')) = '' OR LOWER(TRIM(lq.zeekad_status)) = 'open' THEN 0
+                   WHEN LOWER(TRIM(lq.zeekad_status)) = 'investigating' THEN 1
+                   WHEN LOWER(TRIM(lq.zeekad_status)) = 'closed' THEN 3
+                   ELSE 2
+               END AS status_order
+        FROM dashboard.latest_incident_queue lq
+        LEFT JOIN (
+            SELECT q.incident_id, MIN(j.finished_at) AS detected_at
+            FROM dashboard.incident_queue q
+            JOIN dashboard.scoring_jobs j
+              ON j.job_id = q.job_id
+             AND j.status = 'succeeded'
+             AND j.finished_at IS NOT NULL
+            WHERE q.capture_id IN <include refid="unifiedCaptureIn"/>
+            GROUP BY q.incident_id
+        ) fs ON fs.incident_id = lq.incident_id
+        LEFT JOIN dashboard.incident_reports r
+               ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
+        WHERE lq.capture_id IN <include refid="unifiedCaptureIn"/>
+    </sql>
+
+    <sql id="unifiedQueueFilters">
+        <if test="c.incidentId != null">
+            AND b.incident_id = #{c.incidentId}
+        </if>
+        <if test="c.detectedAfter != null">
+            AND b.detected_at &gt; #{c.detectedAfter}
+        </if>
+        <if test="c.detectedUntil != null">
+            AND b.detected_at &lt;= #{c.detectedUntil}
+        </if>
+        <if test="c.pickedBy != null and c.pickedBy != ''">
+            AND LOWER(b.zeekad_picked_by) = LOWER(#{c.pickedBy})
+        </if>
+        <if test="c.role != null and c.role != ''">
+            AND LOWER(b.zeekad_role) = LOWER(#{c.role})
+        </if>
+        <if test="c.status != null and c.status != ''">
+            AND b.status_norm = LOWER(#{c.status})
+        </if>
+        <if test="c.hasReport != null and c.hasReport">
+            AND b.zeekad_report_job_id IS NOT NULL
+        </if>
+        <if test="c.hasReport != null and !c.hasReport">
+            AND b.zeekad_report_job_id IS NULL
+        </if>
+        <if test="c.wouldSend != null">
+            AND b.zeekad_would_send = #{c.wouldSend}
+        </if>
+        <if test="c.applyStripFilters">
+            <if test="c.priority != null and c.priority != ''">
+                AND b.priority = #{c.priority}
+            </if>
+            <if test="c.reviewPending">
+                AND b.zeekad_review_pending = TRUE
+            </if>
+            <if test="c.alerted">
+                AND b.alerted = TRUE
+            </if>
+        </if>
+    </sql>
+
+    <!-- 정렬: 고른 키(방향, 값 없음은 방향과 상관없이 맨 뒤) → 탐지 시각 최근 → 캡처 ID → 캡처 안 순위.
+         캡처 ID + queue_rank는 최신 큐 안에서 유일하므로 쪽을 넘겨도 빠지거나 겹치는 행이 없다. -->
+    <sql id="unifiedQueueOrder">
+        ORDER BY
+        <choose>
+            <when test="c.sortKey == 'detected'">
+                <if test="c.sortAsc">b.detected_at ASC NULLS LAST,</if>
+                <if test="!c.sortAsc">b.detected_at DESC NULLS LAST,</if>
+            </when>
+            <when test="c.sortKey == 'start'">
+                <if test="c.sortAsc">b.event_start ASC NULLS LAST,</if>
+                <if test="!c.sortAsc">b.event_start DESC NULLS LAST,</if>
+                b.detected_at DESC NULLS LAST,
+            </when>
+            <when test="c.sortKey == 'connections'">
+                <if test="c.sortAsc">b.connection_count ASC NULLS LAST,</if>
+                <if test="!c.sortAsc">b.connection_count DESC NULLS LAST,</if>
+                b.detected_at DESC NULLS LAST,
+            </when>
+            <when test="c.sortKey == 'status'">
+                <if test="c.sortAsc">b.status_order ASC NULLS LAST,</if>
+                <if test="!c.sortAsc">b.status_order DESC NULLS LAST,</if>
+                b.detected_at DESC NULLS LAST,
+            </when>
+            <otherwise>
+                <if test="c.sortAsc">b.priority_order ASC NULLS LAST,</if>
+                <if test="!c.sortAsc">b.priority_order DESC NULLS LAST,</if>
+                b.detected_at DESC NULLS LAST,
+            </otherwise>
+        </choose>
+        b.capture_id ASC, b.queue_rank ASC
+    </sql>
+
+    <select id="findUnifiedQueue" resultMap="unifiedQueueMap">
+        SELECT b.*
+        FROM (<include refid="unifiedQueueBase"/>) b
+        <where>
+            <include refid="unifiedQueueFilters"/>
+        </where>
+        <include refid="unifiedQueueOrder"/>
+        <if test="c.limit != null">
+            LIMIT #{c.limit}
+            <if test="c.offset != null">
+                OFFSET #{c.offset}
+            </if>
+        </if>
+    </select>
+
+    <select id="countUnifiedQueue" resultType="long">
+        SELECT COUNT(*)
+        FROM (<include refid="unifiedQueueBase"/>) b
+        <where>
+            <include refid="unifiedQueueFilters"/>
+        </where>
+    </select>
+
+    <select id="summarizeUnifiedQueue" resultMap="unifiedQueueSummaryMap">
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN b.priority = 'high' THEN 1 ELSE 0 END) AS high,
+               SUM(CASE WHEN b.priority = 'medium' THEN 1 ELSE 0 END) AS medium,
+               SUM(CASE WHEN b.priority = 'low' THEN 1 ELSE 0 END) AS low,
+               SUM(CASE WHEN b.zeekad_review_pending = TRUE THEN 1 ELSE 0 END) AS review_pending,
+               SUM(CASE WHEN b.alerted = TRUE THEN 1 ELSE 0 END) AS alerted,
+               SUM(CASE WHEN b.status_order = 0 THEN 1 ELSE 0 END) AS status_open,
+               SUM(CASE WHEN b.status_order = 1 THEN 1 ELSE 0 END) AS status_investigating,
+               SUM(CASE WHEN b.status_order = 3 THEN 1 ELSE 0 END) AS status_closed,
+               SUM(CASE WHEN b.status_order = 2 THEN 1 ELSE 0 END) AS status_other
+        FROM (<include refid="unifiedQueueBase"/>) b
+        <where>
+            <include refid="unifiedQueueFilters"/>
+        </where>
+    </select>
+
+    <select id="findMaxUnifiedDetectedAt" resultType="java.time.OffsetDateTime">
+        SELECT MAX(b.detected_at)
+        FROM (<include refid="unifiedQueueBase"/>) b
+        <where>
+            <include refid="unifiedQueueFilters"/>
+        </where>
+    </select>
+
+    <select id="findMaxSucceededFinishedAt" resultType="java.time.OffsetDateTime">
+        SELECT MAX(finished_at)
+        FROM dashboard.scoring_jobs
+        WHERE status = 'succeeded'
+          AND finished_at IS NOT NULL
+          AND capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    </select>
+
+    <!-- 캡처별 최신 성공 작업 ID(latest_incident_queue와 같은 MAX(job_id))와 최신 큐의 최대 event_end -->
+    <select id="findCaptureQueueStats" resultMap="captureQueueStatMap">
+        SELECT j.capture_id,
+               MAX(j.job_id) AS latest_job_id,
+               (SELECT MAX(lq.event_end)
+                FROM dashboard.latest_incident_queue lq
+                WHERE lq.capture_id = j.capture_id) AS max_event_end
+        FROM dashboard.scoring_jobs j
+        WHERE j.status = 'succeeded'
+          AND j.capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+        GROUP BY j.capture_id
+    </select>
+
+    <!-- 필터 선택지(탐지 모델·통신 방향): 허용 캡처 최신 큐에 있는 값 -->
+    <select id="findDistinctLatestPickedBy" resultType="string">
+        SELECT DISTINCT zeekad_picked_by
+        FROM dashboard.latest_incident_queue
+        WHERE zeekad_picked_by IS NOT NULL
+          AND capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+        ORDER BY zeekad_picked_by ASC
+    </select>
+
+    <select id="findDistinctLatestRoles" resultType="string">
+        SELECT DISTINCT zeekad_role
+        FROM dashboard.latest_incident_queue
+        WHERE zeekad_role IS NOT NULL
+          AND capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+        ORDER BY zeekad_role ASC
+    </select>
+
 </mapper>

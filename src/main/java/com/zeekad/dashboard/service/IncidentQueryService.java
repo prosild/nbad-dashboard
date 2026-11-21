@@ -247,7 +247,7 @@ public class IncidentQueryService {
         return zeekadReadMapper.findIncidentQueue(jobId, pickedBy, role, status, hasReport, wouldSend);
     }
 
-    private boolean matchesAssetFilter(IncidentQueueItem item, String assetQuery) {
+    static boolean matchesAssetFilter(IncidentQueueItem item, String assetQuery) {
         if (assetQuery == null) {
             return true;
         }

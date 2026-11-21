@@ -29,6 +29,15 @@ server:
 dashboard:
   # 로그인 화면 안내 문구(일반 텍스트, 최대 300자. 넘으면 시작 때 실패). 기본 빈 값이면 화면에 아무것도 보이지 않는다.
   login-notice: ${DASHBOARD_LOGIN_NOTICE:}
+  # 기준 시각(T23). 인시던트 큐의 상대 기간(최근 24시간 등)을 이 시각에서 거꾸로 센다.
+  #   now(기본): 서버 현재 시각. 데이터가 계속 들어오는 운영 배포.
+  #   latest-data: 그 사용자가 볼 수 있는 캡처의 성공 작업 완료 시각 최대값. 데이터가 더 늘지 않는 고정 스냅샷 배포
+  #                (과거 데이터 조사용 일반 설정). 화면 맨 위에 "고정 스냅샷 · 기준 시각"을 늘 보이고 자동 갱신을 끈다.
+  #   다른 값이면 앱 시작 때 실패한다.
+  time-anchor: ${DASHBOARD_TIME_ANCHOR:now}
+  capture-sources:
+    # 실습망 센서(live)로 볼 캡처 패턴(쉼표 목록, 접두어* 문법). 나머지는 가져온 데이터(imported)다. 잘못된 패턴이면 시작 때 실패한다.
+    live-patterns: ${DASHBOARD_LIVE_CAPTURE_PATTERNS:lab-*}
   datasource:
     app:
       url: jdbc:postgresql://${DASHBOARD_DB_HOST:127.0.0.1}:${DASHBOARD_DB_PORT:55432}/${DASHBOARD_DB_NAME:zeekad_dashboard}

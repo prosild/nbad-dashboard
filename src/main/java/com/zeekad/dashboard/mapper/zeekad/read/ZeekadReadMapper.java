@@ -11,9 +11,14 @@ import com.zeekad.dashboard.model.zeekad.ScoringJob;
 import com.zeekad.dashboard.model.zeekad.SendDecision;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
+import com.zeekad.dashboard.model.zeekad.CaptureQueueStat;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -85,4 +90,22 @@ public interface ZeekadReadMapper {
                                                         @Param("incidentId") String incidentId);
 
     List<Map<String, Object>> findRawFeedbackSummaries(@Param("captureId") String captureId);
+
+    /* T23 통합 인시던트 큐. c.captureIds가 비어 있으면 부르지 않는다. */
+
+    List<UnifiedQueueRecord> findUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
+
+    long countUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
+
+    UnifiedQueueSummaryRow summarizeUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
+
+    OffsetDateTime findMaxUnifiedDetectedAt(@Param("c") UnifiedQueueCriteria criteria);
+
+    OffsetDateTime findMaxSucceededFinishedAt(@Param("captureIds") List<String> captureIds);
+
+    List<CaptureQueueStat> findCaptureQueueStats(@Param("captureIds") List<String> captureIds);
+
+    List<String> findDistinctLatestPickedBy(@Param("captureIds") List<String> captureIds);
+
+    List<String> findDistinctLatestRoles(@Param("captureIds") List<String> captureIds);
 }

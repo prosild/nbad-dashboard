@@ -14,6 +14,24 @@ public class DashboardProperties {
     private final Bootstrap bootstrap = new Bootstrap();
     /** 로그인 화면 안내 문구(T21, 환경 변수 DASHBOARD_LOGIN_NOTICE). 일반 텍스트, 기본 빈 값. */
     private String loginNotice = "";
+    /**
+     * 기준 시각 모드(T23, 환경 변수 DASHBOARD_TIME_ANCHOR). now = 서버 현재 시각,
+     * latest-data = 사용자 허용 캡처 안 성공 작업 완료 시각의 최대값(고정 스냅샷). 다른 값이면 시작 때 실패한다.
+     */
+    private String timeAnchor = "now";
+    private final CaptureSources captureSources = new CaptureSources();
+
+    public String getTimeAnchor() {
+        return timeAnchor;
+    }
+
+    public void setTimeAnchor(String timeAnchor) {
+        this.timeAnchor = timeAnchor;
+    }
+
+    public CaptureSources getCaptureSources() {
+        return captureSources;
+    }
 
     public String getLoginNotice() {
         return loginNotice;
@@ -37,6 +55,20 @@ public class DashboardProperties {
 
     public Bootstrap getBootstrap() {
         return bootstrap;
+    }
+
+    /** 수집원 분류(T23). live-patterns에 맞는 캡처는 실습망 센서(live), 아니면 가져온 데이터(imported)다. */
+    public static class CaptureSources {
+        /** 쉼표 목록, CapturePatternMatcher 문법(접두어*). 기본 lab-* */
+        private String livePatterns = "lab-*";
+
+        public String getLivePatterns() {
+            return livePatterns;
+        }
+
+        public void setLivePatterns(String livePatterns) {
+            this.livePatterns = livePatterns;
+        }
     }
 
     public static class Datasource {

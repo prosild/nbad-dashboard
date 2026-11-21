@@ -12,6 +12,7 @@ import com.zeekad.dashboard.service.AnalystReviewDecisionService;
 import com.zeekad.dashboard.service.IncidentDetailService;
 import com.zeekad.dashboard.service.IncidentDetailView;
 import com.zeekad.dashboard.service.IncidentQueryService;
+import com.zeekad.dashboard.service.IncidentQueueService;
 import com.zeekad.dashboard.service.IncidentTransitionService;
 import com.zeekad.dashboard.service.MaskingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,19 +39,22 @@ public class IncidentApiController {
     private final AnalystReviewDecisionService analystReviewDecisionService;
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
+    private final IncidentQueueService incidentQueueService;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
                                  IncidentTransitionService incidentTransitionService,
                                  AnalystReviewDecisionService analystReviewDecisionService,
                                  ClientIpResolver clientIpResolver,
-                                 MaskingService maskingService) {
+                                 MaskingService maskingService,
+                                 IncidentQueueService incidentQueueService) {
         this.incidentQueryService = incidentQueryService;
         this.incidentDetailService = incidentDetailService;
         this.incidentTransitionService = incidentTransitionService;
         this.analystReviewDecisionService = analystReviewDecisionService;
         this.clientIpResolver = clientIpResolver;
         this.maskingService = maskingService;
+        this.incidentQueueService = incidentQueueService;
     }
 
     @GetMapping
@@ -96,7 +100,8 @@ public class IncidentApiController {
         boolean maskedView = maskingService.shouldMask(principal.getRole());
         boolean canDecideReview = principal.getRole() == UserRole.ANALYST || principal.getRole() == UserRole.ADMIN;
 
-        return ResponseEntity.ok(new IncidentDetailApiResponse(maskedView, canDecideReview, detail));
+        return ResponseEntity.ok(new IncidentDetailApiResponse(maskedView, canDecideReview, detail,
+                incidentQueueService.metaFor(principal, jobId, queueRank)));
     }
 
     @PostMapping("/{jobId}/rank/{queueRank}/transition")

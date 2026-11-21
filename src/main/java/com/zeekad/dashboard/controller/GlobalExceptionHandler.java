@@ -1,6 +1,7 @@
 package com.zeekad.dashboard.controller;
 
 import com.zeekad.dashboard.dto.ApiErrorResponse;
+import com.zeekad.dashboard.service.QueueQueryException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -52,6 +53,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleBadRequest(Exception ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ApiErrorResponse(400, "INVALID_REQUEST", "요청 형식이 올바르지 않습니다."));
+    }
+
+    /** T23 통합 큐 요청 값 오류. 메시지는 서버가 정한 고정 문구라 그대로 보인다. */
+    @ExceptionHandler(QueueQueryException.class)
+    public ResponseEntity<ApiErrorResponse> handleQueueQuery(QueueQueryException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(400, ex.getCode(), ex.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
