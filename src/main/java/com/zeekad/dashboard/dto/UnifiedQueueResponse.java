@@ -26,8 +26,9 @@ public record UnifiedQueueResponse(
         List<String> availableModels,
         List<String> availableRoles
 ) {
+    /** overdue(T25): 착수 지연 수. 다른 띠 축과 같이 띠 축을 뺀 집합에서 센다. */
     public record Summary(long total, long high, long medium, long low, long reviewPending, long alerted,
-                          Map<String, Long> byStatus) {
+                          Map<String, Long> byStatus, long overdue) {
     }
 
     public record Source(String captureId, String sourceType, Long latestJobId) {

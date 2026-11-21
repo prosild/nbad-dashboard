@@ -1,6 +1,8 @@
 package com.zeekad.dashboard.controller;
 
 import com.zeekad.dashboard.dto.ActionResultResponse;
+import com.zeekad.dashboard.dto.ApiErrorResponse;
+import com.zeekad.dashboard.dto.AssignmentDtos;
 import com.zeekad.dashboard.dto.IncidentDetailApiResponse;
 import com.zeekad.dashboard.dto.IncidentQueueResponse;
 import com.zeekad.dashboard.dto.IncidentReviewDecisionRequest;
@@ -9,6 +11,7 @@ import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.AnalystReviewDecisionService;
+import com.zeekad.dashboard.service.IncidentAssignmentService;
 import com.zeekad.dashboard.service.IncidentDetailService;
 import com.zeekad.dashboard.service.IncidentDetailView;
 import com.zeekad.dashboard.service.IncidentQueryService;
@@ -40,6 +43,7 @@ public class IncidentApiController {
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
     private final IncidentQueueService incidentQueueService;
+    private final IncidentAssignmentService incidentAssignmentService;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
@@ -47,7 +51,9 @@ public class IncidentApiController {
                                  AnalystReviewDecisionService analystReviewDecisionService,
                                  ClientIpResolver clientIpResolver,
                                  MaskingService maskingService,
-                                 IncidentQueueService incidentQueueService) {
+                                 IncidentQueueService incidentQueueService,
+                                 IncidentAssignmentService incidentAssignmentService) {
+        this.incidentAssignmentService = incidentAssignmentService;
         this.incidentQueryService = incidentQueryService;
         this.incidentDetailService = incidentDetailService;
         this.incidentTransitionService = incidentTransitionService;
@@ -100,8 +106,50 @@ public class IncidentApiController {
         boolean maskedView = maskingService.shouldMask(principal.getRole());
         boolean canDecideReview = principal.getRole() == UserRole.ANALYST || principal.getRole() == UserRole.ADMIN;
 
+        // T25 담당: VIEWER도 담당자 이름을 본다(상태 이력 변경자와 같은 기준). 바꾸기는 ANALYST·ADMIN이고 종결이 아닐 때만.
+        String incidentId = incidentQueueService.rawIncidentId(jobId, queueRank);
+        java.util.Map<String, String> displayMap = incidentQueryService.loadUserDisplayMap();
+        boolean closed = "closed".equals(detail.currentStatus());
         return ResponseEntity.ok(new IncidentDetailApiResponse(maskedView, canDecideReview, detail,
-                incidentQueueService.metaFor(principal, jobId, queueRank)));
+                incidentQueueService.metaFor(principal, jobId, queueRank),
+                incidentAssignmentService.currentView(incidentId, displayMap),
+                incidentAssignmentService.historyView(incidentId, displayMap),
+                canDecideReview && !closed));
+    }
+
+    /** T25 담당자 지정·변경·해제. 본문 { assignee: username|null, expected: username|null }. CSRF 필요 */
+    @PostMapping("/{jobId}/rank/{queueRank}/assignment")
+    public ResponseEntity<?> assign(
+            @PathVariable("jobId") Long jobId,
+            @PathVariable("queueRank") Integer queueRank,
+            @RequestBody AssignmentDtos.AssignRequest body,
+            Authentication authentication,
+            HttpServletRequest request) {
+        DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+        if (body == null) {
+            return ResponseEntity.badRequest().body(new ApiErrorResponse(400, "INVALID_REQUEST", "요청 형식이 올바르지 않습니다."));
+        }
+        IncidentAssignmentService.AssignResult result = incidentAssignmentService.assign(
+                principal, jobId, queueRank, body.assignee(), body.expected(), clientIp);
+        if (!result.succeeded()) {
+            return ResponseEntity.status(result.httpStatus())
+                    .body(new ApiErrorResponse(result.httpStatus(), result.code(), result.message()));
+        }
+        return ResponseEntity.ok(new AssignmentDtos.AssignResponse(result.assignment()));
+    }
+
+    /** T25 담당자가 될 수 있는 사용자. ANALYST·ADMIN만(다른 사용자의 허용 캡처를 간접적으로 드러내므로) */
+    @GetMapping("/{jobId}/rank/{queueRank}/assignees")
+    public ResponseEntity<AssignmentDtos.CandidatesResponse> assignees(
+            @PathVariable("jobId") Long jobId,
+            @PathVariable("queueRank") Integer queueRank,
+            Authentication authentication,
+            HttpServletRequest request) {
+        DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+        return ResponseEntity.ok(new AssignmentDtos.CandidatesResponse(
+                incidentAssignmentService.candidates(principal, jobId, queueRank, clientIp)));
     }
 
     @PostMapping("/{jobId}/rank/{queueRank}/transition")

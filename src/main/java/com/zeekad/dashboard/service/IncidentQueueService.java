@@ -1,5 +1,6 @@
 package com.zeekad.dashboard.service;
 
+import com.zeekad.dashboard.dto.AssignmentDtos;
 import com.zeekad.dashboard.dto.IncidentQueueMeta;
 import com.zeekad.dashboard.dto.QueueNeighborsResponse;
 import com.zeekad.dashboard.dto.QueueNewCountResponse;
@@ -60,16 +61,25 @@ public class IncidentQueueService {
     private final CaptureAccessService captureAccessService;
     private final MaskingService maskingService;
     private final TimeContextService timeContextService;
+    private final AckTargetService ackTargetService;
+    private final IncidentAssignmentService incidentAssignmentService;
 
     public IncidentQueueService(ZeekadReadMapper zeekadReadMapper,
                                 CaptureAccessService captureAccessService,
                                 MaskingService maskingService,
-                                TimeContextService timeContextService) {
+                                TimeContextService timeContextService,
+                                AckTargetService ackTargetService,
+                                IncidentAssignmentService incidentAssignmentService) {
         this.zeekadReadMapper = zeekadReadMapper;
         this.captureAccessService = captureAccessService;
         this.maskingService = maskingService;
         this.timeContextService = timeContextService;
+        this.ackTargetService = ackTargetService;
+        this.incidentAssignmentService = incidentAssignmentService;
     }
+
+    public static final String ASSIGNEE_ME = "me";
+    public static final String ASSIGNEE_NONE = "none";
 
     /** 요청 거르기·정렬·쪽(문자열 그대로). 해석은 이 서비스가 한다. */
     public record QueueParams(String period,
@@ -87,7 +97,17 @@ public class IncidentQueueService {
                               String sort,
                               String dir,
                               String page,
-                              String size) {
+                              String size,
+                              /* T25: 담당 조건 me·none, 착수 지연 띠 축 */
+                              String assignee,
+                              String overdue) {
+        /** T25 앞 호출 호환(담당·착수 지연 조건 없음) */
+        public QueueParams(String period, String source, String captureId, String priority, String status,
+                           String reviewPending, String alerted, String pickedBy, String role, String hasReport,
+                           String wouldSend, String asset, String sort, String dir, String page, String size) {
+            this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
+                    wouldSend, asset, sort, dir, page, size, null, null);
+        }
     }
 
     /** 요청마다 정해지는 공통 맥락(허용 캡처·기준 시각·조회 범위) */
@@ -154,7 +174,7 @@ public class IncidentQueueService {
             latestDetectedAt = zeekadReadMapper.findMaxUnifiedDetectedAt(c);
         } else {
             List<Masked> base = assetFiltered(scope.criteria(), scope.asset(), scope.role());
-            summary = summarize(base);
+            summary = summarize(base, scope.criteria());
             List<Masked> filtered = applyStripFilters(base, scope.criteria());
             total = filtered.size();
             pageCount = pageCount(total, size);
@@ -188,15 +208,23 @@ public class IncidentQueueService {
             }
         }
 
+        // T25 담당자: 이 쪽의 incident_id들로 대시보드 DB를 한 번 읽는다
+        Map<String, AssignmentDtos.Assignee> assignees = incidentAssignmentService.assigneesFor(
+                pageRecords.stream().map(UnifiedQueueRecord::getIncidentId).toList());
         List<UnifiedQueueRow> items = new ArrayList<>(pageRecords.size());
         for (int i = 0; i < pageRecords.size(); i++) {
             UnifiedQueueRecord record = pageRecords.get(i);
+            OffsetDateTime due = ackTargetService.dueAt(record.getCaptureId(), record.getZeekadStatus(),
+                    record.getPriority(), record.getDetectedAt());
             items.add(new UnifiedQueueRow(
                     pageMasked.get(i),
                     record.getDetectedAt(),
                     timeContextService.sourceType(record.getCaptureId()),
                     record.getPriority(),
-                    isOngoing(record, statByCapture.get(record.getCaptureId()), scope.anchor())));
+                    isOngoing(record, statByCapture.get(record.getCaptureId()), scope.anchor()),
+                    assignees.get(record.getIncidentId()),
+                    due,
+                    AckTargetService.isOverdue(due, scope.anchor())));
         }
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
@@ -291,14 +319,26 @@ public class IncidentQueueService {
         String sourceType = timeContextService.sourceType(incident.getCaptureId());
         List<String> allowed = captureAccessService.listAllowedCaptures(principal);
         UnifiedQueueRecord latest = findLatestRow(allowed, incident.getCaptureId(), incident.getIncidentId());
-        if (latest == null) {
-            return new IncidentQueueMeta(sourceType, null, null, false, null, null);
-        }
         OffsetDateTime anchor = timeContextService.anchorFor(allowed);
+        if (latest == null) {
+            return new IncidentQueueMeta(sourceType, null, null, false, null, null, anchor, null, false);
+        }
         CaptureQueueStat stat = zeekadReadMapper.findCaptureQueueStats(List.of(incident.getCaptureId())).stream()
                 .findFirst().orElse(null);
+        OffsetDateTime due = ackTargetService.dueAt(latest.getCaptureId(), latest.getZeekadStatus(), latest.getPriority(),
+                latest.getDetectedAt());
         return new IncidentQueueMeta(sourceType, latest.getDetectedAt(), latest.getPriority(),
-                isOngoing(latest, stat, anchor), latest.getJobId(), latest.getQueueRank());
+                isOngoing(latest, stat, anchor), latest.getJobId(), latest.getQueueRank(),
+                anchor, due, AckTargetService.isOverdue(due, anchor));
+    }
+
+    /**
+     * 상세가 이미 권한을 검사한 작업·순위의 원본 incident_id(VIEWER 상세 응답의 incident_id는 가려져 있어 다시 읽는다).
+     * 응답에 넣지 않고 담당 조회 키로만 쓴다.
+     */
+    public String rawIncidentId(Long jobId, Integer queueRank) {
+        IncidentQueueItem incident = zeekadReadMapper.findIncidentQueueItemByJobAndRank(jobId, queueRank);
+        return incident == null ? null : incident.getIncidentId();
     }
 
     /* ───────────────────────── 현황판·운영 현황 조건(T24) ───────────────────────── */
@@ -414,6 +454,14 @@ public class IncidentQueueService {
             throw invalid("정렬 방향 값이 올바르지 않습니다.");
         }
 
+        String assignee = trimToNull(p.assignee());
+        if (assignee != null) {
+            assignee = assignee.toLowerCase(Locale.ROOT);
+            if (!ASSIGNEE_ME.equals(assignee) && !ASSIGNEE_NONE.equals(assignee)) {
+                throw invalid("담당 값이 올바르지 않습니다.");
+            }
+        }
+
         List<String> captureIds = new ArrayList<>();
         for (String cap : allowed) {
             if (captureId != null && !captureId.equals(cap)) {
@@ -427,7 +475,27 @@ public class IncidentQueueService {
 
         OffsetDateTime anchor = timeContextService.anchorFor(allowed);
         UnifiedQueueCriteria c = new UnifiedQueueCriteria();
+        // T25 담당 조건: 담당 행(담당자가 있는 것만)의 incident_id 목록을 배열 바인드 하나로 넘긴다.
+        // me는 목록 안, none은 목록 밖. me인데 목록이 비면 빈 결과(VIEWER의 me도 빈 결과), none인데 비면 조건 없음.
+        if (assignee != null) {
+            boolean me = ASSIGNEE_ME.equals(assignee);
+            Long userId = me && principal != null ? principal.getId() : null;
+            List<String> ids = me && (userId == null || principal.getRole() == UserRole.VIEWER)
+                    ? List.of()
+                    : incidentAssignmentService.assignedIncidentIds(userId, captureIds);
+            if (me && ids.isEmpty()) {
+                captureIds = new ArrayList<>();
+            }
+            c.setAssigneeMode(assignee);
+            c.setAssigneeIncidentIds(ids.toArray(new String[0]));
+        }
         c.setCaptureIds(List.copyOf(captureIds));
+        // T25 착수 지연 식(큐 행·요약·띠 축이 같은 경계를 쓴다)
+        c.setLiveCaptureIds(captureIds.stream().filter(timeContextService::isLive).toList());
+        c.setAckHighBefore(anchor.minus(ackTargetService.high()));
+        c.setAckMediumBefore(anchor.minus(ackTargetService.medium()));
+        c.setAckLowBefore(anchor.minus(ackTargetService.low()));
+        c.setOverdue("true".equalsIgnoreCase(trimToNull(p.overdue())));
         if (applyPeriod && !"all".equals(period)) {
             c.setDetectedAfter(anchor.minus(PERIODS.get(period)));
             c.setDetectedUntil(anchor);
@@ -488,14 +556,33 @@ public class IncidentQueueService {
             if (c.isReviewPending() && !r.isZeekadReviewPending()) {
                 return false;
             }
+            if (c.isOverdue() && !isOverdueRecord(r, c)) {
+                return false;
+            }
             return !c.isAlerted() || r.isAlerted();
         }).toList();
     }
 
-    private static UnifiedQueueResponse.Summary summarize(List<Masked> rows) {
-        long high = 0, medium = 0, low = 0, review = 0, alerted = 0, open = 0, inv = 0, closed = 0, other = 0;
+    /** SQL 착수 지연 식(ackOverdueCond)과 같은 판정: 실습망 · 신규 · detected_at &lt; 기준 시각 − 우선순위 목표 */
+    static boolean isOverdueRecord(UnifiedQueueRecord r, UnifiedQueueCriteria c) {
+        if (!c.isAckReady() || r.getDetectedAt() == null || !AckTargetService.isOpen(r.getZeekadStatus())
+                || !c.getLiveCaptureIds().contains(r.getCaptureId()) || r.getPriority() == null) {
+            return false;
+        }
+        OffsetDateTime before = switch (r.getPriority()) {
+            case "high" -> c.getAckHighBefore();
+            case "medium" -> c.getAckMediumBefore();
+            case "low" -> c.getAckLowBefore();
+            default -> null;
+        };
+        return before != null && r.getDetectedAt().isBefore(before);
+    }
+
+    private static UnifiedQueueResponse.Summary summarize(List<Masked> rows, UnifiedQueueCriteria c) {
+        long high = 0, medium = 0, low = 0, review = 0, alerted = 0, open = 0, inv = 0, closed = 0, other = 0, overdue = 0;
         for (Masked m : rows) {
             UnifiedQueueRecord r = m.record();
+            if (isOverdueRecord(r, c)) overdue++;
             if ("high".equals(r.getPriority())) high++;
             else if ("medium".equals(r.getPriority())) medium++;
             else if ("low".equals(r.getPriority())) low++;
@@ -508,7 +595,7 @@ public class IncidentQueueService {
             else other++;
         }
         return new UnifiedQueueResponse.Summary(rows.size(), high, medium, low, review, alerted,
-                statusMap(open, inv, closed, other));
+                statusMap(open, inv, closed, other), overdue);
     }
 
     private static UnifiedQueueResponse.Summary toSummary(UnifiedQueueSummaryRow row) {
@@ -517,11 +604,12 @@ public class IncidentQueueService {
         }
         return new UnifiedQueueResponse.Summary(row.getTotal(), row.getHigh(), row.getMedium(), row.getLow(),
                 row.getReviewPending(), row.getAlerted(),
-                statusMap(row.getStatusOpen(), row.getStatusInvestigating(), row.getStatusClosed(), row.getStatusOther()));
+                statusMap(row.getStatusOpen(), row.getStatusInvestigating(), row.getStatusClosed(), row.getStatusOther()),
+                row.getOverdue());
     }
 
     private static UnifiedQueueResponse.Summary emptySummary() {
-        return new UnifiedQueueResponse.Summary(0, 0, 0, 0, 0, 0, statusMap(0, 0, 0, 0));
+        return new UnifiedQueueResponse.Summary(0, 0, 0, 0, 0, 0, statusMap(0, 0, 0, 0), 0);
     }
 
     private static Map<String, Long> statusMap(long open, long inv, long closed, long other) {

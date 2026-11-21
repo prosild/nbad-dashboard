@@ -77,11 +77,14 @@ public class DashboardOverviewService {
     private final IncidentQueueService incidentQueueService;
     private final TimeContextService timeContextService;
     private final MaskingService maskingService;
+    private final HandlingMetricsService handlingMetricsService;
 
     public DashboardOverviewService(ZeekadReadMapper zeekadReadMapper,
                                     IncidentQueueService incidentQueueService,
                                     TimeContextService timeContextService,
-                                    MaskingService maskingService) {
+                                    MaskingService maskingService,
+                                    HandlingMetricsService handlingMetricsService) {
+        this.handlingMetricsService = handlingMetricsService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.incidentQueueService = incidentQueueService;
         this.timeContextService = timeContextService;
@@ -209,13 +212,15 @@ public class DashboardOverviewService {
                             jobRef(byId.get(s.getLatestSucceededJobId()), role))));
         }
 
+        HandlingMetricsService.Result handling = handlingMetricsService.compute(cond, periodGiven);
         return new OperationsApiResponse(maskingService.shouldMask(role), cond.allowed(), cleanCaptureId, jobs, bundles,
                 feedback, slack, periodGiven ? cond.period() : null,
                 source == null || source.isBlank() ? null : source.trim().toLowerCase(Locale.ROOT),
                 cond.anchor(), truncated, jobsTotal, latestJobs,
                 cond.allowed().stream()
                         .map(c -> new UnifiedQueueResponse.Source(c, timeContextService.sourceType(c), null))
-                        .toList());
+                        .toList(),
+                handling.handlingTimes(), handling.workload());
     }
 
     /* ───────────────────────── 센서·캡처 상태 ───────────────────────── */

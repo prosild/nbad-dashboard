@@ -11,5 +11,9 @@ public record IncidentQueueMeta(String sourceType,
                                 String priority,
                                 boolean ongoing,
                                 Long latestJobId,
-                                Integer latestQueueRank) {
+                                Integer latestQueueRank,
+                                /* T25: 경과를 셀 기준 시각, 착수 목표 시각(대상이 아니면 null), 착수 지연 */
+                                OffsetDateTime anchor,
+                                OffsetDateTime ackDueAt,
+                                boolean ackOverdue) {
 }

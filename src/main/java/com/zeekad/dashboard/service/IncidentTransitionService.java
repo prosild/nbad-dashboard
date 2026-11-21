@@ -31,14 +31,20 @@ public class IncidentTransitionService {
     private final ZeekadWriteMapper zeekadWriteMapper;
     private final CaptureAccessService captureAccessService;
     private final AuditService auditService;
+    private final IncidentAssignmentService incidentAssignmentService;
 
     public IncidentTransitionService(ZeekadWriteMapper zeekadWriteMapper,
                                      CaptureAccessService captureAccessService,
-                                     AuditService auditService) {
+                                     AuditService auditService,
+                                     IncidentAssignmentService incidentAssignmentService) {
         this.zeekadWriteMapper = zeekadWriteMapper;
         this.captureAccessService = captureAccessService;
         this.auditService = auditService;
+        this.incidentAssignmentService = incidentAssignmentService;
     }
+
+    /** 자동 지정이 실패했을 때 성공 메시지에 덧붙이는 문장(T25) */
+    public static final String AUTO_ASSIGN_FAILED_NOTE = " 담당자 자동 지정은 실패했습니다.";
 
     public TransitionResult transition(DashboardUserPrincipal principal,
                                        Long jobId,
@@ -132,6 +138,16 @@ public class IncidentTransitionService {
         String successMessage = "closed".equals(normalizedTarget)
                 ? "인시던트를 종결했습니다. 판정: " + resolutionDisplayName(effectiveResolution)
                 : "인시던트를 분석 중으로 바꿨습니다.";
+        if ("investigating".equals(normalizedTarget)) {
+            // T25: 조사 시작 때 미배정이면 시작한 사람을 담당자로. 다른 DB라 한 트랜잭션이 아니다.
+            // 실패해도 상태 변경은 이미 성공했으므로 성공으로 응답하고 안내 문장을 덧붙인다.
+            try {
+                incidentAssignmentService.autoAssignOnStart(principal, item, jobId, clientIp);
+            } catch (RuntimeException ex) {
+                log.error("조사 시작 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank, actorUsername, ex);
+                successMessage = successMessage + AUTO_ASSIGN_FAILED_NOTE;
+            }
+        }
         return TransitionResult.success(successMessage);
     }
 

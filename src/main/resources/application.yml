@@ -44,6 +44,14 @@ dashboard:
     #   형식이 틀리거나 0 이하이거나 stale-after ≥ down-after면 앱 시작 때 실패한다.
     stale-after: ${DASHBOARD_SENSOR_STALE_AFTER:15m}
     down-after: ${DASHBOARD_SENSOR_DOWN_AFTER:1h}
+  sla:
+    ack:
+      # 착수 목표(T25). 실습망(live) 수집원의 신규 인시던트가 탐지 뒤 지금 우선순위의 목표 시간을 넘기면 "착수 지연"이다.
+      #   가져온 데이터는 재생 데이터라 따지지 않는다. 형식은 Spring Duration(30m, 4h 등).
+      #   0 이하이거나 high ≤ medium ≤ low가 아니면 앱 시작 때 실패한다.
+      high: ${DASHBOARD_SLA_ACK_HIGH:30m}
+      medium: ${DASHBOARD_SLA_ACK_MEDIUM:4h}
+      low: ${DASHBOARD_SLA_ACK_LOW:24h}
   datasource:
     app:
       url: jdbc:postgresql://${DASHBOARD_DB_HOST:127.0.0.1}:${DASHBOARD_DB_PORT:55432}/${DASHBOARD_DB_NAME:zeekad_dashboard}

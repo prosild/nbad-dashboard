@@ -22,6 +22,54 @@ public class DashboardProperties {
      */
     private String timeAnchor = "now";
     private final CaptureSources captureSources = new CaptureSources();
+    private final Sla sla = new Sla();
+
+    public Sla getSla() {
+        return sla;
+    }
+
+    /** 착수 목표(T25). dashboard.sla.ack.high·medium·low */
+    public static class Sla {
+        private final Ack ack = new Ack();
+
+        public Ack getAck() {
+            return ack;
+        }
+    }
+
+    /**
+     * 우선순위별 착수 목표 시간(T25): 실습망 신규 인시던트가 탐지 뒤 이 시간을 넘기면 착수 지연이다.
+     * Spring Duration 형식(30m, 4h). 0 이하이거나 high ≤ medium ≤ low가 아니면 시작 때 실패한다.
+     */
+    public static class Ack {
+        private Duration high = Duration.ofMinutes(30);
+        private Duration medium = Duration.ofHours(4);
+        private Duration low = Duration.ofHours(24);
+
+        public Duration getHigh() {
+            return high;
+        }
+
+        public void setHigh(Duration high) {
+            this.high = high;
+        }
+
+        public Duration getMedium() {
+            return medium;
+        }
+
+        public void setMedium(Duration medium) {
+            this.medium = medium;
+        }
+
+        public Duration getLow() {
+            return low;
+        }
+
+        public void setLow(Duration low) {
+            this.low = low;
+        }
+    }
 
     public String getTimeAnchor() {
         return timeAnchor;

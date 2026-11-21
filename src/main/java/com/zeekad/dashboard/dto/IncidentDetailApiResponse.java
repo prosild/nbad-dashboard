@@ -10,6 +10,10 @@ public record IncidentDetailApiResponse(
         boolean canDecideReview,
         IncidentDetailView detail,
         /* T23: 수집원·탐지 시각·서버 우선순위·진행 중 */
-        IncidentQueueMeta queueMeta
+        IncidentQueueMeta queueMeta,
+        /* T25: 현재 담당, 담당 이력(시간 역순), 담당을 바꿀 수 있는지(ANALYST·ADMIN이고 종결이 아님) */
+        AssignmentDtos.Assignment assignment,
+        java.util.List<AssignmentDtos.HistoryItem> assignmentHistory,
+        boolean canAssign
 ) {
 }

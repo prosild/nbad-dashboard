@@ -25,7 +25,17 @@ public class UnifiedQueueCriteria {
     private String priority;
     private boolean reviewPending;
     private boolean alerted;
+    /** T25 착수 지연 띠 축 */
+    private boolean overdue;
     private boolean applyStripFilters = true;
+    /** T25 담당 조건: me(목록 안) · none(목록 밖) · null. 목록은 담당자가 있는 incident_id(배열 바인드 하나) */
+    private String assigneeMode;
+    private String[] assigneeIncidentIds;
+    /** T25 착수 지연 식: 실습망 캡처(captureIds 안)와 우선순위별 경계(기준 시각 − 목표). 하나라도 없으면 지연 0 */
+    private List<String> liveCaptureIds = List.of();
+    private OffsetDateTime ackHighBefore;
+    private OffsetDateTime ackMediumBefore;
+    private OffsetDateTime ackLowBefore;
     private String sortKey = "priority";
     private boolean sortAsc = true;
     private Integer limit;
@@ -45,7 +55,14 @@ public class UnifiedQueueCriteria {
         c.priority = priority;
         c.reviewPending = reviewPending;
         c.alerted = alerted;
+        c.overdue = overdue;
         c.applyStripFilters = applyStripFilters;
+        c.assigneeMode = assigneeMode;
+        c.assigneeIncidentIds = assigneeIncidentIds;
+        c.liveCaptureIds = liveCaptureIds;
+        c.ackHighBefore = ackHighBefore;
+        c.ackMediumBefore = ackMediumBefore;
+        c.ackLowBefore = ackLowBefore;
         c.sortKey = sortKey;
         c.sortAsc = sortAsc;
         c.limit = limit;
@@ -77,6 +94,26 @@ public class UnifiedQueueCriteria {
     public void setReviewPending(boolean reviewPending) { this.reviewPending = reviewPending; }
     public boolean isAlerted() { return alerted; }
     public void setAlerted(boolean alerted) { this.alerted = alerted; }
+    public boolean isOverdue() { return overdue; }
+    public void setOverdue(boolean overdue) { this.overdue = overdue; }
+    public String getAssigneeMode() { return assigneeMode; }
+    public void setAssigneeMode(String assigneeMode) { this.assigneeMode = assigneeMode; }
+    public String[] getAssigneeIncidentIds() { return assigneeIncidentIds; }
+    public void setAssigneeIncidentIds(String[] assigneeIncidentIds) { this.assigneeIncidentIds = assigneeIncidentIds; }
+    public boolean isHasAssigneeIds() { return assigneeIncidentIds != null && assigneeIncidentIds.length > 0; }
+    public List<String> getLiveCaptureIds() { return liveCaptureIds; }
+    public void setLiveCaptureIds(List<String> liveCaptureIds) { this.liveCaptureIds = liveCaptureIds; }
+    public OffsetDateTime getAckHighBefore() { return ackHighBefore; }
+    public void setAckHighBefore(OffsetDateTime v) { this.ackHighBefore = v; }
+    public OffsetDateTime getAckMediumBefore() { return ackMediumBefore; }
+    public void setAckMediumBefore(OffsetDateTime v) { this.ackMediumBefore = v; }
+    public OffsetDateTime getAckLowBefore() { return ackLowBefore; }
+    public void setAckLowBefore(OffsetDateTime v) { this.ackLowBefore = v; }
+    /** 착수 지연 식을 쓸 수 있는지(실습망 캡처와 경계가 모두 있음) */
+    public boolean isAckReady() {
+        return liveCaptureIds != null && !liveCaptureIds.isEmpty()
+                && ackHighBefore != null && ackMediumBefore != null && ackLowBefore != null;
+    }
     public boolean isApplyStripFilters() { return applyStripFilters; }
     public void setApplyStripFilters(boolean applyStripFilters) { this.applyStripFilters = applyStripFilters; }
     public String getSortKey() { return sortKey; }

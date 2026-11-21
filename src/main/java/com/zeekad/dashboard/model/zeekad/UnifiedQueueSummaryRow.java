@@ -14,6 +14,8 @@ public class UnifiedQueueSummaryRow {
     private long statusInvestigating;
     private long statusClosed;
     private long statusOther;
+    /** T25 착수 지연 수 */
+    private long overdue;
 
     public long getTotal() { return total; }
     public void setTotal(Long total) { this.total = total == null ? 0 : total; }
@@ -35,4 +37,6 @@ public class UnifiedQueueSummaryRow {
     public void setStatusClosed(Long v) { this.statusClosed = v == null ? 0 : v; }
     public long getStatusOther() { return statusOther; }
     public void setStatusOther(Long v) { this.statusOther = v == null ? 0 : v; }
+    public long getOverdue() { return overdue; }
+    public void setOverdue(Long v) { this.overdue = v == null ? 0 : v; }
 }

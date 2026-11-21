@@ -140,4 +140,9 @@ public interface ZeekadReadMapper {
     List<SlackSummary> findSlackSummariesForCaptures(@Param("captureIds") List<String> captureIds,
                                                      @Param("after") OffsetDateTime after,
                                                      @Param("until") OffsetDateTime until);
+
+    /** T25 처리 시간 지표·담당 현황 투영(after가 있으면 SQL 하한으로 먼저 줄임) */
+    java.util.List<com.zeekad.dashboard.model.zeekad.HandlingPoint> findHandlingPoints(
+            @Param("c") com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria c,
+            @Param("after") java.time.OffsetDateTime after);
 }

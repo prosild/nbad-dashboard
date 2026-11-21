@@ -12,5 +12,7 @@ public enum AuditActionType {
     INCIDENT_VIEW_UNMASKED,
     INCIDENT_STATUS_TRANSITION,
     ANALYST_REVIEW_DECISION,
+    /** T25 담당자 지정·변경·해제(조사 시작 때 자동 지정 포함) */
+    INCIDENT_ASSIGNMENT,
     USER_ADMIN_CHANGE
 }

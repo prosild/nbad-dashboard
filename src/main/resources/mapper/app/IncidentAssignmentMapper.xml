@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- T25 담당자. #{}만 쓴다. -->
+<mapper namespace="com.zeekad.dashboard.mapper.app.IncidentAssignmentMapper">
+
+    <resultMap id="assignmentMap" type="com.zeekad.dashboard.model.IncidentAssignment">
+        <id property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="assigneeUserId" column="assignee_user_id"/>
+        <result property="assignedAt" column="assigned_at"/>
+        <result property="assignedBy" column="assigned_by"/>
+        <result property="version" column="version"/>
+        <result property="assigneeUsername" column="assignee_username"/>
+        <result property="assigneeDisplayName" column="assignee_display_name"/>
+        <result property="assigneeEnabled" column="assignee_enabled"/>
+    </resultMap>
+
+    <resultMap id="historyMap" type="com.zeekad.dashboard.model.IncidentAssignmentHistory">
+        <id property="id" column="id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="jobId" column="job_id"/>
+        <result property="fromUserId" column="from_user_id"/>
+        <result property="toUserId" column="to_user_id"/>
+        <result property="fromUsername" column="from_username"/>
+        <result property="toUsername" column="to_username"/>
+        <result property="actorUsername" column="actor_username"/>
+        <result property="reason" column="reason"/>
+        <result property="changedAt" column="changed_at"/>
+    </resultMap>
+
+    <sql id="assignmentColumns">
+        a.incident_id, a.capture_id, a.assignee_user_id, a.assigned_at, a.assigned_by, a.version,
+        u.username AS assignee_username, u.display_name AS assignee_display_name, u.enabled AS assignee_enabled
+    </sql>
+
+    <select id="findByIncidentId" resultMap="assignmentMap">
+        SELECT <include refid="assignmentColumns"/>
+        FROM incident_assignments a
+        LEFT JOIN users u ON u.id = a.assignee_user_id
+        WHERE a.incident_id = #{incidentId}
+    </select>
+
+    <select id="findAssignedByIncidentIds" resultMap="assignmentMap">
+        SELECT <include refid="assignmentColumns"/>
+        FROM incident_assignments a
+        JOIN users u ON u.id = a.assignee_user_id
+        WHERE a.incident_id IN
+        <foreach collection="incidentIds" item="iid" open="(" separator="," close=")">#{iid}</foreach>
+    </select>
+
+    <select id="findAssignedRows" resultMap="assignmentMap">
+        SELECT a.incident_id, a.capture_id, a.assignee_user_id, a.assigned_at, a.assigned_by, a.version
+        FROM incident_assignments a
+        WHERE a.assignee_user_id IS NOT NULL
+        <if test="userId != null">
+            AND a.assignee_user_id = #{userId}
+        </if>
+    </select>
+
+    <!-- 첫 지정의 동시 삽입: 행이 이미 있으면 예외 없이 0행이다(PK 위반 예외가 PostgreSQL 트랜잭션을 망가뜨리지 않게).
+         H2도 PostgreSQL 모드에서 같은 문법을 받는다(Gradle 시험). -->
+    <insert id="insertIfAbsent">
+        INSERT INTO incident_assignments (incident_id, capture_id, assignee_user_id, assigned_at, assigned_by, version)
+        VALUES (#{incidentId}, #{captureId}, #{assigneeUserId}, #{assignedAt}, #{assignedBy}, 1)
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <update id="updateIfVersion">
+        UPDATE incident_assignments
+        SET assignee_user_id = #{assigneeUserId},
+            assigned_at = #{assignedAt},
+            assigned_by = #{assignedBy},
+            version = version + 1
+        WHERE incident_id = #{incidentId}
+          AND version = #{expectedVersion}
+    </update>
+
+    <insert id="insertHistory" parameterType="com.zeekad.dashboard.model.IncidentAssignmentHistory"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO incident_assignment_history (
+            incident_id, capture_id, job_id, from_user_id, to_user_id, actor_username, reason, changed_at
+        ) VALUES (
+            #{incidentId}, #{captureId}, #{jobId}, #{fromUserId}, #{toUserId}, #{actorUsername}, #{reason}, #{changedAt}
+        )
+    </insert>
+
+    <select id="findHistory" resultMap="historyMap">
+        SELECT h.id, h.incident_id, h.capture_id, h.job_id, h.from_user_id, h.to_user_id,
+               fu.username AS from_username, tu.username AS to_username,
+               h.actor_username, h.reason, h.changed_at
+        FROM incident_assignment_history h
+        LEFT JOIN users fu ON fu.id = h.from_user_id
+        LEFT JOIN users tu ON tu.id = h.to_user_id
+        WHERE h.incident_id = #{incidentId}
+        ORDER BY h.changed_at DESC, h.id DESC
+    </select>
+</mapper>

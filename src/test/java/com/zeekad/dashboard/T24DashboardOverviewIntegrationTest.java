@@ -92,6 +92,7 @@ class T24DashboardOverviewIntegrationTest {
     @Autowired private CaptureAccessService captureAccessService;
     @Autowired private MaskingService maskingService;
     @Autowired private MutableTestClock clock;
+    @Autowired private com.zeekad.dashboard.service.IncidentAssignmentService incidentAssignmentService;
     @Autowired @Qualifier("zeekadReadDataSource") private DataSource zeekadReadDataSource;
 
     @AfterEach
@@ -501,8 +502,11 @@ class T24DashboardOverviewIntegrationTest {
         DashboardProperties props = new DashboardProperties();
         props.setTimeAnchor("latest-data");
         TimeContextService tcs = new TimeContextService(props, zeekadReadMapper, clock);
-        IncidentQueueService qs = new IncidentQueueService(zeekadReadMapper, captureAccessService, maskingService, tcs);
-        return new DashboardOverviewService(zeekadReadMapper, qs, tcs, maskingService);
+        com.zeekad.dashboard.service.AckTargetService ack = new com.zeekad.dashboard.service.AckTargetService(props, tcs);
+        IncidentQueueService qs = new IncidentQueueService(zeekadReadMapper, captureAccessService, maskingService, tcs,
+                ack, incidentAssignmentService);
+        return new DashboardOverviewService(zeekadReadMapper, qs, tcs, maskingService,
+                new com.zeekad.dashboard.service.HandlingMetricsService(zeekadReadMapper, tcs, ack, incidentAssignmentService));
     }
 
     private static long trendSum(DashboardOverviewResponse ov) {
