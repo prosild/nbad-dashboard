@@ -1193,7 +1193,7 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
         <span
           role="img"
           aria-label={`AI 분석 리포트 있음: ${kind}`}
-          title={`${kind} 리포트 · 리포트 작업: 작업 ${item.zeekadReportJobId}`}
+          title={`${kind} 리포트 · 리포트 작업 ${item.zeekadReportJobId}`}
           className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
         >
           <FileText className="h-3 w-3" aria-hidden="true" />

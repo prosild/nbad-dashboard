@@ -407,7 +407,7 @@ export function OperationsPage() {
                         <tr key={job.jobId} className="hover:bg-slate-800/35">
                           <td
                             className="soc-td whitespace-nowrap text-xs font-semibold tabular-nums text-slate-100"
-                            title={`탐지 작업: 작업 ${job.jobId}`}
+                            title={`탐지 작업 ${job.jobId}`}
                           >
                             {formatDateTime(job.finishedAt)}
                           </td>

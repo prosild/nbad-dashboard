@@ -132,7 +132,7 @@ describe('인시던트 목록 및 상세 화면', () => {
     expect(within(row1).queryByRole('img', { name: '리포트 없음' })).toBeNull();
     // 리포트 작업 번호 툴팁(작성 방식을 앞에 더함)
     // T27: 작업 번호는 "작업 40"('#'은 인시던트 번호에만)
-    expect(within(row1).getByTitle('AI 작성 리포트 · 리포트 작업: 작업 40')).toBeInTheDocument();
+    expect(within(row1).getByTitle('AI 작성 리포트 · 리포트 작업 40')).toBeInTheDocument();
     expect(within(row1).getByRole('img', { name: 'AI 분석 리포트 있음: AI 작성' })).toBeInTheDocument();
     expect(screen.getByText('전체 인시던트')).toBeInTheDocument();
   });

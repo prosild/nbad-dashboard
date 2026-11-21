@@ -126,7 +126,7 @@ export function sortImportedCaptures(rows: CaptureRow[]): CaptureRow[] {
 
 function jobTitle(job: JobRef | null): string | undefined {
   if (!job) return undefined;
-  return `최근 끝난 탐지 작업: 작업 ${job.jobId} · ${job.status ?? '-'} · 완료 ${formatDateTime(job.finishedAt)}${job.error ? `\n오류: ${job.error}` : ''}`;
+  return `최근 끝난 탐지 작업 ${job.jobId} · ${job.status ?? '-'} · 완료 ${formatDateTime(job.finishedAt)}${job.error ? `\n오류: ${job.error}` : ''}`;
 }
 
 /* ───────────────────────── 현황판 패널 ───────────────────────── */

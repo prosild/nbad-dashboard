@@ -223,7 +223,7 @@ export function ReviewsPage() {
                         <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
                           <td
                             className="soc-td text-xs font-semibold text-slate-200"
-                            title={`에스컬레이션 작업: 작업 ${item.reviewJobId ?? item.jobId ?? '-'}`}
+                            title={`에스컬레이션 작업 ${item.reviewJobId ?? item.jobId ?? '-'}`}
                           >
                             <CaptureName id={item.captureId} />
                           </td>

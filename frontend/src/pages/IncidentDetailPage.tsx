@@ -162,7 +162,9 @@ export function IncidentDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [numberMode, jobId, queueRank]);
+    // T27: 번호 위치를 다시 받으면(새로 고침) 같은 위치여도 다시 부른다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numberMode, jobId, queueRank, location]);
 
   useEffect(() => {
     void loadDetail();
