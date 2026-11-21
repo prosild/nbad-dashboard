@@ -261,6 +261,15 @@ describe('T27 큐·에스컬레이션 링크와 번호 칸', () => {
     expect(head.className.split(/\s+/)).toEqual(expect.arrayContaining(['hidden', '2xl:table-cell']));
     const link = within(table).getByRole('link', { name: /인시던트 번호 1042, 인시던트 상세: 10\.0\.0\.3/ });
     expect(link.getAttribute('href')).toMatch(/^\/incidents\/1042\?from=/);
+    // 폭 단계(설계자 답 2): 호스트 이름 2.5 → 4rem(2xl) → 제한 없음(1920, 칸 15rem), 담당 4.5 → 6 → 7.5rem, 탐지 시각은 1920px부터
+    const name = table.querySelector('[data-host-name]') as HTMLElement | null;
+    if (name) expect(name.className.split(/\s+/)).toEqual(expect.arrayContaining(['max-w-[2.5rem]', '2xl:max-w-[4rem]', 'min-[1920px]:max-w-none']));
+    expect((table.querySelector('[data-col="assignee"] > span') as HTMLElement).className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['max-w-[4.5rem]', '2xl:max-w-[6rem]', 'min-[1920px]:max-w-[7.5rem]']),
+    );
+    expect((table.querySelector('[data-detected-time]') as HTMLElement).className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['hidden', 'min-[1920px]:inline']),
+    );
     const cell = table.querySelector('[data-col="incident-no"]') as HTMLElement;
     expect(cell).toHaveTextContent('#1042');
     const other = within(table).getByRole('link', { name: /^인시던트 상세: 10\.0\.0\.4/ });
@@ -406,7 +415,7 @@ describe('T27 도우미·표지', () => {
     const table = await screen.findByRole('table');
     const short = table.querySelector('[data-ack-short]') as HTMLElement;
     expect(short).toHaveTextContent('지연');
-    expect(short.className.split(/\s+/)).toContain('2xl:hidden');
+    expect(short.className.split(/\s+/)).toContain('min-[1920px]:hidden');
     const badge = short.parentElement as HTMLElement;
     expect(within(badge).getByText('착수 지연, 목표 탐지 뒤 30분')).toHaveClass('sr-only');
     expect(badge.getAttribute('title')).toContain('이 우선순위의 착수 목표: 탐지 뒤 30분');

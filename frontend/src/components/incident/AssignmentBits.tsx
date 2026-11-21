@@ -17,7 +17,7 @@ export function AckOverdueBadge({
   dueAt?: string | null;
   /** 탐지 시각(있으면 목표 시간 = 착수 목표 − 탐지를 툴팁·판독기 이름에 넣는다) */
   detectedAt?: string | null;
-  /** T27: 1536px 미만에서 알람 아이콘과 "지연"으로 줄인다(툴팁·판독기 이름은 "착수 지연"과 목표 시간) */
+  /** T27: 1920px 미만에서 알람 아이콘과 "지연"으로 줄인다(툴팁·판독기 이름은 "착수 지연"과 목표 시간) */
   compact?: boolean;
 }) {
   const target = ackTargetText(detectedAt, dueAt);
@@ -39,10 +39,10 @@ export function AckOverdueBadge({
   return (
     <SocBadge tone="danger" title={title}>
       <AlarmClock className="h-3 w-3" aria-hidden="true" />
-      <span aria-hidden="true" className="2xl:hidden" data-ack-short="">
+      <span aria-hidden="true" className="min-[1920px]:hidden" data-ack-short="">
         지연
       </span>
-      <span aria-hidden="true" className="hidden 2xl:inline">
+      <span aria-hidden="true" className="hidden min-[1920px]:inline">
         착수 지연
       </span>
       <span className="sr-only">{target ? `착수 지연, 목표 탐지 뒤 ${target}` : '착수 지연'}</span>

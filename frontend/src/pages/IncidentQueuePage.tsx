@@ -899,14 +899,14 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
   const detectedTitle = `탐지 시각 ${formatDateTime(item.detectedAt)}`;
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap" data-detected-cell="" title={detectedTitle}>
-      {/* T27: 1536px 미만은 탐지 시각을 빼고 경과와 표지만 보인다(탐지 시각은 툴팁과 판독기 글자) */}
-      <span className="hidden text-slate-300 2xl:inline" data-detected-time="">
+      {/* T27: 1920px 미만은 탐지 시각을 빼고 경과와 표지만 보인다(탐지 시각은 툴팁과 판독기 글자) */}
+      <span className="hidden text-slate-300 min-[1920px]:inline" data-detected-time="">
         {compactOccurrence(item.detectedAt, anchor)}
       </span>
-      <span className="sr-only 2xl:hidden">{`${detectedTitle} · `}</span>
+      <span className="sr-only min-[1920px]:hidden">{`${detectedTitle} · `}</span>
       {el && (
         <>
-          <span className="hidden text-slate-600 2xl:inline" aria-hidden="true">
+          <span className="hidden text-slate-600 min-[1920px]:inline" aria-hidden="true">
             ·
           </span>
           <span
@@ -1083,7 +1083,9 @@ function QueueTable({
                   <DetectedCell item={item} anchor={anchor} />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
-                  <div className="flex items-baseline gap-1.5 2xl:max-w-[17rem]">
+                  {/* T27: 호스트 칸 최대 폭은 1920px부터 15rem. IP는 그대로이고 호스트 이름 최대 폭은
+                      1536px 미만 2.5rem · 1536~1919px 4rem · 1920px부터 제한 없음(칸 최대 폭 안에서 말줄임) */}
+                  <div className="flex items-baseline gap-1.5 min-[1920px]:max-w-[15rem]">
                     {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
                     <Link
                       to={url}
@@ -1095,7 +1097,7 @@ function QueueTable({
                     </Link>
                     {firstName !== undefined && (
                       <span
-                        className="min-w-0 max-w-[2.5rem] truncate font-mono text-[11px] text-slate-400 2xl:max-w-none"
+                        className="min-w-0 max-w-[2.5rem] truncate font-mono text-[11px] text-slate-400 2xl:max-w-[4rem] min-[1920px]:max-w-none"
                         title={item.hostName.join(', ')}
                         data-host-name=""
                       >
@@ -1144,7 +1146,8 @@ function QueueTable({
                   </div>
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2" data-col="assignee">
-                  <AssigneeName assignee={item.assignee} className="max-w-[4.5rem] text-xs 2xl:max-w-[10rem]" />
+                  {/* T27: 담당 최대 폭 1536px 미만 4.5rem · 1536~1919px 6rem · 1920px부터 7.5rem(전체 이름은 툴팁) */}
+                  <AssigneeName assignee={item.assignee} className="max-w-[4.5rem] text-xs 2xl:max-w-[6rem] min-[1920px]:max-w-[7.5rem]" />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2 hidden lg:table-cell">
                   <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />
