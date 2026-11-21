@@ -110,6 +110,15 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 | 2026-11-21 | T20 | 운영 현황 · 탐지 모델별 행 | (없음) | 주 탐지 기준 인시던트 수("단독 탐지"라고 쓰지 않는다. 교차 탐지를 빼지 않음) | zeek_AD `feedback_summary.zeekad_picked_by` | 집계 기준을 정확히 쓴다 | 예 |
 | 2026-11-21 | T20 | 전체 · 첫 화면(`/`) | 인시던트(목록) | 현황판(메뉴 맨 위). 패널: 기준 띠(데이터 기준 · 실패한 탐지 작업 · 불러온 시각 · 새로 고침) / 핵심 지표(전체 인시던트 · 경보 발송 · 판정 완료 · 미판정 · 에스컬레이션 대기) / 캡처별 현황 / 탐지 모델 상태 / 파이프라인 / 경보 | 프론트엔드 | 관제 현황판(인계 T20). 인시던트 목록은 `/incidents` 그대로 | 아니요 |
 | 2026-11-21 | T20 | 캡처가 보이는 모든 화면(현황판 · 운영 현황 · 인시던트 목록 캡처 선택 · 에스컬레이션) | 캡처 ID 그대로(`cic17-wed`, `syn1-thu`, `lab-20261119`) | CIC-IDS2017 수요일 / CIC 목요일 + 합성 APT / 실습망 2026-11-19 · Kali 공격 + 정상 배경(원래 ID와 설명은 툴팁). 아래 '수집 구간(캡처) 표시 이름' 절 | zeek_AD 데이터 계약 v2 "수집 구간(캡처) 표시 이름"(Q65) | `syn1-*`을 Kali 트래픽으로 오해하는 일을 막는다(zeek_AD 확정) | 예 |
+| 2026-11-21 | T21 | 상세 조치 패널 · 에스컬레이션(`/reviews`) · 관계 안내 | "에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다."(T19, 계약과 어긋남) | "에스컬레이션 결정은 파이프라인이 반영하면 인시던트 상태에 적용됩니다. 승인 → 분석 중, 오탐 종결 → 종결(오탐)." 조치 패널 에스컬레이션 칸과 `/reviews` 목록 위. 시간 약속("30초", "곧")은 쓰지 않는다 | zeek_AD 계약 `dashboard.decide_review`(재개 때 confirm → investigating, dismiss → investigating → closed(false_positive)) | SPEC 결정 2026-11-21 "정정: 에스컬레이션 결정은 반영되면 인시던트 상태를 바꾼다". 옛 문구는 용어 회귀 테스트 금지 목록 | 아니요 |
+| 2026-11-21 | T21 | 상세 조치 패널 · `/reviews` · 반영 상태 | 화면이 따로 끌어낸 라벨(`/reviews`) | 서버 라벨 3종 그대로: 반영 중 / 반영됨 / 반영 실패(관리자 확인 필요). 보조 표시 "반영 지연"(결정 뒤 10분 넘게 반영 중, 화면이 `decidedAt`으로 계산) + 안내 "반영이 늦어지고 있습니다. 파이프라인 상태를 확인하거나 상태 변경으로 직접 처리하세요." / 실패 안내 "자동 반영에 실패했습니다. 관리자에게 알리거나 상태 변경으로 직접 처리하세요." / 반영 시각 | API `resumeStatusLabel`(zeek_AD `zeekad_review_resumed_at`·`zeekad_review_resume_failed`) | 이름을 새로 만들지 않는다(인계 T21) | 아니요 |
+| 2026-11-21 | T21 | 상세 조치 패널 · 상태 변경 폼 | 오탐 종결 결정 뒤 언제나 판정 오탐 미리 채움 + "에스컬레이션을 오탐 종결로 결정해 판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다." | 반영 실패·반영 지연일 때만 미리 채움 + "오탐 종결 결정이 자동 반영되지 않았습니다. 상태 변경으로 직접 종결하세요. 판정을 오탐으로 미리 채웠습니다." / "판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다." / 신규 단계 "분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.". 반영 중(지연 전)에는 폼을 막지 않고 위에 "에스컬레이션 결정이 아직 반영 중입니다. 지금 상태를 직접 바꾸면 반영 때 그 단계는 건너뜁니다. 결정과 다른 판정으로 종결하면 둘이 어긋난 채 남습니다." | 프론트엔드 | 정상 반영이면 파이프라인이 종결(오탐)하므로 직접 처리는 반영이 안 됐을 때만 안내한다 | 아니요 |
+| 2026-11-21 | T21 | 오탐 종결 확인(상세·`/reviews`) | "오탐 종결로 결정할까요? 결정은 되돌릴 수 없고, 인시던트 상태는 바뀌지 않습니다." | "오탐 종결로 결정할까요? 결정은 되돌릴 수 없습니다. 반영되면 인시던트가 종결(오탐)됩니다." | 프론트엔드 | 계약 정정 | 아니요 |
+| 2026-11-21 | T21 | 인시던트 목록 · 상세 | 발송 판단(`zeekadWouldSend`)을 "경보 발송"이라 부름: 행 칩 "경보 발송"/"보류", 필터 "경보 발송 판단: 경보 발송/보류", 열 "리포트·경보", 상세 탭 "경보 판단", 배지 "경보 발송", 우선순위 High "경보를 발송했거나" | "발송 판단"(발송/보류): 행 칩 "발송 판단: 발송"/"발송 판단: 보류", 필터 칩 "발송 판단: 발송", 드롭다운 "발송 판단"(발송/보류), 열 "리포트·판단"(툴팁 "AI 분석 리포트 · 검증 · 발송 판단"), 상세 탭 "발송 판단"(최종 발송 판단 발송/보류), High "발송 판단이 '발송'이거나 에스컬레이션 대기 중인 인시던트" | zeek_AD `would_send` | "경보 발송" 정의를 하나로(SPEC 결정 2026-11-21). 우선순위 계산은 그대로 | 예 |
+| 2026-11-21 | T21 | 인시던트 목록 요약 띠·화면 필터 · 상세 헤더 · 현황판 KPI | 목록·상세의 "경보 발송" = 발송 판단(`zeekadWouldSend`), 현황판 = `feedback_summary.alerted` | 모두 "경보 발송" = 사건 알림 Slack 기록이 있는 인시던트(`incident_id` 기준, 상태 후속 알림 `status:*` 제외, dry-run·발송 실패 기록 포함). 상세 헤더 "경보": 경보 발송 / 발송 기록 없음 | API `alerted`(목록 SQL이 `dashboard.slack_deliveries`로 계산, `feedback_summary.alerted`와 같은 식) | 같은 캡처에서 KPI와 목록 수가 달랐다(T20 M1) | 예 |
+| 2026-11-21 | T21 | 상세 · 이력 탭 | 상태 변경 항목의 "마지막 변경자" / "결정이 자동 처리에 반영됨" | "변경자"(각 항목은 그 변경의 변경자) + "사유"(결정 반영 항목은 결정 메모, VIEWER에게는 서버가 IPv4를 가림) + 판정(종결일 때) / "결정 반영됨(파이프라인)" | API `statusHistory[].actorDisplay`·`reason`·`resolution` | 각 항목이 그 변경의 기록이다 | 아니요 |
+| 2026-11-21 | T21 | 로그인 | (없음) | 설정값 `DASHBOARD_LOGIN_NOTICE`가 있을 때만 로그인 폼 위(카드 맨 위)에 안내 한 칸(정보 아이콘, 일반 텍스트, 줄바꿈 유지). 공개 데모 문구: "포트폴리오 공개 데모입니다. 읽기 전용 계정 demo로 둘러볼 수 있습니다(비밀번호는 포트폴리오 소개 글에 있습니다). 데이터는 공개 데이터셋 CIC-IDS2017과 합성 APT 패턴, 격리 실습망 트래픽입니다." | API `GET /api/auth/login-notice` | 방문자 안내(T15). 일반 설정값 기능이며 데모 전용 동작이 아니다 | 아니요 |
+| 2026-11-21 | T21 | 상세 · 헤더 이동 | 이동 목록 조회 실패 때 안내 없이 버튼만 꺼짐 | "이동 목록을 불러오지 못했습니다" + "다시 시도" | 프론트엔드 | T19 L-4 | 아니요 |
 
 ## 색·배지 체계 (T17)
 
@@ -140,7 +149,7 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 | 우선순위 | 조건(위에서부터 먼저 맞는 것) | 쓰는 필드(zeek_AD 값) |
 |---|---|---|
 | 없음(`-`, 회색) | 인시던트 상태가 종결 | `zeekadStatus == closed`(소문자로 비교. `null`·빈 문자열은 신규로 보고, 등록되지 않은 값은 종결이 아닌 것으로 본다) |
-| High(빨강) | 경보 발송 또는 에스컬레이션 대기 | `zeekadWouldSend`(zeek_AD `would_send`), `zeekadReviewPending`(검토 결정 전 에스컬레이션) |
+| High(빨강) | 발송 판단 "발송" 또는 에스컬레이션 대기(T21: 이름만 "발송 판단"으로 맞춤, 계산 그대로) | `zeekadWouldSend`(zeek_AD `would_send`), `zeekadReviewPending`(검토 결정 전 에스컬레이션) |
 | Medium(밝은 회색) | 교차 탐지(2개 이상 모델) 또는 AI 분석 리포트 있음 | `zeekadAlsoFlaggedBy` 1개 이상(zeek_AD `zeekad_also_flagged_by`. `multiModelFlagged`는 쓰지 않는다), `hasReport` |
 | Low(흐린 회색) | 그 밖 | — |
 
@@ -155,13 +164,13 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(`SPEC.md` '결정' 202
 
 | 영역 | 남긴 것(화면에 쓰는 필드) | 뺀 것(화면에서 없앰. 접어 두지도 않는다) |
 |---|---|---|
-| 요약 헤더 | 우선순위(화면 계산, 현재 상태 반영), 상태·판정(`currentStatus`·`currentResolution`), 호스트(`hostIp`·`hostName`), 방향(`zeekadRole`), 탐지 모델(`zeekadPickedBy` + `zeekadAlsoFlaggedBy` 수), 발생 시각·지속(`eventStart`·`eventEnd`), 세션 수(`connectionCount`), 경보 발송 여부(`zeekadWouldSend`), 리포트 검증(`report.verificationPassed`) | 인시던트 ID 원문(복사 버튼만. 복사 값은 원문 `incidentId`), 모델 버전 `bundleId`·탐지 작업 시각(툴팁에만) |
+| 요약 헤더 | 우선순위(화면 계산, 현재 상태 반영), 상태·판정(`currentStatus`·`currentResolution`), 호스트(`hostIp`·`hostName`), 방향(`zeekadRole`), 탐지 모델(`zeekadPickedBy` + `zeekadAlsoFlaggedBy` 수), 발생 시각·지속(`eventStart`·`eventEnd`), 세션 수(`connectionCount`), 경보 발송(T21: 사건 알림 Slack 기록 `alerted`. 발송 판단 `zeekadWouldSend`는 발송 판단 탭), 리포트 검증(`report.verificationPassed`) | 인시던트 ID 원문(복사 버튼만. 복사 값은 원문 `incidentId`), 모델 버전 `bundleId`·탐지 작업 시각(툴팁에만) |
 | AI 리포트 | 관측 요약, 확인된 사실(근거 칩 `F*`), 가능한 해석(ATT&CK 칩), 관련 ATT&CK 기법 후보(가설), 리포트의 경보 권고, 추가 확인 권고, 리포트의 한계, 검증 결과 배지 하나(실패일 때만 `verificationReason`·`verificationProblems`), AI 작성 오류(`llmError`), 작성 시각 | `llmModelRequested`·`llmModelVersion`, 토큰 수(`llmInputTokens`·`llmOutputTokens`·`llmThinkingTokens`), `llmSeconds`, `reportVersion`·`inputVersion`, `sourceRun`, 가명 대응표 `pseudonyms`(본문·사실 칩의 가명 병기 `H(192.168.*.*)`는 백엔드가 그대로 하므로 남는다) |
 | 증적 | 핵심 수치(세션 수·송신/수신 바이트·고유 상대 IP 수·고유 목적지 포트 수·페이로드 바이트가 부푼 세션 수), 분포(전송 계층·서비스 프로토콜·세션 상태), 상위 상대 IP·포트, 주요 세션(필드별 열), 프로토콜별 기록 수, 증적의 한계, 원본 증적(`additionalFields`, 증적 탭 맨 아래 기본 접힘) | — |
 | 관측 계정 | 계정 이름(`zeekad_name`, 없으면 `kerberosUser`·`ntlmUser`), 종류(`zeekad_name_kind`), 마지막 관측(`last_seen`) | 출처 로그(`zeekad_source_log`), 관측 횟수(`observations`·`observation_count`), 처음 관측(`first_seen`), 자산 IP·캡처 등 부가 필드 |
-| 경보 판단 | 최종 결과(`wouldSend`·`decidedBy`), 세 의견 한 줄씩(`policyChoice`+`policyReasons`+`policyMandatory`, `llmChoice`, `decisionModelChoice`+선택 확률 숫자 `decisionModelConfidence`), 의견 불일치(`opinionMismatch`)일 때만 강조, `decisionModelError` | 정책 ID `policyId`, 판단 모델 ID `decisionModel`, 선택지별 확률 막대 `decisionModelProbabilities` |
+| 발송 판단(T21 탭 이름) | 최종 결과(`wouldSend`·`decidedBy`), 세 의견 한 줄씩(`policyChoice`+`policyReasons`+`policyMandatory`, `llmChoice`, `decisionModelChoice`+선택 확률 숫자 `decisionModelConfidence`), 의견 불일치(`opinionMismatch`)일 때만 강조, `decisionModelError` | 정책 ID `policyId`, 판단 모델 ID `decisionModel`, 선택지별 확률 막대 `decisionModelProbabilities` |
 | Slack | 발송 시각, 알림 역할(최초·후속), 메시지 종류, 채널에도 표시(`replyBroadcast`), Dry-run, 전송 결과·방식, 오류 | 원본 페이로드 `payloadJson`, `slackTs`, `threadParent`(툴팁 포함), 리포트 작업 번호 툴팁 |
-| 이력·조치 | 상태 변경 이력(마지막 변경자·사유), 에스컬레이션 요청·결정·반영, 조치 패널(상태 변경·에스컬레이션 결정) | — |
+| 이력·조치 | 상태 변경 이력(항목마다 변경자·사유·판정, T21), 에스컬레이션 요청·결정·반영(서버 라벨, 반영 지연 보조 표시), 조치 패널(상태 변경·에스컬레이션 결정) | — |
 
 - 이전·다음 이동: 목록 행 링크가 목록 쿼리를 `from=`으로 넘긴다. 상세는 그 쿼리로 `GET /api/incidents`를 한 번 불러 목록과 같은 함수(`triage.ts`의 `orderQueue`)로 순서를 만든다. `from=`이 없으면 같은 캡처·탐지 작업의 목록을 파이프라인 순위(`queueRank`) 순으로 쓴다.
 
@@ -234,7 +243,7 @@ zeek_AD `docs/data-contract-v2.md` "수집 구간(캡처) 표시 이름" 절과 
 | 지표 | 정의 | 뷰 열 |
 |---|---|---|
 | 인시던트 | `latest_incident_queue`(캡처마다 최신 탐지 작업 하나)의 인시던트 수 | `incidents` |
-| 경보 발송 | 상태 알림(`report_version`이 `status:`로 시작)이 아닌 Slack 발송 기록이 있는 인시던트 | `alerted` |
+| 경보 발송 | 상태 알림(`report_version`이 `status:`로 시작)이 아닌 Slack 발송 기록이 있는 인시던트(`incident_id` 기준, dry-run 기록·발송 실패 기록 포함). T21: 인시던트 목록·상세 헤더도 같은 식(API `alerted`, `dashboard.slack_deliveries`의 `zeekad_message_version IS NOT NULL AND NOT LIKE 'status:%'`)을 쓴다. 발송 판단(`would_send`)과 다르다 | `alerted` |
 | 판정 완료 | 판정(정탐·오탐·정상)이 있는 인시던트 | `resolved` |
 | 미판정 | 인시던트 − 판정 완료 | (계산) |
 | 정탐률 | 정탐 / 판정 완료 | `zeekad_precision` |

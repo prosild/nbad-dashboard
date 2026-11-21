@@ -540,12 +540,13 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($analystDetail.Json.detail.incident.hostIp -eq "192.168.10.50" -and $analystDetail.Json.maskedView -eq $false) "analyst1 허용 인시던트 원문(192.168.10.50) 조회" $analystDetail
                 $statusBefore = $analystDetail.Json.detail.currentStatus
 
+                # T21: 시드의 101/rank1은 반영된 승인(zeek_AD 계약)이라 이미 분석 중이다. 분석 중 -> 종결(판정 필수)로 전이를 시험한다.
                 $analystTransition = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/transition" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
-                    -JsonBody @{ toStatus = "investigating"; reason = "PostgreSQL WAF E2E check" }
+                    -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "PostgreSQL WAF E2E check" }
                 $analystDetailAfter = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $analystCookies
-                $e2eLogs.Add("[5b] analyst1 POST transition (open -> investigating): $(Format-Resp $analystTransition)`n     currentStatus before=$statusBefore after=$($analystDetailAfter.Json.detail.currentStatus)")
-                Assert-Status $analystTransition 200 "analyst1 상태 전이(open -> investigating)"
-                Assert-True ($statusBefore -eq "open" -and $analystTransition.Json.succeeded -eq $true -and $analystDetailAfter.Json.detail.currentStatus -eq "investigating") "PostgreSQL 17 dashboard.transition_incident 전이 반영" $analystDetailAfter
+                $e2eLogs.Add("[5b] analyst1 POST transition (investigating -> closed): $(Format-Resp $analystTransition)`n     currentStatus before=$statusBefore after=$($analystDetailAfter.Json.detail.currentStatus) resolution=$($analystDetailAfter.Json.detail.currentResolution)")
+                Assert-Status $analystTransition 200 "analyst1 상태 전이(investigating -> closed)"
+                Assert-True ($statusBefore -eq "investigating" -and $analystTransition.Json.succeeded -eq $true -and $analystDetailAfter.Json.detail.currentStatus -eq "closed" -and $analystDetailAfter.Json.detail.currentResolution -eq "true_positive") "PostgreSQL 17 dashboard.transition_incident 전이 반영" $analystDetailAfter
 
                 $analystRevConfirm = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/review-decision" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
                     -JsonBody @{ action = "confirm"; note = "PG17 decide_review confirm E2E" }

@@ -393,6 +393,16 @@ try {
     $spoofLoc = Get-HeaderValue $spoofRes "Location"
     $e2eLogs.Add("[1c] (위조 전달 헤더 X-Forwarded-Host/Port, Forwarded, X-Forwarded-Prefix/Ssl를 붙인) GET / -> HTTP $($spoofRes.Status) Location=$spoofLoc")
     Assert-True ($spoofRes.Status -eq 302 -and $spoofLoc -match $locationOk) "방문자가 붙인 전달 헤더가 Location에 반영되지 않음" $spoofRes
+    # T21: 로그인 화면 안내 문구(compose.portfolio.yml DASHBOARD_LOGIN_NOTICE). 로그인 전 공개 GET이고, 문구만 있고 비밀번호가 없어야 한다.
+    $noticeRes = Invoke-Http -Path "/api/auth/login-notice"
+    $noticeText = if ($null -ne $noticeRes.Json) { [string]$noticeRes.Json.notice } else { "" }
+    $noticeKeys = if ($null -ne $noticeRes.Json) { @($noticeRes.Json.PSObject.Properties.Name) } else { @() }
+    $pwShaped = [regex]::Matches($noticeText, '[A-Za-z0-9!@#$%^&*_+=-]{12,}') | ForEach-Object { $_.Value }
+    $e2eLogs.Add("[1d] unauthenticated GET /api/auth/login-notice -> HTTP $($noticeRes.Status) keys=[$($noticeKeys -join ',')] notice=$noticeText password-shaped tokens=$(@($pwShaped).Count)")
+    Assert-Status $noticeRes 200 "비인증 GET /api/auth/login-notice"
+    Assert-True (($noticeKeys -join ',') -eq 'notice') "로그인 안내 응답은 notice 하나뿐" $noticeRes
+    Assert-True ($noticeText.StartsWith("포트폴리오 공개 데모입니다.") -and $noticeText.Contains("읽기 전용 계정 demo")) "로그인 안내 문구(포트폴리오 공개 데모) 응답" $noticeRes
+    Assert-True ((@($pwShaped).Count -eq 0) -and -not $noticeRes.Body.Contains($env:DEMO_PASSWORD)) "로그인 안내 응답에 비밀번호 형태 문자열·demo 비밀번호 없음" $noticeRes
 
     Write-Host "=== [2] demo 로그인·쿠키·me ==="
     $demo = New-Client "203.0.113.10"
@@ -410,6 +420,7 @@ try {
     Write-Host "=== [3] 스냅샷 데이터·마스킹·증적·리포트·운영 상태 ==="
     $ipHits = [System.Collections.Generic.List[string]]::new()
     $queueByCapture = [ordered]@{}
+    $bundleByCapture = @{}
     $e2eLogs.Add("[3-scope] manifest captures=[$($expectedCounts.Keys -join ', ')] demo visible=[$($demoVisibleCaptures -join ', ')]")
     Assert-True ($demoVisibleCaptures.Count -eq 8 -and -not ($demoVisibleCaptures -contains $demoHiddenCapture)) "demo에게 보이는 캡처 8개($demoHiddenCapture 제외)"
     $defaultQueue = Invoke-Http -Path "/api/incidents" -Client $demo
@@ -431,6 +442,7 @@ try {
         Assert-Status $q 200 "demo 인시던트 목록 $cap"
         $items = @($q.Json.incidents)
         $queueByCapture[$cap] = $items
+        $bundleByCapture[$cap] = [string]$q.Json.selectedJob.bundleId
         Find-UnmaskedIpv4 $q.Json "queue[$cap]" $ipHits
         $sampleHost = if ($items.Count) { $items[0].hostIp } else { "" }
         $e2eLogs.Add("[3a] demo GET /api/incidents?captureId=$cap -> HTTP $($q.Status) maskedView=$($q.Json.maskedView) job=$($q.Json.selectedJob.jobId) incidents=$($items.Count) (manifest $($expectedCounts[$cap])) hasReport=$(@($items | Where-Object { $_.hasReport }).Count) sample hostIp=$sampleHost")
@@ -480,6 +492,31 @@ try {
     $e2eLogs.Add("[3c] demo GET /api/operations -> HTTP $($ops.Status) feedbackSummaries=$($fb.Count) captures=[$((@($fb | ForEach-Object { $_.captureId }) | Select-Object -Unique) -join ', ')] slackSummaries=$(@($ops.Json.slackSummaries).Count) bundles=$(@($ops.Json.bundles).Count)")
     Assert-True ($fb.Count -gt 0) "/api/operations feedbackSummaries 있음" $ops
     Assert-True (-not $ops.Body.Contains($demoHiddenCapture)) "demo /api/operations에 $demoHiddenCapture 없음" $ops
+    # T21: 목록의 경보 발송(alerted, 사건 알림 Slack 기록) 수가 캡처마다 feedback_summary 'all' 행 alerted와 같다(같은 식).
+    #      'all' 행이 둘 이상이면 T20 규칙(목록이 고른 최근 작업과 같은 모델 버전 행)과 비교한다.
+    foreach ($cap in $queueByCapture.Keys) {
+        $listAlerted = @($queueByCapture[$cap] | Where-Object { $_.alerted -eq $true }).Count
+        $listWouldSend = @($queueByCapture[$cap] | Where-Object { $_.zeekadWouldSend -eq $true }).Count
+        $missing = @($queueByCapture[$cap] | Where-Object { $null -eq $_.alerted }).Count
+        $allRows = @($fb | Where-Object { $_.captureId -eq $cap -and $_.zeekadPickedBy -eq 'all' })
+        $allCount = $allRows.Count
+        if ($allRows.Count -gt 1) { $allRows = @($allRows | Where-Object { $_.bundleId -eq $bundleByCapture[$cap] }) }
+        $kpi = if ($allRows.Count -eq 1) { [int64]$allRows[0].alerted } else { $null }
+        $e2eLogs.Add("[3e] $cap list alerted=$listAlerted (wouldSend=$listWouldSend, alerted 필드 없음 $missing) feedback_summary 'all' rows=$allCount used bundle=$(if ($allRows.Count -eq 1) { $allRows[0].bundleId } else { '-' }) alerted=$kpi")
+        Assert-True ($missing -eq 0) "목록 항목마다 alerted 필드 있음 ($cap)" $ops
+        Assert-True ($allRows.Count -eq 1 -and $listAlerted -eq $kpi) "목록 경보 발송 수 = feedback_summary 'all' alerted ($($cap): $listAlerted vs $kpi)" $ops
+    }
+    # T21: dashboard.slack_deliveries가 zeekad.slack_delivery를 행 손실 없이 옮기는지(뷰 정의·행 수·report_version 대응) 증거를 남긴다.
+    $sdDef = (Invoke-Psql "zeekad" "SELECT pg_get_viewdef('dashboard.slack_deliveries'::regclass, true)").Output
+    $sdCounts = (Invoke-Psql "zeekad" "SELECT (SELECT count(*) FROM zeekad.slack_delivery) || '|' || (SELECT count(*) FROM dashboard.slack_deliveries) || '|' || (SELECT count(*) FROM zeekad.slack_delivery d WHERE d.report_version !~~ 'status:%') || '|' || (SELECT count(*) FROM dashboard.slack_deliveries s WHERE s.zeekad_message_version IS NOT NULL AND s.zeekad_message_version NOT LIKE 'status:%')").Output.Trim()
+    $sdAlerted = (Invoke-Psql "zeekad" "SELECT string_agg(capture_id || '=' || fs_alerted || '/' || list_alerted, ',' ORDER BY capture_id) FROM (SELECT f.capture_id, f.alerted AS fs_alerted, (SELECT count(*) FROM dashboard.latest_incident_queue l WHERE l.capture_id = f.capture_id AND l.bundle_id = f.bundle_id AND EXISTS (SELECT 1 FROM dashboard.slack_deliveries s WHERE s.incident_id = l.incident_id AND s.zeekad_message_version IS NOT NULL AND s.zeekad_message_version NOT LIKE 'status:%')) AS list_alerted FROM dashboard.feedback_summary f WHERE f.zeekad_picked_by = 'all') x").Output.Trim()
+    Save-Evidence "slack_deliveries-viewdef.txt" ("# 리허설 DB(스냅샷 복원) pg_get_viewdef('dashboard.slack_deliveries') — T21`n$($sdDef.Trim())`n`n" +
+        "# 행 수: zeekad.slack_delivery | dashboard.slack_deliveries | 원본 report_version !~~ 'status:%' | 뷰 zeekad_message_version IS NOT NULL AND NOT LIKE 'status:%'`n$sdCounts`n`n" +
+        "# 캡처별 feedback_summary 'all' alerted / 같은 식(dashboard.slack_deliveries)으로 센 수`n$sdAlerted`n")
+    $sdParts = $sdCounts -split '\|'
+    $e2eLogs.Add("[3f] slack_deliveries rows source|view|source non-status|view non-status = $sdCounts; per-capture fs/list = $sdAlerted")
+    Assert-True ($sdParts.Count -eq 4 -and $sdParts[0] -eq $sdParts[1] -and $sdParts[2] -eq $sdParts[3]) "dashboard.slack_deliveries가 zeekad.slack_delivery 행을 모두 옮기고 상태 알림 제외 수가 같다"
+    Assert-True ([bool]($sdDef -match 'report_version\s+AS\s+zeekad_message_version')) "뷰 열 대응 report_version -> zeekad_message_version"
     $e2eLogs.Add("[3d] details checked=$($detailTargets.Count) evidence.available=$evidenceOk report.present=$reportOk sendDecision=$sendDecisionCount slackDeliveries=$slackCount; unmasked IPv4 JSON paths=$($ipHits.Count)$(if ($ipHits.Count) { ' ' + (($ipHits | Select-Object -First 20) -join ', ') })")
     Assert-True ($ipHits.Count -eq 0) "demo 응답(큐·상세·운영) 전체에 가려지지 않은 IPv4 없음"
 

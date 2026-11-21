@@ -337,13 +337,20 @@ docker image rm zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-p
 
 새 이미지 `tar`를 옮겨 `docker load` → `docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait`. DB 볼륨은 유지되므로 계정·감사 로그가 그대로다.
 
-#### 앱 이미지만 갱신(`dashboard-app` 하나, T16)
+#### 앱 이미지만 갱신(`dashboard-app` 하나, T16 → T21 정리)
 
-대시보드 코드만 바뀌었을 때는 `zeek-ad-dashboard-app:local` 하나만 옮기고 `dashboard-app`만 다시 만든다. 5GB 파이프라인 `tar`는 다시 만들지 않는다. DB 볼륨·`.env`·다른 컨테이너는 그대로 둔다.
+대시보드 코드만 바뀌었을 때는 `zeek-ad-dashboard-app:local` 하나만 옮기고 `dashboard-app`만 다시 만든다. 5GB 파이프라인 `tar`는 다시 만들지 않는다. DB 볼륨·`.env`·다른 컨테이너는 그대로 둔다. `.env`는 읽거나 고치지 않고 `--env-file` 인자로만 넘긴다.
+
+규칙(T21):
+
+- **보존 이름은 `pre-<작업 ID>` 하나로 쓴다.** 작업 ID는 소문자로 쓴다(예: `T21` → `pre-t21`). 이미지는 `zeek-ad-dashboard-app:pre-<작업 ID>`, 교체한 파일은 같은 폴더의 `<파일>.pre-<작업 ID>`다. 아래 명령은 `ID`(예: `t21`) 변수 하나로 이 이름을 만든다.
+- **NAS 명령은 단계마다 실패하면 멈춘다**(`|| exit <번호>`). 멈추면 반복하지 말고 번호로 어느 단계인지 보고, 필요하면 아래 롤백을 한다.
+- **compose·시드 같은 파일 교체**: 새 파일을 `images/<작업 ID>-files/`에 sha256 목록과 함께 먼저 올리고, NAS에서 원래 파일을 같은 폴더에 `*.pre-<작업 ID>`로 보존한 뒤(이미 있으면 덮지 않는다) sha256을 대조하고 바꾼다. 바꾼 뒤 `docker compose ... config --quiet`로 문법을 확인한다.
 
 이 PC(PowerShell, 저장소 루트). 2.1의 앱 이미지 빌드와 2.3 리허설을 먼저 한다:
 
 ```powershell
+$ID = 't21'   # 작업 ID(소문자)
 New-Item -ItemType Directory -Force build/portfolio-images | Out-Null
 docker save -o build/portfolio-images/zeek-ad-dashboard-app.tar zeek-ad-dashboard-app:local
 if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
@@ -355,48 +362,110 @@ if (@($manifest)[0].Config -notmatch '([0-9a-f]{64})') { throw "Config digest no
 [IO.File]::WriteAllText("$PWD/build/portfolio-images/app-image-id.txt", "sha256:$($Matches[1]) zeek-ad-dashboard-app:local`n", [Text.UTF8Encoding]::new($false))
 $nas = "psdev93@192.168.50.146"; $dst = "/volume1/docker/zeekad-portfolio"
 scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/app-image.sha256 build/portfolio-images/app-image-id.txt "${nas}:${dst}/images/"
+if ($LASTEXITCODE -ne 0) { throw "scp image failed" }
+
+# (파일 교체가 있을 때만) 바꿀 파일을 images/<ID>-files/에 sha256 목록과 함께 올린다. 경로는 저장소 기준 상대 경로, 올릴 때는 파일 이름만 쓴다.
+$files = @('compose.portfolio.yml')   # 예: 시드가 바뀌었으면 'docker/portfolio/seed/seed_demo.py'도 넣는다
+$stage = "build/portfolio-images/$ID-files"
+New-Item -ItemType Directory -Force $stage | Out-Null
+foreach ($f in $files) { Copy-Item $f $stage -Force }
+$lines = $files | ForEach-Object { $n = Split-Path $_ -Leaf; "$((Get-FileHash -Algorithm SHA256 "$stage/$n").Hash.ToLower())  $n" }
+[IO.File]::WriteAllText("$PWD/$stage/files.sha256", ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+ssh $nas "mkdir -p ${dst}/images/$ID-files"
+scp -O (Get-ChildItem $stage).FullName "${nas}:${dst}/images/$ID-files/"
+if ($LASTEXITCODE -ne 0) { throw "scp files failed" }
 ```
 
-NAS(셸):
+NAS(셸). 1단계(기록·보존·적재·파일 교체). `ID`와 `FILES`(저장소 기준 상대 경로, 파일 교체가 없으면 빈 값)를 먼저 정한다:
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+set -u
+export PATH=$PATH:/usr/local/bin
+ID=t21
+FILES="compose.portfolio.yml"   # 예: "compose.portfolio.yml docker/portfolio/seed/seed_demo.py", 없으면 ""
+cd /volume1/docker/zeekad-portfolio || exit 1
 mkdir -p ~/zeekad-portfolio-check && C=~/zeekad-portfolio-check
 # 1) 전 상태 기록
-docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/app-update-containers-before.txt
-docker volume ls > $C/app-update-volumes-before.txt
-# 2) 롤백 준비: 지금 dashboard-app이 쓰는 이미지 ID를 남기고 태그로 보존한다
-APP=$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q dashboard-app)
-OLD=$(docker inspect --format '{{.Image}}' "$APP"); echo "$OLD" > $C/app-update-old-image-id.txt
-docker tag "$OLD" zeek-ad-dashboard-app:pre-update
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/$ID-containers-before.txt || exit 1
+docker volume ls > $C/$ID-volumes-before.txt || exit 1
+# 2) 롤백 준비: 지금 dashboard-app이 쓰는 이미지 ID를 남기고 pre-<ID> 태그로 보존한다
+APP=$(docker compose -p zeekad-portfolio -f compose.portfolio.yml ps -q dashboard-app) || exit 2
+OLD=$(docker inspect --format '{{.Image}}' "$APP") || exit 2
+echo "$OLD" > $C/$ID-old-app-image-id.txt
+docker tag "$OLD" zeek-ad-dashboard-app:pre-$ID || exit 2
 # 3) 무결성 확인 → 적재 → ID 대조
-(cd images && sha256sum -c app-image.sha256)
-docker load -i images/zeek-ad-dashboard-app.tar
-printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local)" zeek-ad-dashboard-app:local | diff - images/app-image-id.txt && echo "app image ID matches"
-# 4) dashboard-app만 다시 만든다
-docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app
-# 5) 후 상태 기록·비교: dashboard-app 줄만 달라야 하고 볼륨은 같아야 한다
-docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/app-update-containers-after.txt
-docker volume ls > $C/app-update-volumes-after.txt
-grep -v dashboard-app $C/app-update-containers-before.txt > $C/app-update-others-before.txt
-grep -v dashboard-app $C/app-update-containers-after.txt > $C/app-update-others-after.txt
-diff $C/app-update-others-before.txt $C/app-update-others-after.txt && echo "other containers unchanged"
-diff $C/app-update-volumes-before.txt $C/app-update-volumes-after.txt && echo "volumes unchanged"
+(cd images && sha256sum -c app-image.sha256) || exit 3
+docker load -i images/zeek-ad-dashboard-app.tar || exit 4
+printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local)" zeek-ad-dashboard-app:local | diff - images/app-image-id.txt || exit 5
+echo "app image ID matches"
+# 4) 파일 교체: 같은 폴더에 *.pre-<ID>로 보존(이미 있으면 덮지 않는다) → sha256 대조 → 교체 → compose 문법 확인
+if [ -n "$FILES" ]; then
+  (cd images/$ID-files && sha256sum -c files.sha256) || exit 6
+  for f in $FILES; do
+    [ -f "$f.pre-$ID" ] || cp -p "$f" "$f.pre-$ID" || exit 7
+    cp "images/$ID-files/$(basename "$f")" "$f" || exit 8
+    sha256sum "$f" "$f.pre-$ID"
+  done
+  docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env config --quiet || exit 9
+fi
 ```
 
-그 뒤 3.6의 `curl` 확인(`/login` 200)과 4.4의 공개 주소 확인을 한다. `nginx-waf`는 다시 만들지 않으므로, 확인에서 502가 나오면 반복하지 말고 멈춰 원인을 본다.
-
-롤백(`--wait` 실패 또는 확인 실패):
+2단계(재생성·대조). 1단계가 끝까지 성공했을 때만 한다:
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
-docker tag zeek-ad-dashboard-app:pre-update zeek-ad-dashboard-app:local
-docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app
-docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeekad-portfolio-check/app-update-old-image-id.txt   # 같아야 한다
+set -u
+export PATH=$PATH:/usr/local/bin
+ID=t21
+cd /volume1/docker/zeekad-portfolio || exit 1
+C=~/zeekad-portfolio-check
+# 5) dashboard-app만 다시 만든다
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app || exit 10
+# 6) 후 상태 기록·비교: dashboard-app 줄만 달라야 하고 볼륨은 같아야 한다
+docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/$ID-containers-after.txt || exit 11
+docker volume ls > $C/$ID-volumes-after.txt || exit 11
+grep -v dashboard-app $C/$ID-containers-before.txt > $C/$ID-others-before.txt
+grep -v dashboard-app $C/$ID-containers-after.txt > $C/$ID-others-after.txt
+diff $C/$ID-others-before.txt $C/$ID-others-after.txt || exit 12
+echo "other containers unchanged"
+diff $C/$ID-volumes-before.txt $C/$ID-volumes-after.txt || exit 13
+echo "volumes unchanged"
+# 7) 3.6 확인(WAF 경유)
+H='Host: soc.psdev93.synology.me'; P='X-Forwarded-Proto: https'
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -H "$P" http://127.0.0.1:18480/login)
+echo "login via nginx-waf: $CODE"
+[ "$CODE" = "200" ] || exit 14
 ```
 
-- 보존 태그 이름은 갱신 작업마다 정한다(T16은 `zeek-ad-dashboard-app:pre-t16`). 확인이 끝나 더 필요 없으면 `docker image rm zeek-ad-dashboard-app:pre-<작업>`으로 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다).
-- 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(T20: `demo` 허용 캡처 `*` → `cic17-*,syn1-*`)은 그 파일도 NAS의 같은 경로로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다.
+그 뒤 4.4의 공개 주소 확인을 한다.
+
+**공개 주소(또는 7단계)가 502일 때**: `nginx-waf`는 시작할 때 한 번만 `dashboard-app` 이름을 IP로 해석해 두므로, `dashboard-app`을 다시 만들어 IP가 바뀌면 옛 IP로 보내 502가 난다(근본 수정은 `T14`). 대처는 한 번만 한다.
+
+1. 같은 프로젝트의 `nginx-waf`만 다시 시작한다(다른 컨테이너·볼륨·`.env`는 건드리지 않는다):
+   ```sh
+   cd /volume1/docker/zeekad-portfolio || exit 1
+   docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env restart nginx-waf || exit 15
+   curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: soc.psdev93.synology.me' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18480/login
+   ```
+   재시작은 컨테이너를 다시 만들지 않으므로 6단계의 비교에서 `nginx-waf` 줄(ID·이미지·생성 시각)은 그대로다. 상태(`State`) 시각만 바뀐다.
+2. 그래도 200이 아니면 반복하지 말고 아래 롤백으로 되돌린 뒤 멈추고 보고한다.
+
+롤백(`--wait` 실패, 확인 실패, 502 대처 실패):
+
+```sh
+set -u
+export PATH=$PATH:/usr/local/bin
+ID=t21
+FILES="compose.portfolio.yml"   # 1단계와 같은 값
+cd /volume1/docker/zeekad-portfolio || exit 1
+for f in $FILES; do [ -f "$f.pre-$ID" ] && cp -p "$f.pre-$ID" "$f"; done
+docker tag zeek-ad-dashboard-app:pre-$ID zeek-ad-dashboard-app:local || exit 20
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps dashboard-app || exit 21
+docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local; cat ~/zeekad-portfolio-check/$ID-old-app-image-id.txt   # 같아야 한다
+```
+
+- 확인이 끝나 더 필요 없으면 `docker image rm zeek-ad-dashboard-app:pre-<작업 ID>`로 보존 태그를 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다). 보존 파일 `*.pre-<작업 ID>`는 다음 갱신 전까지 둔다.
+- 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(T20: `demo` 허용 캡처 `*` → `cic17-*,syn1-*`)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
+- 작업자 도구로 실행할 때는 위 1·2단계를 작업 폴더의 스크립트(`handoff/<작업 ID>/tools/nas-step1.sh`·`nas-step2.sh`)로 저장해 `ssh ... "echo <base64> | base64 -d | bash"`처럼 보내고 출력을 `handoff/<작업 ID>/evidence/nas-update.txt`에 남긴다(T16·T20과 같다).
 
 ### 3.9 스냅샷 갱신
 
