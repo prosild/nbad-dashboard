@@ -1031,7 +1031,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 }
                 $e2eLogs.Add("[11e] response times (analyst1, 3 samples, includes curl): $($t11 -join '; ')")
 
-                # [12] 담당자·착수 지연·처리 시간 지표(T25). 검증 시드: cic17-wed(작업 101) 1·3위 종결, 2위 조사 중 / syn1-wed(작업 211) 1·2위 신규.
+                # [12] 담당자·착수 지연·처리 시간 지표(T25). 검증 시드: cic17-wed(작업 101) 1·3위 종결, 2위 조사 중 / syn1-wed(작업 211) 1위 종결·2위 신규 / syn1-tue(작업 201) 1위 신규.
                 #      viewer1·analyst1 = cic17-*, analyst2 = syn1-*. 지정 규칙(권한·IDOR·담당 가능·종결·충돌·CSRF), 자동 지정, 이력 추가만(psql),
                 #      사용자별 불변식(none + 그 집합 안 담당 있음 = total), handlingTimes = 독립 SQL(percentile_disc), workload.ackOverdue ≈ 큐 overdue total,
                 #      VIEWER 응답 IPv4, 응답 시간(데우기 1번 뒤 3번, 최댓값 1초 이하).
@@ -1107,11 +1107,11 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-ApiError $f12 409 "ASSIGNMENT_CONFLICT" "[12f] expected 어긋남"
                 Assert-ApiError $f12c 409 "INCIDENT_CLOSED" "[12f] 종결된 인시던트"
 
-                # [12g] 미배정 인시던트(211/2, 신규)를 analyst2가 조사 시작 → 자동 지정(auto_on_start). 211/1은 analyst2가 직접 지정
+                # [12g] 미배정 인시던트(211/2, 신규)를 analyst2가 조사 시작 → 자동 지정(auto_on_start). 201/1(신규)은 analyst2가 직접 지정
                 $g12 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/2/transition" -Method POST -CookieJar $q12A2 -SaveCookies -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T25 E2E 조사 시작" }
                 $g12d = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/2" -CookieJar $q12A2
-                $g12m = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/assignment" -Method POST -CookieJar $q12A2 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst2'; expected = $null })
-                $e2eLogs.Add("[12g] analyst2 POST 211/2 transition investigating: $(Format-Resp $g12 300)`n      211/2 detail assignment=$($g12d.Json.assignment | ConvertTo-Json -Compress -Depth 4) history=$($g12d.Json.assignmentHistory | ConvertTo-Json -Compress -Depth 4)`n      analyst2 POST 211/1 assignment(self): $(Format-Resp $g12m 300)")
+                $g12m = Invoke-Http -Url "$baseHttps/api/incidents/201/rank/1/assignment" -Method POST -CookieJar $q12A2 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst2'; expected = $null })
+                $e2eLogs.Add("[12g] analyst2 POST 211/2 transition investigating: $(Format-Resp $g12 300)`n      211/2 detail assignment=$($g12d.Json.assignment | ConvertTo-Json -Compress -Depth 4) history=$($g12d.Json.assignmentHistory | ConvertTo-Json -Compress -Depth 4)`n      analyst2 POST 201/1 assignment(self): $(Format-Resp $g12m 300)")
                 Assert-Status $g12 200 "[12g] 조사 시작"
                 Assert-True (-not ([string]$g12.Json.message).Contains('자동 지정은 실패')) "[12g] 자동 지정 실패 안내 없음" $g12
                 Assert-True ($g12d.Json.assignment.assignee.username -eq 'analyst2' -and @($g12d.Json.assignmentHistory)[0].reason -eq 'auto_on_start') "[12g] 조사 시작한 사람이 담당자(auto_on_start)" $g12d
