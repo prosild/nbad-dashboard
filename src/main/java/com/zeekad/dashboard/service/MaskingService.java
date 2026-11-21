@@ -164,6 +164,7 @@ public class MaskingService {
         copy.setZeekadWouldSend(item.isZeekadWouldSend());
         copy.setZeekadReviewAction(item.getZeekadReviewAction());
         copy.setZeekadReviewPending(item.isZeekadReviewPending());
+        copy.setAlerted(item.isAlerted());
         return copy;
     }
 
@@ -263,9 +264,42 @@ public class MaskingService {
         masked.setTopPeers(maskListOfMaps(evidence.getTopPeers()));
         masked.setRepresentativeConnections(maskListOfMaps(evidence.getRepresentativeConnections()));
         masked.setProtocolLogs(maskMapValues(evidence.getProtocolLogs()));
-        masked.setAdditionalFields(maskMapValues(evidence.getAdditionalFields()));
+        masked.setAdditionalFields(maskAdditionalFields(evidence.getAdditionalFields()));
         masked.setLimits(maskStringListIps(evidence.getLimits()));
         return masked;
+    }
+
+    /** VIEWER 증적 추가 필드 host에서 남기는 하위 키(T21). 나머지 하위 키(host.name 등)는 서버에서 뺀다. */
+    static final String EVIDENCE_HOST_KEY = "host";
+    static final String EVIDENCE_HOST_ALLOWED_SUBKEY = "ip";
+
+    /**
+     * 추가 필드를 마스킹한다. host는 허용 목록으로 거른다(T21):
+     * 객체면 하위 키 ip만 마스킹해 남기고, 문자열이면 IPv4를 가리고, 그 밖의 형태(배열·숫자·null 등)는 뺀다.
+     */
+    private Map<String, Object> maskAdditionalFields(Map<String, Object> fields) {
+        if (fields == null || fields.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> masked = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : fields.entrySet()) {
+            if (EVIDENCE_HOST_KEY.equals(entry.getKey())) {
+                Object host = entry.getValue();
+                if (host instanceof Map<?, ?> hostMap) {
+                    Map<String, Object> allowed = new LinkedHashMap<>();
+                    if (hostMap.containsKey(EVIDENCE_HOST_ALLOWED_SUBKEY)) {
+                        allowed.put(EVIDENCE_HOST_ALLOWED_SUBKEY,
+                                maskObjectValue(hostMap.get(EVIDENCE_HOST_ALLOWED_SUBKEY)));
+                    }
+                    masked.put(EVIDENCE_HOST_KEY, Collections.unmodifiableMap(allowed));
+                } else if (host instanceof String str) {
+                    masked.put(EVIDENCE_HOST_KEY, maskIpsInText(str));
+                }
+                continue;
+            }
+            masked.put(entry.getKey(), maskObjectValue(entry.getValue()));
+        }
+        return Collections.unmodifiableMap(masked);
     }
 
     private List<String> maskStringListIps(List<String> values) {

@@ -80,4 +80,48 @@ class MaskingServiceTest {
                     .isEqualTo("192.168.10.50");
         }
     }
+
+    @SuppressWarnings("unchecked")
+    /** T21: VIEWER 증적 추가 필드 host는 허용 하위 키 ip(마스킹)만 남긴다. 문자열은 마스킹, 그 밖의 형태는 뺀다. */
+    @Test
+    void viewerEvidenceHostKeepsOnlyMaskedIpSubkey() {
+        Map<String, Object> host = new java.util.LinkedHashMap<>();
+        host.put("ip", "192.168.10.50");
+        host.put("name", List.of("dc01.corp.local"));
+        host.put("hostname", "dc01");
+        EvidenceData evidence = new EvidenceData();
+        evidence.setAvailable(true);
+        evidence.setAdditionalFields(Map.of("host", host, "version", "evidence.v1"));
+
+        EvidenceData viewer = maskingService.maskEvidence(evidence, UserRole.VIEWER);
+        assertThat(viewer.getAdditionalFields()).containsEntry("version", "evidence.v1");
+        assertThat((Map<String, Object>) viewer.getAdditionalFields().get("host"))
+                .containsOnlyKeys("ip")
+                .containsEntry("ip", "192.168.*.*");
+
+        for (UserRole role : List.of(UserRole.ANALYST, UserRole.ADMIN)) {
+            assertThat((Map<String, Object>) maskingService.maskEvidence(evidence, role).getAdditionalFields().get("host"))
+                    .containsOnlyKeys("ip", "name", "hostname");
+        }
+
+        // 하위 키 ip가 없는 객체 → 빈 객체
+        evidence.setAdditionalFields(Map.of("host", Map.of("name", "dc01.corp.local")));
+        assertThat((Map<String, Object>) maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields().get("host"))
+                .isEmpty();
+
+        // 문자열 → IPv4 마스킹
+        evidence.setAdditionalFields(Map.of("host", "10.20.30.40 dc01"));
+        assertThat(maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields())
+                .containsEntry("host", "10.20.*.* dc01");
+
+        // 배열·숫자·null → 뺀다
+        Map<String, Object> others = new java.util.HashMap<>();
+        others.put("host", List.of("10.20.30.40", "dc01"));
+        evidence.setAdditionalFields(others);
+        assertThat(maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields()).doesNotContainKey("host");
+        others.put("host", 42);
+        assertThat(maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields()).doesNotContainKey("host");
+        others.put("host", null);
+        assertThat(maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields()).doesNotContainKey("host");
+    }
 }

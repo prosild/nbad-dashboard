@@ -623,6 +623,70 @@ class IncidentDetailAndSecurityIntegrationTest {
         }
     }
 
+    /** T21: 증적 추가 필드 host 하위 키 허용 목록. VIEWER에는 마스킹된 ip만, ANALYST에는 원문 그대로 셋 다. */
+    @Test
+    void evidenceHostSubkeysAreAllowListedForViewerOnly() throws Exception {
+        evidenceServerBodyOverride.set("""
+                {
+                  "evidence": {
+                    "version": "evidence.v1",
+                    "host": {"ip": "192.168.10.50", "name": ["T21-LEAK-NAME.corp.local"], "hostname": "T21-LEAK-HOSTNAME"},
+                    "connection_count": 412
+                  }
+                }
+                """);
+        String analyst = "t21_host_analyst";
+        userAdminService.createUser(analyst, "호스트분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.ip").value("192.168.10.50"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.name[0]").value("T21-LEAK-NAME.corp.local"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.hostname").value("T21-LEAK-HOSTNAME"));
+
+        String viewer = "t21_host_viewer";
+        userAdminService.createUser(viewer, "호스트조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MvcResult res = mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(viewer, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.ip").value("192.168.*.*"))
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.name").doesNotExist())
+                .andExpect(jsonPath("$.detail.evidence.additionalFields.host.hostname").doesNotExist())
+                .andReturn();
+        JsonNode host = objectMapper.readTree(res.getResponse().getContentAsString())
+                .at("/detail/evidence/additionalFields/host");
+        assertThat(host.size()).isEqualTo(1);
+        assertThat(res.getResponse().getContentAsString())
+                .doesNotContain("T21-LEAK-NAME")
+                .doesNotContain("T21-LEAK-HOSTNAME");
+    }
+
+    /** T21: 상태 이력 사유(결정 반영 때 들어간 검토 메모 포함)는 VIEWER에게 IPv4가 가려지고, 분석가에게는 원문이다. */
+    @Test
+    void statusHistoryReasonIsMaskedForViewer() throws Exception {
+        String analyst = "t21_hist_analyst";
+        userAdminService.createUser(analyst, "이력분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.currentStatus").value("investigating"))
+                .andExpect(jsonPath("$.detail.statusHistory[0].toStatus").value("investigating"))
+                .andExpect(jsonPath("$.detail.statusHistory[0].reason")
+                        .value("192.168.10.50 도메인 컨트롤러 Kerberos 티켓 요청 급증 확인, 조사 진행"));
+
+        String viewer = "t21_hist_viewer";
+        userAdminService.createUser(viewer, "이력조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MvcResult res = mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(viewer, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.statusHistory[0].reason")
+                        .value("192.168.*.* 도메인 컨트롤러 Kerberos 티켓 요청 급증 확인, 조사 진행"))
+                .andReturn();
+        assertThat(UNMASKED_IPV4.matcher(res.getResponse().getContentAsString()).find())
+                .as("VIEWER 상세 응답에 가려지지 않은 IPv4")
+                .isFalse();
+    }
+
     private Cookie fetchCsrfCookie() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
         return res.getResponse().getCookie("XSRF-TOKEN");
