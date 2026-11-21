@@ -896,14 +896,17 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
     return <span className="text-slate-500">-</span>;
   }
   const el = elapsedText(item.detectedAt, item.zeekadStatus, item.statusUpdatedAt, anchor);
+  const detectedTitle = `탐지 시각 ${formatDateTime(item.detectedAt)}`;
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap" data-detected-cell="">
-      <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="text-slate-300">
+    <span className="inline-flex items-center gap-1 whitespace-nowrap" data-detected-cell="" title={detectedTitle}>
+      {/* T27: 1536px 미만은 탐지 시각을 빼고 경과와 표지만 보인다(탐지 시각은 툴팁과 판독기 글자) */}
+      <span className="hidden text-slate-300 2xl:inline" data-detected-time="">
         {compactOccurrence(item.detectedAt, anchor)}
       </span>
+      <span className="sr-only 2xl:hidden">{`${detectedTitle} · `}</span>
       {el && (
         <>
-          <span className="text-slate-600" aria-hidden="true">
+          <span className="hidden text-slate-600 2xl:inline" aria-hidden="true">
             ·
           </span>
           <span
@@ -987,7 +990,8 @@ function QueueTable({
   const headerProps = { sortKey, sortDir, onSort };
   // 1536px(2xl) 미만에서 통신 방향·세션 수·발생 시각 · 지속은 숨긴다(값은 상세·행 툴팁에 있다). T25: 담당 칸을 더하며
   // 1280px 행을 한 줄로 두려고 발생 시각 · 지속도 2xl부터 보인다. 지금 정렬 기준인 열은 숨기지 않는다.
-  const connectionsCell = sortKey === 'connections' ? '' : 'hidden 2xl:table-cell';
+  // T27: 1536~1919px에서는 번호 칸을 더하며 통신 방향과 세션 수도 숨긴다(1920px부터 보임, 정렬 기준이면 숨기지 않음)
+  const connectionsCell = sortKey === 'connections' ? '' : 'hidden min-[1920px]:table-cell';
   const occurrenceCell = sortKey === 'start' ? '' : 'hidden 2xl:table-cell';
   return (
     <div className="hidden overflow-x-auto md:block" data-queue-table-wrap="">
@@ -1012,7 +1016,7 @@ function QueueTable({
             <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
               수집원
             </th>
-            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2 hidden 2xl:table-cell">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2 hidden min-[1920px]:table-cell">
               통신 방향
             </th>
             <SortHeader
@@ -1079,7 +1083,7 @@ function QueueTable({
                   <DetectedCell item={item} anchor={anchor} />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
-                  <div className="flex max-w-[8.5rem] items-baseline gap-1.5 2xl:max-w-[17rem]">
+                  <div className="flex items-baseline gap-1.5 2xl:max-w-[17rem]">
                     {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
                     <Link
                       to={url}
@@ -1091,8 +1095,9 @@ function QueueTable({
                     </Link>
                     {firstName !== undefined && (
                       <span
-                        className="min-w-0 truncate font-mono text-[11px] text-slate-400"
+                        className="min-w-0 max-w-[2.5rem] truncate font-mono text-[11px] text-slate-400 2xl:max-w-none"
                         title={item.hostName.join(', ')}
+                        data-host-name=""
                       >
                         {firstName}
                         {moreNames > 0 && <span className="ml-1 font-sans text-slate-500">외 {moreNames}</span>}
@@ -1103,7 +1108,7 @@ function QueueTable({
                 <td className="soc-td-compact px-1.5 2xl:px-2">
                   <SourceCell item={item} shortNames={shortNames} />
                 </td>
-                <td className="soc-td-compact px-1.5 2xl:px-2 hidden text-slate-300 2xl:table-cell">
+                <td className="soc-td-compact px-1.5 2xl:px-2 hidden text-slate-300 min-[1920px]:table-cell">
                   <CodeLabel dict="hostRole" value={item.zeekadRole} />
                 </td>
                 <td
@@ -1139,7 +1144,7 @@ function QueueTable({
                   </div>
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2" data-col="assignee">
-                  <AssigneeName assignee={item.assignee} className="max-w-[6.5rem] text-xs 2xl:max-w-[10rem]" />
+                  <AssigneeName assignee={item.assignee} className="max-w-[4.5rem] text-xs 2xl:max-w-[10rem]" />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2 hidden lg:table-cell">
                   <ReviewActionBadge action={item.zeekadReviewAction} pending={item.zeekadReviewPending} />

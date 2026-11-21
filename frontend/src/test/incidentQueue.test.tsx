@@ -571,14 +571,20 @@ describe('통합 인시던트 큐(T23)', () => {
 
 describe('목록 밀도(T23 7절)', () => {
   const hidden2xl = (el: HTMLElement) => el.className.split(/\s+/).includes('hidden') && el.className.includes('2xl:table-cell');
+  // T27: 통신 방향·세션 수는 1536~1919px에서도 숨기고 1920px부터 보인다
+  const hiddenUntil1920 = (el: HTMLElement) =>
+    el.className.split(/\s+/).includes('hidden') && el.className.split(/\s+/).includes('min-[1920px]:table-cell');
 
-  it('1536px 미만에서 통신 방향·세션 수는 숨김 클래스를 쓰지만, 지금 정렬 기준인 열(세션 수)에는 붙이지 않는다', async () => {
+  it('1920px 미만(T27, 그 전에는 1536px 미만)에서 통신 방향·세션 수는 숨김 클래스를 쓰지만, 지금 정렬 기준인 열(세션 수)에는 붙이지 않는다', async () => {
     const first = renderQueue();
     await ready();
     const conn = header(/세션 수 기준 정렬/);
-    expect(hidden2xl(conn)).toBe(true);
+    expect(hiddenUntil1920(conn)).toBe(true);
     const roleTh = within(screen.getByRole('table')).getAllByRole('columnheader').find((h) => h.textContent?.trim() === '통신 방향') as HTMLElement;
-    expect(hidden2xl(roleTh)).toBe(true);
+    expect(hiddenUntil1920(roleTh)).toBe(true);
+    // 발생 시각 · 지속은 그대로 2xl부터
+    const occTh = within(screen.getByRole('table')).getAllByRole('columnheader').find((h) => h.textContent?.includes('발생 시각')) as HTMLElement;
+    expect(hidden2xl(occTh)).toBe(true);
     first.unmount();
 
     renderQueue('/incidents?sort=connections&dir=desc');
@@ -800,7 +806,8 @@ describe('T25 큐: 담당·탐지 · 경과·착수 지연', () => {
     expect(within(r10).getByText('처리 4시간 3분')).toBeInTheDocument();
     // 1280px 행 한 줄: 발생 시각 · 지속·세션 수·통신 방향은 2xl부터 보인다(지금 정렬 기준이면 숨기지 않는다)
     expect(r1.querySelector('[data-col="occurrence"]')).toHaveClass('hidden', '2xl:table-cell');
-    expect(r1.querySelector('[data-col="connections"]')).toHaveClass('hidden', '2xl:table-cell');
+    // T27: 세션 수는 1920px부터
+    expect(r1.querySelector('[data-col="connections"]')).toHaveClass('hidden', 'min-[1920px]:table-cell');
     expect(r1.querySelector('[data-col="assignee"]')).not.toHaveClass('hidden');
     expectAllTablesInScrollBox();
   });
