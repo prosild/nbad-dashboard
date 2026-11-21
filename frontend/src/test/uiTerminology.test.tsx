@@ -767,6 +767,8 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(screen.getByText('최초 알림')).toBeInTheDocument();
     expect(screen.getAllByText('Dry-run').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('주요 세션 (최대 10건)')).toBeInTheDocument();
+    // 세션 표의 열은 사건 단위 통신 방향(출발지·목적지)과 구분해 IP를 붙인다.
+    expect(screen.getAllByText('출발지 IP').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('반영 실패(관리자 확인 필요)')).toBeInTheDocument();
     expectCleanText(container);
   });
