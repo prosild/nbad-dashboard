@@ -60,7 +60,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class T29OutsidePeriodIntegrationTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-11-21T00:00:00Z");
-    private static final long[] JOBS = {9101L, 9102L, 9103L, 9104L, 9105L};
+    private static final long[] JOBS = {9101L, 9102L, 9103L, 9104L, 9105L, 9106L};
     private static final List<String> PATTERNS = List.of("t29a-*", "t29n-*", "t29f-*");
     private static final Pattern FULL_IPV4 = Pattern.compile("(?<![0-9.])(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})(?![0-9.])");
 
@@ -219,6 +219,25 @@ class T29OutsidePeriodIntegrationTest {
         assertThat(asset.get("total").asLong()).isEqualTo(2);
         assertThat(asset.get("outsidePeriod").asLong()).isEqualTo(2);
         assertNoFullIpv4(asset);
+    }
+
+    @Test
+    void lastDetectedFollowsNewSucceededJobOfTheCapture() {
+        DashboardUserPrincipal analyst = principal(UserRole.ANALYST);
+        assertThat(last(queueService.loadQueue(analyst, p("24h", null, null, null, null, null), "127.0.0.1"), "t29a-cap"))
+                .isEqualTo(Instant.parse("2026-11-20T12:00:00Z"));
+        // 같은 캡처에 새 성공 작업(최신 작업 ID가 바뀜)이 생기면 다시 센다
+        JdbcTemplate jdbc = new JdbcTemplate(zeekadReadDataSource);
+        job(jdbc, 9106L, "t29a-cap", "2026-11-20 17:00:00Z", "'2026-11-20 18:00:00Z'");
+        row(jdbc, 9106L, "t29a-cap", 1, "A5", "10.91.0.5", "originator", false);
+        row(jdbc, 9106L, "t29a-cap", 2, "A1", "10.91.0.1", "originator", true);
+        assertThat(last(queueService.loadQueue(analyst, p("24h", null, null, null, null, null), "127.0.0.1"), "t29a-cap"))
+                .isEqualTo(Instant.parse("2026-11-20T18:00:00Z"));
+    }
+
+    private static Instant last(UnifiedQueueResponse r, String capture) {
+        return r.sources().stream().filter(s -> s.captureId().equals(capture)).findFirst()
+                .map(s -> s.lastDetectedAt() == null ? null : s.lastDetectedAt().toInstant()).orElse(null);
     }
 
     /* ───────────── 도우미 ───────────── */

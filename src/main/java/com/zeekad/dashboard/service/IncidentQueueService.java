@@ -30,6 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 통합 인시던트 큐(T23). 허용된 모든 캡처의 최신 작업 행을 합쳐 탐지 시각 기간·수집원으로 거르고,
@@ -138,13 +139,8 @@ public class IncidentQueueService {
         for (CaptureQueueStat s : stats) {
             statByCapture.put(s.getCaptureId(), s);
         }
-        // T29 수집원 목록 마지막 탐지(허용 캡처만)
-        Map<String, OffsetDateTime> lastDetected = new HashMap<>();
-        if (!scope.allowed().isEmpty()) {
-            for (CaptureLastDetected d : zeekadReadMapper.findCaptureLastDetected(scope.allowed())) {
-                lastDetected.put(d.getCaptureId(), d.getLastDetectedAt());
-            }
-        }
+        // T29 수집원 목록 마지막 탐지(허용 캡처만). 캡처의 최신 성공 작업 ID가 같으면 값이 같으므로 캐시한다.
+        Map<String, OffsetDateTime> lastDetected = lastDetectedFor(scope.allowed(), statByCapture);
         List<UnifiedQueueResponse.Source> sources = scope.allowed().stream()
                 .map(cap -> new UnifiedQueueResponse.Source(
                         cap,
@@ -591,6 +587,46 @@ public class IncidentQueueService {
             IncidentQueueItem masked = maskingService.maskIncidentQueueItem(r, role);
             if (IncidentQueryService.matchesAssetFilter(masked, asset)) {
                 out.add(new Masked(r, masked));
+            }
+        }
+        return out;
+    }
+
+    /** 캡처별 마지막 탐지 캐시 값: 계산할 때의 최신 성공 작업 ID와 그 값 */
+    private record LastDetectedEntry(Long latestJobId, OffsetDateTime lastDetectedAt) {
+    }
+
+    private final Map<String, LastDetectedEntry> lastDetectedCache = new ConcurrentHashMap<>();
+
+    /**
+     * T29 캡처별 마지막 탐지. 탐지 시각은 캡처의 성공 작업들로 정해지고 새 성공 작업이 생기면 최신 작업 ID(MAX job_id)가 바뀌므로,
+     * 최신 작업 ID가 캐시와 같은 캡처는 다시 세지 않는다(공개 스냅샷은 시작 뒤 한 번만 센다). 성공 작업이 없는 캡처는 null.
+     */
+    private Map<String, OffsetDateTime> lastDetectedFor(List<String> allowed, Map<String, CaptureQueueStat> statByCapture) {
+        Map<String, OffsetDateTime> out = new HashMap<>();
+        List<String> stale = new ArrayList<>();
+        for (String cap : allowed) {
+            CaptureQueueStat stat = statByCapture.get(cap);
+            Long jobId = stat == null ? null : stat.getLatestJobId();
+            if (jobId == null) {
+                continue;
+            }
+            LastDetectedEntry e = lastDetectedCache.get(cap);
+            if (e != null && jobId.equals(e.latestJobId())) {
+                out.put(cap, e.lastDetectedAt());
+            } else {
+                stale.add(cap);
+            }
+        }
+        if (!stale.isEmpty()) {
+            Map<String, OffsetDateTime> fresh = new HashMap<>();
+            for (CaptureLastDetected d : zeekadReadMapper.findCaptureLastDetected(stale)) {
+                fresh.put(d.getCaptureId(), d.getLastDetectedAt());
+            }
+            for (String cap : stale) {
+                OffsetDateTime v = fresh.get(cap);
+                lastDetectedCache.put(cap, new LastDetectedEntry(statByCapture.get(cap).getLatestJobId(), v));
+                out.put(cap, v);
             }
         }
         return out;
