@@ -244,7 +244,7 @@ zeek_AD `docs/data-contract-v2.md` "수집 구간(캡처) 표시 이름" 절과 
 | 지표 | 정의 | 뷰 열 |
 |---|---|---|
 | 인시던트 | `latest_incident_queue`(캡처마다 최신 탐지 작업 하나)의 인시던트 수 | `incidents` |
-| 경보 발송 | 상태 알림(`report_version`이 `status:`로 시작)이 아닌 Slack 발송 기록이 있는 인시던트(`incident_id` 기준, dry-run 기록·발송 실패 기록 포함). T21: 인시던트 목록·상세 헤더도 같은 식(API `alerted`, `dashboard.slack_deliveries`의 `zeekad_message_version IS NOT NULL AND NOT LIKE 'status:%'`)을 쓴다. 발송 판단(`would_send`)과 다르다 | `alerted` |
+| 경보 발송 | 상태 알림(`report_version`이 `status:`로 시작)이 아닌 Slack 발송 기록이 있는 인시던트(`incident_id` 기준, dry-run 기록·발송 실패 기록 포함). T21: 인시던트 목록·상세 헤더도 같은 식(API `alerted`, `dashboard.slack_deliveries`의 `zeekad_message_version IS NOT NULL AND NOT LIKE 'status:%'`)을 쓴다. 발송 판단(`would_send`)과 다르다. **알려진 차이**: 목록·상세의 경보 발송은 `dashboard.slack_deliveries`(성공한 작업의 기록만)로 세고, 현황판 KPI는 `feedback_summary`(실패한 작업의 기록 포함)로 센다. 실패한 작업에만 사건 알림 기록이 있는 사건이 있으면 KPI가 더 크다. zeek_AD에 정의 통일을 요청함(2026-11-21) | `alerted` |
 | 판정 완료 | 판정(정탐·오탐·정상)이 있는 인시던트 | `resolved` |
 | 미판정 | 인시던트 − 판정 완료 | (계산) |
 | 정탐률 | 정탐 / 판정 완료 | `zeekad_precision` |
