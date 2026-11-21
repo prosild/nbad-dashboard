@@ -271,10 +271,10 @@ class ZeekadReadMapperTest {
         assertThat(cicAll.getZeekadPrecision()).isEqualTo(0.0d);
         assertThat(cicAll.getZeekadAlertPrecision()).isNull();
         assertThat(cicAll.getZeekadAlertResolvedRate()).isEqualTo(0.0d);
-        assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("정밀도 0.00, 결론 1/3 (33.3%)");
-        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("- (결론 0/1 (0.0%))");
+        assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 판정 1/3건(33.3%)");
+        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("판정 없음 · 경보 1건");
 
-        // 결론 0건 캡처(lab-fusion-v2)는 정밀도 null 처리
+        // 판정 0건 캡처(lab-fusion-v2)는 정탐률 null 처리
         List<FeedbackSummaryRecord> fusionSummaries = zeekadReadMapper.findRawFeedbackSummaries("lab-fusion-v2")
                 .stream()
                 .map(FeedbackSummaryRecord::fromRawMap)
@@ -289,7 +289,7 @@ class ZeekadReadMapperTest {
         assertThat(fusionAll.getResolved()).isEqualTo(0L);
         assertThat(fusionAll.getZeekadPrecision()).isNull();
         assertThat(fusionAll.getZeekadAlertPrecision()).isNull();
-        assertThat(fusionAll.getPrecisionSummaryText()).isEqualTo("- (결론 0/3, 0.0%)");
+        assertThat(fusionAll.getPrecisionSummaryText()).isEqualTo("판정 없음");
 
         // IncidentQueryService 정렬('all' 최우선) 및 IDOR 필터 확인
         DashboardUser cicUser = new DashboardUser();
@@ -376,8 +376,8 @@ class ZeekadReadMapperTest {
             assertThat(calcAll.getZeekadPrecision()).isEqualTo(1.0d);
             assertThat(calcAll.getZeekadAlertPrecision()).isEqualTo(1.0d);
             assertThat(calcAll.getZeekadAlertResolvedRate()).isEqualTo(0.5d);
-            assertThat(calcAll.getPrecisionSummaryText()).isEqualTo("정밀도 1.00, 결론 1/2 (50.0%)");
-            assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("정밀도 1.00, 결론 1/2 (50.0%)");
+            assertThat(calcAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 판정 1/2건(50.0%)");
+            assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("표본 부족 · 경보 판정 1/2건(50.0%)");
         } finally {
             jdbc.update("DELETE FROM dashboard.raw_incident_status WHERE incident_id IN (?, ?)", tmpInc1, tmpInc2);
             jdbc.update("DELETE FROM dashboard.raw_send_decisions WHERE job_id = ?", tmpJobId);

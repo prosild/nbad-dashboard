@@ -1,5 +1,7 @@
 package com.zeekad.dashboard.model.zeekad;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -9,6 +11,10 @@ import java.util.Map;
  * dashboard.feedback_summary 뷰 DTO (migration 017, 고정 열 및 부가 열 수용).
  */
 public class FeedbackSummaryRecord {
+
+    /** 판정이 이 건수보다 적으면 비율 대신 "표본 부족"을 쓴다(docs/ui-terminology.md '운영 지표 정의'). */
+    public static final long SAMPLE_MIN = 10L;
+    static final String SAMPLE_SHORT_LABEL = "표본 부족";
 
     private String captureId;
     private String bundleId;
@@ -75,38 +81,68 @@ public class FeedbackSummaryRecord {
         return null;
     }
 
+    /**
+     * 정탐률 문장(docs/ui-terminology.md '운영 지표 정의', 프론트엔드 utils/operations.ts와 같은 형식).
+     * 판정 0건이면 "판정 없음", 판정 10건 미만이면 "표본 부족 · 판정 r/n건(p%)", 그 밖에는 "정탐률 x% · 판정 r/n건(p%)".
+     */
     public String getPrecisionSummaryText() {
-        if (incidents == null || incidents <= 0) {
-            return zeekadPrecision == null
-                    ? "- (결론 없음)"
-                    : String.format(Locale.US, "정밀도 %.2f", zeekadPrecision);
-        }
         long resolvedCount = safeLong(resolved);
-        double resolvedRatePct = (double) resolvedCount / incidents * 100.0;
-        if (zeekadPrecision != null) {
-            return String.format(Locale.US, "정밀도 %.2f, 결론 %d/%d (%.1f%%)",
-                    zeekadPrecision, resolvedCount, incidents, resolvedRatePct);
+        long incidentCount = safeLong(incidents);
+        if (resolvedCount <= 0) {
+            return "판정 없음";
         }
-        return String.format(Locale.US, "- (결론 %d/%d, %.1f%%)",
-                resolvedCount, incidents, resolvedRatePct);
+        String base = incidentCount > 0
+                ? String.format(Locale.US, "판정 %,d/%,d건(%s)", resolvedCount, incidentCount,
+                        percentOf(resolvedCount, incidentCount))
+                : String.format(Locale.US, "판정 %,d건", resolvedCount);
+        if (resolvedCount < SAMPLE_MIN) {
+            return SAMPLE_SHORT_LABEL + " · " + base;
+        }
+        return "정탐률 " + ratioPercent(zeekadPrecision) + " · " + base;
     }
 
+    /**
+     * 경보 정탐률 문장. 경보 0건이면 "경보 없음", 경보 판정 0건이면 "판정 없음 · 경보 n건",
+     * 경보 판정 10건 미만이면 "표본 부족 · 경보 판정 r/n건(p%)", 그 밖에는 "경보 정탐률 x% · 경보 판정 r/n건(p%)".
+     */
     public String getAlertPrecisionSummaryText() {
-        if (alerted == null || alerted <= 0) {
-            return "- (알림 없음)";
+        long alertedCount = safeLong(alerted);
+        if (alertedCount <= 0) {
+            return "경보 없음";
         }
         Long effRes = getEffectiveAlertedResolved();
-        String rateSuffix = zeekadAlertResolvedRate != null
-                ? String.format(Locale.US, " (%.1f%%)", zeekadAlertResolvedRate * 100.0)
-                : "";
         if (effRes == null) {
-            return zeekadAlertPrecision == null
-                    ? "- (결론 없음)"
-                    : String.format(Locale.US, "정밀도 %.2f%s", zeekadAlertPrecision, rateSuffix);
+            return String.format(Locale.US, "경보 %,d건 · 판정 수 알 수 없음", alertedCount);
         }
-        return zeekadAlertPrecision != null
-                ? String.format(Locale.US, "정밀도 %.2f, 결론 %d/%d%s", zeekadAlertPrecision, effRes, alerted, rateSuffix)
-                : String.format(Locale.US, "- (결론 %d/%d%s)", effRes, alerted, rateSuffix);
+        if (effRes <= 0) {
+            return String.format(Locale.US, "판정 없음 · 경보 %,d건", alertedCount);
+        }
+        String base = String.format(Locale.US, "경보 판정 %,d/%,d건(%s)", effRes, alertedCount,
+                percentOf(effRes, alertedCount));
+        if (effRes < SAMPLE_MIN) {
+            return SAMPLE_SHORT_LABEL + " · " + base;
+        }
+        return "경보 정탐률 " + ratioPercent(zeekadAlertPrecision) + " · " + base;
+    }
+
+    /** 분자/분모를 소수 첫째 자리 퍼센트로(반올림 HALF_UP). 예: 5/18 → "27.8%" */
+    static String percentOf(long numerator, long denominator) {
+        if (denominator <= 0) {
+            return "-";
+        }
+        return BigDecimal.valueOf(numerator).multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(denominator), 1, RoundingMode.HALF_UP)
+                .toPlainString() + "%";
+    }
+
+    /** 0~1 비율을 소수 첫째 자리 퍼센트로(반올림 HALF_UP). 예: 0.6 → "60.0%" */
+    static String ratioPercent(Double ratio) {
+        if (ratio == null || !Double.isFinite(ratio)) {
+            return "-";
+        }
+        return BigDecimal.valueOf(ratio).multiply(BigDecimal.valueOf(100))
+                .setScale(1, RoundingMode.HALF_UP)
+                .toPlainString() + "%";
     }
 
     private static long safeLong(Long val) {

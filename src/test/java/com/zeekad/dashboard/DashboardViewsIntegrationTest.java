@@ -24,6 +24,7 @@ import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -162,9 +163,12 @@ class DashboardViewsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("zeekad-fusion/1")))
                 .andExpect(content().string(containsString("zeekad-fusion/3")))
-                .andExpect(content().string(containsString("정밀도 0.00, 결론 1/3 (33.3%)")))
-                .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
+                // T20: 판정 1건(10건 미만)은 정탐률 대신 표본 부족, 판정 0건은 판정 없음
+                .andExpect(content().string(containsString("표본 부족 · 판정 1/3건(33.3%)")))
+                .andExpect(jsonPath("$.feedbackSummaries[?(@.captureId == 'lab-fusion-v2' && @.zeekadPickedBy == 'all')].precisionSummaryText")
+                        .value(hasItem("판정 없음")))
                 .andExpect(content().string(not(containsString("정확도"))))
+                .andExpect(content().string(not(containsString("정밀도"))))
                 .andExpect(jsonPath("$.slackSummaries[1].dryRunOrRecorded").value(true))
                 .andReturn();
 
@@ -175,8 +179,9 @@ class DashboardViewsIntegrationTest {
         mockMvc.perform(get("/api/operations").param("captureId", "lab-fusion-v2").session(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.selectedCaptureId").value("lab-fusion-v2"))
-                .andExpect(content().string(containsString("- (결론 0/3, 0.0%)")))
-                .andExpect(content().string(not(containsString("정밀도 0.00, 결론 1/3 (33.3%)"))));
+                .andExpect(jsonPath("$.feedbackSummaries[?(@.zeekadPickedBy == 'all')].precisionSummaryText")
+                        .value(hasItem("판정 없음")))
+                .andExpect(content().string(not(containsString("표본 부족 · 판정 1/3건(33.3%)"))));
 
         // 분석가 승인 대기 목록 API (전체 vs 대기 건만, 반영 상태 3종)
         mockMvc.perform(get("/api/reviews").session(session))

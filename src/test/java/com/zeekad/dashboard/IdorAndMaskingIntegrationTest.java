@@ -124,7 +124,7 @@ class IdorAndMaskingIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.maskedView").value(true))
                 .andExpect(content().string(containsString("192.168.*.*")))
-                .andExpect(content().string(containsString("정밀도 0.00, 결론 1/3 (33.3%)")))
+                .andExpect(content().string(containsString("표본 부족 · 판정 1/3건(33.3%)")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))))
                 .andExpect(content().string(not(containsString("syn1-tue"))))
                 .andExpect(content().string(not(containsString("lab-20261118"))))
