@@ -80,9 +80,9 @@ services:
       ZEEKAD_RW_PASSWORD: ${DASHBOARD_RW_PASSWORD:-}
       ZEEKAD_EVIDENCE_API_URL: http://api:8000
       DASHBOARD_COOKIE_SECURE: "true"
-      # 공개 데모 계정을 남이 잠그지 못하게 계정 잠금을 사실상 끈다(0이나 작은 값은 첫 실패에 잠근다).
-      # 대신 nginx-waf가 POST /api/auth/login을 클라이언트 IP당 속도 제한한다.
-      DASHBOARD_MAX_FAILED_ATTEMPTS: ${PORTFOLIO_MAX_FAILED_ATTEMPTS:-1000000}
+      # T29: 계정 잠금은 모든 계정에 5회·15분(앱 기본)이다. .env 변수를 쓰지 않는다(옛 .env의 PORTFOLIO_MAX_FAILED_ATTEMPTS는 무시된다).
+      # 비밀번호를 공개한 demo만 아래 목록으로 잠금에서 빠지고, 무작위 대입은 nginx-waf의 IP당 로그인 속도 제한이 막는다.
+      DASHBOARD_MAX_FAILED_ATTEMPTS: "5"
       # T29: 비밀번호를 공개한 공유 조회 계정(VIEWER)만 계정 잠금에서 뺀다. 목록에 있어도 VIEWER가 아니면 잠긴다.
       # 목록에는 비밀번호를 공개한 공유 조회 계정만 넣는다(비공개 비밀번호 계정을 넣으면 여러 IP 대입을 IP당 속도 제한만 막는다).
       DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo}

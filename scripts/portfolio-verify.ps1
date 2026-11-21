@@ -915,7 +915,7 @@ try {
         Assert-ApiError $res 403 "ACCOUNT_DISABLED" "$($acct[0]) 로그인 불가(비활성)"
     }
 
-    Write-Host "=== [6] 계정 잠금 꺼짐 ==="
+    Write-Host "=== [6] demo 잠금 제외(T29) ==="
     for ($k = 1; $k -le 6; $k++) {
         $c = New-Client "198.51.100.$(60 + $k)"
         $res = Login-Api $c "demo" "wrong-password-$k"
@@ -1396,12 +1396,33 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
         else { $final29 = $res }
     }
     $state29 = (Invoke-Psql "zeekad_dashboard" "SELECT failed_attempts, locked_until IS NULL FROM users WHERE username = 'demo'").Output.Trim()
-    $audit29 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*), count(*) FILTER (WHERE detail_json::text LIKE '%`"lockoutExempt`": true%' OR detail_json::text LIKE '%`"lockoutExempt`":true%') FROM audit_logs WHERE id > $auditBase29 AND actor_username = 'demo' GROUP BY action_type ORDER BY action_type").Output.Trim()
+    $audit29 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*), count(*) FILTER (WHERE (detail_json::jsonb ->> 'lockoutExempt') = 'true') FROM audit_logs WHERE id > $auditBase29 AND actor_username = 'demo' GROUP BY action_type ORDER BY action_type").Output.Trim()
     $e2eLogs.Add("[T29d] app env DASHBOARD_LOCKOUT_EXEMPT_USERNAMES='$exempt29' DASHBOARD_MAX_FAILED_ATTEMPTS='$maxFail29'; same client IP $lockIp29, 7.5 s apart: [$($codes29 -join ', ')]; demo failed_attempts|locked_until IS NULL after=$state29`n       final correct password: $(Format-Resp $final29 160)`n       audit since base (action|count|lockoutExempt=true): $($audit29 -replace "`r?`n", '; ')")
     Assert-True ($exempt29 -eq 'demo') "[T29d] 공개 스택 앱 설정 DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo"
     Assert-Status $final29 200 "[T29d] 틀린 비밀번호 6번 뒤 demo 정상 로그인"
     Assert-True ($audit29 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $audit29 -notmatch 'ACCOUNT_LOCKED') "[T29d] LOGIN_FAILURE 6건(모두 lockoutExempt), ACCOUNT_LOCKED 0건"
     Assert-True ($state29 -eq '0|t') "[T29d] demo failed_attempts 0·locked_until 없음"
+
+    # [T29e] 목록 밖 계정은 지금처럼 5번째 실패에 잠긴다. 공개 스택의 다른 계정은 비활성이라(비활성 검사가 먼저) 리허설 DB에서만
+    #        viewer1을 잠시 활성화해 시험하고 끝나면 비활성·잠금 해제로 되돌린다. 요청마다 다른 클라이언트 IP(속도 제한 회피).
+    $maxEnv29 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_MAX_FAILED_ATTEMPTS-<unset>}"')) -IgnoreExitCode).Output.Trim()
+    [void](Invoke-Psql "zeekad_dashboard" "UPDATE users SET enabled = TRUE, failed_attempts = 0, locked_until = NULL WHERE username = 'viewer1'")
+    $auditBase29e = [long](Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(MAX(id),0) FROM audit_logs").Output.Trim()
+    $codes29e = [System.Collections.Generic.List[string]]::new()
+    for ($k = 1; $k -le 5; $k++) {
+        $res = Login-Api (New-Client "198.51.100.$(140 + $k)") "viewer1" "wrong-password-t29e-$k"
+        $codes29e.Add("$($res.Status)")
+    }
+    $ok29e = Login-Api (New-Client "198.51.100.150") "viewer1" $env:BOOTSTRAP_VIEWER1_PASSWORD
+    $audit29e = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*) FROM audit_logs WHERE id > $auditBase29e AND actor_username = 'viewer1' GROUP BY action_type ORDER BY action_type").Output.Trim()
+    [void](Invoke-Psql "zeekad_dashboard" "UPDATE users SET enabled = FALSE, failed_attempts = 0, locked_until = NULL WHERE username = 'viewer1'")
+    $restored29e = (Invoke-Psql "zeekad_dashboard" "SELECT enabled, failed_attempts, locked_until IS NULL FROM users WHERE username = 'viewer1'").Output.Trim()
+    $e2eLogs.Add("[T29e] app env DASHBOARD_MAX_FAILED_ATTEMPTS='$maxEnv29'; viewer1(목록 밖 VIEWER, 리허설에서만 잠시 활성) wrong x5 -> HTTP [$($codes29e -join ', ')]; correct password -> $(Format-Resp $ok29e 160); audit: $($audit29e -replace "`r?`n", '; '); restored (enabled|failed|unlocked)=$restored29e")
+    Assert-True ($maxEnv29 -eq '5') "[T29e] 공개 스택 앱 설정 DASHBOARD_MAX_FAILED_ATTEMPTS=5"
+    Assert-True (($codes29e -join ',') -eq '401,401,401,401,423') "[T29e] 목록 밖 계정 5번째 실패에 423 잠금"
+    Assert-ApiError $ok29e 423 "ACCOUNT_LOCKED" "[T29e] 잠긴 뒤 맞는 비밀번호도 423"
+    Assert-True ($audit29e -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[T29e] ACCOUNT_LOCKED 감사 1건"
+    Assert-True ($restored29e -eq 'f|0|t') "[T29e] viewer1 비활성·잠금 해제로 되돌림"
 
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
