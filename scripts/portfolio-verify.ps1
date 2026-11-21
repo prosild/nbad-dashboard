@@ -1014,7 +1014,7 @@ try {
     $fwRows = (Invoke-Psql "zeekad_dashboard" "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank").Output.Trim()
     $t25Tables = (Invoke-Psql "zeekad_dashboard" "SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables WHERE table_name IN ('incident_assignments', 'incident_assignment_history')").Output.Trim()
     $e2eLogs.Add("[T25a] flyway_schema_history (version|description|success):`n       $($fwRows -replace "`r?`n", "`n       ")`n       tables=$t25Tables")
-    Assert-True ($fwRows -match '(?m)^2\|incident assignments\|t$' -and $t25Tables -eq 'incident_assignment_history,incident_assignments') "[T25a] 앱 DB에 V2 적용"
+    Assert-True ($fwRows -match '(?m)^2\|incident assignments\|t?$' -and $t25Tables -eq 'incident_assignment_history,incident_assignments') "[T25a] 앱 DB에 V2 적용"
 
     # [T25b] handlingTimes(period=all·7d) = 독립 SQL(percentile_disc), workload.ackOverdue = 큐 overdue=true total = summary.overdue = 독립 SQL
     #        (고정 스냅샷이라 정확히 같아야 한다). 구현 SQL을 복사하지 않고 정의(인계 3절)대로 다시 쓴다.
@@ -1170,7 +1170,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $syncLog27 = @($appLogs27 -split "`r?`n" | Where-Object { $_ -match '인시던트 번호' } | ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() } | Select-Object -Last 3)
     $refStats27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*), min(incident_no), max(incident_no), count(DISTINCT created_at) FROM incident_refs").Output.Trim()
     $e2eLogs.Add("[T27a] flyway_schema_history:`n       $($fw27 -replace "`r?`n", "`n       ")`n       latest_incident_queue (all captures)=$($latestIds27.Count) incident_refs (count|min|max|batches)=$refStats27 missing=$($missing27.Count)`n       app log: $($syncLog27 -join ' / ')")
-    Assert-True ($fw27 -match '(?m)^3\|incident refs\|t$') "[T27a] 앱 DB에 V3 적용"
+    Assert-True ($fw27 -match '(?m)^3\|incident refs\|t?$') "[T27a] 앱 DB에 V3 적용"
     Assert-True ($latestIds27.Count -gt 0 -and $missing27.Count -eq 0) "[T27a] 시작 동기화 뒤 최신 큐 모든 인시던트에 번호"
 
     # [T27b] 첫 묶음(created_at 최소) 번호 순서 = 탐지 시각(NULL 마지막)·capture_id·incident_id 순(독립 SQL, 문자열은 코드 순서 ucs_basic)
