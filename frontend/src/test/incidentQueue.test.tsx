@@ -8,6 +8,7 @@ import { ToastProvider } from '../components/ToastContext';
 import { NEW_INCIDENT_POLL_MS } from '../pages/IncidentQueuePage';
 import type { IncidentQueueItem, QueuePriority, UnifiedQueueItem } from '../types/api';
 import { fakeNewCount, fakeQueue, unified, type FakeQueueOptions } from './fakeQueueServer';
+import { expectAllTablesInScrollBox } from './tableScrollBox';
 
 /**
  * T23 통합 인시던트 큐 화면(T18 분류 화면을 이어받음): 서버 정렬·쪽 나눔·요약, 기간·수집원 조건, URL 동기화,
@@ -67,6 +68,7 @@ function makeItem(i: number): UnifiedQueueItem {
 
 /** lab-20261119 표시 이름(사전 labels.ts의 메모 포함) */
 const LAB_NAME = '실습망 2026-11-19 · Kali 공격 + 정상 배경';
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const ITEMS = Array.from({ length: 60 }, (_, idx) => makeItem(idx + 1));
 
@@ -491,8 +493,11 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row1).getByText('1시간 전')).toBeInTheDocument();
     expect(within(row1).getByTitle('탐지 시각 2026-11-20 09:01:00')).toBeInTheDocument();
     // T23 7절: 수집원은 한 줄(아이콘 + 표시 이름). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 있다.
-    const src1 = within(row1).getByLabelText('수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
-    expect(src1).toHaveAttribute('title', '가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
+    // T26(T23 review-4 L2): 역할 없는 span의 aria-label 속성이 아니라, 실제로 계산된 행의 접근성 이름에 들어 있어야 한다.
+    expect(row1).toHaveAccessibleName(/수집원: 가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed/);
+    const src1 = within(row1).getByTitle('가져온 데이터 · CIC-IDS2017 수요일 · 캡처 ID: cic17-wed');
+    expect(src1).not.toHaveAttribute('aria-label');
+    expect(within(src1).getByText('CIC-IDS2017 수요일')).not.toHaveAttribute('aria-hidden');
     expect(within(row1).getByText('CIC-IDS2017 수요일')).toBeInTheDocument();
     expect(within(row1).queryByText('가져온 데이터')).toBeNull();
     // 탐지 시각은 상대 표시만 글로, 발생 시각은 초 없이(기준 시각과 같은 해면 연도도 뺀다)
@@ -509,7 +514,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row4).getByRole('img', { name: '검증 실패' })).toBeInTheDocument();
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;
     expect(within(row36).getByText('Low')).toBeInTheDocument();
-    expect(within(row36).getByLabelText(`수집원: 실습망 센서 · ${LAB_NAME} · 캡처 ID: lab-20261119`)).toBeInTheDocument();
+    expect(row36).toHaveAccessibleName(new RegExp(`수집원: 실습망 센서 · ${escapeRe(LAB_NAME)} · 캡처 ID: lab-20261119`));
     expect(within(row36).getByText(LAB_NAME)).toBeInTheDocument();
     expect(within(row36).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
     const row59 = within(table).getByText('10.0.59.1').closest('tr') as HTMLElement;
@@ -543,10 +548,18 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(firstItem).getByText('탐지 38분 전')).toBeInTheDocument();
     expect(within(firstItem).getByText('실습망 센서')).toBeInTheDocument();
     expect(within(firstItem).getByText(LAB_NAME)).toBeInTheDocument();
+    // T26(T23 review-4 L2): 휴대폰 목록 링크의 접근성 이름에도 수집원 종류·표시 이름·캡처 ID가 들어간다
+    expect(link).toHaveAccessibleName(new RegExp(`수집원: ?실습망 센서 ?${escapeRe(LAB_NAME)} · 캡처 ID: lab-`));
     expect(within(firstItem).getByText('2026-11-18 09:52:00')).toBeInTheDocument();
     expect(within(firstItem).getByText('신규')).toBeInTheDocument();
     const ongoingItem = items.find((li) => within(li).queryByText('10.0.59.1'));
     expect(ongoingItem && within(ongoingItem).getByText('진행 중')).toBeInTheDocument();
+  });
+
+  it('T26 휴대폰 폭: 목록 표는 가로 스크롤 상자 안에 있다', async () => {
+    renderQueue();
+    await ready();
+    expectAllTablesInScrollBox();
   });
 });
 
@@ -592,7 +605,7 @@ describe('목록 밀도(T23 7절)', () => {
     const name = within(row).getByText('very-long-asset-name-for-t23-density-check.corp.example.local');
     expect(name.className).toContain('truncate');
     expect(name).toHaveAttribute('title', 'very-long-asset-name-for-t23-density-check.corp.example.local, second');
-    expect(within(row).getByLabelText(/^수집원: /).className).toMatch(/max-w-/);
+    expect(within(row).getByTitle(/ · 캡처 ID: /).className).toMatch(/max-w-/);
   });
 });
 

@@ -925,7 +925,6 @@ function isNewRow(item: UnifiedQueueItem, highlightAfter: string | null): boolea
   return new Date(item.detectedAt).getTime() > new Date(highlightAfter).getTime();
 }
 
-/** 탐지 시각: 기준 시각에서 얼마 전인지 + 절대 시각(보조 글자·툴팁) */
 /** 탐지 시각: 기준 시각에서 얼마 전인지만 글로 보이고 절대 시각(KST)은 툴팁에 둔다(T23 7절 목록 밀도). */
 function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string | null }) {
   if (!item.detectedAt) {
@@ -939,8 +938,10 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
 }
 
 /**
- * 수집원(한 줄): 종류 아이콘 + 표시 이름(넘치면 말줄임). 종류 문구·표시 이름 전체·캡처 ID는 툴팁과 접근성 이름에 둔다.
+ * 수집원(한 줄): 종류 아이콘 + 표시 이름(넘치면 말줄임). 종류 문구·표시 이름 전체·캡처 ID는 툴팁에 둔다.
  * 종류 문구는 수집원 조건과 상세 헤더에 글자로 보인다.
+ * T26(T23 review-4 L2): 역할 없는 span의 aria-label은 화면 판독기가 읽지 않을 수 있어, 보이는 표시 이름은 그대로 읽히게 두고
+ * 종류 문구·캡처 ID는 sr-only 글자로 더한다(행의 접근성 이름에 "수집원: 종류 · 표시 이름 · 캡처 ID"가 들어간다).
  */
 function SourceCell({ item }: { item: UnifiedQueueItem }) {
   const info = captureInfo(item.captureId);
@@ -948,15 +949,11 @@ function SourceCell({ item }: { item: UnifiedQueueItem }) {
   const label = `${typeText} · ${info.text} · 캡처 ID: ${item.captureId}`;
   const Icon = item.sourceType === 'live' ? Radio : Database;
   return (
-    <span
-      title={label}
-      aria-label={`수집원: ${label}`}
-      className="flex max-w-[5.5rem] items-center gap-1 2xl:max-w-[13rem]"
-    >
+    <span title={label} className="flex max-w-[5.5rem] items-center gap-1 2xl:max-w-[13rem]">
       <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-      <span aria-hidden="true" className="min-w-0 truncate text-slate-300">
-        {info.text}
-      </span>
+      <span className="sr-only">{`수집원: ${typeText} · `}</span>
+      <span className="min-w-0 truncate text-slate-300">{info.text}</span>
+      <span className="sr-only">{` · 캡처 ID: ${item.captureId}`}</span>
     </span>
   );
 }
@@ -1273,8 +1270,11 @@ function QueueMobileList({
               </span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              {/* T26: 링크의 접근성 이름에 "수집원: 종류 표시 이름 · 캡처 ID"가 들어가게 판독기용 글자를 더한다 */}
+              <span className="sr-only">수집원: </span>
               <SourceTypeBadge type={item.sourceType} />
               <CaptureName id={item.captureId} className="min-w-0 truncate text-[11px] text-slate-400" />
+              <span className="sr-only">{` · 캡처 ID: ${item.captureId}`}</span>
               {item.ongoing && <OngoingBadge snapshot={snapshot} />}
             </div>
             <div className="mt-1 flex items-center gap-2 text-xs">
