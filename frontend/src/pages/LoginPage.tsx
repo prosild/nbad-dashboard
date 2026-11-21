@@ -59,7 +59,7 @@ export function LoginPage() {
             <Shield className="h-7 w-7" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-100">{PRODUCT_NAME}</h1>
-          <p className="mt-1.5 text-sm text-slate-400">네트워크 이상탐지 사건을 조사하고 판단하는 관제 화면</p>
+          <p className="mt-1.5 text-sm text-slate-400">네트워크 이상탐지 인시던트를 분석하고 판단하는 관제 화면</p>
         </div>
 
         <div className="soc-card p-6 sm:p-8">

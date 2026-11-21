@@ -77,7 +77,7 @@
     @apply border-b border-slate-800/70 px-3.5 py-3 text-sm text-slate-200 align-top;
   }
 
-  /* 촘촘한 한 줄 표(탐지 사건 목록). 한 행 약 34px. 넘치는 글은 말줄임 + 툴팁 */
+  /* 촘촘한 한 줄 표(인시던트 목록). 한 행 약 34px. 넘치는 글은 말줄임 + 툴팁 */
   .soc-th-compact {
     @apply whitespace-nowrap border-b border-slate-800 bg-[#0a101d] px-2.5 py-2 text-left text-xs font-semibold text-slate-400;
   }

@@ -18,7 +18,7 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
 
   const targetJobId = item.reviewJobId ?? item.jobId;
   if (!targetJobId) {
-    return <span className="text-xs text-slate-500">판단 요청 정보가 없어 결정할 수 없습니다</span>;
+    return <span className="text-xs text-slate-500">에스컬레이션 정보가 없어 결정할 수 없습니다</span>;
   }
 
   async function decide(action: 'confirm' | 'dismiss') {
@@ -30,11 +30,11 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
         action,
         note: note.trim() || undefined,
       });
-      notify(res.message || '판단을 저장했습니다.', 'success');
+      notify(res.message || '검토 결정을 저장했습니다.', 'success');
       setNote('');
       await onSubmitted();
     } catch (err) {
-      notify(err instanceof ApiError ? err.message : '판단을 저장하지 못했습니다.', 'error');
+      notify(err instanceof ApiError ? err.message : '검토 결정을 저장하지 못했습니다.', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -44,10 +44,10 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
     <div className="min-w-[230px] space-y-2">
       <input
         type="text"
-        aria-label={`${item.incidentId} 판단 메모`}
+        aria-label={`${item.incidentId} 검토 메모`}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="판단 메모 (선택)"
+        placeholder="검토 메모 (선택)"
         className="soc-input py-1 text-xs"
       />
       <div className="flex gap-1.5">
@@ -90,7 +90,7 @@ export function ReviewsPage() {
       const res = await reviewsApi.list(captureId || undefined, pendingOnly);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '판단 요청 목록을 불러오지 못했습니다.');
+      setErrorMsg(err instanceof ApiError ? err.message : '에스컬레이션 목록을 불러오지 못했습니다.');
     } finally {
       setLoading(false);
     }
@@ -116,14 +116,14 @@ export function ReviewsPage() {
 
   return (
     <AppShell
-      title="판단 요청"
-      subtitle="자동 판단이 엇갈려 분석가 판단을 기다리는 사건입니다. 조사를 진행할지 오탐으로 종료할지 정해 주세요"
+      title="에스컬레이션"
+      subtitle="자동 판단이 엇갈려 분석가 검토로 넘어온 인시던트입니다. 승인하거나 오탐 종결하세요"
     >
       <div className="space-y-5">
         {data && !data.canDecideReview && (
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span>읽기 전용 계정입니다. 판단은 분석가 계정에서 할 수 있습니다.</span>
+            <span>읽기 전용 계정입니다. 검토 결정은 분석가 계정에서 할 수 있습니다.</span>
           </div>
         )}
 
@@ -131,7 +131,7 @@ export function ReviewsPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div>
               <label htmlFor="reviews-capture" className="mb-1 block text-[11px] font-medium text-slate-400">
-                수집 구간
+                캡처
               </label>
               <select
                 id="reviews-capture"
@@ -139,7 +139,7 @@ export function ReviewsPage() {
                 onChange={(e) => updateCapture(e.target.value)}
                 className="soc-select text-xs"
               >
-                <option value="">열람 허용 수집 구간 전체</option>
+                <option value="">열람 허용 캡처 전체</option>
                 {(data?.allowedCaptures ?? []).map((cap) => (
                   <option key={cap} value={cap}>
                     {cap}
@@ -155,7 +155,7 @@ export function ReviewsPage() {
                 onChange={(e) => togglePendingOnly(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-500/30"
               />
-              <span>판단 대기만 보기</span>
+              <span>대기만 보기</span>
             </label>
           </div>
 
@@ -168,26 +168,26 @@ export function ReviewsPage() {
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadReviews()} />}
 
         {loading && !data ? (
-          <LoadingPanel label="판단 요청 목록을 불러오는 중..." />
+          <LoadingPanel label="에스컬레이션 목록을 불러오는 중..." />
         ) : (
           <div className="soc-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr>
-                    <th className="soc-th">수집 구간</th>
-                    <th className="soc-th">사건 · 호스트</th>
+                    <th className="soc-th">캡처</th>
+                    <th className="soc-th">인시던트 · 호스트</th>
                     <th className="soc-th">요청 사유</th>
                     <th className="soc-th">요청 시각</th>
-                    <th className="soc-th">판단 · 반영 상태</th>
-                    <th className="soc-th">판단 · 상세</th>
+                    <th className="soc-th">검토 결정 · 반영 상태</th>
+                    <th className="soc-th">결정 · 상세</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(data?.reviews ?? []).length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">
-                        판단을 기다리는 사건이 없습니다.
+                        대기 중인 에스컬레이션이 없습니다.
                       </td>
                     </tr>
                   ) : (
@@ -198,7 +198,7 @@ export function ReviewsPage() {
                       const resumeText =
                         item.resumeStatusLabel ||
                         (isPending
-                          ? '판단 대기'
+                          ? '에스컬레이션 대기'
                           : resumeFailed
                             ? '반영 실패(관리자 확인 필요)'
                             : resumed
@@ -209,7 +209,7 @@ export function ReviewsPage() {
                         <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
                           <td
                             className="soc-td font-mono text-xs font-semibold text-slate-200"
-                            title={`판단 요청 실행 #${item.reviewJobId ?? item.jobId ?? '-'}`}
+                            title={`에스컬레이션 작업 #${item.reviewJobId ?? item.jobId ?? '-'}`}
                           >
                             {item.captureId ?? '-'}
                           </td>
@@ -256,7 +256,7 @@ export function ReviewsPage() {
                                   to={`/incidents/${item.jobId}/rank/${item.queueRank}`}
                                   className="soc-btn-secondary inline-flex py-1 text-xs"
                                 >
-                                  사건 상세
+                                  인시던트 상세
                                   <ExternalLink className="h-3 w-3" />
                                 </Link>
                               )}

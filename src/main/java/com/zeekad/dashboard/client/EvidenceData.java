@@ -5,13 +5,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * FastAPI evidence.v1 근거 요약 DTO(zeek_AD zeek_ad/evidence.py summarize_incident 스키마).
+ * FastAPI evidence.v1 증적 요약 DTO(zeek_AD zeek_ad/evidence.py summarize_incident 스키마).
  * 숫자 필드는 키가 없거나 null이면 null로 두고 0으로 바꾸지 않는다.
  */
 public class EvidenceData {
 
-    public static final String FALLBACK_MESSAGE = "상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.";
-    public static final String NO_EVIDENCE_MESSAGE = "이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.";
+    public static final String FALLBACK_MESSAGE = "상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.";
+    public static final String NO_EVIDENCE_MESSAGE = "이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.";
 
     private boolean available;
     private String statusMessage;

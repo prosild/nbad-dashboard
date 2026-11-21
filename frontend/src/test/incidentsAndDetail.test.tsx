@@ -38,8 +38,8 @@ const analystMeResponse = () =>
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   );
 
-describe('조사 큐 및 사건 상세 화면', () => {
-  it('조사 큐 KPI 카드, 30분 초과 지속 시간, 보고서 없음 및 필터를 렌더링한다', async () => {
+describe('인시던트 목록 및 상세 화면', () => {
+  it('인시던트 요약, 30분 초과 지속 시간, 리포트 없음 및 필터를 렌더링한다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return analystMeResponse();
@@ -142,19 +142,19 @@ describe('조사 큐 및 사건 상세 화면', () => {
     const row1 = within(table).getByText('192.168.10.5').closest('tr') as HTMLElement;
     const row2 = within(table).getByText('192.168.10.8').closest('tr') as HTMLElement;
     expect(within(row1).getByText('45분')).toBeInTheDocument();
-    // 함께 탐지한 모델: 화면 글 '+1', 개수는 읽기 프로그램용 글, 이름은 툴팁
-    expect(within(row1).getByText('함께 탐지한 모델 1개')).toBeInTheDocument();
-    expect(within(row1).getByTitle('함께 탐지한 모델: iforest_v1')).toBeInTheDocument();
-    // 보고서 없음: 보고서 없는 행(rank 2) 칩의 접근성 이름, 보고서 있는 행(rank 1)에는 없음
-    expect(within(row2).getByRole('img', { name: '보고서 없음' })).toBeInTheDocument();
-    expect(within(row1).queryByRole('img', { name: '보고서 없음' })).toBeNull();
-    // 보고서 실행 번호 툴팁(작성 방식을 앞에 더함)
-    expect(within(row1).getByTitle('AI 작성 보고서 · 보고서 실행 #40')).toBeInTheDocument();
-    expect(within(row1).getByRole('img', { name: 'AI 분석 보고서 있음: AI 작성' })).toBeInTheDocument();
-    expect(screen.getByText('전체 사건 수')).toBeInTheDocument();
+    // 교차 탐지: 화면 글 '+1', 개수는 읽기 프로그램용 글, 이름은 툴팁(사전에 없는 식별자는 원문)
+    expect(within(row1).getByText('교차 탐지 모델 1개')).toBeInTheDocument();
+    expect(within(row1).getByTitle('교차 탐지: iforest_v1')).toBeInTheDocument();
+    // 리포트 없음: 리포트 없는 행(rank 2) 칩의 접근성 이름, 리포트 있는 행(rank 1)에는 없음
+    expect(within(row2).getByRole('img', { name: '리포트 없음' })).toBeInTheDocument();
+    expect(within(row1).queryByRole('img', { name: '리포트 없음' })).toBeNull();
+    // 리포트 작업 번호 툴팁(작성 방식을 앞에 더함)
+    expect(within(row1).getByTitle('AI 작성 리포트 · 리포트 작업 #40')).toBeInTheDocument();
+    expect(within(row1).getByRole('img', { name: 'AI 분석 리포트 있음: AI 작성' })).toBeInTheDocument();
+    expect(screen.getByText('전체 인시던트')).toBeInTheDocument();
   });
 
-  it('사건 상세에서 F* 근거 펼침, 선택 확률, Slack 스레드, 상태 전이, 검토 결정 및 XSS 이스케이프를 검증한다', async () => {
+  it('인시던트 상세에서 F* 근거 펼침, 선택 확률, Slack 스레드, 상태 전이, 검토 결정 및 XSS 이스케이프를 검증한다', async () => {
     const xssPayload = '<script>window.__xss=1</script><img src=x onerror=alert(1)>';
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -212,7 +212,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
               ],
               evidence: {
                 available: false,
-                statusMessage: '상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
+                statusMessage: '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,
@@ -303,7 +303,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
                       payloadJson: '{"text":"hello"}',
                       threadParent: null,
                       threadKey: 'cic17-wed|192.168.10.5|originator|100',
-                      threadRoleLabel: '첫 알림',
+                      threadRoleLabel: '최초 알림',
                       replyBroadcast: true,
                     },
                   ],
@@ -320,7 +320,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
                 resumedAt: null,
                 resumeFailed: false,
                 pending: true,
-                resumeStatusLabel: '판단 대기',
+                resumeStatusLabel: '에스컬레이션 대기',
                 canDecide: true,
               },
               currentStatus: 'investigating',
@@ -356,12 +356,12 @@ describe('조사 큐 및 사건 상세 화면', () => {
       fetchMock as unknown as typeof fetch,
     );
 
-    expect(await screen.findByText('상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
+    expect(await screen.findByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
     expect(screen.getByText('6 / 9')).toBeInTheDocument();
     expect(screen.getByText('선택 확률')).toBeInTheDocument();
     expect(screen.getByText('확정이 아닌 가설')).toBeInTheDocument();
     expect(screen.getByText('채널에도 표시')).toBeInTheDocument();
-    expect(screen.getByText('시험 모드(실제 전송 안 함)')).toBeInTheDocument();
+    expect(screen.getByText('Dry-run')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('정확도');
 
     // XSS 무해화 확인: 텍스트로만 출력되고 <script>/<img> 요소가 생성되지 않아야 함
@@ -376,7 +376,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
 
     // 상태 전이 제출
     await user.type(screen.getByLabelText('변경 사유 (필수)'), '실제 공격 확인');
-    await user.click(screen.getByRole('button', { name: '종료 처리' }));
+    await user.click(screen.getByRole('button', { name: '종결 처리' }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([u]) => u === '/api/incidents/42/rank/1/transition');
@@ -389,8 +389,8 @@ describe('조사 큐 및 사건 상세 화면', () => {
     });
 
     // 검토 결정 제출
-    await user.type(screen.getByLabelText('판단 메모 (선택)'), '진행 승인');
-    await user.click(screen.getByRole('button', { name: '조사 진행' }));
+    await user.type(screen.getByLabelText('검토 메모 (선택)'), '진행 승인');
+    await user.click(screen.getByRole('button', { name: '승인' }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
@@ -444,7 +444,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
               assetNames: [],
               evidence: {
                 available: false,
-                statusMessage: '상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
+                statusMessage: '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,
@@ -536,7 +536,7 @@ describe('조사 큐 및 사건 상세 화면', () => {
 
     renderWithAnalyst('/incidents/10/rank/1', fetchMock as unknown as typeof fetch);
 
-    expect(await screen.findByText('보고서 없음')).toBeInTheDocument();
-    expect(screen.getByText('이 사건은 알림 전송 판단 대상이 아닙니다.')).toBeInTheDocument();
+    expect(await screen.findByText('리포트 없음')).toBeInTheDocument();
+    expect(screen.getByText('이 인시던트는 경보 발송 판단 대상이 아닙니다.')).toBeInTheDocument();
   });
 });

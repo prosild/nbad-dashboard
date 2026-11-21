@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
@@ -7,9 +8,41 @@ import { ToastProvider } from '../components/ToastContext';
 
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
- * 데이터 원문을 그대로 보여 주는 요소(data-raw: 사건 ID, 모델·구성 식별자, 사람 표시, 원본 근거, 보고서 버전 값)만 검사에서 뺀다.
+ * 데이터 원문을 그대로 보여 주는 요소(data-raw: 인시던트 ID, 모델 종류·식별자, 모델 버전, 사람 표시, 원본 증적, 리포트 버전 값)만 검사에서 뺀다.
+ * T18b: 관제 표준 용어로 바꾸기 전의 풀어 쓴 옛 표기(OLD_TERMS)도 남으면 안 된다(SPEC 결정 2026-11-21).
  */
 const FORBIDDEN = ['dashboard.', 'zeekad_', 'job_id', 'queue_rank', 'evidence.v1', '단계 5'];
+/** T17·T18 표기 중 T18b에서 관제 표준 용어로 바꾼 것. "종료"는 세션 상태 설명(정상 종료 등)에 남으므로 뺀다. */
+const OLD_TERMS = [
+  '탐지 사건',
+  '판단 요청',
+  '판단 대기',
+  '조사 중',
+  '정상 행위',
+  '조사 진행',
+  '오탐으로 종료',
+  '연결 시작 측',
+  '연결 수신 측',
+  '수집 구간',
+  '분석 실행',
+  '모델 구성',
+  '주 탐지 모델',
+  '함께 탐지한 모델',
+  '근거 요약',
+  '대표 연결',
+  '연결 수',
+  '이상 판정 구간',
+  'AI 분석 보고서',
+  '사실 검증',
+  '알림 보냄',
+  '알림 보류',
+  '알림 전송 판단',
+  '첫 알림',
+  '시험 모드',
+  '개인정보 가림',
+  '자산 송신 바이트',
+  '자산 수신 바이트',
+];
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
   'IP',
@@ -35,6 +68,9 @@ function expectCleanText(root: HTMLElement) {
   const text = visibleText(root);
   for (const word of FORBIDDEN) {
     expect(text, `금지 문자열 "${word}"`).not.toContain(word);
+  }
+  for (const word of OLD_TERMS) {
+    expect(text, `옛 표기 "${word}"`).not.toContain(word);
   }
   const mixed = [...text.matchAll(PAREN_PATTERN)]
     .filter((m) => !ALLOWED_ABBREVIATIONS.has(m[1]))
@@ -206,7 +242,7 @@ const detailResponse = (masked: boolean) => ({
       sourceRun: 'run-20261112',
       pseudonyms: { H: '192.168.*.*' },
       observationSummary: '대상 호스트 H가 외부와 대량 연결을 주고받았습니다.',
-      claims: [{ claim: '연결 수가 많습니다.', facts: [{ id: 'F02', name: 'connection_count', value: '155261' }] }],
+      claims: [{ claim: '세션이 많습니다.', facts: [{ id: 'F02', name: 'connection_count', value: '155261' }] }],
       possibleExplanations: [{ explanation: '웹 서버 부하 시험 가능성', facts: [], attackIds: ['T1498'] }],
       sendRecommendation: { choice: 'analyst_review', reason: '판단이 엇갈립니다.', facts: [] },
       limitations: ['표본이 하루치입니다.'],
@@ -248,7 +284,7 @@ const detailResponse = (masked: boolean) => ({
             payloadJson: '{"zeekad_incident_id":"x","job_id":2}',
             threadParent: null,
             threadKey: INCIDENT_ID,
-            threadRoleLabel: '첫 알림',
+            threadRoleLabel: '최초 알림',
             replyBroadcast: false,
           },
           {
@@ -337,7 +373,7 @@ const reviewsResponse = (masked: boolean) => ({
       decidedAt: null,
       zeekadReviewResumedAt: null,
       zeekadReviewResumeFailed: false,
-      resumeStatusLabel: '판단 대기',
+      resumeStatusLabel: '에스컬레이션 대기',
     },
     {
       jobId: 2,
@@ -430,7 +466,7 @@ const operationsResponse = {
       deliveredAt: null,
       createdAt: '2026-11-12T02:40:00Z',
       dryRunOrRecorded: true,
-      payloadTextPreview: '오늘 탐지 사건 241건',
+      payloadTextPreview: '오늘 인시던트 241건',
       payloadChannel: '#sec-alerts',
     },
   ],
@@ -501,7 +537,7 @@ const auditResponse = {
   selectedLimit: 100,
 };
 
-function renderAt(path: string, user: unknown) {
+function renderAt(path: string, user: unknown, overrides: { queue?: unknown } = {}) {
   document.cookie = 'XSRF-TOKEN=terminology-test-token; path=/';
   const masked = (user as { maskedView?: boolean } | null)?.maskedView ?? false;
   vi.stubGlobal(
@@ -510,7 +546,7 @@ function renderAt(path: string, user: unknown) {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return json({ authenticated: user !== null, user });
       if (url.startsWith('/api/incidents/2/rank/1')) return json(detailResponse(masked));
-      if (url.startsWith('/api/incidents')) return json({ ...queueResponse, maskedView: masked });
+      if (url.startsWith('/api/incidents')) return json({ ...(overrides.queue ?? queueResponse), maskedView: masked });
       if (url.startsWith('/api/reviews')) return json(reviewsResponse(masked));
       if (url.startsWith('/api/operations')) return json({ ...operationsResponse, maskedView: masked });
       if (url.startsWith('/api/admin/users')) return json(usersResponse);
@@ -543,6 +579,146 @@ describe('화면 문구 회귀 검사 함수 자체', () => {
       </div>,
     );
     expect(() => expectCleanText(allowed.container)).not.toThrow();
+    allowed.unmount();
+    // T18b: 옛 표기는 잡고, data-raw 원문 영역 안의 글은 뺀다.
+    const old = render(<div>탐지 사건 목록</div>);
+    expect(() => expectCleanText(old.container)).toThrow();
+    old.unmount();
+    const rawOld = render(
+      <div>
+        인시던트 <span data-raw="">연결 수 원문</span>
+      </div>,
+    );
+    expect(() => expectCleanText(rawOld.container)).not.toThrow();
+  });
+});
+
+describe('관제 표준 용어(T18b)', () => {
+  it('메뉴·상태·판정·검토 결정·통신 방향·우선순위·탐지 모델이 새 표기로 보인다', async () => {
+    const base = queueResponse.incidents[0];
+    const queue = {
+      ...queueResponse,
+      incidents: [
+        // High: 경보 발송, 에스컬레이션 대기, 목적지, 분석 중
+        { ...base, queueRank: 1, incidentId: 'a|1', zeekadStatus: 'investigating', zeekadRole: 'responder' },
+        // Medium: 교차 탐지, 승인, 출발지, 신규
+        {
+          ...base,
+          queueRank: 2,
+          incidentId: 'a|2',
+          zeekadStatus: 'open',
+          zeekadRole: 'originator',
+          zeekadPickedBy: 'tail_rarity_v2',
+          zeekadAlsoFlaggedBy: ['tgn_recon'],
+          zeekadReportJobId: null,
+          hasReport: false,
+          zeekadReportKind: null,
+          zeekadVerificationPassed: null,
+          zeekadWouldSend: false,
+          zeekadReviewAction: 'confirm',
+          zeekadReviewPending: false,
+        },
+        // Low
+        {
+          ...base,
+          queueRank: 3,
+          incidentId: 'a|3',
+          zeekadStatus: 'open',
+          zeekadPickedBy: 'transformer_v2',
+          zeekadAlsoFlaggedBy: [],
+          zeekadReportJobId: null,
+          hasReport: false,
+          zeekadReportKind: null,
+          zeekadVerificationPassed: null,
+          zeekadWouldSend: false,
+          zeekadReviewAction: null,
+          zeekadReviewPending: false,
+        },
+        // 종결 · 오탐 · 오탐 종결
+        {
+          ...base,
+          queueRank: 4,
+          incidentId: 'a|4',
+          zeekadStatus: 'closed',
+          zeekadResolution: 'false_positive',
+          zeekadReviewAction: 'dismiss',
+          zeekadReviewPending: false,
+          zeekadWouldSend: false,
+        },
+        // 종결 · 정탐 / 종결 · 정상
+        {
+          ...base,
+          queueRank: 5,
+          incidentId: 'a|5',
+          zeekadStatus: 'closed',
+          zeekadResolution: 'true_positive',
+          zeekadReviewPending: false,
+          zeekadWouldSend: false,
+        },
+        {
+          ...base,
+          queueRank: 6,
+          incidentId: 'a|6',
+          zeekadStatus: 'closed',
+          zeekadResolution: 'benign',
+          zeekadReviewPending: false,
+          zeekadWouldSend: false,
+        },
+      ],
+    };
+    const { container } = renderAt('/incidents', analystUser, { queue });
+    expect(await screen.findByRole('heading', { name: '인시던트' })).toBeInTheDocument();
+
+    const nav = screen.getByRole('navigation', { name: '주 메뉴' });
+    expect(within(nav).getByRole('link', { name: '인시던트' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '에스컬레이션' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '운영 현황' })).toBeInTheDocument();
+
+    const table = await screen.findByRole('table');
+    // 둘째 칸이 순위다.
+    const row = (rank: number) => {
+      const found = within(table)
+        .getAllByRole('row')
+        .find((r) => within(r).queryAllByRole('cell')[1]?.textContent === String(rank));
+      if (!found) throw new Error(`순위 ${rank} 행 없음`);
+      return found;
+    };
+    // 상태
+    expect(within(row(1)).getByText('분석 중')).toBeInTheDocument();
+    expect(within(row(2)).getByText('신규')).toBeInTheDocument();
+    expect(within(row(4)).getByText('종결')).toBeInTheDocument();
+    // 판정
+    expect(within(row(5)).getByText('정탐')).toBeInTheDocument();
+    expect(within(row(4)).getByText('오탐')).toBeInTheDocument();
+    expect(within(row(6)).getByText('정상')).toBeInTheDocument();
+    // 검토 결정
+    expect(within(row(2)).getByText('승인')).toBeInTheDocument();
+    expect(within(row(4)).getByText('오탐 종결')).toBeInTheDocument();
+    expect(within(row(1)).getByText('대기')).toBeInTheDocument();
+    // 통신 방향
+    expect(within(row(1)).getByText('목적지')).toBeInTheDocument();
+    expect(within(row(2)).getByText('출발지')).toBeInTheDocument();
+    // 우선순위(표와 요약 띠)
+    expect(within(row(1)).getByText('High')).toBeInTheDocument();
+    expect(within(row(2)).getByText('Medium')).toBeInTheDocument();
+    expect(within(row(3)).getByText('Low')).toBeInTheDocument();
+    const strip = screen.getByRole('region', { name: '인시던트 요약' });
+    expect(within(strip).getByRole('button', { name: '우선순위 High 1건만 보기' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: '우선순위 Medium 1건만 보기' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: '우선순위 Low 1건만 보기' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: '에스컬레이션 대기 1건만 보기' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: '경보 발송 1건만 보기' })).toBeInTheDocument();
+    // 탐지 모델: 표에는 표시 이름만(식별자는 툴팁)
+    expect(within(row(1)).getByText('통신 관계 이상')).toHaveAttribute('title', expect.stringContaining('TGN(시간 그래프 신경망) · tgn_recon'));
+    expect(within(row(2)).getByText('기준선 이탈')).toBeInTheDocument();
+    expect(within(row(3)).getByText('행위 패턴 이탈')).toBeInTheDocument();
+    expect(within(table).queryByText('tgn_recon')).toBeNull();
+    // 필터의 탐지 모델 선택지는 표시 이름, 값은 식별자
+    await userEvent.setup().click(screen.getByRole('button', { name: /^필터(\s\d+)?$/ }));
+    const modelSelect = screen.getByLabelText('탐지 모델');
+    expect(within(modelSelect).getByRole('option', { name: '기준선 이탈' })).toHaveValue('tail_rarity_v2');
+    expect(within(modelSelect).getByRole('option', { name: '통신 관계 이상' })).toHaveValue('tgn_recon');
+    expectCleanText(container);
   });
 });
 
@@ -556,60 +732,71 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expectCleanText(container);
   });
 
-  it('탐지 사건 목록(조회자): 마스킹 안내는 상단 바 한 곳, 시각은 한국 표준시', async () => {
+  it('인시던트 목록(조회자): 마스킹 안내는 상단 바 한 곳, 시각은 한국 표준시', async () => {
     const { container } = renderAt('/incidents', viewerUser);
-    expect(await screen.findByRole('heading', { name: '탐지 사건' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '인시던트' })).toBeInTheDocument();
     await screen.findAllByText('192.168.*.*');
-    expect(screen.getAllByText('읽기 전용 · 개인정보 가림')).toHaveLength(1);
-    expect(container.textContent).not.toMatch(/마스킹/);
+    expect(screen.getAllByText('마스킹 적용')).toHaveLength(1);
+    // T18b: 안내 문구가 "마스킹 적용"이 되었으므로 "마스킹"이 상단 바 한 곳에만 나오는지로 같은 뜻을 단언한다.
+    expect(container.textContent?.match(/마스킹/g) ?? []).toHaveLength(1);
     expect(screen.getByText('시각 기준 KST')).toBeInTheDocument();
     // T18: 표와 휴대폰 목록이 함께 DOM에 있으므로 표 범위로 좁힌다. 함께 탐지 수는 '+2' 글 대신 읽기 프로그램용 글로 같은 값을 단언한다.
     const table = screen.getByRole('table');
     expect(within(table).getAllByText('2017-07-05 22:45:00').length).toBeGreaterThanOrEqual(1);
-    expect(within(table).getAllByText('연결 수신 측').length).toBeGreaterThanOrEqual(1);
-    expect(within(table).getAllByText('함께 탐지한 모델 2개').length).toBeGreaterThanOrEqual(1);
+    expect(within(table).getAllByText('목적지').length).toBeGreaterThanOrEqual(1);
+    expect(within(table).getAllByText('교차 탐지 모델 2개').length).toBeGreaterThanOrEqual(1);
     expectCleanText(container);
   });
 
-  it('사건 상세(조회자)', async () => {
+  it('인시던트 상세(조회자)', async () => {
     const { container } = renderAt('/incidents/2/rank/1', viewerUser);
-    expect(await screen.findByText('근거 요약')).toBeInTheDocument();
-    expect(screen.getAllByText('읽기 전용 · 개인정보 가림')).toHaveLength(1);
+    expect(await screen.findByText('증적 요약')).toBeInTheDocument();
+    expect(screen.getAllByText('마스킹 적용')).toHaveLength(1);
     expect(screen.getByText('이름 종류')).toBeInTheDocument();
     expect(screen.getByText('식별 안 됨')).toBeInTheDocument();
     expect(screen.getByText('http')).not.toHaveAttribute('data-unregistered');
     expect(screen.getByText('컴퓨터 계정')).toBeInTheDocument();
     expect(screen.getByText('2017-07-05 20:54:41')).toBeInTheDocument();
     expect(screen.getByText('탐지 순위 5위 이내(현재 1위)')).toBeInTheDocument();
-    expect(screen.getByText('AI 보고서: 분석가 판단 요청 · 판단 모델: 분석가 판단 요청')).toBeInTheDocument();
+    expect(screen.getByText('AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션')).toBeInTheDocument();
+    // T18b: 상세에는 탐지 모델 표시 이름과 "모델 종류 · 식별자"(data-raw)가 함께 보인다.
+    expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('TGN(시간 그래프 신경망) · tgn_recon')).toHaveAttribute('data-raw');
+    expect(screen.getByText('통계 기준선 · tail_rarity_v2')).toHaveAttribute('data-raw');
+    expect(screen.getByText('교차 탐지 +2')).toBeInTheDocument();
+    expect(screen.getByText('최초 알림')).toBeInTheDocument();
+    expect(screen.getAllByText('Dry-run').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('주요 세션 (최대 10건)')).toBeInTheDocument();
     expect(screen.getByText('반영 실패(관리자 확인 필요)')).toBeInTheDocument();
     expectCleanText(container);
   });
 
-  it('사건 상세(분석가, 상태 변경 폼 포함)', async () => {
+  it('인시던트 상세(분석가, 상태 변경 폼 포함)', async () => {
     const { container } = renderAt('/incidents/2/rank/1', analystUser);
-    expect(await screen.findByRole('button', { name: '종료 처리' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '종결 처리' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '정탐' })).toBeInTheDocument();
     expectCleanText(container);
   });
 
-  it('판단 요청 목록(조회자·분석가)', async () => {
+  it('에스컬레이션 목록(조회자·분석가)', async () => {
     const viewer = renderAt('/reviews', viewerUser);
-    expect(await screen.findByRole('heading', { name: '판단 요청' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '에스컬레이션' })).toBeInTheDocument();
     await screen.findAllByText('192.168.*.*');
-    expect(screen.getByText('읽기 전용 계정입니다. 판단은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
+    expect(screen.getByText('읽기 전용 계정입니다. 검토 결정은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
     expectCleanText(viewer.container);
     viewer.unmount();
 
     const analyst = renderAt('/reviews', analystUser);
-    expect(await screen.findByRole('button', { name: '조사 진행' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '오탐으로 종료' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '승인' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '오탐 종결' })).toBeInTheDocument();
     expectCleanText(analyst.container);
   });
 
   it('운영 현황', async () => {
     const { container } = renderAt('/operations', viewerUser);
     expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
+    // T18b: 결론 집계의 모델·임계값 키도 탐지 모델 표시 이름 사전을 쓴다.
+    expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('실패').length).toBeGreaterThanOrEqual(1);
     expectCleanText(container);
   });

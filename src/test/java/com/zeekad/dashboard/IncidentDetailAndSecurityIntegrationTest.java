@@ -220,7 +220,7 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(not(containsString("정확도"))))
                 .andExpect(content().string(not(containsString("신뢰도 %"))))
                 .andExpect(jsonPath("$.detail.slackDeliveries[0].dryRunOrRecorded").value(true))
-                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("첫 알림"))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("최초 알림"))
                 .andExpect(jsonPath("$.detail.slackDeliveries[1].threadRoleLabel").value("후속 알림"))
                 .andExpect(jsonPath("$.detail.slackDeliveries[1].replyBroadcast").value(true))
                 .andExpect(jsonPath("$.detail.analystReview.present").value(true))
@@ -252,7 +252,7 @@ class IncidentDetailAndSecurityIntegrationTest {
         mockMvc.perform(get("/api/incidents/101/rank/1").session(analystSession))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.detail.evidence.available").value(false))
-                .andExpect(jsonPath("$.detail.evidence.statusMessage").value("상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다."))
+                .andExpect(jsonPath("$.detail.evidence.statusMessage").value("상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다."))
                 .andExpect(content().string(containsString("H(192.168.10.50)에서 X1(203.0.113.45)로")))
                 .andExpect(content().string(containsString("gemini-2.5-pro")));
 
@@ -306,10 +306,10 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andReturn();
         assertThat(viewerRes.getResponse().getContentAsString()).doesNotContain("\"admin\"");
 
-        // VIEWER가 다른 사건의 thread_parent에 포함된 원문 IP도 마스킹되는지 확인 (101/rank/2 -> 다른 사건 알림의 후속 알림)
+        // VIEWER가 다른 사건의 thread_parent에 포함된 원문 IP도 마스킹되는지 확인 (101/rank/2 -> 타 인시던트 후속 알림)
         mockMvc.perform(get("/api/incidents/101/rank/2").session(viewerSession))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("다른 사건 알림의 후속 알림"))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("타 인시던트 후속 알림"))
                 .andExpect(content().string(containsString("192.168.*.*")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))));
 

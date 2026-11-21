@@ -400,19 +400,19 @@ try {
     Assert-True ($me.Status -eq 200 -and $me.Json.authenticated -eq $true -and $me.Json.user.role -eq "VIEWER" -and $me.Json.user.maskedView -eq $true -and
         @($me.Json.user.allowedCapturePatterns).Count -eq 1 -and @($me.Json.user.allowedCapturePatterns)[0] -eq "*") "demo /api/auth/me role=VIEWER, maskedView=true, allowedCapturePatterns=[*]" $me
 
-    Write-Host "=== [3] 스냅샷 데이터·마스킹·근거·보고서·운영 상태 ==="
+    Write-Host "=== [3] 스냅샷 데이터·마스킹·증적·리포트·운영 상태 ==="
     $ipHits = [System.Collections.Generic.List[string]]::new()
     $queueByCapture = [ordered]@{}
     foreach ($cap in $expectedCounts.Keys) {
         $q = Invoke-Http -Path "/api/incidents?captureId=$cap" -Client $demo
-        Assert-Status $q 200 "demo 조사 큐 $cap"
+        Assert-Status $q 200 "demo 인시던트 목록 $cap"
         $items = @($q.Json.incidents)
         $queueByCapture[$cap] = $items
         Find-UnmaskedIpv4 $q.Json "queue[$cap]" $ipHits
         $sampleHost = if ($items.Count) { $items[0].hostIp } else { "" }
         $e2eLogs.Add("[3a] demo GET /api/incidents?captureId=$cap -> HTTP $($q.Status) maskedView=$($q.Json.maskedView) job=$($q.Json.selectedJob.jobId) incidents=$($items.Count) (manifest $($expectedCounts[$cap])) hasReport=$(@($items | Where-Object { $_.hasReport }).Count) sample hostIp=$sampleHost")
-        Assert-True ($q.Json.maskedView -eq $true) "demo 조사 큐 maskedView ($cap)" $q
-        Assert-True ($items.Count -eq $expectedCounts[$cap]) "조사 큐 건수 $cap = 매니페스트 $($expectedCounts[$cap])" $q
+        Assert-True ($q.Json.maskedView -eq $true) "demo 인시던트 목록 maskedView ($cap)" $q
+        Assert-True ($items.Count -eq $expectedCounts[$cap]) "인시던트 건수 $cap = 매니페스트 $($expectedCounts[$cap])" $q
     }
     $detailTargets = [System.Collections.Generic.List[object]]::new()
     foreach ($cap in $queueByCapture.Keys) { if ($queueByCapture[$cap].Count) { $detailTargets.Add($queueByCapture[$cap][0]) } }
@@ -423,7 +423,7 @@ try {
     $expectedProtocolLogKeys = @("dns", "ftp", "smb", "ssh", "tls", "http", "ntlm", "dce_rpc", "kerberos")
     foreach ($t in $detailTargets) {
         $d = Invoke-Http -Path "/api/incidents/$($t.jobId)/rank/$($t.queueRank)" -Client $demo
-        Assert-Status $d 200 "demo 사건 상세 $($t.jobId)/rank/$($t.queueRank)"
+        Assert-Status $d 200 "demo 인시던트 상세 $($t.jobId)/rank/$($t.queueRank)"
         Find-UnmaskedIpv4 $d.Json "detail[$($t.jobId)/$($t.queueRank)]" $ipHits
         $dd = $d.Json.detail
         if ($dd.evidence.available -eq $true) { $evidenceOk++ }
@@ -432,7 +432,7 @@ try {
         if ($null -ne $dd.sendDecision) { $sendDecisionCount++ }
         $e2eLogs.Add("[3b] demo GET /api/incidents/$($t.jobId)/rank/$($t.queueRank) ($($t.captureId)) -> HTTP $($d.Status) maskedView=$($d.Json.maskedView) evidence.available=$($dd.evidence.available) connectionCount=$($dd.evidence.connectionCount) topPeers=$(@($dd.evidence.topPeers).Count) report.present=$($dd.report.present) sendDecision=$([bool]$dd.sendDecision) slackDeliveries=$(@($dd.slackDeliveries).Count) hostIp=$($dd.incident.hostIp)")
         if ($dd.evidence.available -eq $true) {
-            # T16: 근거 요약 정형 칸(evidence.v1 실제 키 매핑)이 채워졌는지 본다.
+            # T16: 증적 요약 정형 칸(evidence.v1 실제 키 매핑)이 채워졌는지 본다.
             $ev = $dd.evidence
             $transportN = @($ev.transportCounts.PSObject.Properties).Count
             $connStateN = @($ev.connStateCounts.PSObject.Properties).Count
@@ -441,15 +441,15 @@ try {
             $protoKeys = @($ev.protocolLogs | Where-Object { $null -ne $_.metrics } | ForEach-Object { $_.protocol } | Sort-Object)
             $protoOk = (($protoKeys -join ',') -eq ((@($expectedProtocolLogKeys) | Sort-Object) -join ','))
             $e2eLogs.Add("[3b-evidence] $($t.jobId)/rank/$($t.queueRank) bytesSent=$($ev.bytesSent) bytesReceived=$($ev.bytesReceived) connectionCount=$($ev.connectionCount) transport=$transportN connState=$connStateN topPorts=$topPortsN limits=$limitsN protocolLogs=[$($protoKeys -join ',')] uniquePeers=$($ev.uniquePeers) uniquePorts=$($ev.uniquePorts)")
-            Assert-True (($null -ne $ev.bytesSent) -and ($null -ne $ev.bytesReceived) -and ($null -ne $ev.connectionCount)) "근거 바이트·연결 수 정형 칸 채워짐 $($t.jobId)/rank/$($t.queueRank)" $d
-            Assert-True (($transportN -ge 1) -and ($connStateN -ge 1) -and ($topPortsN -ge 1) -and ($limitsN -ge 1)) "근거 전송 계층·연결 상태·상위 포트·관측 한계 1개 이상 $($t.jobId)/rank/$($t.queueRank)" $d
-            Assert-True $protoOk "근거 프로토콜 로그 키 9개($($expectedProtocolLogKeys -join ',')) $($t.jobId)/rank/$($t.queueRank)" $d
+            Assert-True (($null -ne $ev.bytesSent) -and ($null -ne $ev.bytesReceived) -and ($null -ne $ev.connectionCount)) "증적 바이트·세션 수 정형 칸 채워짐 $($t.jobId)/rank/$($t.queueRank)" $d
+            Assert-True (($transportN -ge 1) -and ($connStateN -ge 1) -and ($topPortsN -ge 1) -and ($limitsN -ge 1)) "증적 전송 계층·세션 상태·상위 포트·관측 한계 1개 이상 $($t.jobId)/rank/$($t.queueRank)" $d
+            Assert-True $protoOk "증적 프로토콜 로그 키 9개($($expectedProtocolLogKeys -join ',')) $($t.jobId)/rank/$($t.queueRank)" $d
             $evidenceStructuredOk++
         }
     }
-    Assert-True ($evidenceOk -ge 1) "사건 상세 근거 available=true 1건 이상(근거 API 동작)"
-    Assert-True ($evidenceStructuredOk -eq $evidenceOk) "근거 available=true 상세 모두 정형 칸 채워짐($evidenceStructuredOk/$evidenceOk)"
-    Assert-True ($reportOk -ge 1) "보고서가 있는 사건 상세에서 보고서 표시 1건 이상"
+    Assert-True ($evidenceOk -ge 1) "인시던트 상세 증적 available=true 1건 이상(근거 API 동작)"
+    Assert-True ($evidenceStructuredOk -eq $evidenceOk) "증적 available=true 상세 모두 정형 칸 채워짐($evidenceStructuredOk/$evidenceOk)"
+    Assert-True ($reportOk -ge 1) "리포트가 있는 인시던트 상세에서 리포트 표시 1건 이상"
     $ops = Invoke-Http -Path "/api/operations" -Client $demo
     Assert-Status $ops 200 "demo /api/operations"
     Find-UnmaskedIpv4 $ops.Json "operations" $ipHits

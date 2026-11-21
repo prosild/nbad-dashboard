@@ -471,21 +471,21 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $viewerQueue = Invoke-Http -Url "$baseHttps/api/incidents?captureId=cic17-wed" -CookieJar $viewerCookies
                 $viewerHosts = @($viewerQueue.Json.incidents | ForEach-Object { $_.hostIp })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents?captureId=cic17-wed -> HTTP $($viewerQueue.Status) maskedView=$($viewerQueue.Json.maskedView) hostIp=[$($viewerHosts -join ', ')]")
-                Assert-Status $viewerQueue 200 "viewer1 조사 큐 조회"
-                Assert-True ($viewerQueue.Json.maskedView -eq $true -and ($viewerHosts -contains "192.168.*.*") -and -not $viewerQueue.Body.Contains("192.168.10.50")) "viewer1 조사 큐 IP 마스킹" $viewerQueue
+                Assert-Status $viewerQueue 200 "viewer1 인시던트 목록 조회"
+                Assert-True ($viewerQueue.Json.maskedView -eq $true -and ($viewerHosts -contains "192.168.*.*") -and -not $viewerQueue.Body.Contains("192.168.10.50")) "viewer1 인시던트 목록 IP 마스킹" $viewerQueue
 
                 $viewerDetail = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $viewerCookies
-                Assert-Status $viewerDetail 200 "viewer1 사건 상세(101/rank/1)"
+                Assert-Status $viewerDetail 200 "viewer1 인시던트 상세(101/rank/1)"
                 $vd1 = $viewerDetail.Json.detail
                 $vd1Labels = @($vd1.slackDeliveries | ForEach-Object { $_.threadRoleLabel })
                 $vd1Broadcast = @($vd1.slackDeliveries | Where-Object { $_.replyBroadcast -eq $true })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/1 -> HTTP $($viewerDetail.Status) hostIp=$($vd1.incident.hostIp) slack threadRoleLabel=[$($vd1Labels -join ', ')] replyBroadcast=$($vd1Broadcast.Count) threadGroups=$(@($vd1.slackThreadGroups).Count)")
-                Assert-True ($vd1.incident.hostIp -eq "192.168.*.*" -and -not $viewerDetail.Body.Contains("192.168.10.50")) "viewer1 사건 상세 IP 마스킹" $viewerDetail
-                Assert-True (($vd1Labels -contains "첫 알림") -and ($vd1Labels -contains "후속 알림") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
+                Assert-True ($vd1.incident.hostIp -eq "192.168.*.*" -and -not $viewerDetail.Body.Contains("192.168.10.50")) "viewer1 인시던트 상세 IP 마스킹" $viewerDetail
+                Assert-True (($vd1Labels -contains "최초 알림") -and ($vd1Labels -contains "후속 알림") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
 
                 $viewerDetail2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $viewerCookies
-                Assert-Status $viewerDetail2 200 "viewer1 사건 상세(101/rank/2)"
-                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "다른 사건 알림의 후속 알림" })
+                Assert-Status $viewerDetail2 200 "viewer1 인시던트 상세(101/rank/2)"
+                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "타 인시던트 후속 알림" })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/2 -> HTTP $($viewerDetail2.Status) thread replies=$($vd2Replies.Count) threadParent=[$(@($vd2Replies | ForEach-Object { $_.threadParent }) -join ', ')]")
                 Assert-True ($vd2Replies.Count -gt 0 -and @($vd2Replies | Where-Object { $_.threadParent -match "192\.168\.\*\.\*" }).Count -gt 0 -and -not $viewerDetail2.Body.Contains("192.168.10.50")) "viewer1 Slack zeekad_thread_parent IP 마스킹" $viewerDetail2
 
@@ -534,8 +534,8 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-Status $analystRevIdor 403 "analyst1 미허용 캡처 검토 결정(job 201) 차단"
 
                 $analystDetail = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $analystCookies
-                Assert-Status $analystDetail 200 "analyst1 사건 상세(101/rank/1)"
-                Assert-True ($analystDetail.Json.detail.incident.hostIp -eq "192.168.10.50" -and $analystDetail.Json.maskedView -eq $false) "analyst1 허용 사건 원문(192.168.10.50) 조회" $analystDetail
+                Assert-Status $analystDetail 200 "analyst1 인시던트 상세(101/rank/1)"
+                Assert-True ($analystDetail.Json.detail.incident.hostIp -eq "192.168.10.50" -and $analystDetail.Json.maskedView -eq $false) "analyst1 허용 인시던트 원문(192.168.10.50) 조회" $analystDetail
                 $statusBefore = $analystDetail.Json.detail.currentStatus
 
                 $analystTransition = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/transition" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
@@ -586,7 +586,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($totpPost.Json.succeeded -eq $true -and $totpPost.Json.user.totpVerified -eq $true) "admin TOTP 검증 응답" $totpPost
 
                 $labQueue = Invoke-Http -Url "$baseHttps/api/incidents?captureId=lab-20261118" -CookieJar $adminCookies
-                Assert-Status $labQueue 200 "admin lab-20261118 조사 큐"
+                Assert-Status $labQueue 200 "admin lab-20261118 인시던트 목록"
                 $labItems = @($labQueue.Json.incidents)
                 $labR1 = $labItems | Where-Object { $_.queueRank -eq 1 } | Select-Object -First 1
                 $labR2 = $labItems | Where-Object { $_.queueRank -eq 2 } | Select-Object -First 1

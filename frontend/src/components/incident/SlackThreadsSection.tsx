@@ -7,9 +7,9 @@ import { CodeLabel, SocBadge } from '../StatusBadge';
 function SlackDeliveryCard({ item, isReply }: { item: SlackDeliveryView; isReply: boolean }) {
   const [showPayload, setShowPayload] = useState(false);
   const techInfo = [
-    item.jobId !== null ? `보고서 실행 #${item.jobId}` : null,
+    item.jobId !== null ? `리포트 작업 #${item.jobId}` : null,
     item.slackTs ? `Slack 메시지 시각값 ${item.slackTs}` : null,
-    item.threadParent ? `이어진 사건 ${item.threadParent}` : null,
+    item.threadParent ? `이어진 인시던트 ${item.threadParent}` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -34,7 +34,7 @@ function SlackDeliveryCard({ item, isReply }: { item: SlackDeliveryView; isReply
               채널에도 표시
             </SocBadge>
           )}
-          {item.dryRunOrRecorded && <SocBadge tone="muted">시험 모드(실제 전송 안 함)</SocBadge>}
+          {item.dryRunOrRecorded && <SocBadge tone="muted">Dry-run</SocBadge>}
         </div>
         <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400" title={techInfo || undefined}>
           {formatDateTime(item.deliveredAt ?? item.createdAt)}
@@ -93,14 +93,14 @@ export function SlackThreadsSection({ threadGroups }: { threadGroups: SlackThrea
 
       {threadGroups.length === 0 ? (
         <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
-          이 사건으로 보낸 Slack 알림이 없습니다.
+          이 인시던트로 보낸 Slack 알림이 없습니다.
         </div>
       ) : (
         <div className="space-y-4">
           {threadGroups.map((group) => (
             <div key={group.threadKey} className="soc-panel space-y-2.5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="font-semibold text-slate-200" title={`알림 묶음 기준 사건: ${group.threadKey}`}>
+                <div className="font-semibold text-slate-200" title={`알림 묶음 기준 인시던트: ${group.threadKey}`}>
                   알림 묶음
                 </div>
                 <span className="text-slate-400">메시지 {group.deliveries.length}건</span>

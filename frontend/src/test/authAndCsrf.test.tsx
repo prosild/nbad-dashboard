@@ -85,7 +85,7 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
     await user.type(screen.getByLabelText('비밀번호'), 'Pass!1234');
     await user.click(screen.getByRole('button', { name: /로그인/ }));
 
-    expect(await screen.findByRole('heading', { name: '탐지 사건' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '인시던트' })).toBeInTheDocument();
 
     const loginCall = fetchMock.mock.calls.find(([url]) => url === '/api/auth/login');
     expect(loginCall).toBeDefined();
@@ -221,7 +221,7 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
     await user.click(screen.getByRole('button', { name: /TOTP 등록 완료/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '탐지 사건' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '인시던트' })).toBeInTheDocument();
     });
   });
 });

@@ -28,11 +28,14 @@ const baseEvidence: EvidenceView = {
 };
 
 describe('EvidenceSection', () => {
-  it('정형 근거 칸(바이트·unique·서비스 프로토콜·상위 포트 전송 계층·프로토콜 로그 하위 수치·관측 한계)을 렌더링한다', () => {
+  it('정형 증적 칸(바이트·unique·서비스 프로토콜·상위 포트 전송 계층·프로토콜 로그 하위 수치·관측 한계)을 렌더링한다', () => {
     const { container } = render(<EvidenceSection evidence={baseEvidence} />);
 
-    expect(screen.getByText('자산 송신 바이트')).toBeInTheDocument();
-    expect(screen.getByText('자산 수신 바이트')).toBeInTheDocument();
+    expect(screen.getByText('송신 바이트')).toBeInTheDocument();
+    // 바이트 기준(인시던트 대상 호스트)은 툴팁으로 둔다
+    expect(screen.getByText('송신 바이트').parentElement).toHaveAttribute('title', '인시던트 대상 호스트 기준');
+    expect(screen.getByText('수신 바이트')).toBeInTheDocument();
+    expect(screen.getByText('수신 바이트').parentElement).toHaveAttribute('title', '인시던트 대상 호스트 기준');
     expect(screen.queryByText(/orig_bytes|resp_bytes/)).not.toBeInTheDocument();
     expect(screen.getByText('1.7 GB')).toBeInTheDocument();
     expect(screen.getByText('고유 상대 IP 수').nextSibling).toHaveTextContent('12');
@@ -54,22 +57,22 @@ describe('EvidenceSection', () => {
   it('키가 없는 값은 "값 없음", 관측한 0은 0으로 구분한다', () => {
     render(<EvidenceSection evidence={baseEvidence} />);
 
-    expect(screen.getByText('페이로드 바이트가 부푼 연결 수').nextSibling).toHaveTextContent('값 없음');
-    expect(screen.getByText('자산 수신 바이트').nextSibling).toHaveTextContent('0 B');
+    expect(screen.getByText('페이로드 바이트가 부푼 세션 수').nextSibling).toHaveTextContent('값 없음');
+    expect(screen.getByText('수신 바이트').nextSibling).toHaveTextContent('0 B');
     expect(within(screen.getByTestId('protocol-log-ntlm')).getByText('값 없음')).toBeInTheDocument();
     expect(within(screen.getByTestId('protocol-log-dns')).queryByText('값 없음')).not.toBeInTheDocument();
   });
 
-  it('근거가 없으면 백엔드 상태 문구를 그대로 보여 준다', () => {
+  it('증적이 없으면 백엔드 상태 문구를 그대로 보여 준다', () => {
     render(
       <EvidenceSection
         evidence={{
           ...baseEvidence,
           available: false,
-          statusMessage: '이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.',
+          statusMessage: '이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.',
         }}
       />,
     );
-    expect(screen.getByRole('status')).toHaveTextContent('이 사건에는 근거 요약이 없습니다. 근거 조회는 정상입니다.');
+    expect(screen.getByRole('status')).toHaveTextContent('이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.');
   });
 });

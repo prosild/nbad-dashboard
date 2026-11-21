@@ -40,7 +40,7 @@ export function FactChips({ facts }: { facts: FactItem[] }) {
         <div className="rounded-lg border border-cyan-500/30 bg-[#081020] px-3 py-2 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono font-semibold text-cyan-300">{activeFact.id}</span>
-            {/* 근거 사실 이름은 zeek_AD 보고서가 준 값 그대로다(데이터 원문). */}
+            {/* 근거 사실 이름은 zeek_AD 리포트가 준 값 그대로다(데이터 원문). */}
             <span className="font-mono font-semibold text-slate-200" data-raw="">
               {activeFact.name}
             </span>

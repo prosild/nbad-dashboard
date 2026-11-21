@@ -89,10 +89,10 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(await screen.findByText('경계선 점수 검토')).toBeInTheDocument();
 
     await user.type(
-      screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 판단 메모'),
+      screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 검토 메모'),
       '조사 진행',
     );
-    await user.click(screen.getByRole('button', { name: '조사 진행' }));
+    await user.click(screen.getByRole('button', { name: '승인' }));
 
     await waitFor(() => {
       const decideCall = fetchMock.mock.calls.find(([u]) => u === '/api/reviews/decide');
@@ -173,7 +173,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
     expect(screen.getByText('정밀도 0.60, 결론 5/18 (27.8%)')).toBeInTheDocument();
     expect(screen.getByText('- (결론 없음)')).toBeInTheDocument();
-    expect(screen.getByText('이 표는 탐지된 사건만 셉니다. 놓친 공격 수는 알 수 없습니다.')).toBeInTheDocument();
+    expect(screen.getByText('이 표는 탐지된 인시던트만 셉니다. 놓친 공격 수는 알 수 없습니다.')).toBeInTheDocument();
   });
 
   it('/admin/users에서 신규 사용자를 생성하고 /admin/audit-logs에서 상세 JSON을 펼친다', async () => {
@@ -262,7 +262,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     await user.type(screen.getByLabelText('표시 이름'), '분석가3');
     await user.type(screen.getByLabelText('초기 비밀번호'), 'StrongPass!1');
     await user.selectOptions(screen.getByLabelText('역할'), 'ANALYST');
-    const patternsInput = screen.getByLabelText(/열람 허용 수집 구간/);
+    const patternsInput = screen.getByLabelText(/열람 허용 캡처/);
     await user.clear(patternsInput);
     await user.type(patternsInput, 'cic17-*, syn1-*');
     await user.click(screen.getByRole('button', { name: '사용자 생성' }));

@@ -51,7 +51,7 @@ public class IncidentTransitionService {
                 principal, jobId, queueRank, clientIp);
 
         if (principal == null || (principal.getRole() != UserRole.ANALYST && principal.getRole() != UserRole.ADMIN)) {
-            throw new AccessDeniedException("사건 상태를 변경할 권한이 없습니다.");
+            throw new AccessDeniedException("인시던트 상태를 변경할 권한이 없습니다.");
         }
 
         String normalizedTarget = toStatus == null ? "" : toStatus.trim().toLowerCase(Locale.ROOT);
@@ -71,7 +71,7 @@ public class IncidentTransitionService {
                 return TransitionResult.failure(
                         400,
                         "INVALID_REQUEST",
-                        "사건을 종료하려면 판정(정탐·오탐·정상 행위)을 선택해야 합니다.");
+                        "인시던트를 종결하려면 판정(정탐·오탐·정상)을 선택해야 합니다.");
             }
             effectiveResolution = normalizedResolution;
         }
@@ -102,7 +102,7 @@ public class IncidentTransitionService {
                     log.warn("사건 상태 전이 대상 없음(SQLSTATE 02000): jobId={}, rank={}", jobId, queueRank);
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
-                            "대상 사건을 찾을 수 없습니다.");
+                            "대상 인시던트를 찾을 수 없습니다.");
                     return TransitionResult.failure(404, "NOT_FOUND", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
             }
@@ -130,8 +130,8 @@ public class IncidentTransitionService {
         );
 
         String successMessage = "closed".equals(normalizedTarget)
-                ? "사건을 종료했습니다. 판정: " + resolutionDisplayName(effectiveResolution)
-                : "사건을 조사 중으로 바꿨습니다.";
+                ? "인시던트를 종결했습니다. 판정: " + resolutionDisplayName(effectiveResolution)
+                : "인시던트를 분석 중으로 바꿨습니다.";
         return TransitionResult.success(successMessage);
     }
 
@@ -140,7 +140,7 @@ public class IncidentTransitionService {
         return switch (resolution == null ? "" : resolution) {
             case "true_positive" -> "정탐";
             case "false_positive" -> "오탐";
-            case "benign" -> "정상 행위";
+            case "benign" -> "정상";
             default -> resolution;
         };
     }

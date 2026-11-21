@@ -236,7 +236,7 @@ class ZeekadReadMapperTest {
         assertThat(fusionReviews).hasSize(3);
         assertThat(fusionReviews).extracting(AnalystReviewItem::getReviewJobId).containsOnly(602L);
         assertThat(fusionReviews).extracting(AnalystReviewItem::getResumeStatusLabel)
-                .containsExactlyInAnyOrder("판단 대기", "반영 중", "반영 실패(관리자 확인 필요)");
+                .containsExactlyInAnyOrder("에스컬레이션 대기", "반영 중", "반영 실패(관리자 확인 필요)");
         AnalystReviewItem singleReview = zeekadReadMapper.findAnalystReviewByJobAndIncident(
                 602L, fusionRank1.getIncidentId());
         assertThat(singleReview).isNotNull();

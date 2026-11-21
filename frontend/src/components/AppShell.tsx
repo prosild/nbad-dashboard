@@ -30,8 +30,8 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/incidents', label: '탐지 사건', icon: Radar, matchPrefix: '/incidents' },
-  { to: '/reviews', label: '판단 요청', icon: ClipboardCheck, matchPrefix: '/reviews' },
+  { to: '/incidents', label: '인시던트', icon: Radar, matchPrefix: '/incidents' },
+  { to: '/reviews', label: '에스컬레이션', icon: ClipboardCheck, matchPrefix: '/reviews' },
   { to: '/operations', label: '운영 현황', icon: Activity, matchPrefix: '/operations' },
   { to: '/admin/users', label: '사용자 관리', icon: Users, matchPrefix: '/admin/users', adminOnly: true },
   { to: '/admin/audit-logs', label: '감사 로그', icon: FileSearch, matchPrefix: '/admin/audit-logs', adminOnly: true },
@@ -100,12 +100,12 @@ export function AppShell({
               <UserRoleBadge role={user.role} />
             </div>
             <div className="mt-1 font-mono text-[11px] text-slate-400">@{user.username}</div>
-            <div className="mt-2 text-[11px] text-slate-400">열람 허용 수집 구간</div>
+            <div className="mt-2 text-[11px] text-slate-400">열람 허용 캡처</div>
             <div className="mt-1 flex flex-wrap gap-1">
               {user.allowedCapturePatterns.map((pattern) => (
                 <span
                   key={pattern}
-                  title={pattern === '*' ? '모든 수집 구간' : undefined}
+                  title={pattern === '*' ? '모든 캡처' : undefined}
                   className="rounded border border-slate-800 bg-slate-900 px-1.5 py-0.5 font-mono text-[11px] text-slate-400"
                 >
                   {pattern === '*' ? '전체' : pattern}
@@ -186,7 +186,7 @@ export function AppShell({
                   title={`${labelText('userRole', user.role)} 계정입니다. 조회만 할 수 있고, IP 주소와 계정 이름 일부가 서버에서 가려져 보입니다.`}
                 >
                   <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
-                  읽기 전용 · 개인정보 가림
+                  마스킹 적용
                 </SocBadge>
               ) : (
                 user && (

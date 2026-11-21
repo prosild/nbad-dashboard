@@ -1,60 +1,70 @@
 /**
  * 표시 이름 사전: zeek_AD·API 코드 값 → 화면 표시 이름.
  * 화면은 코드 값을 이 사전으로만 보여 준다. 같은 내용을 docs/ui-terminology.md '표시 이름 사전' 절에 사람이 읽을 수 있게 남긴다.
- * 탐지 모델 이름(tail_rarity_v2 등)과 모델 구성(zeekad-fusion/N)은 사용자 결정으로 바꾸지 않으므로 여기에 넣지 않는다.
+ * 탐지 모델 이름은 zeek_AD 데이터 계약 v2 '모델 표시 이름'(SPEC 결정 2026-11-21)을 따른다(`detectionModel`, `DETECTION_MODEL_INFO`).
+ * 모델 버전 값(zeekad-fusion/N)은 바꾸지 않으므로 여기에 넣지 않는다.
  */
 
 export const LABEL_DICTIONARIES = {
-  /** 사건 상태 (zeek_AD incident status) */
+  /** 인시던트 상태 (zeek_AD incident status) */
   incidentStatus: {
     open: '신규',
-    investigating: '조사 중',
-    closed: '종료',
+    investigating: '분석 중',
+    closed: '종결',
   },
   /** 자동 분류 우선순위 (대시보드 계산 값, utils/triage.ts) */
   priority: {
-    high: '높음',
-    medium: '중간',
-    low: '낮음',
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low',
+  },
+  /**
+   * 탐지 모델 표시 이름 (zeek_AD 데이터 계약 v2 '모델 표시 이름', 설계 토론 Q63). 버전을 넣지 않는다.
+   * 모델 종류·툴팁 설명은 DETECTION_MODEL_INFO. 사전에 없는 새 식별자는 "미등록 값"으로 보인다.
+   */
+  detectionModel: {
+    tail_rarity_v2: '기준선 이탈',
+    transformer_v2: '행위 패턴 이탈',
+    tgn_recon: '통신 관계 이상',
   },
   /** 판정 (zeek_AD resolution) */
   resolution: {
     true_positive: '정탐',
     false_positive: '오탐',
-    benign: '정상 행위',
+    benign: '정상',
   },
   /** 통신 방향 (zeek_AD zeekad_role) */
   hostRole: {
-    originator: '연결 시작 측',
-    responder: '연결 수신 측',
+    originator: '출발지',
+    responder: '목적지',
   },
-  /** 보고서 작성 방식 (zeek_AD zeekad_report_kind) */
+  /** 리포트 작성 방식 (zeek_AD zeekad_report_kind) */
   reportKind: {
     llm: 'AI 작성',
     template: '템플릿 작성',
   },
-  /** 알림 전송 판단 선택지 (zeek_AD send decision choice) */
+  /** 경보 발송 판단 선택지 (zeek_AD send decision choice) */
   sendChoice: {
     send: '전송',
     hold: '보류',
-    analyst_review: '분석가 판단 요청',
-    need_more_evidence: '근거 보강 필요',
+    analyst_review: '에스컬레이션',
+    need_more_evidence: '증적 보강 필요',
   },
-  /** 알림 전송 최종 결정 주체 (zeek_AD decided_by) */
+  /** 경보 발송 최종 결정 주체 (zeek_AD decided_by) */
   decidedBy: {
     policy: '규칙',
-    llm: 'AI 보고서',
+    llm: 'AI 리포트',
     decision_model: '판단 모델',
   },
-  /** 분석가 판단 결정 (zeek_AD zeekad_review_action) */
+  /** 에스컬레이션 검토 결정 (zeek_AD zeekad_review_action) */
   reviewAction: {
-    confirm: '조사 진행',
-    dismiss: '오탐으로 종료',
+    confirm: '승인',
+    dismiss: '오탐 종결',
   },
-  /** 사실 검증 결과 (zeek_AD zeekad_verification_passed) */
+  /** 리포트 검증 결과 (zeek_AD zeekad_verification_passed) */
   verification: {
-    true: '사실 검증 통과',
-    false: '사실 검증 실패',
+    true: '검증 통과',
+    false: '검증 실패',
   },
   /** 자산 관측 이름 종류 (zeek_AD zeekad_name_kind) */
   assetNameKind: {
@@ -74,13 +84,13 @@ export const LABEL_DICTIONARIES = {
   },
   /** Slack 메시지 종류 (zeek_AD slack message kind) */
   slackMessageKind: {
-    incident: '사건 알림',
+    incident: '인시던트 알림',
     status: '상태 변경 알림',
     daily_summary: '일일 요약',
   },
   /** Slack 전송 방식 (zeek_AD zeekad_delivery_mode) */
   slackDeliveryMode: {
-    dry_run: '시험 모드(실제 전송 안 함)',
+    dry_run: 'Dry-run',
     live: '실제 전송',
   },
   /** Slack 전송 결과 (zeek_AD zeekad_delivery_status) */
@@ -90,7 +100,7 @@ export const LABEL_DICTIONARIES = {
     delivered: '전송됨',
     failed: '전송 실패',
   },
-  /** 분석 실행 상태 (zeek_AD scoring_jobs.status) */
+  /** 탐지 작업 상태 (zeek_AD scoring_jobs.status) */
   jobStatus: {
     succeeded: '완료',
     failed: '실패',
@@ -111,26 +121,26 @@ export const LABEL_DICTIONARIES = {
     ACCOUNT_LOCKED: '계정 잠김',
     TOTP_VERIFIED: '2단계 인증 성공',
     ACCESS_DENIED_IDOR: '허용 범위 밖 접근 거부',
-    INCIDENT_VIEW_UNMASKED: '가림 없이 사건 열람',
-    INCIDENT_STATUS_TRANSITION: '사건 상태 변경',
-    ANALYST_REVIEW_DECISION: '분석가 판단 결정',
+    INCIDENT_VIEW_UNMASKED: '마스킹 없이 인시던트 열람',
+    INCIDENT_STATUS_TRANSITION: '인시던트 상태 변경',
+    ANALYST_REVIEW_DECISION: '에스컬레이션 결정',
     USER_ADMIN_CHANGE: '사용자 계정 변경',
   },
-  /** 근거 표의 열 이름 (zeek_AD evidence.v1 하위 키) */
+  /** 증적 표의 열 이름 (zeek_AD evidence.v1 하위 키) */
   evidenceField: {
     ip: 'IP',
     port: '포트',
     transport: '전송 계층',
     protocol: '서비스 프로토콜',
-    connections: '연결 수',
+    connections: '세션 수',
     bytes: '바이트',
     zeek: 'Zeek 기록',
     event: '시각',
     source: '출발지',
     destination: '목적지',
     network: '네트워크',
-    uid: '연결 ID',
-    conn_state: '연결 상태',
+    uid: '세션 ID',
+    conn_state: '세션 상태',
     start: '시작',
     duration: '지속 시간',
   },
@@ -143,8 +153,8 @@ export const LABEL_DICTIONARIES = {
     files: '파일 수',
     mappings: '공유 폴더 연결',
     auth_failures: '인증 실패',
-    connections: '연결 수',
-    without_sni: 'SNI 없는 연결',
+    connections: '세션 수',
+    without_sni: 'SNI 없는 세션',
     errors: '오류 응답',
     requests: '요청 수',
     auths: '인증 수',
@@ -175,7 +185,7 @@ export const LABEL_DICTIONARIES = {
     SHR: '수신 측 종료, 시작 미확인',
     OTH: '시작 미확인 연결',
   },
-  /** MITRE ATT&CK 전술 (zeek_AD 보고서 attack_candidates.tactics, 슬러그·제목 표기 모두) */
+  /** MITRE ATT&CK 전술 (zeek_AD 리포트 attack_candidates.tactics, 슬러그·제목 표기 모두) */
   attackTactic: {
     reconnaissance: '정찰',
     'resource-development': '자원 개발',
@@ -255,8 +265,8 @@ export function policyReasonText(reason: string): LabelLookup {
 }
 
 /**
- * 분석가 판단 요청 사유(zeek_AD zeekad_review_reason). `llm=analyst_review, decision_model=analyst_review` 같은
- * `주체=선택지` 나열은 `AI 보고서: 분석가 판단 요청 · 판단 모델: 분석가 판단 요청`으로 바꾸고, 그 밖의 문장은 그대로 둔다.
+ * 에스컬레이션 사유(zeek_AD zeekad_review_reason). `llm=analyst_review, decision_model=analyst_review` 같은
+ * `주체=선택지` 나열은 `AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션`으로 바꾸고, 그 밖의 문장은 그대로 둔다.
  */
 export function reviewReasonText(reason: string | null | undefined): LabelLookup {
   if (!reason) {
@@ -277,6 +287,64 @@ export function reviewReasonText(reason: string | null | undefined): LabelLookup
     };
   }
   return { text: raw, known: true, raw };
+}
+
+/**
+ * 탐지 모델 종류와 툴팁 설명(zeek_AD 데이터 계약 v2 '모델 표시 이름' 확정 문구). 키는 `detectionModel` 사전과 같다.
+ */
+export const DETECTION_MODEL_INFO: Record<string, { kind: string; description: string }> = {
+  tail_rarity_v2: {
+    kind: '통계 기준선',
+    description:
+      '5분 구간의 통신 특징 42개(연결 수, 목적지 포트 수, 연결 실패 비율, 프로토콜 로그 등) 중 정상 기간에 거의 없던 값이 있는 정도. 가장 드문 특징 하나가 점수다. 정찰·스캔, 인증 실패 반복에 강하다.',
+  },
+  transformer_v2: {
+    kind: 'Transformer',
+    description:
+      '이 자산의 직전 1시간(5분 구간 12개)으로 다음 5분을 예측하고, 실제와 다른 정도. 다른 자산이 아니라 자기 평소 흐름과 비교한다. 이력이 없는 첫 구간에서는 높게 나올 수 있다.',
+  },
+  tgn_recon: {
+    kind: 'TGN(시간 그래프 신경망)',
+    description:
+      '호스트 사이의 연결을 시간 그래프로 학습해, 예상하기 어려운 연결이 나온 정도(구간 안에서 가장 예상 밖인 연결 하나 기준). beacon처럼 양은 적어도 상대가 특이한 통신을 올린다. 이상 호스트와 통신한 정상 호스트도 함께 올라갈 수 있다.',
+  },
+};
+
+export interface DetectionModelLookup extends LabelLookup {
+  /** 모델 종류(미등록이면 null) */
+  kind: string | null;
+  /** zeek_AD 툴팁 설명(미등록이면 null) */
+  description: string | null;
+  /** 상세·툴팁용 "모델 종류 · 식별자"(미등록이면 식별자만) */
+  kindAndId: string;
+  /** 툴팁 글: "모델 종류 · 식별자" + 설명. 미등록이면 미등록 값 툴팁 */
+  tooltip: string;
+}
+
+/** 탐지 모델 식별자 → 표시 이름·종류·설명. 사전에 없는 식별자는 known=false("미등록 값"). */
+export function detectionModelInfo(id: string | null | undefined): DetectionModelLookup {
+  const base = lookupLabel('detectionModel', id);
+  const key = base.raw.toLowerCase();
+  const info = base.known && base.raw && Object.prototype.hasOwnProperty.call(DETECTION_MODEL_INFO, key)
+    ? DETECTION_MODEL_INFO[key]
+    : null;
+  if (!info) {
+    return {
+      ...base,
+      kind: null,
+      description: null,
+      kindAndId: base.raw,
+      tooltip: base.raw ? unregisteredTitle(base.raw) : '',
+    };
+  }
+  const kindAndId = `${info.kind} · ${base.raw}`;
+  return {
+    ...base,
+    kind: info.kind,
+    description: info.description,
+    kindAndId,
+    tooltip: `${kindAndId}\n${info.description}`,
+  };
 }
 
 /** 미등록 값 툴팁 문구 */

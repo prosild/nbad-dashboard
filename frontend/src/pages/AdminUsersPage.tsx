@@ -127,7 +127,7 @@ export function AdminUsersPage() {
   return (
     <AppShell
       title="사용자 관리"
-      subtitle="계정 권한, 열람 허용 수집 구간, 잠금 해제, 2단계 인증 초기화를 관리합니다"
+      subtitle="계정 권한, 열람 허용 캡처, 잠금 해제, 2단계 인증 초기화를 관리합니다"
       actions={
         <button
           type="button"
@@ -223,7 +223,7 @@ export function AdminUsersPage() {
 
               <div className="md:col-span-2">
                 <label htmlFor="create-patterns" className="mb-1 block text-xs font-medium text-slate-300">
-                  열람 허용 수집 구간 (줄바꿈이나 쉼표로 구분, 예: cic17-*, syn1-*, 전체는 *)
+                  열람 허용 캡처 (줄바꿈이나 쉼표로 구분, 예: cic17-*, syn1-*, 전체는 *)
                 </label>
                 <textarea
                   id="create-patterns"
@@ -303,7 +303,7 @@ export function AdminUsersPage() {
 
               <div className="md:col-span-2">
                 <label htmlFor="edit-patterns" className="mb-1 block text-xs font-medium text-slate-300">
-                  열람 허용 수집 구간 (줄바꿈이나 쉼표로 구분)
+                  열람 허용 캡처 (줄바꿈이나 쉼표로 구분)
                 </label>
                 <textarea
                   id="edit-patterns"
@@ -349,7 +349,7 @@ export function AdminUsersPage() {
                   <tr>
                     <th className="soc-th">아이디 · 표시 이름</th>
                     <th className="soc-th">역할</th>
-                    <th className="soc-th">열람 허용 수집 구간</th>
+                    <th className="soc-th">열람 허용 캡처</th>
                     <th className="soc-th">계정 · 2단계 인증 상태</th>
                     <th className="soc-th">수정 시각</th>
                     <th className="soc-th text-right">관리</th>

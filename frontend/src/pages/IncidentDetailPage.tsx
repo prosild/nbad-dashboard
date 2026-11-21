@@ -10,11 +10,17 @@ import { IncidentStatusAndReviewSection } from '../components/incident/IncidentS
 import { ReportSection } from '../components/incident/ReportSection';
 import { SendDecisionSection } from '../components/incident/SendDecisionSection';
 import { SlackThreadsSection } from '../components/incident/SlackThreadsSection';
-import { CodeLabel, IncidentStatusBadge, ResolutionBadge, SocBadge } from '../components/StatusBadge';
+import {
+  CodeLabel,
+  DetectionModelName,
+  IncidentStatusBadge,
+  ResolutionBadge,
+  SocBadge,
+} from '../components/StatusBadge';
 import { SvgProgressBar } from '../components/SvgProgressBar';
 import type { IncidentDetailApiResponse } from '../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
-import { lookupLabel } from '../utils/labels';
+import { detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
 
 /** 자산 관측 항목 값: 시각은 표준 형식, 이름 종류는 사전, 숫자는 천 단위 구분 */
 function AssetAttributeValue({ attrKey, value }: { attrKey: string; value: unknown }) {
@@ -41,7 +47,7 @@ export function IncidentDetailPage() {
 
   const loadDetail = useCallback(async () => {
     if (!jobId || !queueRank) {
-      setErrorMsg('잘못된 사건 경로입니다.');
+      setErrorMsg('잘못된 인시던트 경로입니다.');
       setLoading(false);
       return;
     }
@@ -51,7 +57,7 @@ export function IncidentDetailPage() {
       const res = await incidentsApi.detail(jobId, queueRank);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '사건 정보를 불러오지 못했습니다.');
+      setErrorMsg(err instanceof ApiError ? err.message : '인시던트 정보를 불러오지 못했습니다.');
     } finally {
       setLoading(false);
     }
@@ -67,10 +73,10 @@ export function IncidentDetailPage() {
 
   return (
     <AppShell
-      title={incident ? `사건 상세 · ${incident.hostIp} · ${incident.queueRank}위` : '사건 상세'}
+      title={incident ? `인시던트 상세 · ${incident.hostIp} · ${incident.queueRank}위` : '인시던트 상세'}
       subtitle={
         incident
-          ? `${formatDateTimeRange(incident.eventStart, incident.eventEnd)} · 수집 구간 ${incident.captureId}`
+          ? `${formatDateTimeRange(incident.eventStart, incident.eventEnd)} · 캡처 ${incident.captureId}`
           : undefined
       }
       actions={
@@ -79,7 +85,7 @@ export function IncidentDetailPage() {
           className="soc-btn-secondary py-1.5 text-xs"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          사건 목록으로
+          인시던트 목록으로
         </Link>
       }
     >
@@ -87,7 +93,7 @@ export function IncidentDetailPage() {
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadDetail()} />}
 
         {loading && !detail ? (
-          <LoadingPanel label="사건 정보를 불러오는 중..." />
+          <LoadingPanel label="인시던트 정보를 불러오는 중..." />
         ) : detail && incident ? (
           <>
             <section className="soc-card p-5">
@@ -96,17 +102,17 @@ export function IncidentDetailPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <IncidentStatusBadge status={detail.currentStatus} />
                     <ResolutionBadge resolution={detail.currentResolution} />
-                    {incident.zeekadReportJobId === null && <SocBadge tone="muted">보고서 없음</SocBadge>}
+                    {incident.zeekadReportJobId === null && <SocBadge tone="muted">리포트 없음</SocBadge>}
                   </div>
                   <div className="text-xs text-slate-400">
-                    사건 ID{' '}
+                    인시던트 ID{' '}
                     <span className="break-all font-mono text-slate-200" data-raw="">
                       {incident.incidentId}
                     </span>
                   </div>
                   <div className="text-xs text-slate-400">
-                    분석 실행{' '}
-                    <span className="tabular-nums text-slate-300" title={`분석 실행 #${incident.jobId}`}>
+                    탐지 작업{' '}
+                    <span className="tabular-nums text-slate-300" title={`탐지 작업 #${incident.jobId}`}>
                       {jobWhen ? formatDateTime(jobWhen) : `#${incident.jobId}`}
                     </span>
                   </div>
@@ -115,15 +121,20 @@ export function IncidentDetailPage() {
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   {incident.zeekadPickedBy && (
                     <span className="text-slate-400">
-                      주 탐지 모델{' '}
-                      <span className="font-mono font-semibold text-slate-100" data-raw="">
-                        {incident.zeekadPickedBy}
-                      </span>
+                      탐지 모델{' '}
+                      <DetectionModelName
+                        id={incident.zeekadPickedBy}
+                        variant="detail"
+                        className="font-semibold text-slate-100"
+                      />
                     </span>
                   )}
                   {incident.zeekadAlsoFlaggedBy.length > 0 && (
-                    <SocBadge tone="neutral" title={incident.zeekadAlsoFlaggedBy.join(', ')}>
-                      함께 탐지한 모델 +{incident.zeekadAlsoFlaggedBy.length}
+                    <SocBadge
+                      tone="neutral"
+                      title={incident.zeekadAlsoFlaggedBy.map((m) => detectionModelInfo(m).tooltip).join('\n\n')}
+                    >
+                      교차 탐지 +{incident.zeekadAlsoFlaggedBy.length}
                     </SocBadge>
                   )}
                 </div>
@@ -142,7 +153,7 @@ export function IncidentDetailPage() {
                 </div>
 
                 <div className="soc-panel p-3.5">
-                  <div className="text-[11px] font-medium text-slate-400">통신 방향 · 모델 구성</div>
+                  <div className="text-[11px] font-medium text-slate-400">통신 방향 · 모델 버전</div>
                   <div className="mt-1 text-sm font-bold text-slate-100">
                     <CodeLabel dict="hostRole" value={incident.zeekadRole} />
                   </div>
@@ -160,7 +171,7 @@ export function IncidentDetailPage() {
                 </div>
 
                 <div className="soc-panel p-3.5">
-                  <div className="text-[11px] font-medium text-slate-400">총 연결 수</div>
+                  <div className="text-[11px] font-medium text-slate-400">총 세션 수</div>
                   <div className="mt-1 text-xl font-bold tabular-nums text-slate-100">
                     {formatNumber(incident.connectionCount)}
                   </div>
@@ -173,13 +184,13 @@ export function IncidentDetailPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                     <Cpu className="h-4 w-4 text-slate-400" />
-                    모델별 이상 판정 구간
+                    모델별 탐지 윈도우
                   </div>
-                  <span className="text-[11px] text-slate-400">기준값을 넘은 구간 수 / 전체 구간 수</span>
+                  <span className="text-[11px] text-slate-400">기준값을 넘은 윈도우 수 / 전체 윈도우 수</span>
                 </div>
 
                 {detail.modelScores.length === 0 ? (
-                  <p className="text-xs text-slate-400">모델별 이상 판정 구간 정보가 없습니다.</p>
+                  <p className="text-xs text-slate-400">모델별 탐지 윈도우 정보가 없습니다.</p>
                 ) : (
                   <div className="space-y-3">
                     {detail.modelScores.map((score) => {
@@ -189,16 +200,18 @@ export function IncidentDetailPage() {
                       return (
                         <div key={score.zeekadModel} className="soc-panel space-y-1.5 p-3">
                           <div className="flex items-center justify-between text-xs">
-                            <span className="font-mono font-semibold text-slate-100" data-raw="">
-                              {score.zeekadModel}
-                            </span>
+                            <DetectionModelName
+                              id={score.zeekadModel}
+                              variant="detail"
+                              className="font-semibold text-slate-100"
+                            />
                             <span className="font-bold tabular-nums text-slate-100">{ratioLabel}</span>
                           </div>
                           <SvgProgressBar
                             value={cand}
                             max={total > 0 ? total : 1}
                             tone="cyan"
-                            label={`${score.zeekadModel} 이상 판정 구간 ${ratioLabel}`}
+                            label={`${labelText('detectionModel', score.zeekadModel)} 탐지 윈도우 ${ratioLabel}`}
                           />
                         </div>
                       );

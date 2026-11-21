@@ -12,20 +12,27 @@ import {
   Minus,
   ShieldCheck,
 } from 'lucide-react';
-import { labelText, lookupLabel, unregisteredTitle, type LabelDictionaryName, type LabelLookup } from '../utils/labels';
+import {
+  detectionModelInfo,
+  labelText,
+  lookupLabel,
+  unregisteredTitle,
+  type LabelDictionaryName,
+  type LabelLookup,
+} from '../utils/labels';
 import type { Priority } from '../utils/triage';
 
 /**
  * 색 체계(docs/ui-terminology.md '색·배지 체계'):
  * - danger(빨강): 높은 위험·우선순위·정탐(실제 위협) 전용
- * - attention(주황): 사람 손이 필요함(판단 대기, 반영 실패, 실행 실패, 사실 검증 실패 등) 전용
+ * - attention(주황): 사람 손이 필요함(에스컬레이션 대기, 반영 실패, 작업 실패, 검증 실패 등) 전용
  * - neutral(회색): 상태·정보. 상태는 아이콘으로 구분한다
- * - info(하늘): 진행 중(조사 중, 진행 중)
- * - positive(초록): 정상 행위 판정·검증 통과
- * - notice(청록): 알림 보냄
+ * - info(하늘): 진행 중(분석 중, 진행 중)
+ * - positive(초록): 정상 판정·검증 통과
+ * - notice(청록): 경보 발송
  * - violet(보라): 오탐 판정
- * - emphasis(밝은 회색 테두리): 우선순위 중간처럼 중립이지만 눈에 띄어야 하는 값
- * - muted(흐린 회색): 우선순위 낮음·종료, 값 없음
+ * - emphasis(밝은 회색 테두리): 우선순위 Medium처럼 중립이지만 눈에 띄어야 하는 값
+ * - muted(흐린 회색): 우선순위 Low·종결, 값 없음
  */
 export type BadgeTone =
   | 'danger'
@@ -101,6 +108,41 @@ export function LookupText({ label, className = '' }: { label: LabelLookup; clas
   );
 }
 
+/**
+ * 탐지 모델 이름(zeek_AD '모델 표시 이름'). 표(`variant="table"`)에는 표시 이름만 보이고 "모델 종류 · 식별자"와 설명은 툴팁에 둔다.
+ * 상세(`variant="detail"`)는 표시 이름 옆에 "모델 종류 · 식별자"를 함께 보인다(식별자 요소는 data-raw).
+ * 사전에 없는 식별자는 흐린 원문 + "미등록 값" 툴팁이다.
+ */
+export function DetectionModelName({
+  id,
+  variant = 'table',
+  className = '',
+}: {
+  id: string | null | undefined;
+  variant?: 'table' | 'detail';
+  className?: string;
+}) {
+  const info = detectionModelInfo(id);
+  if (!info.known || !info.kind) {
+    return <LookupText label={info} className={className} />;
+  }
+  if (variant === 'detail') {
+    return (
+      <span className={`inline-flex flex-wrap items-baseline gap-x-1.5 ${className}`} title={info.tooltip}>
+        <span>{info.text}</span>
+        <span className="font-mono text-[11px] font-normal text-slate-400" data-raw="">
+          {info.kindAndId}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className={className} title={info.tooltip}>
+      {info.text}
+    </span>
+  );
+}
+
 export function IncidentStatusBadge({ status }: { status: string | null | undefined }) {
   const norm = (status ?? 'open').toLowerCase();
   const tone: BadgeTone = norm === 'investigating' ? 'info' : norm === 'closed' ? 'muted' : 'neutral';
@@ -128,7 +170,7 @@ export function ResolutionBadge({ resolution }: { resolution: string | null | un
   );
 }
 
-/** 분석가 판단: 결정 전이면 '판단 대기'(주황), 결정 후는 중립색 + 체크 아이콘 */
+/** 분석가 판단: 결정 전이면 '대기'(주황), 결정 후는 중립색 + 체크 아이콘 */
 export function ReviewActionBadge({
   action,
   pending,
@@ -140,7 +182,7 @@ export function ReviewActionBadge({
     return pending ? (
       <SocBadge tone="attention">
         <Clock className="h-3 w-3" aria-hidden="true" />
-        판단 대기
+        대기
       </SocBadge>
     ) : (
       <SocBadge tone="muted">-</SocBadge>
@@ -191,22 +233,22 @@ export function ResumeStatusBadge({
   );
 }
 
-/** 알림 전송 판단 결과(would_send) */
+/** 경보 발송 판단 결과(would_send) */
 export function WouldSendBadge({ wouldSend }: { wouldSend: boolean | null | undefined }) {
   return wouldSend ? (
     <SocBadge tone="notice">
       <Bell className="h-3 w-3" aria-hidden="true" />
-      알림 보냄
+      경보 발송
     </SocBadge>
   ) : (
     <SocBadge tone="muted">
       <BellOff className="h-3 w-3" aria-hidden="true" />
-      알림 보류
+      보류
     </SocBadge>
   );
 }
 
-/** 보고서 사실 검증 결과 */
+/** 리포트 검증 결과 */
 export function VerificationBadge({ passed }: { passed: boolean | null | undefined }) {
   if (passed === null || passed === undefined) {
     return null;
@@ -224,7 +266,7 @@ export function VerificationBadge({ passed }: { passed: boolean | null | undefin
   );
 }
 
-/** 분석 실행 상태 */
+/** 탐지 작업 상태 */
 export function JobStatusBadge({ status }: { status: string | null | undefined }) {
   const norm = (status ?? '').toLowerCase();
   if (norm === 'failed') {
@@ -262,11 +304,11 @@ export function UserRoleBadge({ role }: { role: string | null | undefined }) {
 
 /** 자동 분류 우선순위 툴팁. 분석가 판정이 아니라 화면이 계산한 값임을 알린다. */
 export const PRIORITY_TOOLTIP = '자동 분류 우선순위: 파이프라인 결과로 화면이 계산한 값이며 분석가 판정이 아닙니다';
-export const NO_PRIORITY_TOOLTIP = '종료된 사건은 우선순위를 매기지 않습니다';
+export const NO_PRIORITY_TOOLTIP = '종결된 인시던트는 우선순위를 매기지 않습니다';
 
 /**
- * 자동 분류 우선순위. 높음 = 빨강(danger), 중간 = 밝은 회색 테두리(emphasis), 낮음 = 흐린 회색(muted),
- * 종료(우선순위 없음) = 흐린 '-'. 주황은 "사람 손 필요" 전용이라 쓰지 않는다.
+ * 자동 분류 우선순위. High = 빨강(danger), Medium = 밝은 회색 테두리(emphasis), Low = 흐린 회색(muted),
+ * 종결(우선순위 없음) = 흐린 '-'. 주황은 "사람 손 필요" 전용이라 쓰지 않는다.
  */
 export function PriorityBadge({ priority }: { priority: Priority | null }) {
   if (priority === null) {

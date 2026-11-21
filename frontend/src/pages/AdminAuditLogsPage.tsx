@@ -202,7 +202,7 @@ export function AdminAuditLogsPage() {
                     <th className="soc-th">발생 시각</th>
                     <th className="soc-th">사용자</th>
                     <th className="soc-th">동작 유형</th>
-                    <th className="soc-th">대상 수집 구간 · 사건</th>
+                    <th className="soc-th">대상 캡처 · 인시던트</th>
                     <th className="soc-th">접속 IP</th>
                     <th className="soc-th text-right">상세</th>
                   </tr>

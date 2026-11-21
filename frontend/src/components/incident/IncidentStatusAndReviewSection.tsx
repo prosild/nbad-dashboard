@@ -65,7 +65,7 @@ export function IncidentStatusAndReviewSection({
         resolution: nextAllowedStatus === 'closed' ? resolution : null,
         reason: reason.trim(),
       });
-      notify(res.message || '사건 상태를 바꿨습니다.', 'success');
+      notify(res.message || '인시던트 상태를 바꿨습니다.', 'success');
       setReason('');
       await onRefresh();
     } catch (err) {
@@ -83,11 +83,11 @@ export function IncidentStatusAndReviewSection({
         action,
         note: reviewNote.trim() || undefined,
       });
-      notify(res.message || '판단을 저장했습니다.', 'success');
+      notify(res.message || '검토 결정을 저장했습니다.', 'success');
       setReviewNote('');
       await onRefresh();
     } catch (err) {
-      setReviewError(err instanceof ApiError ? err.message : '판단을 저장하지 못했습니다.');
+      setReviewError(err instanceof ApiError ? err.message : '검토 결정을 저장하지 못했습니다.');
     } finally {
       setDecidingReview(false);
     }
@@ -166,7 +166,7 @@ export function IncidentStatusAndReviewSection({
                 required
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="조사 판단과 상태 변경 근거를 입력하세요."
+                placeholder="분석 내용과 상태 변경 사유를 입력하세요."
                 className="soc-input text-xs"
               />
             </div>
@@ -175,8 +175,8 @@ export function IncidentStatusAndReviewSection({
               {transitioning
                 ? '저장 중...'
                 : nextAllowedStatus === 'investigating'
-                  ? '조사 중으로 변경'
-                  : '종료 처리'}
+                  ? '분석 중으로 변경'
+                  : '종결 처리'}
             </button>
           </form>
         )}
@@ -207,7 +207,7 @@ export function IncidentStatusAndReviewSection({
                     </div>
                     <span
                       className="whitespace-nowrap text-[11px] tabular-nums text-slate-400"
-                      title={item.jobId !== null ? `분석 실행 #${item.jobId}` : undefined}
+                      title={item.jobId !== null ? `탐지 작업 #${item.jobId}` : undefined}
                     >
                       {formatDateTime(item.changedAt)}
                     </span>
@@ -228,7 +228,7 @@ export function IncidentStatusAndReviewSection({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
             <ClipboardCheck className="h-4 w-4 text-slate-400" />
-            분석가 판단 요청
+            에스컬레이션
           </div>
           {analystReview.present && analystReview.resumeStatusLabel && (
             <ResumeStatusBadge
@@ -242,7 +242,7 @@ export function IncidentStatusAndReviewSection({
 
         {!analystReview.present ? (
           <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
-            이 사건에는 분석가 판단 요청이 없습니다.
+            이 인시던트에는 에스컬레이션이 없습니다.
           </div>
         ) : (
           <div className="space-y-4">
@@ -251,7 +251,7 @@ export function IncidentStatusAndReviewSection({
                 <span className="text-slate-400">요청 시각</span>
                 <span
                   className="tabular-nums text-slate-300"
-                  title={analystReview.reviewJobId !== null ? `판단 요청 실행 #${analystReview.reviewJobId}` : undefined}
+                  title={analystReview.reviewJobId !== null ? `에스컬레이션 작업 #${analystReview.reviewJobId}` : undefined}
                 >
                   {formatDateTime(analystReview.requestedAt)}
                 </span>
@@ -263,7 +263,7 @@ export function IncidentStatusAndReviewSection({
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2.5">
-                <span className="text-slate-400">현재 판단</span>
+                <span className="text-slate-400">검토 결정</span>
                 <ReviewActionBadge action={analystReview.reviewAction} pending={analystReview.pending} />
                 {analystReview.analystDisplay && (
                   <span className="text-slate-300" data-raw="">
@@ -273,7 +273,7 @@ export function IncidentStatusAndReviewSection({
               </div>
               {analystReview.decidedAt && (
                 <div className="text-[11px] tabular-nums text-slate-400">
-                  판단 시각 {formatDateTime(analystReview.decidedAt)}
+                  결정 시각 {formatDateTime(analystReview.decidedAt)}
                   {analystReview.resumedAt ? ` · 자동 처리 반영 ${formatDateTime(analystReview.resumedAt)}` : ''}
                 </div>
               )}
@@ -281,7 +281,7 @@ export function IncidentStatusAndReviewSection({
 
             {analystReview.canDecide && !analystReview.reviewAction && (
               <div className="soc-panel space-y-3 p-4">
-                <h4 className="soc-subhead">판단 입력</h4>
+                <h4 className="soc-subhead">검토 결정 입력</h4>
 
                 {reviewError && (
                   <div
@@ -294,14 +294,14 @@ export function IncidentStatusAndReviewSection({
 
                 <div>
                   <label htmlFor="detail-review-note" className="mb-1 block text-xs font-medium text-slate-300">
-                    판단 메모 (선택)
+                    검토 메모 (선택)
                   </label>
                   <textarea
                     id="detail-review-note"
                     rows={2}
                     value={reviewNote}
                     onChange={(e) => setReviewNote(e.target.value)}
-                    placeholder="판단 근거를 적어 두세요(선택)."
+                    placeholder="결정 근거를 적어 두세요(선택)."
                     className="soc-input text-xs"
                   />
                 </div>

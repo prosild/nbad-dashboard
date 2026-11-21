@@ -516,11 +516,11 @@ public class IncidentDetailService {
             String rawIncidentId = d.getIncidentId();
             String threadRoleLabel;
             if (rawThreadParent == null) {
-                threadRoleLabel = "첫 알림";
+                threadRoleLabel = "최초 알림";
             } else if (rawThreadParent.equals(rawIncidentId)) {
                 threadRoleLabel = "후속 알림";
             } else {
-                threadRoleLabel = "다른 사건 알림의 후속 알림";
+                threadRoleLabel = "타 인시던트 후속 알림";
             }
             String rawThreadKey = rawThreadParent != null ? rawThreadParent : rawIncidentId;
             String displayThreadKey = mask ? maskingService.maskIpsInText(rawThreadKey) : rawThreadKey;

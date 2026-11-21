@@ -39,37 +39,37 @@ function item(overrides: Partial<IncidentQueueItem> = {}): IncidentQueueItem {
 }
 
 describe('자동 분류 우선순위(computePriority)', () => {
-  it('높음: 알림 보냄 또는 판단 대기', () => {
+  it('High: 경보 발송 또는 에스컬레이션 대기', () => {
     expect(computePriority(item({ zeekadWouldSend: true }))).toBe('high');
     expect(computePriority(item({ zeekadReviewPending: true }))).toBe('high');
     // 높음 조건이 중간 조건보다 앞선다
     expect(computePriority(item({ zeekadWouldSend: true, hasReport: true, zeekadAlsoFlaggedBy: ['a'] }))).toBe('high');
   });
 
-  it('중간: 함께 탐지한 모델 1개 이상 또는 보고서 있음', () => {
+  it('Medium: 교차 탐지 모델 1개 이상 또는 리포트 있음', () => {
     expect(computePriority(item({ zeekadAlsoFlaggedBy: ['iforest_v1'] }))).toBe('medium');
     expect(computePriority(item({ zeekadAlsoFlaggedBy: ['a', 'b'] }))).toBe('medium');
     expect(computePriority(item({ hasReport: true }))).toBe('medium');
   });
 
-  it('경계: 함께 탐지 0개면 낮음, 1개면 중간. multiModelFlagged 필드는 쓰지 않는다', () => {
+  it('경계: 교차 탐지 0개면 Low, 1개면 Medium. multiModelFlagged 필드는 쓰지 않는다', () => {
     expect(computePriority(item({ zeekadAlsoFlaggedBy: [] }))).toBe('low');
     expect(computePriority(item({ zeekadAlsoFlaggedBy: [], multiModelFlagged: true }))).toBe('low');
     expect(computePriority(item({ zeekadAlsoFlaggedBy: ['a'], multiModelFlagged: false }))).toBe('medium');
     expect(computePriority(item({ zeekadAlsoFlaggedBy: null as unknown as string[] }))).toBe('low');
   });
 
-  it('낮음: 그 밖', () => {
+  it('Low: 그 밖', () => {
     expect(computePriority(item())).toBe('low');
   });
 
-  it('종료: 우선순위 없음(null). 대소문자 무시', () => {
+  it('종결: 우선순위 없음(null). 대소문자 무시', () => {
     expect(computePriority(item({ zeekadStatus: 'closed', zeekadWouldSend: true }))).toBeNull();
     expect(computePriority(item({ zeekadStatus: 'CLOSED', hasReport: true }))).toBeNull();
     expect(computePriority(item({ zeekadStatus: ' Closed ' }))).toBeNull();
   });
 
-  it('상태 없음(null·빈 문자열)은 신규, 등록되지 않은 상태 값은 종료가 아닌 것으로 본다', () => {
+  it('상태 없음(null·빈 문자열)은 신규, 등록되지 않은 상태 값은 종결이 아닌 것으로 본다', () => {
     expect(normalizeStatus(null)).toBe('open');
     expect(normalizeStatus('')).toBe('open');
     expect(computePriority(item({ zeekadStatus: null, zeekadWouldSend: true }))).toBe('high');
@@ -89,11 +89,11 @@ describe('정렬(sortIncidents)', () => {
   const all = [closed, low, high2, medium, high];
   const ranks = (list: IncidentQueueItem[]) => list.map((i) => i.queueRank);
 
-  it('우선순위 오름: 높음→중간→낮음, 같은 값은 순위 오름, 종료는 맨 뒤', () => {
+  it('우선순위 오름: High→Medium→Low, 같은 값은 순위 오름, 종결은 맨 뒤', () => {
     expect(ranks(sortIncidents(all, 'priority', 'asc'))).toEqual([3, 5, 1, 2, 4]);
   });
 
-  it('우선순위 내림에서도 종료는 맨 뒤, 같은 값의 2차 키는 순위 오름 그대로', () => {
+  it('우선순위 내림에서도 종결은 맨 뒤, 같은 값의 2차 키는 순위 오름 그대로', () => {
     expect(ranks(sortIncidents(all, 'priority', 'desc'))).toEqual([2, 1, 3, 5, 4]);
   });
 
@@ -102,7 +102,7 @@ describe('정렬(sortIncidents)', () => {
     expect(ranks(sortIncidents(all, 'rank', 'desc'))).toEqual([5, 4, 3, 2, 1]);
   });
 
-  it('연결 수·시각의 null은 방향과 상관없이 맨 뒤', () => {
+  it('세션 수·시각의 null은 방향과 상관없이 맨 뒤', () => {
     expect(ranks(sortIncidents(all, 'connections', 'desc'))).toEqual([4, 2, 3, 5, 1]);
     expect(ranks(sortIncidents(all, 'connections', 'asc'))).toEqual([3, 5, 2, 4, 1]);
     // high2의 eventStart는 기본값 01:00 → low(01:00)와 같으면 순위 오름
@@ -110,7 +110,7 @@ describe('정렬(sortIncidents)', () => {
     expect(ranks(sortIncidents(all, 'start', 'asc'))).toEqual([2, 5, 3, 4, 1]);
   });
 
-  it('상태 순서: 신규 → 조사 중 → 종료', () => {
+  it('상태 순서: 신규 → 분석 중 → 종결', () => {
     expect(ranks(sortIncidents(all, 'status', 'asc'))).toEqual([1, 2, 3, 5, 4]);
     expect(ranks(sortIncidents(all, 'status', 'desc'))).toEqual([4, 5, 1, 2, 3]);
   });

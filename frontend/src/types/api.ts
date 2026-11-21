@@ -130,7 +130,7 @@ export interface EvidenceView {
   available: boolean;
   statusMessage: string | null;
   connectionCount: number | null;
-  /** 자산(사건 대상 호스트) 기준 송신 IP 바이트 */
+  /** 자산(인시던트 대상 호스트) 기준 송신 IP 바이트 */
   bytesSent: number | null;
   /** 자산 기준 수신 IP 바이트 */
   bytesReceived: number | null;

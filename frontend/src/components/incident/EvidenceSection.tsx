@@ -5,7 +5,7 @@ import { lookupLabel, unregisteredTitle, type LabelDictionaryName } from '../../
 import { LookupText } from '../StatusBadge';
 import { SvgProgressBar } from '../SvgProgressBar';
 
-/** 근거에 키가 없어 null인 값. 0(관측했는데 0)과 구분해 보여 준다. */
+/** 증적에 키가 없어 null인 값. 0(관측했는데 0)과 구분해 보여 준다. */
 const MISSING_LABEL = '값 없음';
 
 function displayCount(value: number | null | undefined): string {
@@ -25,9 +25,12 @@ function labelProps(dict: LabelDictionaryName, key: string): { text: string; tit
   return { text: label.text, title: label.raw !== label.text ? label.raw : undefined, dim: false };
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+/** 송신·수신 바이트의 기준(zeek_AD evidence.network.bytes: 연결 방향이 아니라 인시던트 대상 호스트 기준) */
+const BYTES_BASIS_TOOLTIP = '인시던트 대상 호스트 기준';
+
+function StatCard({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="soc-panel p-3.5">
+    <div className="soc-panel p-3.5" title={title}>
       <div className="text-[11px] font-medium text-slate-400">{label}</div>
       <div
         className={`mt-1 text-xl font-bold tabular-nums ${value === MISSING_LABEL ? 'text-slate-500' : 'text-slate-100'}`}
@@ -234,7 +237,7 @@ function DynamicRecordTable({
                     );
                   }
                   if (typeof val === 'object') {
-                    // 중첩 근거(대표 연결의 zeek·event·source 등)는 원문 그대로 보인다. 필드별 열 배치는 T19 범위다.
+                    // 중첩 증적(주요 세션의 zeek·event·source 등)는 원문 그대로 보인다. 필드별 열 배치는 T19 범위다.
                     return (
                       <td key={col} className="soc-td whitespace-nowrap font-mono text-xs" data-raw="">
                         {JSON.stringify(val)}
@@ -262,14 +265,14 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
       <section className="soc-card p-5">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-100">
           <Network className="h-4 w-4 text-slate-400" />
-          근거 요약
+          증적 요약
         </div>
         <div
           role="status"
           className="flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <span>{evidence.statusMessage || '상세 근거를 불러오지 못했습니다. 기본 정보만 표시합니다.'}</span>
+          <span>{evidence.statusMessage || '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.'}</span>
         </div>
       </section>
     );
@@ -282,17 +285,17 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
           <Network className="h-4 w-4 text-slate-400" />
-          근거 요약
+          증적 요약
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="총 연결 수" value={displayCount(evidence.connectionCount)} />
-        <StatCard label="자산 송신 바이트" value={displayBytes(evidence.bytesSent)} />
-        <StatCard label="자산 수신 바이트" value={displayBytes(evidence.bytesReceived)} />
+        <StatCard label="총 세션 수" value={displayCount(evidence.connectionCount)} />
+        <StatCard label="송신 바이트" title={BYTES_BASIS_TOOLTIP} value={displayBytes(evidence.bytesSent)} />
+        <StatCard label="수신 바이트" title={BYTES_BASIS_TOOLTIP} value={displayBytes(evidence.bytesReceived)} />
         <StatCard label="고유 상대 IP 수" value={displayCount(evidence.uniquePeers)} />
         <StatCard label="고유 목적지 포트 수" value={displayCount(evidence.uniquePorts)} />
-        <StatCard label="페이로드 바이트가 부푼 연결 수" value={displayCount(evidence.payloadBytesInflated)} />
+        <StatCard label="페이로드 바이트가 부푼 세션 수" value={displayCount(evidence.payloadBytesInflated)} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -304,7 +307,7 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
           keyDict="serviceProtocol"
           softDict
         />
-        <DistributionList title="연결 상태 분포" counts={evidence.connStateCounts} tone="purple" keyDict="connState" />
+        <DistributionList title="세션 상태 분포" counts={evidence.connStateCounts} tone="purple" keyDict="connState" />
       </div>
 
       <div>
@@ -322,14 +325,14 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
       </div>
 
       <DynamicRecordTable
-        title="대표 연결 (최대 10건)"
+        title="주요 세션 (최대 10건)"
         rows={evidence.representativeConnections.slice(0, 10)}
-        emptyLabel="대표 연결 정보 없음"
+        emptyLabel="주요 세션 정보 없음"
       />
 
       {evidence.limits.length > 0 && (
         <div className="soc-panel p-4">
-          <h4 className="soc-subhead mb-2">근거의 한계</h4>
+          <h4 className="soc-subhead mb-2">증적의 한계</h4>
           <ul className="list-disc space-y-1 pl-5 text-xs text-slate-300">
             {evidence.limits.map((item, idx) => (
               <li key={idx}>{item}</li>
@@ -342,7 +345,7 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceView }) {
         <div className="soc-panel p-4">
           <div className="soc-subhead mb-2 flex items-center gap-1.5">
             <Database className="h-3.5 w-3.5 text-slate-400" />
-            원본 근거 데이터
+            원본 증적 데이터
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {additionalEntries.map(([key, value]) => (

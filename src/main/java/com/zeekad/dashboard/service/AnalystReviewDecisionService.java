@@ -51,7 +51,7 @@ public class AnalystReviewDecisionService {
         String cleanIncidentId = incidentId == null ? "" : incidentId.trim();
         if (cleanIncidentId.isEmpty()) {
             return DecisionResult.failure(400, "INVALID_REQUEST",
-                    "검토 대상 사건 ID가 누락되었습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
+                    "검토 대상 인시던트 ID가 누락되었습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
         return executeDecision(principal, job.getCaptureId(), reviewJobId, cleanIncidentId, action, note, clientIp);
     }
@@ -71,7 +71,7 @@ public class AnalystReviewDecisionService {
             return DecisionResult.failure(
                     404,
                     "NOT_FOUND",
-                    "이 사건에는 연결된 분석가 검토 작업이 없습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
+                    "이 인시던트에는 연결된 에스컬레이션이 없습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }
         captureAccessService.requireJobAccess(principal, reportJobId, rawIncident.getCaptureId(), clientIp);
         return executeDecision(
@@ -154,8 +154,8 @@ public class AnalystReviewDecisionService {
         );
 
         String successMessage = "confirm".equals(normalizedAction)
-                ? "판단을 '조사 진행'으로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다."
-                : "판단을 '오탐으로 종료'로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다.";
+                ? "검토 결정을 '승인'으로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다."
+                : "검토 결정을 '오탐 종결'로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다.";
         return DecisionResult.success(successMessage);
     }
 

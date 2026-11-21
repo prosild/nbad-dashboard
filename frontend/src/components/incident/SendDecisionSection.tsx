@@ -11,10 +11,10 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
       <section className="soc-card p-5">
         <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-100">
           <GitCompare className="h-4 w-4 text-slate-400" />
-          알림 전송 판단
+          경보 발송 판단
         </div>
         <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
-          이 사건은 알림 전송 판단 대상이 아닙니다.
+          이 인시던트는 경보 발송 판단 대상이 아닙니다.
         </div>
       </section>
     );
@@ -27,7 +27,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
           <GitCompare className="h-4 w-4 text-slate-400" />
-          알림 전송 판단
+          경보 발송 판단
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="text-slate-400">최종</span>
@@ -46,7 +46,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
           className="flex items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200"
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-          <span>규칙, AI 보고서, 판단 모델의 의견이 서로 다릅니다.</span>
+          <span>규칙, AI 리포트, 판단 모델의 의견이 서로 다릅니다.</span>
         </div>
       )}
 
@@ -81,12 +81,12 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
         <div className="soc-panel p-4">
           <div className="soc-subhead flex items-center gap-1.5">
             <Sparkles className="h-3.5 w-3.5 text-slate-400" />
-            AI 보고서 의견
+            AI 리포트 의견
           </div>
           <div className="mt-3 text-base font-bold text-slate-100">
             <CodeLabel dict="sendChoice" value={sendDecision.llmChoice} />
           </div>
-          <p className="mt-2 text-xs text-slate-400">AI 분석 보고서를 작성한 모델이 고른 선택지입니다.</p>
+          <p className="mt-2 text-xs text-slate-400">AI 분석 리포트를 작성한 모델이 고른 선택지입니다.</p>
         </div>
 
         <div className="soc-panel space-y-3 p-4">

@@ -1,7 +1,7 @@
 import type { IncidentQueueItem } from '../types/api';
 
 /**
- * 탐지 사건 화면의 자동 분류(우선순위)·정렬·페이지 나눔 순수 함수.
+ * 인시던트 화면의 자동 분류(우선순위)·정렬·페이지 나눔 순수 함수.
  * 규칙은 SPEC.md 결정 2026-11-21 "자동 분류 우선순위 규칙 수정"과 docs/ui-terminology.md '자동 분류 기준' 절을 따른다.
  * 우선순위는 파이프라인 결과로 화면이 계산하는 값이며 분석가 판정이 아니다.
  */
@@ -27,10 +27,10 @@ export function isClosedStatus(status: string | null | undefined): boolean {
 }
 
 /**
- * 자동 분류 우선순위. 종료된 사건은 null(우선순위 없음).
- * - 높음: 알림 보냄(zeekadWouldSend) 또는 분석가 판단 대기(zeekadReviewPending)
- * - 중간: 함께 탐지한 모델이 1개 이상(2개 이상 모델 동시 탐지) 또는 AI 분석 보고서 있음(hasReport)
- * - 낮음: 그 밖
+ * 자동 분류 우선순위. 종결된 인시던트는 null(우선순위 없음).
+ * - High: 경보 발송(zeekadWouldSend) 또는 에스컬레이션 대기(zeekadReviewPending)
+ * - Medium: 교차 탐지 모델이 1개 이상(2개 이상 모델 동시 탐지) 또는 AI 분석 리포트 있음(hasReport)
+ * - Low: 그 밖
  */
 export function computePriority(item: TriageInput): Priority | null {
   if (isClosedStatus(item.zeekadStatus)) {
@@ -50,7 +50,7 @@ export type SortDir = 'asc' | 'desc';
 
 export const SORT_KEYS: readonly SortKey[] = ['priority', 'rank', 'start', 'connections', 'status'];
 
-/** 처음 누를 때 방향: 우선순위·상태·순위는 오름(높음·신규·1위 먼저), 시각·연결 수는 내림(최근·많은 것 먼저). */
+/** 처음 누를 때 방향: 우선순위·상태·순위는 오름(High·신규·1위 먼저), 시각·세션 수는 내림(최근·많은 것 먼저). */
 export const DEFAULT_SORT_DIR: Record<SortKey, SortDir> = {
   priority: 'asc',
   rank: 'asc',
@@ -71,7 +71,7 @@ export function parseSortDir(raw: string | null | undefined): SortDir | null {
 
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
-/** 상태 순서: 신규 → 조사 중 → 종료. 등록되지 않은 값은 조사 중과 종료 사이에 둔다. */
+/** 상태 순서: 신규 → 분석 중 → 종결. 등록되지 않은 값은 분석 중과 종결 사이에 둔다. */
 function statusOrder(status: string | null | undefined): number {
   const norm = normalizeStatus(status);
   if (norm === 'open') return 0;
@@ -86,7 +86,7 @@ function timeValue(iso: string | null | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-/** 정렬 값. null은 방향과 상관없이 맨 뒤로 보낸다(종료 사건의 우선순위, 연결 수·시각 없음). */
+/** 정렬 값. null은 방향과 상관없이 맨 뒤로 보낸다(종결 인시던트의 우선순위, 세션 수·시각 없음). */
 function sortValue(item: IncidentQueueItem, key: SortKey): number | null {
   switch (key) {
     case 'priority': {

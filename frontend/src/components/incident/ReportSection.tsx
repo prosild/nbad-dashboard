@@ -18,10 +18,10 @@ export function ReportSection({ report }: { report: ReportView }) {
       <section className="soc-card p-5">
         <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-100">
           <FileText className="h-4 w-4 text-slate-400" />
-          AI 분석 보고서
+          AI 분석 리포트
         </div>
         <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
-          이 사건에는 AI 분석 보고서가 없습니다.
+          이 인시던트에는 AI 분석 리포트가 없습니다.
         </div>
       </section>
     );
@@ -34,7 +34,7 @@ export function ReportSection({ report }: { report: ReportView }) {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
           <FileText className="h-4 w-4 text-slate-400" />
-          AI 분석 보고서
+          AI 분석 리포트
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SocBadge tone="neutral">
@@ -64,7 +64,7 @@ export function ReportSection({ report }: { report: ReportView }) {
           </div>
         </div>
         <div className="soc-panel p-3">
-          <div className="text-slate-400">보고서 형식 · 입력 형식 · 실행 ID</div>
+          <div className="text-slate-400">리포트 형식 · 입력 형식 · 실행 ID</div>
           <div className="mt-1 break-all text-slate-200">
             <span className="font-mono" data-raw="">
               {report.reportVersion ?? '-'}
@@ -96,7 +96,7 @@ export function ReportSection({ report }: { report: ReportView }) {
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200">
           <div className="flex items-center gap-1.5 font-semibold">
             <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-            사실 검증 실패 사유: {report.verificationReason || '-'}
+            검증 실패 사유: {report.verificationReason || '-'}
           </div>
           {report.verificationProblems.length > 0 && (
             <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
@@ -186,7 +186,7 @@ export function ReportSection({ report }: { report: ReportView }) {
       {report.sendRecommendation && (
         <div className="soc-panel p-4">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h4 className="soc-subhead">보고서의 알림 권고</h4>
+            <h4 className="soc-subhead">리포트의 경보 권고</h4>
             {report.sendRecommendation.choice && (
               <SocBadge tone="neutral">
                 <CodeLabel dict="sendChoice" value={report.sendRecommendation.choice} />
@@ -200,7 +200,7 @@ export function ReportSection({ report }: { report: ReportView }) {
 
       {pseudonymEntries.length > 0 && (
         <div className="soc-panel p-4">
-          <h4 className="soc-subhead mb-2">보고서 속 가명</h4>
+          <h4 className="soc-subhead mb-2">리포트 속 가명</h4>
           <div className="flex flex-wrap gap-2">
             {pseudonymEntries.map(([key, ip]) => (
               <div key={key} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-1.5 font-mono text-xs">
@@ -217,7 +217,7 @@ export function ReportSection({ report }: { report: ReportView }) {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {report.limitations.length > 0 && (
             <div className="soc-panel p-4">
-              <h4 className="soc-subhead mb-2">보고서의 한계</h4>
+              <h4 className="soc-subhead mb-2">리포트의 한계</h4>
               <ul className="list-disc space-y-1 pl-4 text-xs text-slate-300">
                 {report.limitations.map((item, idx) => (
                   <li key={idx}>{item}</li>

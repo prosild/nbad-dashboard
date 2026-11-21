@@ -23,6 +23,7 @@ import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
   CodeLabel,
+  DetectionModelName,
   IncidentStatusBadge,
   PRIORITY_TOOLTIP,
   PriorityBadge,
@@ -31,7 +32,7 @@ import {
 } from '../components/StatusBadge';
 import type { IncidentQueueItem, IncidentQueueResponse, ScoringJob } from '../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
-import { labelText } from '../utils/labels';
+import { detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
 import {
   computePriority,
   DEFAULT_SORT,
@@ -48,7 +49,7 @@ import {
   type SortKey,
 } from '../utils/triage';
 
-/** 분석 실행은 날짜·시각으로 보여 주고 실행 번호는 툴팁에만 둔다. */
+/** 탐지 작업은 날짜·시각으로 보여 주고 실행 번호는 툴팁에만 둔다. */
 function jobTimeLabel(job: ScoringJob | null | undefined): string {
   if (!job) {
     return '-';
@@ -122,7 +123,7 @@ export function IncidentQueuePage() {
       });
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '사건 목록을 불러오지 못했습니다.');
+      setErrorMsg(err instanceof ApiError ? err.message : '인시던트 목록을 불러오지 못했습니다.');
     } finally {
       setLoading(false);
     }
@@ -155,7 +156,7 @@ export function IncidentQueuePage() {
     updateParams({ [key]: value || null }, { clearJobId });
   }
 
-  /** 수집 구간·분석 실행을 뺀 나머지를 모두 지운다. */
+  /** 캡처·탐지 작업을 뺀 나머지를 모두 지운다. */
   function handleResetFilters() {
     const next = new URLSearchParams();
     const cap = captureId || data?.selectedCaptureId || '';
@@ -236,17 +237,24 @@ export function IncidentQueuePage() {
 
   const chips = useMemo(() => {
     const list: { key: string; label: string; raw?: string }[] = [];
-    if (pickedBy) list.push({ key: 'pickedBy', label: '주 탐지 모델', raw: pickedBy });
+    if (pickedBy) {
+      const model = lookupLabel('detectionModel', pickedBy);
+      list.push(
+        model.known
+          ? { key: 'pickedBy', label: `탐지 모델: ${model.text}` }
+          : { key: 'pickedBy', label: '탐지 모델', raw: pickedBy },
+      );
+    }
     if (role) list.push({ key: 'role', label: `통신 방향: ${labelText('hostRole', role)}` });
-    if (status) list.push({ key: 'status', label: `사건 상태: ${labelText('incidentStatus', status)}` });
+    if (status) list.push({ key: 'status', label: `인시던트 상태: ${labelText('incidentStatus', status)}` });
     if (hasReport)
-      list.push({ key: 'hasReport', label: `AI 분석 보고서: ${hasReport === 'true' ? '보고서 있음' : '보고서 없음'}` });
+      list.push({ key: 'hasReport', label: `AI 리포트: ${hasReport === 'true' ? '리포트 있음' : '리포트 없음'}` });
     if (wouldSend)
-      list.push({ key: 'wouldSend', label: `알림 전송 판단: ${wouldSend === 'true' ? '알림 보냄' : '알림 보류'}` });
+      list.push({ key: 'wouldSend', label: `경보 발송 판단: ${wouldSend === 'true' ? '경보 발송' : '보류'}` });
     if (asset) list.push({ key: 'asset', label: '자산 검색', raw: asset });
     if (priorityFilter) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', priorityFilter)}` });
-    if (reviewPendingFilter) list.push({ key: 'reviewPending', label: '판단 대기만' });
-    if (alertedFilter) list.push({ key: 'alerted', label: '알림 보냄만' });
+    if (reviewPendingFilter) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
+    if (alertedFilter) list.push({ key: 'alerted', label: '경보 발송만' });
     return list;
   }, [pickedBy, role, status, hasReport, wouldSend, asset, priorityFilter, reviewPendingFilter, alertedFilter]);
 
@@ -258,7 +266,7 @@ export function IncidentQueuePage() {
   const serverFilterCount = SERVER_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
 
   return (
-    <AppShell title="탐지 사건" subtitle="탐지 모델이 올린 사건을 우선순위 순으로 확인하고 조사합니다">
+    <AppShell title="인시던트" subtitle="탐지 모델이 올린 인시던트를 우선순위 순으로 확인하고 분석합니다">
       <div className="space-y-3">
         <SummaryStrip
           summary={summary}
@@ -272,7 +280,7 @@ export function IncidentQueuePage() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
               <label htmlFor="filter-capture" className="shrink-0 text-xs font-medium text-slate-400">
-                수집 구간
+                캡처
               </label>
               <select
                 id="filter-capture"
@@ -285,13 +293,13 @@ export function IncidentQueuePage() {
                     {cap}
                   </option>
                 ))}
-                {(data?.allowedCaptures?.length ?? 0) === 0 && <option value="">열람 허용 수집 구간 없음</option>}
+                {(data?.allowedCaptures?.length ?? 0) === 0 && <option value="">열람 허용 캡처 없음</option>}
               </select>
             </div>
 
             <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
               <label htmlFor="filter-job" className="shrink-0 text-xs font-medium text-slate-400">
-                분석 실행
+                탐지 작업
               </label>
               <select
                 id="filter-job"
@@ -300,7 +308,7 @@ export function IncidentQueuePage() {
                 className="soc-select w-full py-1.5 text-xs tabular-nums sm:w-80"
               >
                 {(data?.captureJobs ?? []).map((job, idx) => (
-                  <option key={job.jobId} value={String(job.jobId)} title={`분석 실행 #${job.jobId}`}>
+                  <option key={job.jobId} value={String(job.jobId)} title={`탐지 작업 #${job.jobId}`}>
                     {jobTimeLabel(job)} · {job.bundleId} · {labelText('jobStatus', job.status)}
                     {idx === 0 ? ' · 최신' : ''}
                   </option>
@@ -368,7 +376,7 @@ export function IncidentQueuePage() {
             >
               <div>
                 <label htmlFor="filter-model" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  주 탐지 모델
+                  탐지 모델
                 </label>
                 <select
                   id="filter-model"
@@ -378,8 +386,8 @@ export function IncidentQueuePage() {
                 >
                   <option value="">모든 모델</option>
                   {(data?.availableModels ?? []).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
+                    <option key={m} value={m} title={detectionModelInfo(m).tooltip}>
+                      {labelText('detectionModel', m)}
                     </option>
                   ))}
                 </select>
@@ -406,7 +414,7 @@ export function IncidentQueuePage() {
 
               <div>
                 <label htmlFor="filter-status" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  사건 상태
+                  인시던트 상태
                 </label>
                 <select
                   id="filter-status"
@@ -423,7 +431,7 @@ export function IncidentQueuePage() {
 
               <div>
                 <label htmlFor="filter-has-report" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  AI 분석 보고서
+                  AI 리포트
                 </label>
                 <select
                   id="filter-has-report"
@@ -432,14 +440,14 @@ export function IncidentQueuePage() {
                   className="soc-select w-full py-1.5 text-xs"
                 >
                   <option value="">전체</option>
-                  <option value="true">보고서 있음</option>
-                  <option value="false">보고서 없음</option>
+                  <option value="true">리포트 있음</option>
+                  <option value="false">리포트 없음</option>
                 </select>
               </div>
 
               <div>
                 <label htmlFor="filter-would-send" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  알림 전송 판단
+                  경보 발송 판단
                 </label>
                 <select
                   id="filter-would-send"
@@ -448,8 +456,8 @@ export function IncidentQueuePage() {
                   className="soc-select w-full py-1.5 text-xs"
                 >
                   <option value="">전체</option>
-                  <option value="true">알림 보냄</option>
-                  <option value="false">알림 보류</option>
+                  <option value="true">경보 발송</option>
+                  <option value="false">보류</option>
                 </select>
               </div>
 
@@ -478,12 +486,12 @@ export function IncidentQueuePage() {
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadQueue()} />}
 
         {loading && !data ? (
-          <LoadingPanel label="사건 목록을 불러오는 중..." />
+          <LoadingPanel label="인시던트 목록을 불러오는 중..." />
         ) : (
           <div className="soc-card overflow-hidden">
             {pageRows.length === 0 ? (
               <p className="px-4 py-12 text-center text-sm text-slate-400">
-                조건에 맞는 사건이 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
+                조건에 맞는 인시던트가 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
               </p>
             ) : (
               <>
@@ -532,11 +540,11 @@ function SummaryStrip({
   };
   return (
     <section
-      aria-label="사건 요약"
+      aria-label="인시던트 요약"
       className="soc-card flex flex-wrap items-center gap-x-1 gap-y-1 px-2 py-1.5 text-xs"
     >
       <div className="flex items-baseline gap-2 px-2 py-1">
-        <span className="text-slate-400">전체 사건 수</span>
+        <span className="text-slate-400">전체 인시던트</span>
         <span className="text-lg font-bold tabular-nums text-slate-100">{formatNumber(summary.total)}</span>
       </div>
 
@@ -562,9 +570,9 @@ function SummaryStrip({
         <StripButton
           pressed={reviewPendingFilter}
           onClick={() => onToggle('reviewPending', 'true')}
-          ariaLabel={`판단 대기 ${summary.reviewPending}건만 보기`}
+          ariaLabel={`에스컬레이션 대기 ${summary.reviewPending}건만 보기`}
         >
-          <span className="text-slate-400">판단 대기</span>
+          <span className="text-slate-400">에스컬레이션 대기</span>
           <span
             className={`text-base font-bold tabular-nums ${summary.reviewPending > 0 ? 'text-amber-300' : 'text-slate-300'}`}
           >
@@ -572,17 +580,17 @@ function SummaryStrip({
           </span>
         </StripButton>
         <Link to="/reviews?pendingOnly=true" className="px-1 text-[11px] text-cyan-300 hover:underline">
-          판단 요청 화면
+          에스컬레이션으로 이동
         </Link>
       </div>
 
       <StripButton
         pressed={alertedFilter}
         onClick={() => onToggle('alerted', 'true')}
-        ariaLabel={`알림 보냄 ${summary.alerted}건만 보기`}
+        ariaLabel={`경보 발송 ${summary.alerted}건만 보기`}
       >
         <Bell className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
-        <span className="text-slate-400">알림 보냄</span>
+        <span className="text-slate-400">경보 발송</span>
         <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(summary.alerted)}</span>
       </StripButton>
 
@@ -597,16 +605,16 @@ function SummaryStrip({
           </p>
           <ul className="space-y-1">
             <li>
-              <span className="font-semibold text-rose-200">높음</span>: 알림을 보냈거나 분석가 판단을 기다리는 사건
+              <span className="font-semibold text-rose-200">High</span>: 경보를 발송했거나 에스컬레이션 대기 중인 인시던트
             </li>
             <li>
-              <span className="font-semibold text-slate-50">중간</span>: 2개 이상 모델이 함께 탐지했거나 AI 분석
-              보고서가 있는 사건
+              <span className="font-semibold text-slate-50">Medium</span>: 교차 탐지(2개 이상 모델)됐거나 AI 분석
+              리포트가 있는 인시던트
             </li>
             <li>
-              <span className="font-semibold text-slate-400">낮음</span>: 그 밖의 사건
+              <span className="font-semibold text-slate-400">Low</span>: 그 밖의 인시던트
             </li>
-            <li className="text-slate-400">종료된 사건은 우선순위를 매기지 않습니다(-).</li>
+            <li className="text-slate-400">종결된 인시던트는 우선순위를 매기지 않습니다(-).</li>
           </ul>
           <p className="mt-2 text-slate-400">기본 정렬은 우선순위, 같으면 탐지 순위 순입니다.</p>
         </div>
@@ -652,7 +660,7 @@ const SORT_LABEL: Record<SortKey, string> = {
   priority: '우선순위',
   rank: '순위',
   start: '관측 시작',
-  connections: '연결 수',
+  connections: '세션 수',
   status: '상태',
 };
 
@@ -700,11 +708,11 @@ function SortHeader({
 
 function hiddenInfoTitle(item: IncidentQueueItem): string {
   const review = item.zeekadReviewPending
-    ? '판단 대기'
+    ? '대기'
     : item.zeekadReviewAction
       ? labelText('reviewAction', item.zeekadReviewAction.toLowerCase())
       : '-';
-  return `통신 방향 ${labelText('hostRole', item.zeekadRole)} · 연결 ${formatNumber(item.connectionCount)}건 · 분석가 판단 ${review}`;
+  return `통신 방향 ${labelText('hostRole', item.zeekadRole)} · 세션 ${formatNumber(item.connectionCount)}건 · 에스컬레이션 ${review}`;
 }
 
 function QueueTable({
@@ -737,7 +745,7 @@ function QueueTable({
   return (
     <div className="hidden overflow-x-auto md:block">
       <table className="w-full border-collapse text-left">
-        <caption className="sr-only">탐지 사건 목록. 행을 누르거나 행에서 Enter 키를 누르면 사건 상세로 갑니다.</caption>
+        <caption className="sr-only">인시던트 목록. 행을 누르거나 행에서 Enter 키를 누르면 인시던트 상세로 갑니다.</caption>
         <thead>
           <tr>
             <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
@@ -750,18 +758,18 @@ function QueueTable({
             </th>
             <SortHeader column="start" label="관측 시작 · 지속" {...headerProps} />
             <th scope="col" className="soc-th-compact">
-              주 탐지 모델
+              탐지 모델
             </th>
-            <th scope="col" className="soc-th-compact" title="AI 분석 보고서 · 사실 검증 · 알림">
-              보고서·알림
+            <th scope="col" className="soc-th-compact" title="AI 분석 리포트 · 검증 · 경보">
+              리포트·경보
             </th>
             <SortHeader column="status" label="상태 · 판정" {...headerProps} />
             <th scope="col" className="soc-th-compact hidden lg:table-cell">
-              분석가 판단
+              에스컬레이션
             </th>
             <SortHeader
               column="connections"
-              label="연결 수"
+              label="세션 수"
               align="right"
               className="hidden xl:table-cell"
               {...headerProps}
@@ -819,9 +827,7 @@ function QueueTable({
                   <span className="text-slate-400">{formatDuration(item.eventStart, item.eventEnd)}</span>
                 </td>
                 <td className="soc-td-compact">
-                  <span className="font-mono font-semibold text-slate-100" data-raw="">
-                    {item.zeekadPickedBy ?? '-'}
-                  </span>
+                  <DetectionModelName id={item.zeekadPickedBy} className="font-semibold text-slate-100" />
                   <AlsoFlagged models={item.zeekadAlsoFlaggedBy} />
                 </td>
                 <td className="soc-td-compact">
@@ -851,7 +857,7 @@ function QueueTable({
   );
 }
 
-/** 함께 탐지한 모델 수. 화면 글은 +N으로 줄이고 이름은 툴팁, 개수는 읽기 프로그램용 글로 남긴다. */
+/** 교차 탐지 모델 수. 화면 글은 +N으로 줄이고 이름은 툴팁, 개수는 읽기 프로그램용 글로 남긴다. */
 function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
   const list = models ?? [];
   if (list.length === 0) {
@@ -859,18 +865,18 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
   }
   return (
     <span
-      title={`함께 탐지한 모델: ${list.join(', ')}`}
+      title={`교차 탐지: ${list.map((m) => labelText('detectionModel', m)).join(', ')}`}
       className="ml-1.5 rounded border border-slate-700 bg-slate-800/80 px-1 text-[11px] tabular-nums text-slate-300"
     >
       <span aria-hidden="true">+{list.length}</span>
-      <span className="sr-only">함께 탐지한 모델 {list.length}개</span>
+      <span className="sr-only">교차 탐지 모델 {list.length}개</span>
     </span>
   );
 }
 
 const CHIP_BASE = 'inline-flex h-5 w-5 items-center justify-center rounded border';
 
-/** 보고서·사실 검증·알림을 묶은 아이콘 칩. 각 칩은 접근성 이름과 툴팁을 가진다. */
+/** 리포트·검증·경보를 묶은 아이콘 칩. 각 칩은 접근성 이름과 툴팁을 가진다. */
 function SignalChips({ item }: { item: IncidentQueueItem }) {
   const hasReport = item.zeekadReportJobId !== null;
   const kind = labelText('reportKind', item.zeekadReportKind);
@@ -879,22 +885,22 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
       {hasReport ? (
         <span
           role="img"
-          aria-label={`AI 분석 보고서 있음: ${kind}`}
-          title={`${kind} 보고서 · 보고서 실행 #${item.zeekadReportJobId}`}
+          aria-label={`AI 분석 리포트 있음: ${kind}`}
+          title={`${kind} 리포트 · 리포트 작업 #${item.zeekadReportJobId}`}
           className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
         >
           <FileText className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
-        <span role="img" aria-label="보고서 없음" title="보고서 없음" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
+        <span role="img" aria-label="리포트 없음" title="리포트 없음" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
           <FileX className="h-3 w-3" aria-hidden="true" />
         </span>
       )}
       {hasReport && item.zeekadVerificationPassed === true ? (
         <span
           role="img"
-          aria-label="사실 검증 통과"
-          title="사실 검증 통과"
+          aria-label="검증 통과"
+          title="검증 통과"
           className={`${CHIP_BASE} border-emerald-500/35 bg-emerald-500/10 text-emerald-300`}
         >
           <ShieldCheck className="h-3 w-3" aria-hidden="true" />
@@ -902,8 +908,8 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
       ) : hasReport && item.zeekadVerificationPassed === false ? (
         <span
           role="img"
-          aria-label="사실 검증 실패"
-          title="사실 검증 실패"
+          aria-label="검증 실패"
+          title="검증 실패"
           className={`${CHIP_BASE} border-amber-500/40 bg-amber-500/15 text-amber-300`}
         >
           <AlertTriangle className="h-3 w-3" aria-hidden="true" />
@@ -914,14 +920,14 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
       {item.zeekadWouldSend ? (
         <span
           role="img"
-          aria-label="알림 보냄"
-          title="알림 보냄"
+          aria-label="경보 발송"
+          title="경보 발송"
           className={`${CHIP_BASE} border-cyan-500/35 bg-cyan-500/10 text-cyan-300`}
         >
           <Bell className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
-        <span role="img" aria-label="알림 보류" title="알림 보류" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
+        <span role="img" aria-label="보류" title="보류" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
           <BellOff className="h-3 w-3" aria-hidden="true" />
         </span>
       )}
@@ -933,7 +939,7 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
 
 function QueueMobileList({ rows }: { rows: RowItem[] }) {
   return (
-    <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="탐지 사건 목록">
+    <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="인시던트 목록">
       {rows.map(({ item, priority }) => (
         <li key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}>
           <Link
