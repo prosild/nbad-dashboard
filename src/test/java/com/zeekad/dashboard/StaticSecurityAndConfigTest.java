@@ -222,7 +222,6 @@ class StaticSecurityAndConfigTest {
 
         assertThat(compose).contains("MODSEC_RULE_ENGINE: \"on\"", "PARANOIA: \"1\"",
                 "BLOCKING_PARANOIA: \"1\"", "ANOMALY_INBOUND: \"5\"");
-        assertThat(compose).doesNotContain("PORTFOLIO_MAX_FAILED_ATTEMPTS:-");
         assertThat(compose).doesNotContainPattern("(?i)DetectionOnly|MODSEC_RULE_ENGINE:\\s*\"?off");
         assertThat(compose).doesNotContainPattern("(?m)^\\s*(BLOCKING_)?PARANOIA:\\s*\"?0");
     }
@@ -263,6 +262,7 @@ class StaticSecurityAndConfigTest {
                 // T29: 잠금은 5회 고정(.env 변수 없음), 공개 비밀번호 demo만 잠금 제외
                 "DASHBOARD_MAX_FAILED_ATTEMPTS: \"5\"", "DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo}",
                 "cap_drop: [ALL]", "no-new-privileges:true", "subnet: ${PORTFOLIO_SUBNET:-10.203.48.0/24}");
+        assertThat(compose).doesNotContain("PORTFOLIO_MAX_FAILED_ATTEMPTS:-");
         assertThat(compose).doesNotContainPattern("(?i)DetectionOnly|MODSEC_RULE_ENGINE:\\s*\"?off");
 
         String httpConf = Files.readString(
