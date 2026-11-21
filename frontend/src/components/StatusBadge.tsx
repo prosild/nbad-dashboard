@@ -254,17 +254,35 @@ export function ResumeStatusBadge({
   );
 }
 
-/** 경보 발송 판단 결과(would_send) */
+/**
+ * 발송 판단 결과(zeek_AD would_send): 발송 / 보류. T21: "경보 발송"이라 부르지 않는다.
+ * "경보 발송"은 사건 알림 Slack 기록이 있다는 뜻이고(AlertedBadge), 발송 판단과 다를 수 있다.
+ */
 export function WouldSendBadge({ wouldSend }: { wouldSend: boolean | null | undefined }) {
   return wouldSend ? (
-    <SocBadge tone="notice">
+    <SocBadge tone="notice" title="발송 판단: 발송">
+      <Bell className="h-3 w-3" aria-hidden="true" />
+      발송
+    </SocBadge>
+  ) : (
+    <SocBadge tone="muted" title="발송 판단: 보류">
+      <BellOff className="h-3 w-3" aria-hidden="true" />
+      보류
+    </SocBadge>
+  );
+}
+
+/** 경보 발송(T21): 사건 알림 Slack 기록(상태 후속 알림 제외)이 있는 인시던트. 현황판 KPI·목록 필터와 같은 정의 */
+export function AlertedBadge({ alerted }: { alerted: boolean | null | undefined }) {
+  return alerted ? (
+    <SocBadge tone="notice" title="사건 알림 Slack 기록이 있습니다(dry-run 기록·발송 실패 기록 포함)">
       <Bell className="h-3 w-3" aria-hidden="true" />
       경보 발송
     </SocBadge>
   ) : (
-    <SocBadge tone="muted">
+    <SocBadge tone="muted" title="사건 알림 Slack 기록이 없습니다">
       <BellOff className="h-3 w-3" aria-hidden="true" />
-      보류
+      발송 기록 없음
     </SocBadge>
   );
 }

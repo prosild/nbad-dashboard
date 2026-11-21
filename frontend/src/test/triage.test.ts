@@ -34,6 +34,7 @@ function item(overrides: Partial<IncidentQueueItem> = {}): IncidentQueueItem {
     zeekadWouldSend: false,
     zeekadReviewAction: null,
     zeekadReviewPending: false,
+    alerted: false,
     ...overrides,
   };
 }

@@ -22,6 +22,12 @@ import { SocBadge, UserRoleBadge } from './StatusBadge';
 
 export const PRODUCT_NAME = 'zeek_AD 보안 관제';
 
+/**
+ * T21: 고정 띠(stickyBar)가 있는 화면(인시던트 상세)은 넓은 화면(xl)에서 상단 바 줄을 접지 않는다.
+ * 헤더 높이가 폭에 따라 달라지지 않아야 조치 패널의 고정 위치(xl:top)가 헤더에 가리지 않는다.
+ */
+const STICKY_ROW_NOWRAP = 'xl:flex-nowrap';
+
 interface NavItem {
   to: string;
   label: string;
@@ -163,7 +169,7 @@ export function AppShell({
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 border-b border-slate-800/90 bg-[#090f1d]/95 backdrop-blur">
-          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className={`mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -179,7 +185,7 @@ export function AppShell({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className={`flex flex-wrap items-center gap-2 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
               <span
                 className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-slate-400"
                 title="화면의 모든 날짜·시각은 한국 표준시(UTC+9)로 표시합니다."

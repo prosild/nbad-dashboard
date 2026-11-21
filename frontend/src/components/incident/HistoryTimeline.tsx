@@ -61,9 +61,13 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
             </span>
             {ev.item.resolution && <ResolutionBadge resolution={ev.item.resolution} />}
           </div>
-          <div className="mt-1 text-slate-200">{ev.item.reason || '-'}</div>
+          {/* T21: 각 항목은 그 변경의 변경자·사유다. 결정 반영으로 생긴 항목의 사유는 결정 메모다(서버가 VIEWER에게 IPv4를 가린다). */}
+          <div className="mt-1 text-slate-200">
+            <span className="mr-1.5 text-[11px] text-slate-500">사유</span>
+            <span className="whitespace-pre-line break-words">{ev.item.reason || '-'}</span>
+          </div>
           <div className="mt-0.5 text-[11px] text-slate-400">
-            마지막 변경자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+            변경자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
           </div>
         </>
       );
@@ -89,7 +93,7 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
         </div>
       );
     case 'reviewResumed':
-      return <div className="font-semibold text-slate-100">결정이 자동 처리에 반영됨</div>;
+      return <div className="font-semibold text-slate-100">결정 반영됨(파이프라인)</div>;
     case 'reviewResumeFailed':
       return <div className="font-semibold text-amber-200">결정 반영 실패(관리자 확인 필요)</div>;
     default:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
@@ -28,7 +28,7 @@ export const DETAIL_TABS = [
   { key: 'summary', label: '요약' },
   { key: 'evidence', label: '증적' },
   { key: 'report', label: 'AI 리포트' },
-  { key: 'decision', label: '경보 판단' },
+  { key: 'decision', label: '발송 판단' },
   { key: 'slack', label: 'Slack' },
   { key: 'history', label: '이력' },
 ] as const;
@@ -43,15 +43,26 @@ interface NavState {
   /** 목록 쿼리로 만든 순서면 'list', 쿼리가 없어 파이프라인 순위 순이면 'pipeline' */
   basis: 'list' | 'pipeline';
   ordered: IncidentQueueItem[];
+  /** 목록 조회 실패(T21: 헤더에 안내와 다시 시도를 둔다) */
+  failed: boolean;
 }
+
+/** 이동 목록 조회 실패 안내(T21) */
+export const NAV_LOAD_FAILED_TEXT = '이동 목록을 불러오지 못했습니다';
 
 /**
  * 이전·다음 순서(M1). 목록이 넘긴 `from=` 쿼리로 `GET /api/incidents`를 한 번 불러 목록과 같은 함수(orderQueue)로 순서를 만든다.
  * 쿼리가 없으면 같은 캡처·탐지 작업의 목록을 파이프라인 순위 순으로 쓴다.
  */
-function useNeighborOrder(fromQuery: string | null, captureId: string | null, jobId: number | null) {
+function useNeighborOrder(
+  fromQuery: string | null,
+  captureId: string | null,
+  jobId: number | null,
+): { nav: NavState | null; retry: () => void } {
   const [nav, setNav] = useState<NavState | null>(null);
-  const key = fromQuery !== null ? `from:${fromQuery}` : captureId ? `job:${captureId}|${jobId}` : null;
+  const [attempt, setAttempt] = useState(0);
+  const baseKey = fromQuery !== null ? `from:${fromQuery}` : captureId ? `job:${captureId}|${jobId}` : null;
+  const key = baseKey === null ? null : `${baseKey}#${attempt}`;
   // 같은 목록 안에서 이전·다음으로 옮겨 가도 다시 부르지 않도록 key가 바뀔 때만 부른다.
   useEffect(() => {
     if (key === null) return;
@@ -67,13 +78,15 @@ function useNeighborOrder(fromQuery: string | null, captureId: string | null, jo
           };
           for (const k of SERVER_FILTER_KEYS) filters[k] = params.get(k) || undefined;
           const res = await incidentsApi.list(filters);
-          if (!cancelled) setNav({ basis: 'list', ordered: orderQueue(res.incidents, parseQueueView(params)) });
+          if (!cancelled)
+            setNav({ basis: 'list', ordered: orderQueue(res.incidents, parseQueueView(params)), failed: false });
         } else {
           const res = await incidentsApi.list({ captureId: captureId ?? undefined, jobId: jobId ?? undefined });
-          if (!cancelled) setNav({ basis: 'pipeline', ordered: sortIncidents(res.incidents, 'rank', 'asc') });
+          if (!cancelled)
+            setNav({ basis: 'pipeline', ordered: sortIncidents(res.incidents, 'rank', 'asc'), failed: false });
         }
       } catch {
-        if (!cancelled) setNav({ basis: fromQuery !== null ? 'list' : 'pipeline', ordered: [] });
+        if (!cancelled) setNav({ basis: fromQuery !== null ? 'list' : 'pipeline', ordered: [], failed: true });
       }
     })();
     return () => {
@@ -82,7 +95,8 @@ function useNeighborOrder(fromQuery: string | null, captureId: string | null, jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  return nav;
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { nav, retry };
 }
 
 export function IncidentDetailPage() {
@@ -134,7 +148,7 @@ export function IncidentDetailPage() {
   const current =
     incident && String(incident.jobId) === jobId && String(incident.queueRank) === queueRank ? detail : undefined;
 
-  const nav = useNeighborOrder(fromQuery, incident?.captureId ?? null, incident?.jobId ?? null);
+  const { nav, retry: retryNav } = useNeighborOrder(fromQuery, incident?.captureId ?? null, incident?.jobId ?? null);
   const neighbors = useMemo(
     () => (nav && jobId && queueRank ? findNeighbors(nav.ordered, Number(jobId), Number(queueRank)) : null),
     [nav, jobId, queueRank],
@@ -174,12 +188,22 @@ export function IncidentDetailPage() {
 
   const navBasisLabel = nav?.basis === 'pipeline' ? '파이프라인 순위 순' : '목록 순서';
   const navActions = (
-    <nav aria-label="인시던트 이동" className="flex flex-wrap items-center gap-1.5">
+    <nav aria-label="인시던트 이동" className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap">
       <Link to={backUrl} className="soc-btn-secondary py-1.5 text-xs">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         인시던트 목록으로
       </Link>
       <NeighborLink item={neighbors?.prev ?? null} to={linkTo} label="이전 인시던트" icon="prev" />
+      {nav?.failed && (
+        <span role="alert" className="inline-flex items-center gap-1.5 text-[11px] text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden="true" />
+          {NAV_LOAD_FAILED_TEXT}
+          <button type="button" onClick={retryNav} className="soc-btn-secondary px-2 py-1 text-[11px]">
+            <RefreshCw className="h-3 w-3" aria-hidden="true" />
+            다시 시도
+          </button>
+        </span>
+      )}
       {neighbors && neighbors.index >= 0 && (
         <span className="text-[11px] tabular-nums text-slate-400" title={`이전·다음 기준: ${navBasisLabel}`}>
           {neighbors.index + 1} / {neighbors.total}

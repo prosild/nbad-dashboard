@@ -7,6 +7,7 @@ import type {
   AuthCsrfResponse,
   AuthLoginResponse,
   AuthMeResponse,
+  LoginNoticeResponse,
   IncidentDetailApiResponse,
   IncidentQueueResponse,
   OperationsApiResponse,
@@ -30,6 +31,8 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
 export const authApi = {
   csrf: () => apiRequest<AuthCsrfResponse>('/api/auth/csrf', { skipAuthRedirect: true }),
   me: () => apiRequest<AuthMeResponse>('/api/auth/me', { skipAuthRedirect: true }),
+  /** T21: 로그인 화면 안내 문구(로그인 전 공개 GET, 일반 텍스트) */
+  loginNotice: () => apiRequest<LoginNoticeResponse>('/api/auth/login-notice', { skipAuthRedirect: true }),
   login: (username: string, password: string) =>
     apiRequest<AuthLoginResponse>('/api/auth/login', {
       method: 'POST',

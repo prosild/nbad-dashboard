@@ -28,7 +28,8 @@ export function isClosedStatus(status: string | null | undefined): boolean {
 
 /**
  * 자동 분류 우선순위. 종결된 인시던트는 null(우선순위 없음).
- * - High: 경보 발송(zeekadWouldSend) 또는 에스컬레이션 대기(zeekadReviewPending)
+ * - High: 발송 판단 "발송"(zeekadWouldSend) 또는 에스컬레이션 대기(zeekadReviewPending)
+ *   (T21: 계산은 그대로 두고 이름만 맞췄다. "경보 발송"은 사건 알림 Slack 기록(alerted)이며 이 규칙의 입력이 아니다.)
  * - Medium: 교차 탐지 모델이 1개 이상(2개 이상 모델 동시 탐지) 또는 AI 분석 리포트 있음(hasReport)
  * - Low: 그 밖
  */
@@ -200,7 +201,8 @@ export function applyClientFilters(items: readonly IncidentQueueItem[], filters:
   return items.filter((item) => {
     if (filters.priority && computePriority(item) !== filters.priority) return false;
     if (filters.reviewPending && !item.zeekadReviewPending) return false;
-    if (filters.alerted && !item.zeekadWouldSend) return false;
+    // T21: 경보 발송 = 사건 알림 Slack 기록(alerted). 현황판 KPI(feedback_summary.alerted)와 같은 정의다.
+    if (filters.alerted && !item.alerted) return false;
     return true;
   });
 }

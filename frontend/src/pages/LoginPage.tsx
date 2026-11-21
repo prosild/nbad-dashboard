@@ -1,16 +1,40 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Lock, Shield } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, Lock, Shield } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { authApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { PRODUCT_NAME } from '../components/AppShell';
+
+/**
+ * 로그인 화면 안내 문구(T21, 설정값 DASHBOARD_LOGIN_NOTICE). 값이 있을 때만 로그인 폼 위에 보인다.
+ * 일반 텍스트로만 그린다(텍스트 노드, 줄바꿈은 CSS whitespace-pre-line). 불러오지 못하면 아무것도 보이지 않는다.
+ */
+function useLoginNotice(): string {
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    let alive = true;
+    authApi
+      .loginNotice()
+      .then((res) => {
+        if (alive) setNotice(typeof res?.notice === 'string' ? res.notice.trim() : '');
+      })
+      .catch(() => {
+        if (alive) setNotice('');
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return notice;
+}
 
 export function LoginPage() {
   const { user, sessionExpired, setAuthenticatedUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const loginNotice = useLoginNotice();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -63,6 +87,17 @@ export function LoginPage() {
         </div>
 
         <div className="soc-card p-6 sm:p-8">
+          {loginNotice && (
+            <p
+              role="note"
+              aria-label="안내"
+              className="mb-5 flex items-start gap-2.5 rounded-lg border border-slate-700 bg-slate-900/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-300"
+            >
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+              <span className="whitespace-pre-line">{loginNotice}</span>
+            </p>
+          )}
+
           {isExpired && (
             <div
               role="status"

@@ -51,6 +51,12 @@ const OLD_TERMS = [
   '판정 비율',
   '놓친 공격',
   '전체 (all)',
+  // T21 정정: 에스컬레이션 결정은 반영되면 상태를 바꾼다(zeek_AD 계약). 옛 안내(T19)는 남으면 안 된다.
+  '에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다',
+  '인시던트 상태는 바뀌지 않습니다',
+  '결정이 자동 처리에 반영됨',
+  // T21: 발송 판단(would_send)을 "경보 발송 판단"으로 부르지 않는다
+  '경보 발송 판단',
 ];
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
@@ -139,6 +145,7 @@ const queueItem = {
   zeekadWouldSend: true,
   zeekadReviewAction: null,
   zeekadReviewPending: true,
+  alerted: true,
 };
 
 const scoringJob = {
@@ -173,6 +180,7 @@ const queueResponse = {
       zeekadWouldSend: false,
       zeekadReviewAction: 'dismiss',
       zeekadReviewPending: false,
+      alerted: false,
     },
   ],
   availableModels: ['tail_rarity_v2', 'transformer_v2', 'tgn_recon'],
@@ -604,12 +612,12 @@ describe('화면 문구 회귀 검사 함수 자체', () => {
 
 describe('관제 표준 용어(T18b)', () => {
   it('메뉴·상태·판정·검토 결정·통신 방향·우선순위·탐지 모델이 새 표기로 보인다', async () => {
-    const base = queueResponse.incidents[0];
+    const base = { ...queueResponse.incidents[0], alerted: false };
     const queue = {
       ...queueResponse,
       incidents: [
-        // High: 경보 발송, 에스컬레이션 대기, 목적지, 분석 중
-        { ...base, queueRank: 1, incidentId: 'a|1', zeekadStatus: 'investigating', zeekadRole: 'responder' },
+        // High: 발송 판단 발송, 에스컬레이션 대기, 목적지, 분석 중 (경보 발송 = 사건 알림 기록 있음)
+        { ...base, queueRank: 1, incidentId: 'a|1', zeekadStatus: 'investigating', zeekadRole: 'responder', alerted: true },
         // Medium: 교차 탐지, 승인, 출발지, 신규
         {
           ...base,
@@ -791,7 +799,7 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(within(panel()).getByRole('columnheader', { name: '출발지 IP:포트' })).toBeInTheDocument();
     expectCleanText(container);
 
-    await openTab('경보 판단');
+    await openTab('발송 판단');
     expect(within(panel()).getByText('탐지 순위 5위 이내(현재 1위)')).toBeInTheDocument();
     await openTab('Slack');
     expect(within(panel()).getByText('최초 알림')).toBeInTheDocument();
@@ -807,8 +815,39 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     const { container } = renderAt('/incidents/2/rank/1', analystUser);
     expect(await screen.findByRole('button', { name: '종결 처리' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '정탐' })).toBeInTheDocument();
-    expect(screen.getByText('에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다.')).toBeInTheDocument();
+    expect(
+      screen.getByText('에스컬레이션 결정은 파이프라인이 반영하면 인시던트 상태에 적용됩니다. 승인 → 분석 중, 오탐 종결 → 종결(오탐).'),
+    ).toBeInTheDocument();
     expectCleanText(container);
+  });
+
+  it('T21: 발송 판단(wouldSend)을 그리는 요소에는 "경보 발송"이 없다(목록 칩·필터·상세 발송 판단 탭)', async () => {
+    const user = userEvent.setup();
+    const list = renderAt('/incidents', analystUser);
+    const table = await screen.findByRole('table');
+    // 목록 행 칩: 발송 판단 발송/보류
+    expect(within(table).getByRole('img', { name: '발송 판단: 발송' })).toHaveAttribute('title', '발송 판단: 발송');
+    expect(within(table).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
+    for (const img of within(table).getAllByRole('img', { name: /발송 판단/ })) {
+      expect(img.getAttribute('aria-label')).not.toContain('경보 발송');
+      expect(img.getAttribute('title') ?? '').not.toContain('경보 발송');
+    }
+    // 필터 드롭다운(서버 wouldSend 파라미터)
+    await user.click(screen.getByRole('button', { name: /^필터(\s\d+)?$/ }));
+    const select = screen.getByLabelText('발송 판단');
+    expect(within(select).getByRole('option', { name: '발송' })).toHaveValue('true');
+    expect(select.textContent).not.toContain('경보 발송');
+    list.unmount();
+
+    const detail = renderAt('/incidents/2/rank/1?tab=decision', analystUser);
+    const tab = await screen.findByRole('tab', { name: '발송 판단', selected: true });
+    expect(tab).toBeInTheDocument();
+    const decisionPanel = screen.getByRole('tabpanel');
+    expect(within(decisionPanel).getByText('발송')).toBeInTheDocument();
+    expect(decisionPanel.textContent).not.toContain('경보 발송');
+    // 상세 헤더의 경보 발송은 사건 알림 기록(alerted) 값이다
+    expect(within(screen.getByRole('region', { name: '인시던트 요약' })).getByText('경보 발송')).toBeInTheDocument();
+    expectCleanText(detail.container);
   });
 
   it('에스컬레이션 목록(조회자·분석가)', async () => {
@@ -816,6 +855,10 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(await screen.findByRole('heading', { name: '에스컬레이션' })).toBeInTheDocument();
     await screen.findAllByText('192.168.*.*');
     expect(screen.getByText('읽기 전용 계정입니다. 검토 결정은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
+    // T21: 관계 안내(새 문구)는 에스컬레이션 화면에도 있다
+    expect(
+      screen.getByRole('note', { name: '에스컬레이션 결정과 상태' }),
+    ).toHaveTextContent('에스컬레이션 결정은 파이프라인이 반영하면 인시던트 상태에 적용됩니다. 승인 → 분석 중, 오탐 종결 → 종결(오탐).');
     expectCleanText(viewer.container);
     viewer.unmount();
 

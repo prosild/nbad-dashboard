@@ -375,8 +375,8 @@ describe('인시던트 목록 및 상세 화면', () => {
     await openTab('증적');
     expect(within(panel()).getByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
 
-    // 경보 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 사용자 결정으로 뺐다)
-    await openTab('경보 판단');
+    // 발송 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 사용자 결정으로 뺐다)
+    await openTab('발송 판단');
     expect(within(panel()).getByText('선택 확률')).toBeInTheDocument();
     expect(within(panel()).getByText('74.0%')).toBeInTheDocument();
     expect(within(panel()).queryByText('선택지별 선택 확률')).toBeNull();
@@ -553,9 +553,9 @@ describe('인시던트 목록 및 상세 화면', () => {
 
     renderWithAnalyst('/incidents/10/rank/1', fetchMock as unknown as typeof fetch);
 
-    // 헤더의 리포트 없음, 경보 판단 탭의 빈 상태 한 줄
+    // 헤더의 리포트 없음, 발송 판단 탭의 빈 상태 한 줄
     expect(await screen.findByText('리포트 없음')).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('tab', { name: '경보 판단' }));
-    expect(within(screen.getByRole('tabpanel')).getByText('이 인시던트는 경보 발송 판단 대상이 아닙니다.')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: '발송 판단' }));
+    expect(within(screen.getByRole('tabpanel')).getByText('이 인시던트는 발송 판단 대상이 아닙니다.')).toBeInTheDocument();
   });
 });

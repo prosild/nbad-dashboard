@@ -5,7 +5,8 @@ import { labelText } from '../../utils/labels';
 /** 오탐 종결 메모 필수 안내(화면 검증. API의 메모는 선택값 그대로다) */
 export const DISMISS_NOTE_REQUIRED = '오탐 종결에는 검토 메모가 필요합니다.';
 /** 오탐 종결 확인 문구 */
-export const DISMISS_CONFIRM_TEXT = '오탐 종결로 결정할까요? 결정은 되돌릴 수 없고, 인시던트 상태는 바뀌지 않습니다.';
+export const DISMISS_CONFIRM_TEXT =
+  '오탐 종결로 결정할까요? 결정은 되돌릴 수 없습니다. 반영되면 인시던트가 종결(오탐)됩니다.';
 
 /**
  * 에스컬레이션 결정 버튼(승인 · 오탐 종결). 오탐 종결은 메모가 있어야 하고 확인 단계를 한 번 더 거친다(T19 H7·M4).

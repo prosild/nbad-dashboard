@@ -41,6 +41,8 @@ function makeItem(i: number): IncidentQueueItem {
     zeekadWouldSend: m === 1,
     zeekadReviewAction: null,
     zeekadReviewPending: m === 2,
+    // T21 경보 발송(사건 알림 Slack 기록)은 발송 판단과 다른 집합: 순위 끝자리 1(발송 판단 발송)·6(발송 판단 보류) → 12건
+    alerted: m === 1 || m === 6,
   };
 }
 
@@ -315,9 +317,11 @@ describe('인시던트 분류 화면(T18)', () => {
 
     await user.click(high);
     await user.click(within(strip).getByRole('button', { name: '에스컬레이션 대기 6건만 보기' }));
-    await user.click(within(strip).getByRole('button', { name: '경보 발송 6건만 보기' }));
+    // T21: 경보 발송은 사건 알림 기록(alerted)으로 센다. 발송 판단(wouldSend, 6건)과 다른 12건
+    await user.click(within(strip).getByRole('button', { name: '경보 발송 12건만 보기' }));
     expect(params().get('alerted')).toBe('true');
-    expect(tableRanks()).toEqual([1, 11, 21, 31, 41, 51]);
+    expect(screen.getByText('전체 12건 중 1–12')).toBeInTheDocument();
+    expect([...tableRanks()].sort((x, y) => x - y)).toEqual([1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56]);
     // 경보 발송은 화면 필터라 서버 파라미터(wouldSend)를 보내지 않는다
     expect(params().get('wouldSend')).toBeNull();
 
@@ -373,7 +377,9 @@ describe('인시던트 분류 화면(T18)', () => {
     expect(within(row1).getByText('ws-01.lab')).toHaveAttribute('title', 'ws-01.lab, WS-01$');
     expect(within(row1).getByText('외 1')).toBeInTheDocument();
     expect(row1).toHaveAttribute('title', '통신 방향 출발지 · 세션 10건 · 에스컬레이션 -');
-    expect(within(row1).getByRole('img', { name: '경보 발송' })).toBeInTheDocument();
+    // T21: 행 칩은 발송 판단(wouldSend)이다. "경보 발송"이라 부르지 않는다
+    expect(within(row1).getByRole('img', { name: '발송 판단: 발송' })).toBeInTheDocument();
+    expect(within(table).queryByRole('img', { name: '경보 발송' })).toBeNull();
     const row3 = within(table).getByText('10.0.3.1').closest('tr') as HTMLElement;
     expect(within(row3).getByText('Medium')).toBeInTheDocument();
     expect(within(row3).getByRole('img', { name: '검증 통과' })).toBeInTheDocument();
@@ -381,7 +387,7 @@ describe('인시던트 분류 화면(T18)', () => {
     expect(within(row4).getByRole('img', { name: '검증 실패' })).toBeInTheDocument();
     const row6 = within(table).getByText('10.0.6.1').closest('tr') as HTMLElement;
     expect(within(row6).getByText('Low')).toBeInTheDocument();
-    expect(within(row6).getByRole('img', { name: '보류' })).toBeInTheDocument();
+    expect(within(row6).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
   });
 
   it('종결 인시던트는 우선순위 없음으로 표시한다', async () => {

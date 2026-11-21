@@ -53,6 +53,7 @@ function queueItem(overrides: Partial<IncidentQueueItem> = {}): IncidentQueueIte
     zeekadWouldSend: true,
     zeekadReviewAction: null,
     zeekadReviewPending: true,
+    alerted: true,
     ...overrides,
   };
 }
@@ -244,6 +245,8 @@ interface Setup {
   list?: IncidentQueueItem[];
   /** POST 뒤 상세를 바꾸는 함수(상태 변경 흐름) */
   onPost?: (url: string, body: Record<string, unknown>, state: { detail: IncidentDetailView }) => void;
+  /** T21: 이동 목록(GET /api/incidents) 조회가 실패할 횟수 */
+  listFailures?: number;
 }
 
 function renderDetail(path: string, setup: Setup = {}) {
@@ -267,6 +270,9 @@ function renderDetail(path: string, setup: Setup = {}) {
     }
     if (url === '/api/incidents' || url.startsWith('/api/incidents?')) {
       listCalls.push(url);
+      if (listCalls.length <= (setup.listFailures ?? 0)) {
+        return json({ code: 'INTERNAL', message: '일시 오류' }, 500);
+      }
       return json({
         maskedView: false,
         allowedCaptures: ['cic17-wed'],
@@ -310,7 +316,7 @@ describe('인시던트 상세 화면(T19)', () => {
       '요약',
       '증적',
       'AI 리포트',
-      '경보 판단',
+      '발송 판단',
       'Slack',
       '이력',
     ]);
@@ -404,7 +410,11 @@ describe('인시던트 상세 화면(T19)', () => {
       expect(within(a).getByRole('button', { name: '종결 처리' })).toBeInTheDocument();
       expect(within(a).getByRole('button', { name: '승인' })).toBeInTheDocument();
       expect(within(a).getByRole('button', { name: '오탐 종결' })).toBeInTheDocument();
-      expect(within(a).getByText('에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다.')).toBeInTheDocument();
+      // T21 정정: zeek_AD 계약대로 결정은 반영되면 상태를 바꾼다
+      expect(
+        within(a).getByText('에스컬레이션 결정은 파이프라인이 반영하면 인시던트 상태에 적용됩니다. 승인 → 분석 중, 오탐 종결 → 종결(오탐).'),
+      ).toBeInTheDocument();
+      expect(a.textContent).not.toContain('인시던트 상태를 바꾸지 않습니다');
       // 최근 이력(최신이 위)과 전체 이력 이동
       const recent = within(a).getByRole('list', { name: '최근 이력' });
       expect(within(recent).getAllByRole('listitem')[0]).toHaveTextContent('조사 시작');
@@ -428,7 +438,7 @@ describe('인시던트 상세 화면(T19)', () => {
     await user.type(within(a).getByLabelText('검토 메모 (오탐 종결 때 필수)'), '정상 업무 트래픽');
     await user.click(within(a).getByRole('button', { name: '오탐 종결' }));
     const confirm = within(a).getByRole('group', { name: '오탐 종결 확인' });
-    expect(confirm).toHaveTextContent('오탐 종결로 결정할까요? 결정은 되돌릴 수 없고, 인시던트 상태는 바뀌지 않습니다.');
+    expect(confirm).toHaveTextContent('오탐 종결로 결정할까요? 결정은 되돌릴 수 없습니다. 반영되면 인시던트가 종결(오탐)됩니다.');
     expect(posts(fetchMock, '/api/incidents/42/rank/1/review-decision')).toHaveLength(0);
     await user.click(within(confirm).getByRole('button', { name: '취소' }));
     expect(within(a).queryByRole('group', { name: '오탐 종결 확인' })).toBeNull();
@@ -474,7 +484,7 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(a).getAllByText('김검토 (rev1)').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('오탐 종결 뒤 신규 → 분석 중 → 종결 흐름에서 종결 폼의 판정이 오탐으로 미리 채워진다(바꿀 수 있음)', async () => {
+  it('오탐 종결이 반영 실패면 신규 → 분석 중 → 종결 흐름에서 종결 폼의 판정이 오탐으로 미리 채워진다(바꿀 수 있음)', async () => {
     const user = userEvent.setup();
     const { fetchMock } = renderDetail('/incidents/42/rank/1', {
       detail: (d) => ({
@@ -482,7 +492,15 @@ describe('인시던트 상세 화면(T19)', () => {
         incident: { ...d.incident, zeekadStatus: 'open', zeekadReviewPending: false, zeekadReviewAction: 'dismiss' },
         currentStatus: 'open',
         nextAllowedStatus: 'investigating',
-        analystReview: { ...d.analystReview, reviewAction: 'dismiss', pending: false, resumeStatusLabel: '반영됨', resumedAt: '2026-11-12T05:00:00Z' },
+        analystReview: {
+          ...d.analystReview,
+          reviewAction: 'dismiss',
+          decidedAt: '2026-11-12T04:00:00Z',
+          pending: false,
+          resumeFailed: true,
+          resumedAt: null,
+          resumeStatusLabel: '반영 실패(관리자 확인 필요)',
+        },
       }),
       onPost: (url, body, state) => {
         if (url.endsWith('/transition') && body.toStatus === 'investigating') {
@@ -493,14 +511,18 @@ describe('인시던트 상세 화면(T19)', () => {
     await screen.findByRole('tab', { name: '요약', selected: true });
     // 신규: 다음 단계가 분석 중이라 판정 칸이 없고 안내만 있다
     expect(within(actions()).queryByLabelText('판정 (필수)')).toBeNull();
-    expect(within(actions()).getByText('에스컬레이션을 오탐 종결로 결정했습니다. 분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.')).toBeInTheDocument();
+    expect(within(actions()).getByText('분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.')).toBeInTheDocument();
+    expect(within(actions()).getByRole('note', { name: '직접 종결 안내' })).toHaveTextContent(
+      '오탐 종결 결정이 자동 반영되지 않았습니다. 상태 변경으로 직접 종결하세요. 판정을 오탐으로 미리 채웠습니다.',
+    );
+    expect(within(actions()).getByText('자동 반영에 실패했습니다. 관리자에게 알리거나 상태 변경으로 직접 처리하세요.')).toBeInTheDocument();
     await user.type(within(actions()).getByLabelText('변경 사유 (필수)'), '확인 시작');
     await user.click(within(actions()).getByRole('button', { name: '분석 중으로 변경' }));
 
     // 분석 중: 종결 폼의 판정 기본값 = 오탐
     const select = await within(actions()).findByLabelText('판정 (필수)');
     expect(select).toHaveValue('false_positive');
-    expect(within(actions()).getByText('에스컬레이션을 오탐 종결로 결정해 판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다.')).toBeInTheDocument();
+    expect(within(actions()).getByText('판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다.')).toBeInTheDocument();
     await user.type(within(actions()).getByLabelText('변경 사유 (필수)'), '오탐 확인');
     await user.click(within(actions()).getByRole('button', { name: '종결 처리' }));
     await waitFor(() => expect(posts(fetchMock, '/api/incidents/42/rank/1/transition')).toHaveLength(2));
@@ -596,13 +618,13 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(container.querySelector('[title*="gemini-decision-1"]')).toBeNull();
     expect(container.querySelector('[title*="17000.123"]')).toBeNull();
 
-    // 남긴 항목: 리포트 요약·사실·해석·ATT&CK·권고·한계·검증, 경보 판단 세 의견, Slack 시각·종류·결과
+    // 남긴 항목: 리포트 요약·사실·해석·ATT&CK·권고·한계·검증, 발송 판단 세 의견, Slack 시각·종류·결과
     await user.click(screen.getByRole('tab', { name: 'AI 리포트' }));
     const p = panel();
     for (const kept of ['관측 요약', '확인된 사실', '가능한 해석', '관련 ATT&CK 기법 후보', '추가 확인 권고', '리포트의 한계', '검증 통과']) {
       expect(within(p).getByText(kept)).toBeInTheDocument();
     }
-    await user.click(screen.getByRole('tab', { name: '경보 판단' }));
+    await user.click(screen.getByRole('tab', { name: '발송 판단' }));
     // 세 의견이 같으면 한 줄 요약을 먼저 보이고 펼친다
     const summaryLine = within(panel()).getByRole('button', { name: '세 의견 모두 전송' });
     expect(summaryLine).toHaveAttribute('aria-expanded', 'false');
@@ -621,7 +643,7 @@ describe('인시던트 상세 화면(T19)', () => {
     const user = userEvent.setup();
     const { container } = renderDetail('/incidents/42/rank/1');
     await screen.findByRole('tab', { name: '요약', selected: true });
-    for (const name of ['요약', '증적', 'AI 리포트', '경보 판단', 'Slack', '이력']) {
+    for (const name of ['요약', '증적', 'AI 리포트', '발송 판단', 'Slack', '이력']) {
       await user.click(screen.getByRole('tab', { name }));
       expect(container.querySelectorAll('script')).toHaveLength(0);
       expect(container.querySelectorAll('img')).toHaveLength(0);
@@ -636,7 +658,7 @@ describe('인시던트 상세 화면(T19)', () => {
     expect((window as unknown as { __xss?: number }).__xss).toBeUndefined();
   });
 
-  it('이력 탭은 상태 변경과 에스컬레이션 요청·결정·반영을 시간 순서 하나로 합친다(마지막 변경자 표기)', async () => {
+  it('이력 탭은 상태 변경과 에스컬레이션 요청·결정·반영을 시간 순서 하나로 합친다(항목마다 변경자·사유)', async () => {
     renderDetail('/incidents/42/rank/1?tab=history', {
       detail: (d) => ({
         ...d,
@@ -663,8 +685,10 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(items[0]).toHaveTextContent('최초 생성');
     expect(items[1]).toHaveTextContent('에스컬레이션 요청');
     expect(items[2]).toHaveTextContent('에스컬레이션 결정');
-    expect(items[3]).toHaveTextContent('결정이 자동 처리에 반영됨');
-    expect(items[4]).toHaveTextContent('마지막 변경자 분석가1 (analyst1)');
+    expect(items[3]).toHaveTextContent('결정 반영됨(파이프라인)');
+    // T21: 각 항목은 그 변경의 변경자다("마지막 변경자" 아님)
+    expect(items[4]).toHaveTextContent('변경자 분석가1 (analyst1)');
+    expect(items[4]).not.toHaveTextContent('마지막 변경자');
     expect(document.body.textContent).not.toContain('담당자');
   });
 
@@ -743,5 +767,172 @@ describe('T19 순수 함수', () => {
     expect(findNeighbors(ordered, 42, 1)).toMatchObject({ index: -1, prev: null, next: null });
     // 기본 정렬은 우선순위 → 순위
     expect(orderQueue(items, parseQueueView(new URLSearchParams(''))).map((i) => i.queueRank)).toEqual([2, 3, 1]);
+  });
+});
+
+describe('T21: 결정 반영 상태·반영 지연·오탐 미리 채움·이력 사유·이동 실패', () => {
+  const RELATION = '에스컬레이션 결정은 파이프라인이 반영하면 인시던트 상태에 적용됩니다. 승인 → 분석 중, 오탐 종결 → 종결(오탐).';
+  const PENDING_NOTE =
+    '에스컬레이션 결정이 아직 반영 중입니다. 지금 상태를 직접 바꾸면 반영 때 그 단계는 건너뜁니다. 결정과 다른 판정으로 종결하면 둘이 어긋난 채 남습니다.';
+  const DELAYED = '반영이 늦어지고 있습니다. 파이프라인 상태를 확인하거나 상태 변경으로 직접 처리하세요.';
+  const MANUAL_CLOSE = '오탐 종결 결정이 자동 반영되지 않았습니다. 상태 변경으로 직접 종결하세요. 판정을 오탐으로 미리 채웠습니다.';
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+  function decided(
+    action: 'confirm' | 'dismiss',
+    review: Partial<IncidentDetailView['analystReview']>,
+  ): (d: IncidentDetailView) => IncidentDetailView {
+    return (d) => ({
+      ...d,
+      incident: { ...d.incident, zeekadReviewPending: false, zeekadReviewAction: action },
+      analystReview: { ...d.analystReview, reviewAction: action, pending: false, analystDisplay: '김검토 (rev1)', ...review },
+    });
+  }
+
+  it('반영 중(지연 전): 서버 라벨 "반영 중", 지연 표시 없음, 미리 채움 없음, 폼은 막지 않고 위에 안내', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: decided('dismiss', { decidedAt: minutesAgo(2), resumeStatusLabel: '반영 중' }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    expect(within(a).getByText('반영 중')).toBeInTheDocument();
+    expect(within(a).queryByText('반영 지연')).toBeNull();
+    expect(within(a).queryByText(DELAYED)).toBeNull();
+    expect(within(a).getByText(RELATION)).toBeInTheDocument();
+    expect(within(a).getByRole('note', { name: '반영 중 상태 변경 안내' })).toHaveTextContent(PENDING_NOTE);
+    // 오탐 종결이어도 반영 중에는 판정을 미리 채우지 않는다(정탐 기본값)
+    expect(within(a).getByLabelText('판정 (필수)')).toHaveValue('true_positive');
+    expect(within(a).queryByRole('note', { name: '직접 종결 안내' })).toBeNull();
+    expect(within(a).getByRole('button', { name: '종결 처리' })).toBeInTheDocument();
+  });
+
+  it('반영 지연(결정 뒤 10분 넘게 반영 중): 서버 라벨은 그대로 "반영 중"이고 반영 지연 표시·안내, 오탐이면 미리 채움', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: decided('dismiss', { decidedAt: minutesAgo(11), resumeStatusLabel: '반영 중' }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    expect(within(a).getByText('반영 중')).toBeInTheDocument();
+    expect(within(a).getByText('반영 지연')).toBeInTheDocument();
+    expect(within(a).getByText(DELAYED)).toBeInTheDocument();
+    expect(within(a).queryByRole('note', { name: '반영 중 상태 변경 안내' })).toBeNull();
+    expect(within(a).getByRole('note', { name: '직접 종결 안내' })).toHaveTextContent(MANUAL_CLOSE);
+    expect(within(a).getByLabelText('판정 (필수)')).toHaveValue('false_positive');
+  });
+
+  it('반영 실패: 서버 라벨 "반영 실패(관리자 확인 필요)"와 실패 안내, 오탐이면 미리 채움', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: decided('dismiss', {
+        decidedAt: minutesAgo(1),
+        resumeFailed: true,
+        resumeStatusLabel: '반영 실패(관리자 확인 필요)',
+      }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    expect(within(a).getByText('반영 실패(관리자 확인 필요)')).toBeInTheDocument();
+    expect(within(a).getByText('자동 반영에 실패했습니다. 관리자에게 알리거나 상태 변경으로 직접 처리하세요.')).toBeInTheDocument();
+    expect(within(a).queryByText('반영 지연')).toBeNull();
+    expect(within(a).getByLabelText('판정 (필수)')).toHaveValue('false_positive');
+  });
+
+  it('반영됨: 서버 라벨 "반영됨"과 반영 시각, 안내·미리 채움 없음', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: (d) => ({
+        ...decided('confirm', {
+          decidedAt: '2026-11-12T04:00:00Z',
+          resumedAt: '2026-11-12T04:00:30Z',
+          resumeStatusLabel: '반영됨',
+        })(d),
+        currentStatus: 'investigating',
+      }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    expect(within(a).getByText('반영됨')).toBeInTheDocument();
+    expect(within(a).getAllByText('2026-11-12 13:00:30').length).toBeGreaterThanOrEqual(1);
+    expect(within(a).queryByText('반영 지연')).toBeNull();
+    expect(within(a).queryByRole('note', { name: '반영 중 상태 변경 안내' })).toBeNull();
+    expect(within(a).queryByRole('note', { name: '직접 종결 안내' })).toBeNull();
+    expect(within(a).getByLabelText('판정 (필수)')).toHaveValue('true_positive');
+  });
+
+  it('승인 결정이 반영 지연이면 지연 안내는 있고 판정 미리 채움은 없다(오탐 종결 결정만 미리 채운다)', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: decided('confirm', { decidedAt: minutesAgo(30), resumeStatusLabel: '반영 중' }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    expect(within(a).getByText(DELAYED)).toBeInTheDocument();
+    expect(within(a).queryByRole('note', { name: '직접 종결 안내' })).toBeNull();
+    expect(within(a).getByLabelText('판정 (필수)')).toHaveValue('true_positive');
+  });
+
+  it('상세 헤더의 경보는 alerted 값이다(발송 판단과 다른 값이면 alerted를 따른다)', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      detail: (d) => ({ ...d, incident: { ...d.incident, alerted: false, zeekadWouldSend: true } }),
+    });
+    const header = await screen.findByRole('region', { name: '인시던트 요약' });
+    expect(within(header).getByText('발송 기록 없음')).toBeInTheDocument();
+    expect(within(header).queryByText('경보 발송')).toBeNull();
+  });
+
+  it('이력 탭: 상태 변경 항목마다 변경자·사유·판정(종결)을 보인다(결정 반영 항목의 사유 = 결정 메모)', async () => {
+    renderDetail('/incidents/42/rank/1?tab=history', {
+      detail: (d) => ({
+        ...d,
+        currentStatus: 'closed',
+        currentResolution: 'false_positive',
+        nextAllowedStatus: null,
+        statusHistory: [
+          {
+            jobId: 42,
+            fromStatus: 'open',
+            toStatus: 'investigating',
+            resolution: null,
+            actorDisplay: '김검토 (rev1)',
+            reason: '정기 백업 작업 트래픽으로 확인(오탐)',
+            changedAt: '2026-11-12T04:00:30Z',
+          },
+          {
+            jobId: 42,
+            fromStatus: 'investigating',
+            toStatus: 'closed',
+            resolution: 'false_positive',
+            actorDisplay: '김검토 (rev1)',
+            reason: '정기 백업 작업 트래픽으로 확인(오탐)',
+            changedAt: '2026-11-12T04:00:31Z',
+          },
+        ],
+      }),
+    });
+    await screen.findByRole('tab', { name: '이력', selected: true });
+    const items = within(within(panel()).getByRole('list', { name: '이력 타임라인' })).getAllByRole('listitem');
+    const statusItems = items.filter((li) => li.textContent?.includes('변경자'));
+    expect(statusItems).toHaveLength(2);
+    for (const li of statusItems) {
+      expect(li).toHaveTextContent('사유정기 백업 작업 트래픽으로 확인(오탐)');
+      expect(li).toHaveTextContent('변경자 김검토 (rev1)');
+    }
+    expect(within(statusItems[1]).getByText('오탐')).toBeInTheDocument();
+    expect(within(statusItems[0]).queryByText('오탐')).toBeNull();
+  });
+
+  it('이동 목록 조회가 실패하면 헤더에 안내와 다시 시도가 있고, 다시 시도하면 이동 버튼이 살아난다', async () => {
+    const user = userEvent.setup();
+    const list = [
+      queueItem({ queueRank: 1, hostIp: '10.0.0.1' }),
+      queueItem({ queueRank: 2, hostIp: '10.0.0.2', incidentId: 'b|2' }),
+    ];
+    const { listCalls } = renderDetail('/incidents/42/rank/1', { list, listFailures: 1 });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
+    expect(await within(nav).findByRole('alert')).toHaveTextContent('이동 목록을 불러오지 못했습니다');
+    expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('aria-disabled', 'true');
+
+    await user.click(within(nav).getByRole('button', { name: '다시 시도' }));
+    await waitFor(() => expect(within(nav).queryByRole('alert')).toBeNull());
+    expect(listCalls.length).toBe(2);
+    expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('href', '/incidents/42/rank/2');
   });
 });

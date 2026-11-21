@@ -17,6 +17,11 @@ export interface AuthUserDto {
   allowedCapturePatterns: string[];
 }
 
+/** T21: 로그인 화면 안내 문구(설정이 없으면 빈 문자열) */
+export interface LoginNoticeResponse {
+  notice: string;
+}
+
 export interface AuthMeResponse {
   authenticated: boolean;
   user: AuthUserDto | null;
@@ -89,6 +94,8 @@ export interface IncidentQueueItem {
   zeekadWouldSend: boolean;
   zeekadReviewAction: string | null;
   zeekadReviewPending: boolean;
+  /** T21 경보 발송: 사건 알림 Slack 기록이 있는 인시던트(feedback_summary.alerted와 같은 식). 발송 판단(zeekadWouldSend)과 다르다. */
+  alerted: boolean;
   multiModelFlagged?: boolean;
 }
 

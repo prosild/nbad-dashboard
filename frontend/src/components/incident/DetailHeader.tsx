@@ -11,7 +11,7 @@ import {
   ResolutionBadge,
   SocBadge,
   VerificationBadge,
-  WouldSendBadge,
+  AlertedBadge,
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
 
@@ -55,7 +55,7 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
 
   return (
     <section aria-label="인시던트 요약" className="space-y-1.5 text-xs">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:flex-nowrap xl:overflow-hidden">
         <PriorityBadge priority={priority} />
         <span className="flex items-center gap-1">
           <IncidentStatusBadge status={detail.currentStatus} />
@@ -84,7 +84,7 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
           )}
         </Field>
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:flex-nowrap xl:overflow-hidden">
         <Field label="발생" title={timeTitle}>
           <span className="tabular-nums text-slate-200">{formatDateTime(incident.eventStart)}</span>
           <span className="tabular-nums text-slate-400">{formatDuration(incident.eventStart, incident.eventEnd)}</span>
@@ -93,7 +93,8 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
           <span className="tabular-nums text-slate-200">{formatNumber(incident.connectionCount)}건</span>
         </Field>
         <Field label="경보">
-          <WouldSendBadge wouldSend={incident.zeekadWouldSend} />
+          {/* T21: 경보 발송 = 사건 알림 Slack 기록(alerted). 발송 판단은 "발송 판단" 탭에 있다. */}
+          <AlertedBadge alerted={incident.alerted} />
         </Field>
         <Field label="AI 리포트">
           {detail.report.present ? (

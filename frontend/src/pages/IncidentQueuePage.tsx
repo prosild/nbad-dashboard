@@ -187,7 +187,8 @@ export function IncidentQueuePage() {
     for (const { item, priority } of rows) {
       if (priority) counts[priority] += 1;
       if (item.zeekadReviewPending) counts.reviewPending += 1;
-      if (item.zeekadWouldSend) counts.alerted += 1;
+      // T21: 경보 발송 = 사건 알림 Slack 기록(alerted). 발송 판단(zeekadWouldSend)이 아니다.
+      if (item.alerted) counts.alerted += 1;
     }
     return counts;
   }, [rows]);
@@ -255,7 +256,7 @@ export function IncidentQueuePage() {
     if (hasReport)
       list.push({ key: 'hasReport', label: `AI 리포트: ${hasReport === 'true' ? '리포트 있음' : '리포트 없음'}` });
     if (wouldSend)
-      list.push({ key: 'wouldSend', label: `경보 발송 판단: ${wouldSend === 'true' ? '경보 발송' : '보류'}` });
+      list.push({ key: 'wouldSend', label: `발송 판단: ${wouldSend === 'true' ? '발송' : '보류'}` });
     if (asset) list.push({ key: 'asset', label: '자산 검색', raw: asset });
     if (priorityFilter) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', priorityFilter)}` });
     if (reviewPendingFilter) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
@@ -456,7 +457,7 @@ export function IncidentQueuePage() {
 
               <div>
                 <label htmlFor="filter-would-send" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  경보 발송 판단
+                  발송 판단
                 </label>
                 <select
                   id="filter-would-send"
@@ -465,7 +466,7 @@ export function IncidentQueuePage() {
                   className="soc-select w-full py-1.5 text-xs"
                 >
                   <option value="">전체</option>
-                  <option value="true">경보 발송</option>
+                  <option value="true">발송</option>
                   <option value="false">보류</option>
                 </select>
               </div>
@@ -620,7 +621,8 @@ function SummaryStrip({
           </p>
           <ul className="space-y-1">
             <li>
-              <span className="font-semibold text-rose-200">High</span>: 경보를 발송했거나 에스컬레이션 대기 중인 인시던트
+              <span className="font-semibold text-rose-200">High</span>: 발송 판단이 &lsquo;발송&rsquo;이거나 에스컬레이션 대기 중인
+              인시던트
             </li>
             <li>
               <span className="font-semibold text-slate-50">Medium</span>: 교차 탐지(2개 이상 모델)됐거나 AI 분석
@@ -777,8 +779,8 @@ function QueueTable({
             <th scope="col" className="soc-th-compact">
               탐지 모델
             </th>
-            <th scope="col" className="soc-th-compact" title="AI 분석 리포트 · 검증 · 경보">
-              리포트·경보
+            <th scope="col" className="soc-th-compact" title="AI 분석 리포트 · 검증 · 발송 판단">
+              리포트·판단
             </th>
             <SortHeader column="status" label="상태 · 판정" {...headerProps} />
             <th scope="col" className="soc-th-compact hidden lg:table-cell">
@@ -901,7 +903,7 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
 
 const CHIP_BASE = 'inline-flex h-5 w-5 items-center justify-center rounded border';
 
-/** 리포트·검증·경보를 묶은 아이콘 칩. 각 칩은 접근성 이름과 툴팁을 가진다. */
+/** 리포트·검증·발송 판단을 묶은 아이콘 칩(T21: 세 번째 칩은 발송 판단 zeekadWouldSend이며 "경보 발송"이 아니다). 각 칩은 접근성 이름과 툴팁을 가진다. */
 function SignalChips({ item }: { item: IncidentQueueItem }) {
   const hasReport = item.zeekadReportJobId !== null;
   const kind = labelText('reportKind', item.zeekadReportKind);
@@ -945,14 +947,19 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
       {item.zeekadWouldSend ? (
         <span
           role="img"
-          aria-label="경보 발송"
-          title="경보 발송"
+          aria-label="발송 판단: 발송"
+          title="발송 판단: 발송"
           className={`${CHIP_BASE} border-cyan-500/35 bg-cyan-500/10 text-cyan-300`}
         >
           <Bell className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
-        <span role="img" aria-label="보류" title="보류" className={`${CHIP_BASE} border-slate-800 text-slate-600`}>
+        <span
+          role="img"
+          aria-label="발송 판단: 보류"
+          title="발송 판단: 보류"
+          className={`${CHIP_BASE} border-slate-800 text-slate-600`}
+        >
           <BellOff className="h-3 w-3" aria-hidden="true" />
         </span>
       )}

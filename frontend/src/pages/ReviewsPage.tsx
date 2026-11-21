@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ClipboardCheck, ExternalLink, Info } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, ExternalLink, Info } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
@@ -11,6 +11,13 @@ import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
 import { formatDateTime } from '../utils/format';
 import { captureInfo, reviewReasonText } from '../utils/labels';
+import {
+  RESUME_DELAYED_LABEL,
+  RESUME_DELAYED_TEXT,
+  resumePhase,
+  REVIEW_STATUS_RELATION,
+  useNowMs,
+} from '../utils/reviewResume';
 
 function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSubmitted: () => Promise<void> }) {
   const { notify } = useToast();
@@ -70,6 +77,7 @@ export function ReviewsPage() {
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const nowMs = useNowMs();
 
   const captureId = searchParams.get('captureId') ?? '';
   const pendingOnly = searchParams.get('pendingOnly') === 'true';
@@ -117,6 +125,15 @@ export function ReviewsPage() {
             <span>읽기 전용 계정입니다. 검토 결정은 분석가 계정에서 할 수 있습니다.</span>
           </div>
         )}
+
+        <p
+          role="note"
+          aria-label="에스컬레이션 결정과 상태"
+          className="flex items-start gap-1.5 rounded border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-400"
+        >
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {REVIEW_STATUS_RELATION}
+        </p>
 
         <section className="soc-card flex flex-wrap items-center justify-between gap-4 p-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -189,15 +206,17 @@ export function ReviewsPage() {
                       const isPending = item.zeekadReviewAction === null || item.zeekadReviewAction === '';
                       const resumeFailed = item.zeekadReviewResumeFailed === true;
                       const resumed = item.zeekadReviewResumedAt !== null;
-                      const resumeText =
-                        item.resumeStatusLabel ||
-                        (isPending
-                          ? '에스컬레이션 대기'
-                          : resumeFailed
-                            ? '반영 실패(관리자 확인 필요)'
-                            : resumed
-                              ? '반영됨'
-                              : '반영 중');
+                      // T21: 반영 상태 이름은 서버 라벨(resumeStatusLabel)만 쓴다. 반영 지연은 결정 시각으로 계산하는 보조 표시.
+                      const resumeText = item.resumeStatusLabel ?? '';
+                      const phase = resumePhase(
+                        {
+                          reviewAction: item.zeekadReviewAction,
+                          decidedAt: item.decidedAt,
+                          resumedAt: item.zeekadReviewResumedAt,
+                          resumeFailed: item.zeekadReviewResumeFailed,
+                        },
+                        nowMs,
+                      );
 
                       return (
                         <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
@@ -225,13 +244,22 @@ export function ReviewsPage() {
                           <td className="soc-td text-xs">
                             <div className="flex flex-col items-start gap-1">
                               <ReviewActionBadge action={item.zeekadReviewAction} pending={isPending} />
-                              {!isPending && (
+                              {!isPending && resumeText && (
                                 <ResumeStatusBadge
                                   label={resumeText}
                                   failed={resumeFailed}
                                   resumed={resumed}
                                   pending={false}
                                 />
+                              )}
+                              {phase === 'delayed' && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[11px] text-amber-200"
+                                  title={RESUME_DELAYED_TEXT}
+                                >
+                                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                  {RESUME_DELAYED_LABEL}
+                                </span>
                               )}
                               {item.analystDisplay && (
                                 <span className="text-[11px] text-slate-400" data-raw="">

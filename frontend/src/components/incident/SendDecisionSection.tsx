@@ -6,7 +6,7 @@ import { labelText, policyReasonText } from '../../utils/labels';
 import { CodeLabel, LookupText, SocBadge, WouldSendBadge } from '../StatusBadge';
 
 /**
- * 경보 발송 판단 탭(T19): 최종 결과 + 세 의견(규칙·AI 리포트·판단 모델) 한 줄씩.
+ * 발송 판단 탭(T19, T21 이름 정리): 최종 결과 + 세 의견(규칙·AI 리포트·판단 모델) 한 줄씩.
  * 의견이 갈릴 때만 강조하고, 같으면 "세 의견 모두 …" 한 줄을 먼저 보이고 펼친다.
  * 정책 ID·판단 모델 ID·선택지별 확률 막대는 화면에 두지 않는다(사용자 결정 2026-11-21). 판단 모델은 선택 확률 숫자 하나만.
  */
@@ -15,7 +15,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
   const [open, setOpen] = useState(!agree);
 
   if (!sendDecision.present) {
-    return <p className="text-sm text-slate-400">이 인시던트는 경보 발송 판단 대상이 아닙니다.</p>;
+    return <p className="text-sm text-slate-400">이 인시던트는 발송 판단 대상이 아닙니다.</p>;
   }
 
   const commonChoice = agree ? (sendDecision.policyChoice ?? sendDecision.llmChoice ?? sendDecision.decisionModelChoice) : null;
@@ -23,7 +23,7 @@ export function SendDecisionSection({ sendDecision }: { sendDecision: SendDecisi
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-slate-400">최종</span>
+        <span className="text-slate-400">최종 발송 판단</span>
         <WouldSendBadge wouldSend={sendDecision.wouldSend} />
         {sendDecision.decidedBy && (
           <span className="text-slate-400">

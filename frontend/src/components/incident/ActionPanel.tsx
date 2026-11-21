@@ -5,6 +5,17 @@ import { incidentsApi } from '../../api/endpoints';
 import type { IncidentDetailView } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { labelText, reviewReasonText } from '../../utils/labels';
+import {
+  isResumeStuck,
+  RESUME_DELAYED_LABEL,
+  RESUME_DELAYED_TEXT,
+  RESUME_FAILED_TEXT,
+  RESUME_MANUAL_CLOSE_TEXT,
+  RESUME_PENDING_FORM_NOTE,
+  resumePhase,
+  REVIEW_STATUS_RELATION,
+  useNowMs,
+} from '../../utils/reviewResume';
 import { isClosedStatus } from '../../utils/triage';
 import {
   IncidentStatusBadge,
@@ -19,8 +30,8 @@ import { ReviewDecisionButtons } from './ReviewDecisionButtons';
 
 type Resolution = 'true_positive' | 'false_positive' | 'benign';
 
-/** 두 결정(에스컬레이션 결정·상태 변경)의 관계 안내 */
-export const REVIEW_STATUS_RELATION = '에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다.';
+/** 두 결정의 관계 안내(T21 정정: zeek_AD 계약대로 결정이 반영되면 상태가 바뀐다). 정의는 utils/reviewResume.ts */
+export { REVIEW_STATUS_RELATION };
 
 /** 패널 아래쪽에 보이는 최근 이력 수 */
 const RECENT_HISTORY = 3;
@@ -46,8 +57,12 @@ export function ActionPanel({
   const canTransition = !readOnly && detail.canTransition && nextAllowedStatus !== null;
   const canDecide = !readOnly && analystReview.present && analystReview.canDecide && !analystReview.reviewAction;
 
-  // 오탐 미리 채움(M3): 컴포넌트 상태가 아니라 서버 값(검토 결정 = 오탐 종결, 상태 ≠ 종결)에서 끌어낸다.
-  const dismissed = analystReview.reviewAction === 'dismiss' && !isClosedStatus(currentStatus);
+  // 결정 반영 단계(T21): 서버 값(결정·결정 시각·반영 시각·반영 실패)과 지금 시각으로 끌어낸다.
+  const nowMs = useNowMs();
+  const phase = resumePhase(analystReview, nowMs);
+  const stuck = isResumeStuck(phase);
+  // 오탐 미리 채움(T21): 오탐 종결 결정이 자동 반영되지 않았을 때(반영 실패·반영 지연)만. 상태 ≠ 종결.
+  const dismissed = analystReview.reviewAction === 'dismiss' && !isClosedStatus(currentStatus) && stuck;
   const defaultResolution: Resolution = dismissed ? 'false_positive' : 'true_positive';
 
   const [resolution, setResolution] = useState<Resolution>(defaultResolution);
@@ -142,6 +157,28 @@ export function ActionPanel({
             상태 변경: {labelText('incidentStatus', currentStatus)} → {labelText('incidentStatus', nextAllowedStatus)}
           </h3>
 
+          {phase === 'pending' && (
+            <p
+              role="note"
+              aria-label="반영 중 상태 변경 안내"
+              className="flex items-start gap-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-300"
+            >
+              <Info className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
+              {RESUME_PENDING_FORM_NOTE}
+            </p>
+          )}
+
+          {dismissed && (
+            <p
+              role="note"
+              aria-label="직접 종결 안내"
+              className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+            >
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" aria-hidden="true" />
+              {RESUME_MANUAL_CLOSE_TEXT}
+            </p>
+          )}
+
           {transitionError && (
             <div
               role="alert"
@@ -174,16 +211,14 @@ export function ActionPanel({
                 <option value="benign">{labelText('resolution', 'benign')}</option>
               </select>
               {dismissed && (
-                <p className="mt-1 text-[11px] text-slate-400">
-                  에스컬레이션을 오탐 종결로 결정해 판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다.
-                </p>
+                <p className="mt-1 text-[11px] text-slate-400">판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다.</p>
               )}
             </div>
           )}
 
           {nextAllowedStatus === 'investigating' && dismissed && (
             <p className="text-[11px] text-slate-400">
-              에스컬레이션을 오탐 종결로 결정했습니다. 분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.
+              분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.
             </p>
           )}
 
@@ -247,7 +282,7 @@ export function ActionPanel({
                 </div>
               )}
               {analystReview.reviewAction && analystReview.resumeStatusLabel && (
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
                   반영 상태
                   <ResumeStatusBadge
                     label={analystReview.resumeStatusLabel}
@@ -255,7 +290,25 @@ export function ActionPanel({
                     resumed={analystReview.resumedAt !== null}
                     pending={analystReview.pending}
                   />
+                  {phase === 'delayed' && (
+                    <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-200">
+                      <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                      {RESUME_DELAYED_LABEL}
+                    </span>
+                  )}
+                  {analystReview.resumedAt && (
+                    <span className="tabular-nums">{formatDateTime(analystReview.resumedAt)}</span>
+                  )}
                 </div>
+              )}
+              {(phase === 'delayed' || phase === 'failed') && (
+                <p
+                  role="alert"
+                  className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+                >
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" aria-hidden="true" />
+                  {phase === 'delayed' ? RESUME_DELAYED_TEXT : RESUME_FAILED_TEXT}
+                </p>
               )}
             </div>
 
