@@ -5,6 +5,7 @@ import { ApiError } from '../api/client';
 import { authApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { PRODUCT_NAME } from '../components/AppShell';
+import { returnPathFromState } from '../utils/returnTo';
 
 /**
  * 로그인 화면 안내 문구(T21, 설정값 DASHBOARD_LOGIN_NOTICE). 값이 있을 때만 로그인 폼 위에 보인다.
@@ -41,16 +42,19 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // T27: 원래 주소(라우터 상태, 앱 안 경로만)
+  const stateFrom = returnPathFromState(location.state);
+  const fromState = stateFrom ? { from: stateFrom } : undefined;
+
   if (user) {
     if (user.totpRequired && !user.totpVerified) {
-      return <Navigate to={user.totpEnabled ? '/login/totp' : '/login/totp/setup'} replace />;
+      return <Navigate to={user.totpEnabled ? '/login/totp' : '/login/totp/setup'} state={fromState} replace />;
     }
-    return <Navigate to="/" replace />;
+    return <Navigate to={stateFrom ?? '/'} replace />;
   }
 
   const isExpired = searchParams.has('expired') || sessionExpired;
   const isLogout = searchParams.has('logout');
-  const stateFrom = (location.state as { from?: string } | null)?.from;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,11 +63,13 @@ export function LoginPage() {
     try {
       const res = await authApi.login(username.trim(), password);
       setAuthenticatedUser(res.user);
-      const target =
-        res.nextRoute === '/' && stateFrom && stateFrom.startsWith('/') && !stateFrom.startsWith('/login')
-          ? stateFrom
-          : res.nextRoute || '/';
-      navigate(target, { replace: true });
+      const next = res.nextRoute || '/';
+      if (next === '/' && stateFrom) {
+        navigate(stateFrom, { replace: true });
+      } else {
+        // ADMIN은 OTP 화면으로 가고, 원래 주소를 그 화면에 넘긴다
+        navigate(next, { replace: true, state: fromState });
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMsg(err.message);

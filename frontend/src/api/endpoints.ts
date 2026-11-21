@@ -1,5 +1,6 @@
 import { apiRequest } from './client';
 import type {
+  IncidentNoLocation,
   ActionResultResponse,
   AssigneeCandidate,
   IncidentAssignment,
@@ -98,6 +99,8 @@ export const incidentsApi = {
     apiRequest<QueueNeighborsResponse>(
       `/api/incidents/queue/neighbors${buildQuery({ jobId: String(jobId), queueRank: String(queueRank), ...params })}`,
     ),
+  /** T27 인시던트 번호 → 지금 위치 */
+  locate: (incidentNo: number | string) => apiRequest<IncidentNoLocation>(`/api/incidents/no/${incidentNo}`),
   detail: (jobId: number | string, queueRank: number | string) =>
     apiRequest<IncidentDetailApiResponse>(`/api/incidents/${jobId}/rank/${queueRank}`),
   transition: (

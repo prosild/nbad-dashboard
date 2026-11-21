@@ -63,6 +63,8 @@ const OLD_TERMS = [
   '데이터 기준',
   '캡처별 현황',
   '판정 완료',
+  // T27: '#'은 인시던트 번호에만 쓴다. 작업 번호는 "작업 44"
+  '작업 #',
 ];
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
@@ -102,6 +104,9 @@ function expectCleanText(root: HTMLElement) {
     .map((m) => m[0]);
   expect(mixed, '한국어 (영어 코드) 병기').toEqual([]);
   expect(text).not.toContain('정확도');
+  // T27: 툴팁에도 작업 번호를 '#'으로 쓰지 않는다
+  const titles = Array.from(root.querySelectorAll('[title]')).map((el) => el.getAttribute('title') ?? '');
+  expect(titles.filter((t) => t.includes('작업 #')), '툴팁의 작업 # 표기').toEqual([]);
 }
 
 const json = (body: unknown, status = 200) =>

@@ -85,8 +85,8 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
     await user.type(screen.getByLabelText('비밀번호'), 'Pass!1234');
     await user.click(screen.getByRole('button', { name: /로그인/ }));
 
-    // T20: 로그인 뒤 기본 이동(nextRoute '/')은 관제 현황판이다.
-    expect(await screen.findByRole('heading', { name: '현황판' })).toBeInTheDocument();
+    // T27: 보호 경로(/incidents)에서 로그인으로 왔으면 로그인 뒤 원래 주소로 간다(그 전에는 nextRoute '/' 현황판).
+    expect(await screen.findByRole('heading', { name: '인시던트' })).toBeInTheDocument();
 
     const loginCall = fetchMock.mock.calls.find(([url]) => url === '/api/auth/login');
     expect(loginCall).toBeDefined();
@@ -221,9 +221,9 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
     await user.type(screen.getByLabelText('6자리 TOTP 인증 코드'), '123456');
     await user.click(screen.getByRole('button', { name: /TOTP 등록 완료/ }));
 
-    // T20: TOTP 등록 뒤 기본 이동('/')은 관제 현황판이다.
+    // T27: TOTP 등록 뒤 원래 주소(/incidents)로 간다(그 전에는 기본 이동 '/' 현황판).
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '현황판' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: '인시던트' })).toBeInTheDocument();
     });
   });
 });

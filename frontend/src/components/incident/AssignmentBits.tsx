@@ -9,13 +9,54 @@ export const ACK_OVERDUE_TOOLTIP =
   '실습망 신규 인시던트가 우선순위별 착수 목표(탐지 뒤 High 30분·Medium 4시간·Low 24시간, 기본값)를 넘겼습니다. 조사를 시작하면 풀립니다.';
 
 /** 빨간 "착수 지연" 표지. 색만이 아니라 글자로 보인다(T25). */
-export function AckOverdueBadge({ dueAt }: { dueAt?: string | null }) {
+export function AckOverdueBadge({
+  dueAt,
+  detectedAt = null,
+  compact = false,
+}: {
+  dueAt?: string | null;
+  /** 탐지 시각(있으면 목표 시간 = 착수 목표 − 탐지를 툴팁·판독기 이름에 넣는다) */
+  detectedAt?: string | null;
+  /** T27: 1536px 미만에서 알람 아이콘과 "지연"으로 줄인다(툴팁·판독기 이름은 "착수 지연"과 목표 시간) */
+  compact?: boolean;
+}) {
+  const target = ackTargetText(detectedAt, dueAt);
+  const title = [
+    ACK_OVERDUE_TOOLTIP,
+    target ? `이 우선순위의 착수 목표: 탐지 뒤 ${target}` : null,
+    dueAt ? `착수 목표 ${formatDateTime(dueAt)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (!compact) {
+    return (
+      <SocBadge tone="danger" title={title}>
+        <AlarmClock className="h-3 w-3" aria-hidden="true" />
+        착수 지연
+      </SocBadge>
+    );
+  }
   return (
-    <SocBadge tone="danger" title={dueAt ? `${ACK_OVERDUE_TOOLTIP}\n착수 목표 ${formatDateTime(dueAt)}` : ACK_OVERDUE_TOOLTIP}>
+    <SocBadge tone="danger" title={title}>
       <AlarmClock className="h-3 w-3" aria-hidden="true" />
-      착수 지연
+      <span aria-hidden="true" className="2xl:hidden" data-ack-short="">
+        지연
+      </span>
+      <span aria-hidden="true" className="hidden 2xl:inline">
+        착수 지연
+      </span>
+      <span className="sr-only">{target ? `착수 지연, 목표 탐지 뒤 ${target}` : '착수 지연'}</span>
     </SocBadge>
   );
+}
+
+/** 착수 목표 시간(착수 목표 시각 − 탐지 시각), 예: "30분", "4시간" */
+export function ackTargetText(detectedAt: string | null | undefined, dueAt: string | null | undefined): string | null {
+  const s = secondsBetween(detectedAt ?? null, dueAt ?? null);
+  if (s === null || s <= 0) return null;
+  const minutes = Math.round(s / 60);
+  if (minutes % 60 === 0) return `${minutes / 60}시간`;
+  return `${minutes}분`;
 }
 
 /** 담당자 이름. 없으면 흐린 "미배정", 비활성 계정이면 "비활성" 표지를 붙인다. */

@@ -126,7 +126,7 @@ export function sortImportedCaptures(rows: CaptureRow[]): CaptureRow[] {
 
 function jobTitle(job: JobRef | null): string | undefined {
   if (!job) return undefined;
-  return `최근 끝난 탐지 작업 #${job.jobId} · ${job.status ?? '-'} · 완료 ${formatDateTime(job.finishedAt)}${job.error ? `\n오류: ${job.error}` : ''}`;
+  return `최근 끝난 탐지 작업: 작업 ${job.jobId} · ${job.status ?? '-'} · 완료 ${formatDateTime(job.finishedAt)}${job.error ? `\n오류: ${job.error}` : ''}`;
 }
 
 /* ───────────────────────── 현황판 패널 ───────────────────────── */
@@ -373,7 +373,8 @@ function JobCell({ job }: { job: JobRef | null }) {
   if (!job) return <span className="text-slate-500">-</span>;
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={`완료 ${formatDateTime(job.finishedAt)} · 시작 ${formatDateTime(job.startedAt)}`}>
-      <span className="text-slate-400">#{job.jobId}</span>
+      {/* T27: 칸 머리가 "최근 끝난 작업"이라 숫자만 쓴다('#'은 인시던트 번호에만) */}
+      <span className="tabular-nums text-slate-400" aria-label={`작업 ${job.jobId}`}>{job.jobId}</span>
       <JobStatusBadge status={job.status} />
     </span>
   );

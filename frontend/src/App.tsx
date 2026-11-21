@@ -52,6 +52,15 @@ export function AppRoutes() {
           </RequireAuth>
         }
       />
+      {/* T27 인시던트 번호 고정 주소. 숫자가 아니면 화면이 잘못된 경로 안내를 보인다 */}
+      <Route
+        path="/incidents/:incidentNo"
+        element={
+          <RequireAuth>
+            <IncidentDetailPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/incidents/:jobId/rank/:queueRank"
         element={

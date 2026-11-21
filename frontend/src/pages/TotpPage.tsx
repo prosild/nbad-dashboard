@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Copy, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { authApi } from '../api/endpoints';
@@ -7,11 +7,15 @@ import { useAuth } from '../auth/AuthContext';
 import { QrCodeSvg } from '../components/QrCodeSvg';
 import { useToast } from '../components/ToastContext';
 import type { TotpSetupResponse } from '../types/api';
+import { returnPathFromState } from '../utils/returnTo';
 
 export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
   const { user, setAuthenticatedUser, logout } = useAuth();
   const { notify } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  // T27: OTP를 마치면 원래 주소(라우터 상태, 앱 안 경로만)로 간다
+  const returnTo = returnPathFromState(location.state);
 
   const [setupInfo, setSetupInfo] = useState<TotpSetupResponse | null>(null);
   const [loadingSetup, setLoadingSetup] = useState(mode === 'setup');
@@ -75,7 +79,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
           : await authApi.verifyTotp(code.trim());
       setAuthenticatedUser(res.user);
       notify(res.message || 'TOTP 인증이 완료되었습니다.', 'success');
-      navigate('/', { replace: true });
+      navigate(returnTo ?? '/', { replace: true });
     } catch (err) {
       setErrorMsg(err instanceof ApiError ? err.message : '인증 코드를 확인하지 못했습니다.');
     } finally {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
@@ -14,7 +14,8 @@ import { ReportSection } from '../components/incident/ReportSection';
 import { SendDecisionSection } from '../components/incident/SendDecisionSection';
 import { SlackThreadsSection } from '../components/incident/SlackThreadsSection';
 import { SummaryTab } from '../components/incident/SummaryTab';
-import type { IncidentDetailApiResponse, QueueNeighborKey, QueueNeighborsResponse } from '../types/api';
+import type { IncidentDetailApiResponse, IncidentNoLocation, QueueNeighborKey, QueueNeighborsResponse } from '../types/api';
+import { incidentPath, parseIncidentNo } from '../utils/incidentLink';
 import { parseQueueQuery, queueApiParams } from '../utils/triage';
 
 /** 상세 탭. URL `tab=`에 남긴다(요약은 기본이라 남기지 않는다). */
@@ -45,6 +46,8 @@ export const NAV_LOAD_FAILED_TEXT = '이동 목록을 불러오지 못했습니�
 export const NAV_NOT_IN_LIST_TEXT = '목록이 갱신되어 이 인시던트가 지금 목록에 없습니다';
 /** 보고 있는 탐지 작업이 최신이 아닐 때(T23) */
 export const NEWER_RESULT_TEXT = '이 인시던트의 더 새로운 분석 결과가 있습니다';
+/** T27 번호 위치가 최신 큐가 아닐 때 */
+export const NOT_LATEST_TEXT = '최신 탐지 결과에는 이 인시던트가 없습니다. 마지막으로 나온 탐지 결과를 보여 줍니다.';
 
 /**
  * 이전·다음(T23). 목록이 넘긴 `from=` 쿼리(기간·수집원·거르기·정렬)로 서버 neighbors API를 부른다.
@@ -81,8 +84,20 @@ function useNeighbors(
   return { nav, retry };
 }
 
+/**
+ * T27 상세 화면. 고정 주소 `/incidents/{번호}`는 번호 API로 지금 위치(작업·순위)를 받은 뒤 기존 상세·조치 API를 그 위치로 부른다.
+ * 옛 주소 `/incidents/{작업}/rank/{순위}`는 상세를 부르고, 응답에 번호가 있으면 같은 쿼리를 붙인 번호 주소로 바꾼다(replace).
+ */
 export function IncidentDetailPage() {
-  const { jobId, queueRank } = useParams<{ jobId: string; queueRank: string }>();
+  const params = useParams<{ jobId?: string; queueRank?: string; incidentNo?: string }>();
+  const navigate = useNavigate();
+  const numberMode = params.incidentNo !== undefined;
+  const incidentNo = numberMode ? parseIncidentNo(params.incidentNo) : null;
+  const [location, setLocation] = useState<IncidentNoLocation | null>(null);
+  const [locateAttempt, setLocateAttempt] = useState(0);
+  const [locateError, setLocateError] = useState<string | null>(null);
+  const jobId = numberMode ? (location ? String(location.jobId) : undefined) : params.jobId;
+  const queueRank = numberMode ? (location ? String(location.queueRank) : undefined) : params.queueRank;
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, timeContext } = useAuth();
   const [data, setData] = useState<IncidentDetailApiResponse | null>(null);
@@ -102,7 +117,36 @@ export function IncidentDetailPage() {
     }
   }, [rawTab, searchParams, setSearchParams]);
 
+  // T27 번호 주소: 번호 → 지금 위치. "새로 고침"은 다시 받는다(주소는 그대로).
+  useEffect(() => {
+    if (!numberMode) return undefined;
+    if (incidentNo === null) {
+      setLocateError('잘못된 인시던트 경로입니다.');
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLocateError(null);
+    incidentsApi
+      .locate(incidentNo)
+      .then((res) => {
+        if (!cancelled) setLocation(res);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLocation(null);
+        setLoading(false);
+        setLocateError(err instanceof ApiError ? err.message : '인시던트 정보를 불러오지 못했습니다.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [numberMode, incidentNo, locateAttempt]);
+
   const loadDetail = useCallback(async () => {
+    if (numberMode && (!jobId || !queueRank)) {
+      return; // 위치를 받기 전
+    }
     if (!jobId || !queueRank) {
       setErrorMsg('잘못된 인시던트 경로입니다.');
       setLoading(false);
@@ -118,11 +162,22 @@ export function IncidentDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [jobId, queueRank]);
+  }, [numberMode, jobId, queueRank]);
 
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  // T27 옛 주소: 번호가 있으면 같은 쿼리를 붙인 번호 주소로 바꾼다(그 인시던트의 지금 결과가 열린다)
+  const loadedNo = data?.incidentNo ?? null;
+  const loadedJob = data?.detail?.incident?.jobId;
+  const loadedRank = data?.detail?.incident?.queueRank;
+  useEffect(() => {
+    if (numberMode || loadedNo === null || loadedNo === undefined) return;
+    if (String(loadedJob) !== params.jobId || String(loadedRank) !== params.queueRank) return;
+    const target = incidentPath({ incidentNo: loadedNo }, searchParams);
+    if (target) navigate(target, { replace: true });
+  }, [numberMode, loadedNo, loadedJob, loadedRank, params.jobId, params.queueRank, searchParams, navigate]);
 
   const detail = data?.detail;
   const incident = detail?.incident;
@@ -135,13 +190,14 @@ export function IncidentDetailPage() {
   const currentKey = neighbors?.current ?? null;
   const stale =
     currentKey !== null && (String(currentKey.jobId) !== jobId || String(currentKey.queueRank) !== queueRank);
+  // T27: 번호 주소에서 위치가 최신이 아님(latest=false). 새 결과 띠는 이웃 API의 current가 다른 위치를 가리킬 때만이다.
+  const notLatest = numberMode && location !== null && !location.latest;
 
   function linkTo(item: QueueNeighborKey): string {
     const next = new URLSearchParams();
     if (fromQuery !== null) next.set('from', fromQuery);
     if (tab !== 'summary') next.set('tab', tab);
-    const qs = next.toString();
-    return `/incidents/${item.jobId}/rank/${item.queueRank}${qs ? `?${qs}` : ''}`;
+    return incidentPath(item, next) ?? '/incidents';
   }
 
   // 목록으로: 넘겨받은 목록 쿼리로 돌아가고, 없으면 기본 큐다(캡처 쿼리를 새로 만들지 않는다).
@@ -208,7 +264,12 @@ export function IncidentDetailPage() {
       actions={navActions}
       stickyBar={
         current ? (
-          <DetailHeader detail={current} meta={data?.queueMeta ?? null} snapshot={Boolean(timeContext?.snapshot)} />
+          <DetailHeader
+            detail={current}
+            meta={data?.queueMeta ?? null}
+            snapshot={Boolean(timeContext?.snapshot)}
+            incidentNo={data?.incidentNo ?? null}
+          />
         ) : undefined
       }
     >
@@ -222,14 +283,38 @@ export function IncidentDetailPage() {
               <Info className="h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden="true" />
               {NEWER_RESULT_TEXT}
             </span>
-            <Link to={linkTo(currentKey)} className="soc-btn-secondary px-2.5 py-1 text-xs">
-              최신 보기
-            </Link>
+            {numberMode ? (
+              <button
+                type="button"
+                onClick={() => setLocateAttempt((n) => n + 1)}
+                className="soc-btn-secondary px-2.5 py-1 text-xs"
+              >
+                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                새로 고침
+              </button>
+            ) : (
+              <Link to={linkTo(currentKey)} className="soc-btn-secondary px-2.5 py-1 text-xs">
+                최신 보기
+              </Link>
+            )}
           </div>
+        )}
+        {notLatest && current && (
+          <div
+            role="status"
+            data-not-latest=""
+            className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200"
+          >
+            <Info className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+            {NOT_LATEST_TEXT}
+          </div>
+        )}
+        {locateError && (
+          <ErrorAlert message={locateError} onRetry={incidentNo !== null ? () => setLocateAttempt((n) => n + 1) : undefined} />
         )}
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadDetail()} />}
 
-        {loading && !current ? (
+        {loading && !current && !locateError ? (
           <LoadingPanel label="인시던트 정보를 불러오는 중..." />
         ) : current ? (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">

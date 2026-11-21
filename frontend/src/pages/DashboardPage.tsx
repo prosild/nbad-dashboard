@@ -11,6 +11,7 @@ import { SourceStatusList } from '../components/dashboard/SourceStatus';
 import { TrendChart } from '../components/dashboard/TrendChart';
 import type { DashboardOverviewResponse, UnifiedQueueItem, UnifiedQueueResponse } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber, formatRelativeTo } from '../utils/format';
+import { incidentPath } from '../utils/incidentLink';
 import { captureInfo, captureShortNames, shortNameOf } from '../utils/labels';
 import { parsePeriod, parseSource, periodLabel, type Period } from '../utils/triage';
 
@@ -402,7 +403,8 @@ function TrendPanel({
 /* ───────────────────────── 최근 인시던트 ───────────────────────── */
 
 function recentDetailUrl(item: UnifiedQueueItem, listQuery: string): string {
-  return `/incidents/${item.jobId}/rank/${item.queueRank}?${new URLSearchParams({ from: listQuery }).toString()}`;
+  // T27: 번호가 있으면 고정 주소, 없으면 옛 주소
+  return incidentPath(item, new URLSearchParams({ from: listQuery })) ?? '/incidents';
 }
 
 function RecentPanel({

@@ -407,7 +407,7 @@ export function OperationsPage() {
                         <tr key={job.jobId} className="hover:bg-slate-800/35">
                           <td
                             className="soc-td whitespace-nowrap text-xs font-semibold tabular-nums text-slate-100"
-                            title={`탐지 작업 #${job.jobId}`}
+                            title={`탐지 작업: 작업 ${job.jobId}`}
                           >
                             {formatDateTime(job.finishedAt)}
                           </td>
@@ -504,7 +504,7 @@ export function OperationsPage() {
                           <CaptureName id={summary.captureId} className="font-semibold text-slate-100" />
                           {summary.jobId !== null && (
                             <span className="text-[11px] text-slate-500" title={summary.zeekadMessageVersion ? `메시지 형식 ${summary.zeekadMessageVersion}` : undefined}>
-                              탐지 작업 #{summary.jobId}
+                              작업 {summary.jobId}
                             </span>
                           )}
                           {summary.dryRunOrRecorded && <SocBadge tone="muted">Dry-run</SocBadge>}

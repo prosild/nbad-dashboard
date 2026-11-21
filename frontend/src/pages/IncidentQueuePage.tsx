@@ -51,6 +51,7 @@ import {
   formatNumber,
   formatRelativeTo,
 } from '../utils/format';
+import { incidentPath } from '../utils/incidentLink';
 import { captureInfo, captureShortNames, detectionModelInfo, labelText, lookupLabel, shortNameOf } from '../utils/labels';
 import {
   DEFAULT_PAGE_SIZE,
@@ -82,7 +83,8 @@ const PAGE_KEY = 'page';
  * 상세 주소. 목록의 쿼리(기간·수집원·거르기·정렬·쪽)를 `from=`으로 넘겨 상세의 이전·다음(neighbors API)과 목록 복귀가 같은 조건을 쓴다.
  */
 function detailUrl(item: UnifiedQueueItem, listQuery: string): string {
-  return `/incidents/${item.jobId}/rank/${item.queueRank}?${new URLSearchParams({ from: listQuery }).toString()}`;
+  // T27: 번호가 있으면 고정 주소, 없으면 옛 주소
+  return incidentPath(item, new URLSearchParams({ from: listQuery })) ?? '/incidents';
 }
 
 /**
@@ -875,6 +877,11 @@ function hiddenInfoTitle(item: UnifiedQueueItem): string {
   return `통신 방향 ${labelText('hostRole', item.zeekadRole)} · 세션 ${formatNumber(item.connectionCount)}건 · 에스컬레이션 ${review}`;
 }
 
+/** T27 행 링크 접근성 이름 앞머리: "인시던트 번호 1042, "(번호가 없으면 빈 글) */
+function noLabel(item: UnifiedQueueItem): string {
+  return typeof item.incidentNo === 'number' ? `인시던트 번호 ${item.incidentNo}, ` : '';
+}
+
 function isNewRow(item: UnifiedQueueItem, highlightAfter: string | null): boolean {
   if (!highlightAfter || !item.detectedAt) return false;
   return new Date(item.detectedAt).getTime() > new Date(highlightAfter).getTime();
@@ -907,7 +914,7 @@ function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string
           </span>
         </>
       )}
-      {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} />}
+      {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} detectedAt={item.detectedAt} compact />}
     </span>
   );
 }
@@ -988,6 +995,10 @@ function QueueTable({
         <caption className="sr-only">인시던트 목록. 호스트 링크나 행을 누르거나 행에서 Enter 키를 누르면 인시던트 상세로 갑니다.</caption>
         <thead>
           <tr>
+            {/* T27: 인시던트 번호는 1536px(2xl)부터 맨 앞 칸. 정렬은 없다. 좁은 화면은 행 링크 이름에 번호가 있다 */}
+            <th scope="col" className="soc-th-compact hidden px-1.5 2xl:table-cell 2xl:px-2" data-col-head="incident-no">
+              번호
+            </th>
             <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
             <SortHeader
               column="detected"
@@ -1052,6 +1063,12 @@ function QueueTable({
                 }}
                 className="cursor-pointer transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/70"
               >
+                <td
+                  className="soc-td-compact hidden px-1.5 font-mono tabular-nums text-slate-300 2xl:table-cell 2xl:px-2"
+                  data-col="incident-no"
+                >
+                  {typeof item.incidentNo === 'number' ? `#${item.incidentNo}` : '-'}
+                </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
                   <div className="flex items-center gap-1">
                     <PriorityBadge priority={item.priority} />
@@ -1067,7 +1084,7 @@ function QueueTable({
                     <Link
                       to={url}
                       onClick={(e) => e.stopPropagation()}
-                      aria-label={`인시던트 상세: ${item.hostIp} · ${captureInfo(item.captureId).text}`}
+                      aria-label={`${noLabel(item)}인시던트 상세: ${item.hostIp} · ${captureInfo(item.captureId).text}`}
                       className="shrink-0 font-mono font-semibold text-slate-100 hover:text-cyan-200 hover:underline focus:outline-none focus-visible:underline"
                     >
                       {item.hostIp}
@@ -1168,7 +1185,7 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
         <span
           role="img"
           aria-label={`AI 분석 리포트 있음: ${kind}`}
-          title={`${kind} 리포트 · 리포트 작업 #${item.zeekadReportJobId}`}
+          title={`${kind} 리포트 · 리포트 작업: 작업 ${item.zeekadReportJobId}`}
           className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
         >
           <FileText className="h-3 w-3" aria-hidden="true" />
@@ -1286,6 +1303,15 @@ function QueueMobileList({
             className="block px-3 py-2.5 transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50"
           >
             <div className="flex items-center gap-2">
+              {typeof item.incidentNo === 'number' && (
+                <span
+                  className="shrink-0 font-mono text-xs font-semibold tabular-nums text-cyan-200"
+                  aria-label={`인시던트 번호 ${item.incidentNo}`}
+                  data-card-incident-no=""
+                >
+                  #{item.incidentNo}
+                </span>
+              )}
               <PriorityBadge priority={item.priority} />
               {isNewRow(item, highlightAfter) && <NewRowBadge />}
               <span className="shrink-0 font-mono text-sm font-semibold text-slate-100">{item.hostIp}</span>
@@ -1300,7 +1326,7 @@ function QueueMobileList({
               <span className="text-[11px] text-slate-500">담당</span>
               <AssigneeName assignee={item.assignee} className="max-w-[9rem] text-xs" />
               <MobileElapsed item={item} anchor={anchor} />
-              {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} />}
+              {item.ackOverdue && <AckOverdueBadge dueAt={item.ackDueAt} detectedAt={item.detectedAt} />}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               {/* T26: 링크의 접근성 이름에 "수집원: 종류 표시 이름 · 캡처 ID"가 들어가게 판독기용 글자를 더한다 */}

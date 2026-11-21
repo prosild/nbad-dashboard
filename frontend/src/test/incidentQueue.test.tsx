@@ -190,8 +190,9 @@ describe('통합 인시던트 큐(T23)', () => {
     renderQueue();
     await ready();
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((h) => h.textContent?.trim());
-    // T25: "탐지 시각" → "탐지 · 경과", 상태 · 판정 뒤에 "담당"
+    // T25: "탐지 시각" → "탐지 · 경과", 상태 · 판정 뒤에 "담당". T27: 맨 앞 "번호"(2xl부터 보임)
     expect(headers).toEqual([
+      '번호',
       '우선순위',
       '탐지 · 경과',
       '호스트',
@@ -594,7 +595,8 @@ describe('목록 밀도(T23 7절)', () => {
     await ready();
     const th = within(screen.getByRole('table'))
       .getAllByRole('columnheader')
-      .find((h) => h.getAttribute('aria-sort') !== 'none') as HTMLElement;
+      // T27: 정렬 없는 "번호" 칸은 aria-sort가 없다
+      .find((h) => h.hasAttribute('aria-sort') && h.getAttribute('aria-sort') !== 'none') as HTMLElement;
     expect(th).toBeDefined();
     expect(th.className.split(/\s+/)).not.toContain('hidden');
   });

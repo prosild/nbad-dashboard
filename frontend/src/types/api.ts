@@ -135,6 +135,8 @@ export interface UnifiedQueueItem extends IncidentQueueItem {
   ackDueAt?: string | null;
   /** T25 착수 지연 */
   ackOverdue?: boolean;
+  /** T27 인시던트 번호(매기지 못했으면 null) */
+  incidentNo?: number | null;
 }
 
 export interface UnifiedQueueSummary {
@@ -184,6 +186,16 @@ export interface QueueNeighborKey {
   jobId: number;
   queueRank: number;
   hostIp: string | null;
+  /** T27 인시던트 번호(없으면 null) */
+  incidentNo?: number | null;
+}
+
+/** T27 GET /api/incidents/no/{번호}: 지금 위치. latest=false면 최신 큐에 없고 마지막 성공 작업 위치다 */
+export interface IncidentNoLocation {
+  incidentNo: number;
+  jobId: number;
+  queueRank: number;
+  latest: boolean;
 }
 
 export interface QueueNeighborsResponse {
@@ -432,6 +444,8 @@ export interface IncidentDetailApiResponse {
   assignment?: IncidentAssignment | null;
   assignmentHistory?: AssignmentHistoryItem[];
   canAssign?: boolean;
+  /** T27 인시던트 번호(매기지 못했으면 null) */
+  incidentNo?: number | null;
 }
 
 export interface AnalystReviewItem {
@@ -450,6 +464,8 @@ export interface AnalystReviewItem {
   decidedAt: string | null;
   zeekadReviewResumedAt: string | null;
   zeekadReviewResumeFailed: boolean | null;
+  /** T27 인시던트 번호(매기지 못했으면 null) */
+  incidentNo?: number | null;
   pending?: boolean;
   resumeFailed?: boolean;
   resumeStatusLabel?: string;

@@ -705,7 +705,9 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     const table = await within(section).findByRole('table');
     const sensorRow = table.querySelector('[data-sensor-row="lab-*"]') as HTMLElement;
     expect(within(sensorRow).getByText('정상')).toBeInTheDocument();
-    expect(sensorRow).toHaveTextContent('#60');
+    // T27: '#'은 인시던트 번호에만 쓴다. "최근 끝난 작업" 칸은 숫자만(판독기 이름 "작업 60")
+    expect(sensorRow).not.toHaveTextContent('#60');
+    expect(within(sensorRow).getByLabelText('작업 60')).toHaveTextContent('60');
     const rows = Array.from(table.querySelectorAll('[data-capture-row]')).map((r) => r.getAttribute('data-capture-row'));
     expect(rows).toEqual(['lab-20261120', 'lab-20261119', 'syn1-thu', 'cic17-wed']);
     const ended = table.querySelector('[data-capture-row="lab-20261119"]') as HTMLElement;
@@ -852,6 +854,17 @@ describe('T25 운영 현황: 처리 시간·담당 현황', () => {
 });
 
 describe('T25 현황판·운영 현황 후속(T24 수락 때 정한 것)', () => {
+  it('T27 최근 인시던트 링크는 번호가 있으면 번호 주소(from= 유지), 없으면 옛 주소다', async () => {
+    const numbered = ITEMS.map((it, i) => ({ ...it, incidentNo: i % 2 === 0 ? 900 + i : null }));
+    renderAt('/', { queue: (url) => json(fakeQueue(url, { items: numbered, anchor: ANCHOR, periodFilter })) });
+    const panel = await screen.findByRole('region', { name: '최근 인시던트' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-recent-row]').length).toBeGreaterThan(1));
+    const hrefs = Array.from(panel.querySelectorAll('[data-recent-row]')).map((a) => a.getAttribute('href') ?? '');
+    expect(hrefs.some((h) => /^\/incidents\/9\d\d\?from=/.test(h))).toBe(true);
+    expect(hrefs.some((h) => /^\/incidents\/\d+\/rank\/\d+\?from=/.test(h))).toBe(true);
+    expect(hrefs.every((h) => /^\/incidents\/(9\d\d|\d+\/rank\/\d+)\?from=/.test(h))).toBe(true);
+  });
+
   it('최근 인시던트 행의 탐지 모델 이름은 640px 미만에서도 보인다(숨김 클래스 없음)', async () => {
     renderAt('/');
     const panel = await screen.findByRole('region', { name: '최근 인시던트' });

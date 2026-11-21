@@ -11,6 +11,7 @@ import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { registerApiCallbacks } from '../api/client';
 import { authApi, timeApi } from '../api/endpoints';
 import type { AuthUserDto, TimeContextResponse } from '../types/api';
+import { fromState, returnPathFromState } from '../utils/returnTo';
 
 interface AuthContextValue {
   user: AuthUserDto | null;
@@ -73,14 +74,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return registerApiCallbacks({
+      // T27: 화면을 열어 둔 채 세션이 끝나 API 401·OTP 필요를 받으면 그 순간의 주소를 라우터 상태로 넘긴다
       onUnauthorized: (code) => {
         const expired = code === 'SESSION_EXPIRED';
+        const state = fromState(window.location.pathname + window.location.search);
         setSessionExpired(expired);
         setUser(null);
-        navigate(expired ? '/login?expired' : '/login', { replace: true });
+        navigate(expired ? '/login?expired' : '/login', { replace: true, state });
       },
       onTotpRequired: (mode) => {
-        navigate(mode === 'setup' ? '/login/totp/setup' : '/login/totp', { replace: true });
+        const state = fromState(window.location.pathname + window.location.search);
+        navigate(mode === 'setup' ? '/login/totp/setup' : '/login/totp', { replace: true, state });
       },
     });
   }, [navigate]);
@@ -160,7 +164,13 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
     );
   }
   if (user.totpRequired && !user.totpVerified) {
-    return <Navigate to={user.totpEnabled ? '/login/totp' : '/login/totp/setup'} replace />;
+    return (
+      <Navigate
+        to={user.totpEnabled ? '/login/totp' : '/login/totp/setup'}
+        state={fromState(location.pathname + location.search)}
+        replace
+      />
+    );
   }
   return <>{children}</>;
 }
@@ -173,21 +183,25 @@ export function RequireTotpRoute({
   children: React.ReactNode;
 }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
+  // T27: OTP 화면 사이를 옮겨도 원래 주소를 잃지 않는다
+  const from = returnPathFromState(location.state);
+  const state = from ? { from } : undefined;
 
   if (loading) {
     return <AuthLoadingScreen />;
   }
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={state} replace />;
   }
   if (user.role !== 'ADMIN' || user.totpVerified) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={from ?? '/'} replace />;
   }
   if (mode === 'setup' && user.totpEnabled) {
-    return <Navigate to="/login/totp" replace />;
+    return <Navigate to="/login/totp" state={state} replace />;
   }
   if (mode === 'verify' && !user.totpEnabled) {
-    return <Navigate to="/login/totp/setup" replace />;
+    return <Navigate to="/login/totp/setup" state={state} replace />;
   }
   return <>{children}</>;
 }

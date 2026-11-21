@@ -9,6 +9,7 @@ import { ReviewDecisionButtons } from '../components/incident/ReviewDecisionButt
 import { CaptureName, CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
+import { incidentPath } from '../utils/incidentLink';
 import { formatDateTime } from '../utils/format';
 import { captureInfo, reviewReasonText } from '../utils/labels';
 import {
@@ -222,7 +223,7 @@ export function ReviewsPage() {
                         <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
                           <td
                             className="soc-td text-xs font-semibold text-slate-200"
-                            title={`에스컬레이션 작업 #${item.reviewJobId ?? item.jobId ?? '-'}`}
+                            title={`에스컬레이션 작업: 작업 ${item.reviewJobId ?? item.jobId ?? '-'}`}
                           >
                             <CaptureName id={item.captureId} />
                           </td>
@@ -273,9 +274,10 @@ export function ReviewsPage() {
                               {data?.canDecideReview && isPending && (
                                 <ReviewRowActions item={item} onSubmitted={loadReviews} />
                               )}
-                              {item.jobId !== null && item.queueRank !== null && (
+                              {/* T27: 번호가 있으면 순위가 없어도 고정 주소로, 둘 다 없으면 숨긴다 */}
+                              {incidentPath(item) !== null && (
                                 <Link
-                                  to={`/incidents/${item.jobId}/rank/${item.queueRank}`}
+                                  to={incidentPath(item) as string}
                                   className="soc-btn-secondary inline-flex py-1 text-xs"
                                 >
                                   인시던트 상세
