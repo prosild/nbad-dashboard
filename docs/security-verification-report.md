@@ -1,6 +1,6 @@
 # zeek_ad_dashboard 보안 검증 보고서
 
-이 문서는 `zeek_ad_dashboard`의 컨테이너 구성(멀티스테이지 빌드), 앞단 Nginx + ModSecurity(OWASP CRS) WAF, React SPA + JSON REST API(`/api/**`) 구조에서의 실제 PostgreSQL 17 연동 E2E 동작, CycloneDX SBOM, Trivy 취약점/설정 스캔, OWASP ZAP 베이스라인 스캔의 **실제 실행 결과와 조치 내역, 잔여 위험**을 기록합니다.
+`zeek_ad_dashboard`의 보안 검증을 실제로 돌린 결과와 조치, 남은 위험을 적습니다. 대상은 멀티스테이지 컨테이너 빌드, 앞단 Nginx + ModSecurity(OWASP CRS) WAF, React SPA와 JSON REST API(`/api/**`)를 PostgreSQL 17에 붙여 돌린 E2E, CycloneDX SBOM, Trivy 취약점·설정 스캔, OWASP ZAP 베이스라인 스캔입니다.
 
 - 최종 실행: `scripts/security-scan.ps1 -EvidenceDir "handoff/T10/evidence"` (commit `e565082`, 2026-11-20 11:17~11:23 KST, 종료 코드 `0`, 기록 `security-scan-run-4.txt`)
 - 실행 전 `docker compose -f compose.yml -f docker/verify/compose.verify.yml build --pull --no-cache`로 이미지 빌드 캐시를 비웠습니다(아래 4.1 참고).
@@ -37,7 +37,7 @@
 
 ## 3. PostgreSQL 17 + Nginx ModSecurity WAF + SPA/JSON API 실측 E2E 검증
 
-`compose.yml` + `docker/verify/compose.verify.yml`(`postgres:17-alpine`) 기동 후 외부 HTTPS(`https://127.0.0.1:18443`) 및 HTTP(`http://127.0.0.1:18080`)로 실측했습니다(증거: `handoff/T10/evidence/waf-e2e-verification.txt`). 로그인은 `GET /api/auth/csrf`로 받은 `XSRF-TOKEN`을 `X-XSRF-TOKEN` 헤더에 넣은 JSON `POST /api/auth/login`으로 하고, 응답은 JSON 필드로 판정합니다. 쓰기 요청마다 curl 쿠키 파일의 최신 토큰을 읽습니다.
+`compose.yml` + `docker/verify/compose.verify.yml`(`postgres:17-alpine`) 기동 후 외부 HTTPS(`https://127.0.0.1:18443`) 및 HTTP(`http://127.0.0.1:18080`)로 실측했습니다(증거: `handoff/T10/evidence/waf-e2e-verification.txt`). 로그인은 `GET /api/auth/csrf`로 받은 `XSRF-TOKEN`을 `X-XSRF-TOKEN` 헤더에 넣은 JSON `POST /api/auth/login`으로 합니다. 응답은 JSON 필드로 판정합니다. 쓰기 요청마다 curl 쿠키 파일의 최신 토큰을 읽습니다.
 
 | 검증 항목 | 요청/대상 | 실측 결과 |
 |---|---|---|
@@ -64,19 +64,19 @@
 | 공통 | 모든 응답 본문 63건 | `정확도` 문구 0건 |
 
 > [!NOTE]
-> **판정 방식(설계자 결정 2026-11-20):** `분석가 결론 집계`, `놓친 공격(재현율)`, `전체 (all)`은 데이터가 아니라 SPA 화면에 고정된 문구이므로 배포된 JS 번들 안에 있는지로 판정합니다. 데이터 쪽은 `/api/operations` JSON의 `feedbackSummaries`·`allModel`·`precisionSummaryText` 필드로 판정합니다. 이것은 API 계약 누락이 아닙니다.
+> **판정 방식(설계자 결정 2026-11-20):** `분석가 결론 집계`, `놓친 공격(재현율)`, `전체 (all)`은 데이터가 아니라 SPA 화면에 고정된 문구이므로 배포된 JS 번들 안에 있는지로 판정합니다. 데이터 쪽은 `/api/operations` JSON의 `feedbackSummaries`·`allModel`·`precisionSummaryText` 필드로 판정합니다.
 >
-> **WAF 차단 판정:** 상태 코드만 보지 않습니다. 응답 본문이 앱의 `ApiErrorResponse` JSON(`code`)이 아니고, 요청마다 붙인 `X-E2E-Probe` 헤더로 찾은 `nginx-waf` ModSecurity 감사 로그에 `is_interrupted=true`, `http_code=403`, 규칙 ID가 있어야 통과입니다. E2E는 `127.0.0.1`로 접속하므로 모든 요청에 `920350`(숫자 IP Host, 3점)이 함께 기록됩니다. 각 공격은 그 규칙 하나만으로 임계값 `5` 이상(예: `942100` 단독 5점)입니다.
+> **WAF 차단 판정:** 상태 코드만 보지 않습니다. 응답 본문이 앱의 `ApiErrorResponse` JSON(`code`)이 아니고 요청마다 붙인 `X-E2E-Probe` 헤더로 찾은 `nginx-waf` ModSecurity 감사 로그에 `is_interrupted=true`, `http_code=403`, 규칙 ID가 있어야 통과입니다. E2E는 `127.0.0.1`로 접속하므로 모든 요청에 `920350`(숫자 IP Host, 3점)이 함께 기록됩니다. 각 공격은 그 규칙 하나만으로 임계값 `5` 이상(예: `942100` 단독 5점)입니다.
 >
-> **WAF 예외:** 추가하지 않았습니다(`modsecurity-override.conf.template` 변경 없음). 시험 중 본문 없는 `POST /api/auth/logout`이 `403`이었으나, 원인은 curl `-X POST` 단독 호출이 `Content-Length`를 빼서 생긴 `920180`(+ `920350`)이었습니다. 브라우저 `fetch`는 `Content-Length: 0`을 보내므로 스크립트도 같게 맞췄고, 이후 `200`입니다.
+> **WAF 예외:** 추가하지 않았습니다(`modsecurity-override.conf.template` 변경 없음). 시험 중 본문 없는 `POST /api/auth/logout`이 `403`을 받았습니다. curl `-X POST`만 쓰면 `Content-Length`가 빠져 `920180`(+ `920350`)에 걸린 것이었습니다. 브라우저 `fetch`처럼 `Content-Length: 0`을 보내게 스크립트를 고친 뒤로는 `200`입니다.
 
 ---
 
 ## 4. CycloneDX SBOM 및 Trivy 스캔 결과
 
 ### 4.1 조치 내역
-1. **Java 의존성 CVE 조치 (`build.gradle`, T07)**: Spring Boot `3.5.3` 기본 의존성 기준 `bom.json` `82`건 / `app.jar` `83`건에서 Spring Boot `3.5.16` 및 하위 라이브러리 패치 버전 상향으로 각각 `2`건 / `3`건으로 줄였습니다.
-2. **OS 패키지 (`Dockerfile` `apk upgrade --no-cache`)**: 이번 검증의 첫 전체 실행(run-3)에서 앱 이미지 Alpine OS가 `18`건(MEDIUM 15 · UNKNOWN 3: `openssl`·`libssl3`·`libcrypto3` `3.5.9-r0` → `3.5.9-r1`, `gnutls` `3.8.13-r0` → `3.8.14-r0`)이었습니다. `RUN apk upgrade` 레이어가 빌드 캐시에서 재사용돼 이후 패치가 반영되지 않은 것이 원인이어서, `build --pull --no-cache`로 다시 빌드해 `0`건이 되었습니다. 같은 재빌드로 WAF 기반 이미지가 `nginx 1.30.7`로 갱신되어 WAF 이미지 OS `24`건(CRITICAL 4 · HIGH 2 · MEDIUM 18)도 `0`건이 되었습니다. 배포·재검증 전에는 캐시 없이 다시 빌드합니다(`docs/deployment-guide.md` 4.1).
+1. **Java 의존성 CVE 조치 (`build.gradle`, T07)**: Spring Boot `3.5.3` 기본 의존성 기준 `bom.json` `82`건 / `app.jar` `83`건이었습니다. Spring Boot `3.5.16`과 하위 라이브러리를 패치 버전으로 올려 각각 `2`건 / `3`건으로 줄였습니다.
+2. **OS 패키지 (`Dockerfile` `apk upgrade --no-cache`)**: 이번 검증의 첫 전체 실행(run-3)에서 앱 이미지 Alpine OS가 `18`건(MEDIUM 15 · UNKNOWN 3: `openssl`·`libssl3`·`libcrypto3` `3.5.9-r0` → `3.5.9-r1`, `gnutls` `3.8.13-r0` → `3.8.14-r0`)이었습니다. `RUN apk upgrade` 레이어를 빌드 캐시에서 다시 써서 그 뒤 패치가 들어가지 않은 것이 원인이었습니다. `build --pull --no-cache`로 다시 빌드하자 `0`건이 되었습니다. 같은 재빌드로 WAF 기반 이미지가 `nginx 1.30.7`로 갱신되어 WAF 이미지 OS `24`건(CRITICAL 4 · HIGH 2 · MEDIUM 18)도 `0`건이 되었습니다. 배포·재검증 전에는 캐시 없이 다시 빌드합니다(`docs/deployment-guide.md` 4.1).
 3. **Dockerfile 정적 점검**: Trivy FS 오설정 `0`건(앱 `Dockerfile`은 `USER appuser`·`HEALTHCHECK`, WAF `Dockerfile`은 `USER nginx`·`HEALTHCHECK`).
 
 ### 4.2 최종 Trivy 스캔 요약 (run-4, `handoff/T10/evidence/trivy-summary.txt`)
@@ -91,27 +91,27 @@
 | `zeek-ad-dashboard-waf:local` | Alpine 3.24.4 OS (`nginx 1.30.7`) | 0 | 0 | 0 | 0 | run-3 24건 → 기반 이미지 갱신으로 0건 |
 
 ### 4.3 잔여 위험 및 수용 근거
-1. **`org.springframework:spring-webmvc 6.2.19` (`CVE-2026-47884`, `CVE-2026-47890` — CRITICAL, Fixed in `7.0.9`)**:
+1. **`org.springframework:spring-webmvc 6.2.19`** (`CVE-2026-47884`, `CVE-2026-47890`, CRITICAL, `7.0.9`에서 수정):
    - Spring Framework `7.0.9`(Spring Boot `4.x` 세대) 메이저 업그레이드가 필요한 항목입니다.
-   - `CVE-2026-47884`는 `XsltView` 경로 제한 우회, `CVE-2026-47890`은 SSE(Server-Sent Events) 뷰 스트림 손상 취약점입니다. 지금 구조는 서버 뷰 렌더링을 하지 않습니다(Thymeleaf 제거, T08). 백엔드는 `@RestController`의 Jackson JSON 응답과, SPA 화면 경로를 정적 `index.html`로 넘기는 `forward:`만 씁니다. `XsltView`·`SseEmitter`·SSE 뷰를 쓰는 코드가 없어 해당 경로가 노출되지 않습니다. 향후 Spring Boot 4.x 전환 시 해소 대상입니다.
-2. **`ognl:ognl 3.4.4` (`CVE-2026-113730` — MEDIUM, Fixed in `3.4.13`)**:
-   - `mybatis-3.5.19.jar` 내부에 shaded(`org.apache.ibatis.ognl`) 형태로 내장된 라이브러리입니다. 본 애플리케이션은 MyBatis 정적 XML 매퍼(`#{}` 바인딩 전용, `${}` 0건)만 사용하며 외부 사용자 입력을 OGNL 표현식으로 평가하지 않으므로 직접적인 악용 경로가 없습니다.
-3. **OWASP ZAP Low `10010` Cookie No HttpOnly Flag — `XSRF-TOKEN` 한정 (사용자 결정, `SPEC.md` '결정' 2026-11-20)**:
+   - `CVE-2026-47884`는 `XsltView` 경로 제한 우회, `CVE-2026-47890`은 SSE(Server-Sent Events) 뷰 스트림 손상 취약점입니다. 지금 구조는 서버 뷰 렌더링을 하지 않습니다(Thymeleaf 제거, T08). 백엔드는 `@RestController`의 Jackson JSON 응답과, SPA 화면 경로를 정적 `index.html`로 넘기는 `forward:`만 씁니다. `XsltView`·`SseEmitter`·SSE 뷰를 쓰는 코드가 없어 해당 경로가 노출되지 않습니다. Spring Boot 4.x로 옮길 때 해소합니다.
+2. **`ognl:ognl 3.4.4`** (`CVE-2026-113730`, MEDIUM, `3.4.13`에서 수정):
+   - `mybatis-3.5.19.jar` 내부에 shaded(`org.apache.ibatis.ognl`) 형태로 들어 있는 라이브러리입니다. 이 앱은 MyBatis 정적 XML 매퍼(`#{}` 바인딩만, `${}` 0건)만 쓰고 사용자 입력을 OGNL 표현식으로 평가하지 않습니다. 그래서 직접 악용할 경로가 없습니다.
+3. **OWASP ZAP Low `10010` Cookie No HttpOnly Flag** (`XSRF-TOKEN`만, 사용자 결정, `SPEC.md` '결정' 2026-11-20):
    - SPA는 이중 제출(double-submit) CSRF 방식이어서 JS가 `XSRF-TOKEN` 쿠키를 읽어 `X-XSRF-TOKEN` 헤더로 보내야 합니다. HttpOnly를 붙이면 모든 쓰기 요청이 실패합니다.
-   - 이 쿠키는 세션 자격 증명이 아닙니다. 탈취돼도 그것만으로 세션을 쓸 수 없고, 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다(E2E [4]에서 확인).
-   - CSP `script-src 'self'`(인라인 스크립트 금지)로 쿠키를 읽을 수 있는 XSS 경로를 줄이고, `XSRF-TOKEN`도 `Secure; SameSite=Lax`입니다.
-   - 스크립트는 모든 인스턴스의 param이 정확히 `XSRF-TOKEN`인 `10010`만 허용하고, 다른 쿠키가 섞인 `10010`이나 그 밖의 Low·Medium·High가 하나라도 있으면 실패합니다(ZAP 설정으로 `10010`을 끄지 않음). 로컬 시험 결과: 원본 통과, 다른 쿠키 혼입·다른 Low 추가·`10010` Medium 변경·param 대소문자 차이는 모두 실패.
+   - 이 쿠키는 세션 자격 증명이 아닙니다. 탈취돼도 그것만으로 세션을 쓸 수 없습니다. 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다(E2E [4]에서 확인).
+   - CSP `script-src 'self'`(인라인 스크립트 금지)로 쿠키를 읽을 수 있는 XSS 경로를 줄였습니다. `XSRF-TOKEN`도 `Secure; SameSite=Lax`입니다.
+   - 스크립트는 모든 인스턴스의 param이 정확히 `XSRF-TOKEN`인 `10010`만 허용합니다. 다른 쿠키가 섞인 `10010`이나 그 밖의 Low·Medium·High가 하나라도 있으면 실패합니다(ZAP 설정으로 `10010`을 끄지 않음). 로컬 시험 결과: 원본 통과, 다른 쿠키 혼입·다른 Low 추가·`10010` Medium 변경·param 대소문자 차이는 모두 실패.
 
 ---
 
 ## 5. OWASP ZAP 베이스라인 스캔 결과 (`zap-baseline.py`)
 
-기동된 `https://nginx-waf:8443/` 대상(`--network <compose_net>`)으로 `ghcr.io/zaproxy/zaproxy:stable zap-baseline.py`를 실행했습니다. ZAP은 정보성 경고만 있어도 종료 코드 `2`이므로, 스크립트는 종료 코드 대신 `zap-baseline.json`의 위험 등급별 경고 수로 판정합니다(exit `1`/`3`은 계속 실패).
+기동된 `https://nginx-waf:8443/` 대상(`--network <compose_net>`)으로 `ghcr.io/zaproxy/zaproxy:stable zap-baseline.py`를 실행했습니다. ZAP은 정보성 경고만 있어도 종료 코드가 `2`라서 스크립트는 종료 코드 대신 `zap-baseline.json`의 위험 등급별 경고 수로 판정합니다(exit `1`/`3`은 계속 실패).
 
 - **최종 스캔 (run-4, `handoff/T10/evidence/zap-baseline-summary.md`)**: `ZAP_EXIT_CODE=2`
   - **High**: `0`
   - **Medium**: `0`
-  - **Low**: `0` (허용 예외 제외. `ALLOWED: 10010 XSRF-TOKEN (instances=3)` — `/`, `/robots.txt`, `/sitemap.xml`의 `Set-Cookie: XSRF-TOKEN`)
-  - **Informational**: `3` (`Modern Web Application [10109]` — SPA 특성, `Non-Storable Content [10049]` — `Cache-Control: no-store` 정책, `Session Management Response Identified [10112]`)
+  - **Low**: `0` (허용 예외 제외. `ALLOWED: 10010 XSRF-TOKEN (instances=3)`: `/`, `/robots.txt`, `/sitemap.xml`의 `Set-Cookie: XSRF-TOKEN`)
+  - **Informational**: `3` (`Modern Web Application [10109]`: SPA라서, `Non-Storable Content [10049]`: `Cache-Control: no-store` 정책, `Session Management Response Identified [10112]`)
   - **PASS**: `64`건 (`FAIL-NEW: 0`)
-- 참고: T07(Thymeleaf SSR)에서는 `XSRF-TOKEN` 쿠키가 없어 Low `0`이었습니다. COOP/COEP/CORP·`Permissions-Policy` 헤더(T07 조치)는 그대로 유지됩니다.
+- 참고: T07(Thymeleaf SSR)에서는 `XSRF-TOKEN` 쿠키가 없어 Low `0`이었습니다. COOP/COEP/CORP·`Permissions-Policy` 헤더(T07 조치)는 그대로 있습니다.

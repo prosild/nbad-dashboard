@@ -1,6 +1,6 @@
 # 포트폴리오 공개 배포 안내서 (Synology DS920+)
 
-이 문서는 대시보드를 포트폴리오로 공개하는 절차다. 작업자와 사용자는 이 문서만 보고 따라 할 수 있어야 한다.
+대시보드를 포트폴리오로 공개하는 절차다. 이 문서만 보고 처음부터 따라 할 수 있게 적었다.
 `https://soc.<DDNS 이름>.synology.me`에서 공개 데모 계정 `demo`(읽기 전용 `VIEWER`, 마스킹 적용)로 로그인해 실제 `zeek_AD` 스냅샷 데이터를 보게 한다.
 
 - 역할 분담: **이 PC**(이미지·스냅샷 준비, 리허설) → **NAS**(작업자가 SSH로 기동) → **DSM**(사용자가 인증서·역방향 프록시 설정) → 공개 주소 확인.
@@ -38,7 +38,7 @@
 - **바깥에 여는 포트는 `nginx-waf` HTTP 하나뿐이고 NAS `127.0.0.1`에만 묶는다.** 그래서 이 포트에 접근할 수 있는 것은 같은 NAS의 DSM 역방향 프록시뿐이다. 아래 전달 헤더(`X-Forwarded-For`, `X-Forwarded-Proto`)를 믿는 근거가 이 전제다. 포트를 `0.0.0.0`이나 LAN 주소에 묶으면 이 전제가 깨진다.
 - **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, 스택 서브넷 `PORTFOLIO_SUBNET`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`, 포트폴리오 전용 http 문맥 설정). 앱에 넘기는 헤더는 `T14`부터 모든 스택이 같은 공유 규칙(WAF 이미지 템플릿 `includes/proxy_backend.conf.template`)을 쓴다: `X-Forwarded-For`는 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다. VMware 스택(`compose.yml`)은 `127.0.0.1`만 신뢰한다(`docs/deployment-guide.md` 1.2).
 - **절대 URL**: 들어온 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
-- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)만 활성. 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보이고, 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, SPEC 결정 2026-11-21). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
+- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)만 활성. 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보인다. 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, SPEC 결정 2026-11-21). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **계정 잠금과 로그인 속도 제한(`T29`에서 바꿈)**: 모든 계정은 앱 기본대로 틀린 비밀번호 5번에 15분 잠긴다(`compose.portfolio.yml`이 `DASHBOARD_MAX_FAILED_ATTEMPTS="5"`로 고정하고 `.env`를 쓰지 않는다. `T12`~`T27`은 `PORTFOLIO_MAX_FAILED_ATTEMPTS=1000000`으로 모든 계정의 잠금을 사실상 껐었다. NAS `.env`에 그 줄이 남아 있어도 이제 쓰이지 않는다). 비밀번호를 공개한 `demo`만 아래 잠금 제외로 빠진다. 공개 ANALYST·ADMIN 계정이 남의 시도로 15분 잠길 수 있는 것은 받아들인다(방문자 화면은 `demo`). nginx는 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
 - **공유 조회 계정 잠금 제외(`T29`)**: `compose.portfolio.yml`이 `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo`(기본, `.env`의 같은 이름으로 바꿀 수 있음)를 넘긴다. 비밀번호를 공개한 `demo`를 누군가 틀린 비밀번호로 잠가 다른 방문자를 막지 못하게 하려는 것이다. 앱은 로그인 때 DB 역할이 VIEWER인 목록 계정만 잠금에서 빼고(실패 수·잠금을 바꾸지 않음), 실패 감사(`LOGIN_FAILURE`, `lockoutExempt: true`)는 그대로 남긴다. ANALYST·ADMIN은 목록에 있어도 잠긴다. 무작위 대입은 위 IP당 로그인 속도 제한이 막는다(값은 바꾸지 않았다). **운영 규칙: 목록에는 비밀번호를 공개한 공유 조회 계정만 넣는다.** 비공개 비밀번호 계정을 넣으면 여러 IP에서 대입할 때 막을 것이 IP당 속도 제한뿐이다. 목록의 계정이 없거나 VIEWER가 아니면 앱이 시작할 때 경고 로그를 남긴다(이름만). 공개 데모에서는 로그인 실패를 일부러 만들어 시험하지 않는다(실패하면 방문자가 막힐 수 있다). 리허설 `[T29]`가 대신 확인한다.
 - **기준 시각(`T23`)**: `dashboard-app`은 `DASHBOARD_TIME_ANCHOR=latest-data`(compose 기본, `.env`의 `PORTFOLIO_TIME_ANCHOR`로 바꿀 수 있음)로 뜬다. 데이터가 더 늘지 않는 고정 스냅샷이라 인시던트 큐의 "최근 24시간" 등을 `demo`가 볼 수 있는 캡처의 최신 탐지 작업 완료 시각에서 센다(숨긴 캡처의 시각은 섞이지 않는다). 모든 화면 맨 위에 "고정 스냅샷 · 기준 시각 …"이 보이고 새 인시던트 자동 갱신은 꺼진다. `T23`은 3.8로 `dashboard-app` 이미지와 `compose.portfolio.yml`을 바꿨다(`ID=t23`, `SVC=dashboard-app`, `FILES="compose.portfolio.yml"`).
@@ -99,7 +99,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-snapshot.p
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-verify.ps1 -EvidenceDir handoff/<작업 ID>/evidence
 ```
 
-- 프로젝트 이름 `zeekad-portfolio-verify`로 같은 `compose.portfolio.yml`을 띄우고, 시드를 두 번 실행한 뒤 DSM을 흉내 낸 요청으로 E2E와 ZAP을 돌리고 `down -v`로 지운다. 비밀값은 실행마다 무작위로 만든다. 실패하면 종료 코드가 0이 아니다.
+- 프로젝트 이름 `zeekad-portfolio-verify`로 같은 `compose.portfolio.yml`을 띄운다. 시드를 두 번 실행한 뒤 DSM을 흉내 낸 요청으로 E2E와 ZAP을 돌리고 `down -v`로 지운다. 비밀값은 실행마다 무작위로 만든다. 실패하면 종료 코드가 0이 아니다.
 - 이 PC 메모리가 빠듯해 실행이 중단되면 다시 돌리지 말고 `docker compose -p zeekad-portfolio-verify -f compose.portfolio.yml down -v`로 정리한다.
 
 ### 2.4 옮길 파일 만들기
@@ -209,7 +209,7 @@ scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/z
 ```
 
 - PowerShell 5.1 파이프(`tar | ssh`, `docker save | ssh`)는 바이트를 문자열로 바꿔 깨뜨리므로 쓰지 않는다. 파일은 `scp`로만 보낸다.
-- 작업 트리의 `.env.portfolio.example`·`compose.portfolio.yml`·`seed_demo.py`·nginx 템플릿은 Windows에서 CRLF로 체크아웃돼 그대로 전송된다(`*.sh`만 `.gitattributes`로 LF). Compose·nginx·`python`은 CRLF여도 동작하지만, 3.4의 `.env` 작성 스크립트는 줄 끝 `\r`을 떼야 한다(스크립트에 들어 있다).
+- 작업 트리의 `.env.portfolio.example`·`compose.portfolio.yml`·`seed_demo.py`·nginx 템플릿은 Windows에서 CRLF로 체크아웃돼 그대로 전송된다(`*.sh`만 `.gitattributes`로 LF). Compose·nginx·`python`은 CRLF여도 동작한다. 다만 3.4의 `.env` 작성 스크립트는 줄 끝 `\r`을 떼야 한다(스크립트에 들어 있다).
 
 NAS에서 스냅샷 권한과 무결성 확인:
 
