@@ -894,3 +894,48 @@ describe('T25 현황판·운영 현황 후속(T24 수락 때 정한 것)', () =>
     expect(cell).not.toHaveClass('break-all');
   });
 });
+
+describe('현황판 기간 밖 안내(T29)', () => {
+  it('기간 밖에 더 있으면 핵심 지표 위에 "선택한 기간 밖 인시던트 N건 · 전체 기간 보기", 누르면 기간 전체', async () => {
+    const user = userEvent.setup();
+    renderAt('/?period=1h');
+    const notice = await screen.findByTestId('outside-period');
+    const inPeriod = fakeQueue('/api/incidents/queue?period=1h', { items: ITEMS, anchor: ANCHOR, periodFilter });
+    expect(inPeriod.total).toBeGreaterThan(0);
+    expect(notice).toHaveTextContent(`선택한 기간 밖 인시던트 ${ITEMS.length - inPeriod.total}건`);
+    // 핵심 지표 앞에 있다
+    const kpi = screen.getByRole('region', { name: '핵심 지표' });
+    expect(notice.compareDocumentPosition(kpi) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(notice).getByRole('button', { name: '전체 기간 보기' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/?period=all');
+    await waitFor(() => expect(screen.queryByTestId('outside-period')).toBeNull());
+  });
+
+  it('0건이면 한 줄 안내 없이 탐지 추이 빈 안내가 기간 밖 수와 함께 보인다', async () => {
+    const all = (url: string) =>
+      fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter: (_i, p) => p === 'all', newestOutsidePeriod: '2026-11-12T03:00:00Z' });
+    renderAt('/?period=1h', {
+      queue: (url) => json(all(url)),
+      overview: (url) => json({ ...fakeOverview(url), trend: { bucket: '5m', buckets: buckets('1h', 0), unbucketed: { noDetectedAt: 0, afterAnchor: 0 } } }),
+    });
+    const trend = await screen.findByRole('region', { name: '탐지 추이' });
+    expect(await within(trend).findByText(/이 기간에 탐지된 인시던트가 없습니다/)).toHaveTextContent(
+      `선택한 기간 밖 인시던트 ${ITEMS.length}건 · 가장 최근 탐지: 2026-11-12 12:00:00`,
+    );
+    expect(screen.queryByTestId('outside-period')).toBeNull();
+    expect(screen.queryByRole('button', { name: '전체 기간 보기' })).toBeNull();
+  });
+
+  it('수집원 목록에 마지막 탐지가 붙는다(큐 sources)', async () => {
+    renderAt('/', {
+      snapshot: true,
+      queue: (url) =>
+        json(fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter, snapshot: true, lastDetected: { 'cic17-wed': '2026-11-12T03:00:00Z' } })),
+    });
+    await screen.findByRole('region', { name: '핵심 지표' });
+    const select = screen.getByLabelText('수집원') as HTMLSelectElement;
+    expect(select.querySelector('option[value="cap:cic17-wed"]')?.textContent).toBe(
+      'CIC-IDS2017 수요일 · 마지막 탐지 11-12 12:00(기준 시각 8일 전)',
+    );
+  });
+});

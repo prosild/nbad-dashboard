@@ -1269,3 +1269,15 @@ describe('T25 buildTimeline 합치기', () => {
     expect(assignmentKindLabel({ ...assignments[2], to: { username: 'b', displayName: 'B', enabled: true } })).toBe('담당 변경');
   });
 });
+
+describe('T29 상세 머리 경과 한 줄', () => {
+  it('경과·처리 값은 줄바꿈 없이 줄어들지 않는다(whitespace-nowrap·shrink-0)', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      meta: { ...DEFAULT_META, sourceType: 'live', detectedAt: '2026-11-15T13:00:00Z', anchor: '2026-11-21T00:12:00Z' },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const value = header().querySelector('[data-detail-elapsed]') as HTMLElement;
+    expect(value).toHaveTextContent('5일 11시간');
+    expect(value.className.split(/\s+/)).toEqual(expect.arrayContaining(['whitespace-nowrap', 'shrink-0']));
+  });
+});

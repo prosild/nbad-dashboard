@@ -155,6 +155,8 @@ export interface QueueSource {
   captureId: string;
   sourceType: SourceType;
   latestJobId: number | null;
+  /** T29 그 수집원 최신 큐 인시던트의 가장 늦은 탐지 시각(없으면 null) */
+  lastDetectedAt?: string | null;
 }
 
 export interface UnifiedQueueResponse {
@@ -169,7 +171,10 @@ export interface UnifiedQueueResponse {
   snapshot: boolean;
   period: string;
   latestDetectedAt: string | null;
+  /** 기간 시작 이하에 탐지된 행(같은 조건)의 가장 늦은 탐지 시각(T29부터 결과가 있어도 준다) */
   newestOutsidePeriod: string | null;
+  /** T29 기간만 전체로 넓히면 더 보이는 수(같은 조건). 기간 전체면 0, 알 수 없으면 null */
+  outsidePeriod?: number | null;
   sources: QueueSource[];
   maskedView: boolean;
   availableModels: string[];

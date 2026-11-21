@@ -5,6 +5,7 @@ import { ApiError } from '../api/client';
 import { dashboardApi, incidentsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
+import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, SocBadge } from '../components/StatusBadge';
 import { SourceStatusList } from '../components/dashboard/SourceStatus';
@@ -163,6 +164,8 @@ export function DashboardPage() {
               sources={queue?.sources ?? []}
               value={sourceSelectValue(cond.source, cond.captureId)}
               onChange={(v) => updateParams(sourceSelectChanges(v))}
+              anchor={queue?.anchor ?? null}
+              snapshot={snapshot}
             />
             <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
               <AnchorText overview={overview} />
@@ -183,6 +186,7 @@ export function DashboardPage() {
           <LoadingPanel label="관제 현황을 불러오는 중..." />
         ) : !overview || !queue ? null : (
           <>
+            <OutsidePeriodNotice queue={queue} onAllPeriod={() => updateParams({ period: 'all' })} />
             <KpiRow cond={cond} queue={queue} pending={data.pending} pendingError={pendingError} />
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
@@ -190,6 +194,7 @@ export function DashboardPage() {
                 overview={overview}
                 queue={queue}
                 cond={cond}
+                sourceValue={sourceSelectValue(cond.source, cond.captureId)}
                 onAllPeriod={() => updateParams({ period: 'all' })}
                 className="xl:col-span-3"
               />
@@ -349,12 +354,14 @@ function TrendPanel({
   overview,
   queue,
   cond,
+  sourceValue,
   onAllPeriod,
   className = '',
 }: {
   overview: DashboardOverviewResponse;
   queue: UnifiedQueueResponse;
   cond: Condition;
+  sourceValue: string;
   onAllPeriod: () => void;
   className?: string;
 }) {
@@ -370,12 +377,9 @@ function TrendPanel({
         note={`${periodScopeText(cond.period)} · 구간 ${unitText[trend.bucket] ?? trend.bucket} · ${DISPLAY_TIME_ZONE_LABEL}`}
       />
       {bucketed === 0 && unbucketed === 0 ? (
-        queue.newestOutsidePeriod ? (
+        hasOutsideToShow(queue) ? (
           <div className="space-y-2 px-2 py-8 text-center text-sm text-slate-300" data-empty="period">
-            <p>
-              이 기간에 탐지된 인시던트가 없습니다. 가장 최근 탐지:{' '}
-              <span className="tabular-nums text-slate-100">{formatDateTime(queue.newestOutsidePeriod)}</span>
-            </p>
+            <EmptyPeriodText queue={queue} sourceValue={sourceValue} />
             <button type="button" onClick={onAllPeriod} className="soc-btn-secondary px-3 py-1.5 text-xs">
               기간: 전체로 보기
             </button>

@@ -7,6 +7,8 @@ import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
 import type { IncidentQueueItem, QueuePriority } from '../types/api';
 import { fakeQueue, unified } from './fakeQueueServer';
+import { EmptyPeriodText, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
+import { SourceSelect } from '../components/ConditionBar';
 
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
@@ -1026,5 +1028,35 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect((await screen.findAllByText('허용 범위 밖 접근 거부')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText('사용자 아이디')).not.toHaveAttribute('placeholder', '예: analyst1');
     expectCleanText(audit.container);
+  });
+});
+
+describe('T29 기간 밖 안내·수집원 목록 문구', () => {
+  it('한 줄 안내·빈 결과 안내·수집원 목록에 내부 이름·영어 병기가 없다', () => {
+    const items = [
+      unified({ ...queueResponse.incidents[0], captureId: 'cic17-wed' } as IncidentQueueItem, { detectedAt: '2026-11-12T03:10:00Z' }),
+      unified({ ...queueResponse.incidents[0], captureId: 'lab-20261119', queueRank: 2 } as IncidentQueueItem, { detectedAt: '2026-11-20T01:00:00Z' }),
+    ];
+    const opts = {
+      items,
+      anchor: '2026-11-20T01:30:00Z',
+      snapshot: true,
+      newestOutsidePeriod: '2026-11-12T03:10:00Z',
+      newestOutsideAlways: true,
+      lastDetected: { 'cic17-wed': '2026-11-12T03:10:00Z', 'lab-20261119': '2026-11-20T01:00:00Z' },
+      periodFilter: (it: { captureId: string }, period: string) => period === 'all' || it.captureId.startsWith('lab-'),
+    };
+    const some = fakeQueue('/api/incidents/queue?period=24h', opts);
+    const none = fakeQueue('/api/incidents/queue?period=24h&captureId=cic17-wed', opts);
+    const { container } = render(
+      <div>
+        <OutsidePeriodNotice queue={some} onAllPeriod={() => undefined} />
+        <EmptyPeriodText queue={none} sourceValue="cap:cic17-wed" />
+        <SourceSelect sources={some.sources} value="" onChange={() => undefined} anchor={some.anchor} snapshot />
+      </div>,
+    );
+    expect(container.textContent).toContain('선택한 기간 밖 인시던트 1건');
+    expect(container.textContent).toContain('마지막 탐지 11-12 12:10(기준 시각 7일 전)');
+    expectCleanText(container);
   });
 });

@@ -5,12 +5,15 @@
 import type { SourceType } from '../types/api';
 import { captureInfo } from '../utils/labels';
 import { PERIODS, type Period } from '../utils/triage';
+import { lastDetectedText, maxIso } from './OutsidePeriodNotice';
 import { SOURCE_TYPE_LABEL } from './StatusBadge';
 
 /** 수집원 선택 목록에 쓰는 최소 정보(큐 sources·overview captures) */
 export interface SourceOption {
   captureId: string;
   sourceType: SourceType;
+  /** T29 큐 sources만 준다(운영 현황 목록에는 없다). 있으면 목록에 마지막 탐지를 붙인다 */
+  lastDetectedAt?: string | null;
 }
 
 /** URL의 source·captureId → 선택 값('' = 전체, 'src:live|imported', 'cap:<id>') */
@@ -56,16 +59,31 @@ export function PeriodButtons({ value, onChange }: { value: Period; onChange: (v
   );
 }
 
+/** T29 목록 글 뒤에 붙일 마지막 탐지(큐 sources에서 온 것만) */
+function lastDetectedSuffix(
+  members: SourceOption[],
+  anchor: string | null | undefined,
+  snapshot: boolean,
+): string {
+  if (members.length === 0 || members.some((m) => m.lastDetectedAt === undefined)) return '';
+  return ` · ${lastDetectedText(maxIso(members.map((m) => m.lastDetectedAt)), anchor, snapshot)}`;
+}
+
 export function SourceSelect({
   id = 'filter-source',
   sources,
   value,
   onChange,
+  anchor = null,
+  snapshot = false,
 }: {
   id?: string;
   sources: SourceOption[];
   value: string;
   onChange: (value: string) => void;
+  /** T29 마지막 탐지와 견줄 기준 시각(고정 스냅샷이면 "기준 시각 N일 전") */
+  anchor?: string | null;
+  snapshot?: boolean;
 }) {
   const groups: SourceType[] = ['live', 'imported'];
   const known = new Set(sources.map((s) => `cap:${s.captureId}`));
@@ -83,7 +101,7 @@ export function SourceSelect({
         const members = sources.filter((s) => s.sourceType === g);
         return [
           <option key={`src-${g}`} value={`src:${g}`}>
-            {SOURCE_TYPE_LABEL[g]} 전체
+            {`${SOURCE_TYPE_LABEL[g]} 전체${lastDetectedSuffix(members, anchor, snapshot)}`}
           </option>,
           members.length > 0 ? (
             <optgroup key={`grp-${g}`} label={SOURCE_TYPE_LABEL[g]}>
@@ -91,7 +109,7 @@ export function SourceSelect({
                 const info = captureInfo(s.captureId);
                 return (
                   <option key={s.captureId} value={`cap:${s.captureId}`} title={info.tooltip}>
-                    {info.text}
+                    {`${info.text}${lastDetectedSuffix([s], anchor, snapshot)}`}
                   </option>
                 );
               })}
@@ -111,18 +129,22 @@ export function SourceField({
   sources,
   value,
   onChange,
+  anchor = null,
+  snapshot = false,
 }: {
   id?: string;
   sources: SourceOption[];
   value: string;
   onChange: (value: string) => void;
+  anchor?: string | null;
+  snapshot?: boolean;
 }) {
   return (
     <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
       <label htmlFor={id} className="shrink-0 text-xs font-medium text-slate-400">
         수집원
       </label>
-      <SourceSelect id={id} sources={sources} value={value} onChange={onChange} />
+      <SourceSelect id={id} sources={sources} value={value} onChange={onChange} anchor={anchor} snapshot={snapshot} />
     </div>
   );
 }

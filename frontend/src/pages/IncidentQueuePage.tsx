@@ -29,6 +29,7 @@ import { AppShell } from '../components/AppShell';
 import { AckOverdueBadge, AssigneeName, elapsedText } from '../components/incident/AssignmentBits';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import {
   CaptureName,
   CodeLabel,
@@ -49,6 +50,7 @@ import {
   formatDateTimeRange,
   formatDuration,
   formatNumber,
+  formatCompactDateTime,
   formatRelativeTo,
 } from '../utils/format';
 import { incidentPath } from '../utils/incidentLink';
@@ -346,11 +348,19 @@ export function IncidentQueuePage() {
           onToggle={toggleStripFilter}
         />
 
+        <OutsidePeriodNotice queue={data} onAllPeriod={() => handlePeriod('all')} />
+
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <PeriodButtons value={query.period} onChange={handlePeriod} />
 
-            <SourceField sources={data?.sources ?? []} value={sourceValue} onChange={handleSource} />
+            <SourceField
+              sources={data?.sources ?? []}
+              value={sourceValue}
+              onChange={handleSource}
+              anchor={data?.anchor ?? null}
+              snapshot={Boolean(data?.snapshot)}
+            />
 
             <AssigneeField
               value={query.assignee}
@@ -561,6 +571,7 @@ export function IncidentQueuePage() {
               <EmptyState
                 data={data}
                 anyFilter={anyFilter}
+                sourceValue={sourceValue}
                 onAllPeriod={() => handlePeriod('all')}
                 onReset={handleResetFilters}
               />
@@ -606,21 +617,20 @@ export function IncidentQueuePage() {
 function EmptyState({
   data,
   anyFilter,
+  sourceValue,
   onAllPeriod,
   onReset,
 }: {
   data: UnifiedQueueResponse | null;
   anyFilter: boolean;
+  sourceValue: string;
   onAllPeriod: () => void;
   onReset: () => void;
 }) {
-  if (data && data.newestOutsidePeriod) {
+  if (data && hasOutsideToShow(data)) {
     return (
       <div className="space-y-2 px-4 py-12 text-center text-sm text-slate-300" data-empty="period">
-        <p>
-          이 기간에 탐지된 인시던트가 없습니다. 가장 최근 탐지:{' '}
-          <span className="tabular-nums text-slate-100">{formatDateTime(data.newestOutsidePeriod)}</span>
-        </p>
+        <EmptyPeriodText queue={data} sourceValue={sourceValue} />
         <div className="flex flex-wrap items-center justify-center gap-2">
           <button type="button" onClick={onAllPeriod} className="soc-btn-secondary px-3 py-1.5 text-xs">
             기간: 전체로 보기
@@ -945,10 +955,7 @@ function SourceCell({ item, shortNames }: { item: UnifiedQueueItem; shortNames: 
 
 /** 발생 시각(한 줄): 초를 빼고, 기준 시각과 같은 해면 연도를 뺀다(해가 다르면 연도를 보인다). 전체 구간은 칸 툴팁. */
 function compactOccurrence(iso: string | null, anchor: string | null): string {
-  const full = formatDateTime(iso);
-  if (full.length !== 19) return full;
-  const anchorYear = anchor ? formatDateTime(anchor).slice(0, 4) : '';
-  return full.slice(0, 4) === anchorYear ? full.slice(5, 16) : full.slice(0, 16);
+  return formatCompactDateTime(iso, anchor);
 }
 
 function QueueTable({

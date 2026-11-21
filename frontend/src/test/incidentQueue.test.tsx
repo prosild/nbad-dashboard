@@ -887,3 +887,88 @@ describe('T25 큐: 담당·탐지 · 경과·착수 지연', () => {
     expect(within(closedCard).getByText('미배정')).toBeInTheDocument();
   });
 });
+
+describe('기간 밖 안내(T29)', () => {
+  const labOnly = (it: UnifiedQueueItem, period: string) => period === 'all' || it.captureId.startsWith('lab-');
+  const LAST = { 'cic17-wed': '2026-11-12T03:10:00Z', 'lab-20261119': '2026-11-20T01:00:00Z' };
+
+  it('기간 밖에 더 있으면 "선택한 기간 밖 인시던트 N건 · 전체 기간 보기"를 보이고 누르면 기간이 전체가 된다', async () => {
+    const user = userEvent.setup();
+    renderQueue('/incidents', { periodFilter: labOnly, newestOutsidePeriod: '2026-11-12T03:10:00Z', newestOutsideAlways: true });
+    await ready();
+    const notice = await screen.findByTestId('outside-period');
+    expect(notice).toHaveAttribute('role', 'status');
+    expect(notice).toHaveTextContent('선택한 기간 밖 인시던트 30건');
+    expect(notice).toHaveTextContent('기간 밖 가장 최근 탐지 11-12 12:10');
+    // 결과가 있으므로 빈 결과 안내는 없다
+    expect(screen.queryByText(/이 기간에 탐지된 인시던트가 없습니다/)).toBeNull();
+    await user.click(within(notice).getByRole('button', { name: '전체 기간 보기' }));
+    await waitFor(() => expect(params().get('period')).toBe('all'));
+    await waitFor(() => expect(screen.queryByTestId('outside-period')).toBeNull());
+  });
+
+  it('기간 밖에 없으면 안내가 없다', async () => {
+    renderQueue('/incidents');
+    await ready();
+    expect(screen.queryByTestId('outside-period')).toBeNull();
+  });
+
+  it('0건이면 빈 결과 안내에 기간 밖 수를 넣고 한 줄 안내·두 번째 버튼은 없다', async () => {
+    const user = userEvent.setup();
+    renderQueue('/incidents', {
+      periodFilter: (_i, period) => period === 'all',
+      newestOutsidePeriod: '2026-11-19T02:05:00Z',
+    });
+    const empty = await screen.findByText(/이 기간에 탐지된 인시던트가 없습니다/);
+    expect(empty).toHaveTextContent('선택한 기간 밖 인시던트 60건 · 가장 최근 탐지: 2026-11-19 11:05:00');
+    expect(screen.queryByTestId('outside-period')).toBeNull();
+    expect(screen.queryByRole('button', { name: '전체 기간 보기' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: '기간: 전체로 보기' })).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '기간: 전체로 보기' }));
+    await waitFor(() => expect(params().get('period')).toBe('all'));
+  });
+
+  it('수집원 목록에 종류(묶음)와 마지막 탐지(고정 스냅샷이면 기준 시각과 견준 값)를 보인다', async () => {
+    renderQueue('/incidents', { lastDetected: LAST, snapshot: true, anchor: '2026-11-20T01:30:00Z' });
+    await ready();
+    const select = screen.getByLabelText('수집원') as HTMLSelectElement;
+    const groups = [...select.querySelectorAll('optgroup')].map((g) => g.label);
+    expect(groups).toEqual(['실습망 센서', '가져온 데이터']);
+    const text = (value: string) => select.querySelector(`option[value="${value}"]`)?.textContent;
+    expect(text('cap:cic17-wed')).toBe('CIC-IDS2017 수요일 · 마지막 탐지 11-12 12:10(기준 시각 7일 전)');
+    expect(text('cap:lab-20261119')).toMatch(/ · 마지막 탐지 11-20 10:00\(기준 시각 30분 전\)$/);
+    expect(text('src:imported')).toBe('가져온 데이터 전체 · 마지막 탐지 11-12 12:10(기준 시각 7일 전)');
+    expect(text('src:live')).toBe('실습망 센서 전체 · 마지막 탐지 11-20 10:00(기준 시각 30분 전)');
+  });
+
+  it('지금 시각 기준이면 "N일 전", 탐지 없는 수집원은 "탐지 없음"', async () => {
+    renderQueue('/incidents', { lastDetected: { 'cic17-wed': '2026-11-12T03:10:00Z', 'lab-20261119': null }, anchor: '2026-11-20T01:30:00Z' });
+    await ready();
+    const select = screen.getByLabelText('수집원') as HTMLSelectElement;
+    expect(select.querySelector('option[value="cap:cic17-wed"]')?.textContent).toBe('CIC-IDS2017 수요일 · 마지막 탐지 11-12 12:10(7일 전)');
+    expect(select.querySelector('option[value="cap:lab-20261119"]')?.textContent).toMatch(/ · 탐지 없음$/);
+  });
+
+  it('고른 수집원의 마지막 탐지가 기간 밖이면 그 사실과 [기간: 전체로 보기]를 바로 보인다', async () => {
+    const user = userEvent.setup();
+    renderQueue('/incidents?captureId=cic17-wed', {
+      periodFilter: labOnly,
+      lastDetected: LAST,
+      snapshot: true,
+      anchor: '2026-11-20T01:30:00Z',
+      newestOutsidePeriod: '2026-11-12T03:10:00Z',
+    });
+    const src = await screen.findByTestId('source-outside');
+    expect(src).toHaveTextContent('고른 수집원 CIC-IDS2017 수요일의 마지막 탐지 11-12 12:10(기준 시각 7일 전)이 선택한 기간 밖입니다.');
+    expect(screen.getByText(/이 기간에 탐지된 인시던트가 없습니다/)).toHaveTextContent('선택한 기간 밖 인시던트 30건');
+    await user.click(screen.getByRole('button', { name: '기간: 전체로 보기' }));
+    await waitFor(() => expect(params().get('period')).toBe('all'));
+    expect(params().get('captureId')).toBe('cic17-wed');
+  });
+
+  it('고른 수집원이 기간 안이면 수집원 안내가 없다', async () => {
+    renderQueue('/incidents?captureId=lab-20261119', { periodFilter: labOnly, lastDetected: LAST, anchor: '2026-11-20T01:30:00Z' });
+    await ready();
+    expect(screen.queryByTestId('source-outside')).toBeNull();
+  });
+});

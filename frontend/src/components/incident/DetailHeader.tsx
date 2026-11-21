@@ -140,7 +140,7 @@ export function DetailHeader({
             label={elapsed.kind === 'handled' ? '처리' : '경과'}
             title={elapsed.kind === 'handled' ? '처리 시간: 종결 시각 − 탐지 시각' : '탐지 뒤 경과(기준 시각까지)'}
           >
-            <span className="tabular-nums text-slate-200" data-detail-elapsed="">
+            <span className="shrink-0 whitespace-nowrap tabular-nums text-slate-200" data-detail-elapsed="">
               {elapsed.kind === 'handled' ? elapsed.text.replace(/^처리 /, '') : elapsed.text}
             </span>
             {meta?.ackOverdue && <AckOverdueBadge dueAt={meta?.ackDueAt} detectedAt={meta?.detectedAt ?? null} />}

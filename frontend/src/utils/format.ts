@@ -29,6 +29,14 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
+/** 짧은 날짜·시각(T29): 초를 빼고, 기준 시각과 같은 해면 연도도 뺀다. 예: `11-19 15:55`, 해가 다르면 `2025-11-19 15:55` */
+export function formatCompactDateTime(iso: string | null | undefined, anchorIso?: string | null): string {
+  const full = formatDateTime(iso);
+  if (full.length !== 19) return full;
+  const anchorYear = anchorIso ? formatDateTime(anchorIso).slice(0, 4) : '';
+  return full.slice(0, 4) === anchorYear ? full.slice(5, 16) : full.slice(0, 16);
+}
+
 /** 시작~끝 구간: 같은 날이면 끝은 시각만 쓴다. 예: `2017-07-05 22:45:00 ~ 23:15:00` */
 export function formatDateTimeRange(startIso: string | null | undefined, endIso: string | null | undefined): string {
   const start = formatDateTime(startIso);

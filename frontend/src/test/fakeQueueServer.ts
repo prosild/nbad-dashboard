@@ -18,6 +18,10 @@ export interface FakeQueueOptions {
   snapshot?: boolean;
   /** 기간 결과가 0건일 때 돌려줄 기간 밖 최근 탐지 시각(시험이 정한다) */
   newestOutsidePeriod?: string | null;
+  /** T29: 결과가 있어도 newestOutsidePeriod를 돌려준다(서버 T29 동작) */
+  newestOutsideAlways?: boolean;
+  /** T29: 수집원별 마지막 탐지(없으면 sources에 lastDetectedAt을 넣지 않는다) */
+  lastDetected?: Record<string, string | null>;
   /** 기간별로 보일 항목을 바꾸고 싶으면 넣는다(없으면 기간과 상관없이 모두) */
   periodFilter?: (item: UnifiedQueueItem, period: string) => boolean;
   availableModels?: string[];
@@ -180,11 +184,18 @@ export function fakeQueue(url: string, opts: FakeQueueOptions): UnifiedQueueResp
     snapshot: Boolean(opts.snapshot),
     period: p.get('period') ?? '24h',
     latestDetectedAt: latest ?? null,
-    newestOutsidePeriod: sorted.length === 0 ? (opts.newestOutsidePeriod ?? null) : null,
+    newestOutsidePeriod:
+      sorted.length === 0 || opts.newestOutsideAlways ? (opts.newestOutsidePeriod ?? null) : null,
+    // T29 기간 밖 수 = 같은 조건 기간 전체 수 − 지금 수
+    outsidePeriod:
+      (p.get('period') ?? '24h') === 'all'
+        ? 0
+        : filterStrip(filterBase(opts.items, p, { ...opts, periodFilter: undefined }), p).length - sorted.length,
     sources: [...new Set(opts.items.map((i) => i.captureId))].sort().map((captureId) => ({
       captureId,
       sourceType: captureId.startsWith('lab-') ? ('live' as const) : ('imported' as const),
       latestJobId: opts.items.find((i) => i.captureId === captureId)?.jobId ?? null,
+      ...(opts.lastDetected ? { lastDetectedAt: opts.lastDetected[captureId] ?? null } : {}),
     })),
     maskedView: Boolean(opts.maskedView),
     availableModels: opts.availableModels ?? [...new Set(opts.items.map((i) => i.zeekadPickedBy ?? ''))].filter(Boolean),
