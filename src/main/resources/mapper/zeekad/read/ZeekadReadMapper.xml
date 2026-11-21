@@ -257,7 +257,7 @@
                lq.zeekad_review_action,
                COALESCE(lq.zeekad_review_pending, FALSE) AS zeekad_review_pending,
                <!-- T21 경보 발송: feedback_summary.alerted와 같은 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외).
-                    알려진 차이: slack_deliveries는 성공한 작업의 기록만 옮기고 feedback_summary는 실패한 작업 기록도 센다(zeek_AD에 통일 요청, 2026-11-21) -->
+                    slack_deliveries(성공 작업 조인)와 feedback_summary.alerted는 같은 범위다(zeek_AD 계약 v2, Q67). 다르면 zeek_AD 결함 -->
                CASE WHEN EXISTS (
                    SELECT 1
                    FROM dashboard.slack_deliveries sdl
@@ -320,7 +320,7 @@
                    CASE WHEN arq.incident_id IS NOT NULL AND arq.zeekad_review_action IS NULL THEN TRUE ELSE FALSE END
                ) AS zeekad_review_pending,
                <!-- T21 경보 발송: feedback_summary.alerted와 같은 식(사건 알림 Slack 기록, 상태 후속 알림 status:* 제외).
-                    알려진 차이: slack_deliveries는 성공한 작업의 기록만 옮기고 feedback_summary는 실패한 작업 기록도 센다(zeek_AD에 통일 요청, 2026-11-21) -->
+                    slack_deliveries(성공 작업 조인)와 feedback_summary.alerted는 같은 범위다(zeek_AD 계약 v2, Q67). 다르면 zeek_AD 결함 -->
                CASE WHEN EXISTS (
                    SELECT 1
                    FROM dashboard.slack_deliveries sdl
