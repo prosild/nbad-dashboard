@@ -747,6 +747,133 @@ try {
     Assert-True (@($ongoingItems | Where-Object { $_.sourceType -ne 'live' }).Count -eq 0) "[T23h] 진행 중은 실습망 센서만"
     Assert-True (@($all.Items | Where-Object { ($_.captureId -like 'lab-*') -ne ($_.sourceType -eq 'live') }).Count -eq 0) "[T23h] 수집원 분류(lab-* = 실습망 센서)"
 
+    Write-Host "=== [T24] 현황판 overview·운영 현황(불변식·KPI = 큐·센서 상태·숨김 0·독립 SQL 24시간 구간·응답 시간) ==="
+    $t24IpHits = [System.Collections.Generic.List[string]]::new()
+    $t24Fail = [System.Collections.Generic.List[string]]::new()
+    $t24Lines = [System.Collections.Generic.List[string]]::new()
+    $t24Bodies = [System.Collections.Generic.List[string]]::new()
+    # [T24a] 기간 다섯 × 수집원(all·live·imported): 구간 합 + unbucketed = 큐 total = 캡처 행 합, 센서 = 그 캡처 합.
+    #        KPI 넷 = 링크 조건 큐 목록 수(total): 탐지된 인시던트·High(priority=high)·경보 발송(alerted=true)·에스컬레이션 대기(period=all, reviewPending=true)
+    foreach ($period in @('1h', '24h', '7d', '30d', 'all')) {
+        foreach ($cond in @('', '&source=live', '&source=imported')) {
+            $q = "period=$period$cond"
+            $ov = Invoke-Http -Path "/api/dashboard/overview?$q" -Client $demo
+            $qq = Invoke-Http -Path "/api/incidents/queue?$q&size=25" -Client $demo
+            Assert-Status $ov 200 "[T24a] demo overview $q"
+            Assert-Status $qq 200 "[T24a] demo queue $q"
+            $t24Bodies.Add($ov.Body)
+            Find-UnmaskedIpv4 $ov.Json "overview[$q]" $t24IpHits
+            $bucketSum = 0
+            foreach ($b in @($ov.Json.trend.buckets)) {
+                $parts = [int]$b.high + [int]$b.medium + [int]$b.low + [int]$b.none
+                if ($parts -ne [int]$b.total) { $t24Fail.Add("$q bucket $($b.end) parts=$parts total=$($b.total)") }
+                $bucketSum += $parts
+            }
+            $unb = [int]$ov.Json.trend.unbucketed.noDetectedAt + [int]$ov.Json.trend.unbucketed.afterAnchor
+            $capSum = 0
+            $bySensor = @{}
+            foreach ($c in @($ov.Json.captures)) {
+                $capSum += [int]$c.total
+                if ($c.sensorKey) { $bySensor[$c.sensorKey] = [int]$bySensor[$c.sensorKey] + [int]$c.total }
+            }
+            foreach ($s in @($ov.Json.sensors)) {
+                if ([int]$s.total -ne [int]$bySensor[$s.sensorKey]) { $t24Fail.Add("$q sensor $($s.sensorKey) $($s.total) != $($bySensor[$s.sensorKey])") }
+            }
+            $sum = $qq.Json.summary
+            if (($bucketSum + $unb) -ne [int]$sum.total -or $capSum -ne [int]$sum.total) { $t24Fail.Add("$q buckets=$bucketSum unbucketed=$unb captures=$capSum queue=$($sum.total)") }
+            # KPI = 링크 목록 수
+            $hi = Invoke-Http -Path "/api/incidents/queue?$q&priority=high&size=25" -Client $demo
+            $al = Invoke-Http -Path "/api/incidents/queue?$q&alerted=true&size=25" -Client $demo
+            if ([int]$hi.Json.total -ne [int]$sum.high) { $t24Fail.Add("$q KPI High $($sum.high) != list $($hi.Json.total)") }
+            if ([int]$al.Json.total -ne [int]$sum.alerted) { $t24Fail.Add("$q KPI alerted $($sum.alerted) != list $($al.Json.total)") }
+            $t24Lines.Add("$q -> buckets=$(@($ov.Json.trend.buckets).Count)($($ov.Json.trend.bucket)) sum=$bucketSum unbucketed=$unb captures=$capSum queue.total=$($sum.total) high=$($sum.high)/list $($hi.Json.total) alerted=$($sum.alerted)/list $($al.Json.total) sensors=[$(@($ov.Json.sensors | ForEach-Object { "$($_.sensorKey)=$($_.total)/$($_.health)" }) -join ',')]")
+        }
+    }
+    foreach ($cond in @('', '&source=live', '&source=imported')) {
+        $pAll = Invoke-Http -Path "/api/incidents/queue?period=all$cond&size=25" -Client $demo
+        $pList = Invoke-Http -Path "/api/incidents/queue?period=all$cond&reviewPending=true&size=25" -Client $demo
+        if ([int]$pList.Json.total -ne [int]$pAll.Json.summary.reviewPending) { $t24Fail.Add("all$cond KPI pending $($pAll.Json.summary.reviewPending) != list $($pList.Json.total)") }
+        $t24Lines.Add("pending period=all$cond -> summary.reviewPending=$($pAll.Json.summary.reviewPending) list total=$($pList.Json.total)")
+    }
+    $e2eLogs.Add("[T24a] overview invariants and KPI = list (demo, latest-data):`n       $($t24Lines -join "`n       ")`n       failures=$($t24Fail.Count)$(if ($t24Fail.Count) { "`n       " + ($t24Fail -join "`n       ") })")
+    Assert-True ($t24Fail.Count -eq 0) "[T24a] 구간 합 + unbucketed = 큐 total = 캡처 행 합, 센서 = 캡처 합, KPI = 링크 목록 수 (실패 $($t24Fail.Count))"
+
+    # [T24b] 에스컬레이션 대기: 큐(period=all) reviewPending = /api/reviews 대기 건수(다르면 원인을 적는다)
+    $rv = Invoke-Http -Path "/api/reviews?pendingOnly=true" -Client $demo
+    Assert-Status $rv 200 "[T24b] demo /api/reviews?pendingOnly=true"
+    $rvPending = @($rv.Json.reviews | Where-Object { $_.pending -ne $false }).Count
+    $qPending = [int](Invoke-Http -Path "/api/incidents/queue?period=all&size=25" -Client $demo).Json.summary.reviewPending
+    $e2eLogs.Add("[T24b] escalation pending: queue(period=all).summary.reviewPending=$qPending; /api/reviews pendingOnly pending=$rvPending (reviews rows=$(@($rv.Json.reviews).Count))$(if ($qPending -ne $rvPending) { '; DIFFERENT: queue counts latest_incident_queue.zeekad_review_pending(latest analysis), /api/reviews lists analyst_review_queue rows' })")
+
+    # [T24c] 실습망 센서 상태 ok, lab-20261119 active(latest-data 기준), 기준 시각 = [T23b] SQL 기준 시각
+    $ov24 = Invoke-Http -Path "/api/dashboard/overview?period=24h" -Client $demo
+    $labSensor = @($ov24.Json.sensors | Where-Object { $_.sensorKey -eq 'lab-*' })
+    $labCap = @($ov24.Json.captures | Where-Object { $_.captureId -eq $demoLabCapture })
+    $e2eLogs.Add("[T24c] sensors=[$(@($ov24.Json.sensors | ForEach-Object { "$($_.sensorKey):$($_.health) lastScored=$($_.lastScoredAt) lastActivity=$($_.lastActivityAt) captures=$($_.captureCount) active=$($_.activeCaptureId)" }) -join '; ')] captures=[$(@($ov24.Json.captures | ForEach-Object { "$($_.captureId):$($_.state)" }) -join ', ')] anchor=$($ov24.Json.anchor) snapshot=$($ov24.Json.snapshot) alerting=$($ov24.Json.alerting | ConvertTo-Json -Compress)")
+    Assert-True ($labSensor.Count -eq 1 -and $labSensor[0].health -eq 'ok' -and $labSensor[0].captureCount -eq 1) "[T24c] 실습망 센서 상태 ok(공개 캡처 1개 묶음)" $ov24
+    Assert-True ($labCap.Count -eq 1 -and $labCap[0].state -eq 'active') "[T24c] $demoLabCapture 수집 중(active)" $ov24
+    Assert-True ((ConvertTo-EpochMicros ([string]$ov24.Json.anchor)) -eq $anchorMicros -and $ov24.Json.snapshot -eq $true) "[T24c] overview 기준 시각 = 공개 캡처 SQL 기준 시각(latest-data)" $ov24
+    Assert-True (@($ov24.Json.captures | Where-Object { $_.sourceType -eq 'imported' -and $_.state -notin @('imported', 'failed', 'none') }).Count -eq 0) "[T24c] 가져온 데이터 캡처 상태" $ov24
+
+    # [T24d] 독립 SQL로 24시간 구간별 수(KST 시계 1시간, (start, end]): 구현 SQL을 복사하지 않음
+    $bucketSql = "WITH first_seen AS (SELECT q.incident_id, MIN(j.finished_at) AS detected_at FROM dashboard.incident_queue q " +
+        "JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id), " +
+        "d AS (SELECT f.detected_at, date_trunc('hour', f.detected_at AT TIME ZONE 'Asia/Seoul') AS kst_floor, f.detected_at AT TIME ZONE 'Asia/Seoul' AS kst " +
+        "FROM dashboard.latest_incident_queue lq JOIN first_seen f ON f.incident_id = lq.incident_id " +
+        "WHERE lq.capture_id = ANY($publicArr) AND f.detected_at > $anchorExpr - interval '24 hours' AND f.detected_at <= $anchorExpr) " +
+        "SELECT EXTRACT(EPOCH FROM ((CASE WHEN kst = kst_floor THEN kst_floor ELSE kst_floor + interval '1 hour' END) AT TIME ZONE 'Asia/Seoul'))::bigint, count(*) FROM d GROUP BY 1 ORDER BY 1"
+    $sqlBuckets = (Invoke-Psql "zeekad" $bucketSql).Output.Trim()
+    $sqlMap = [ordered]@{}
+    foreach ($line in @($sqlBuckets -split "`r?`n" | Where-Object { $_ })) { $e, $n = $line -split '\|'; $sqlMap[[long]$e] = [int]$n }
+    $apiMap = [ordered]@{}
+    foreach ($b in @($ov24.Json.trend.buckets)) {
+        if ([int]$b.total -gt 0) { $apiMap[[long]((ConvertTo-EpochMicros ([string]$b.end)) / 1000000)] = [int]$b.total }
+    }
+    $sqlText = ($sqlMap.GetEnumerator() | ForEach-Object { "$(Format-Micros ($_.Key * 1000000))=$($_.Value)" }) -join ', '
+    $apiText = ($apiMap.GetEnumerator() | ForEach-Object { "$(Format-Micros ($_.Key * 1000000))=$($_.Value)" }) -join ', '
+    $e2eLogs.Add("[T24d] 24h buckets (end UTC=count, non-zero): API [$apiText]; independent SQL [$sqlText]; API buckets=$(@($ov24.Json.trend.buckets).Count) first=$($ov24.Json.trend.buckets[0].start)~$($ov24.Json.trend.buckets[0].end) partial=$($ov24.Json.trend.buckets[0].partial)")
+    Assert-True ($apiText -eq $sqlText -and $apiText.Length -gt 0) "[T24d] 24시간 구간별 수 = 독립 SQL (API [$apiText], SQL [$sqlText])"
+
+    # [T24e] 숨김 캡처 흔적 0(overview·operations 기간 다섯), 가려지지 않은 IPv4 0, 허용 밖 captureId 403
+    foreach ($period in @('1h', '24h', '7d', '30d', 'all')) {
+        $ops = Invoke-Http -Path "/api/operations?period=$period" -Client $demo
+        Assert-Status $ops 200 "[T24e] demo operations period=$period"
+        $t24Bodies.Add($ops.Body)
+        Find-UnmaskedIpv4 $ops.Json "operations[$period]" $t24IpHits
+    }
+    $leaks = @()
+    foreach ($body in $t24Bodies) { foreach ($h in $demoHiddenCaptures) { if ($body.Contains($h)) { $leaks += $h } } }
+    $deny = @()
+    foreach ($h in @($demoHiddenCaptures | Select-Object -First 2)) {
+        $d1 = Invoke-Http -Path "/api/dashboard/overview?period=24h&captureId=$h" -Client $demo
+        $d2 = Invoke-Http -Path "/api/operations?period=7d&captureId=$h" -Client $demo
+        $deny += "$h overview=$($d1.Status) operations=$($d2.Status)"
+        Assert-Status $d1 403 "[T24e] demo overview 숨김 캡처 $h"
+        Assert-Status $d2 403 "[T24e] demo operations 숨김 캡처 $h"
+    }
+    $e2eLogs.Add("[T24e] hidden captures=[$($demoHiddenCaptures -join ', ')] leaks in overview/operations bodies=$($leaks.Count) [$(@($leaks | Select-Object -Unique) -join ', ')]; denied: $($deny -join '; '); unmasked IPv4 JSON paths=$($t24IpHits.Count)$(if ($t24IpHits.Count) { ' ' + (($t24IpHits | Select-Object -First 20) -join ', ') })")
+    Assert-True ($leaks.Count -eq 0) "[T24e] overview·operations에 숨김 캡처 흔적 0"
+    Assert-True ($t24IpHits.Count -eq 0) "[T24e] overview·operations에 가려지지 않은 IPv4 없음"
+
+    # [T24f] 응답 시간(curl 포함, 3회): overview all·24h, operations?period=7d
+    $t24Timings = [ordered]@{}
+    foreach ($t in @(@{ Name = 'overview all'; Path = "/api/dashboard/overview?period=all" },
+                     @{ Name = 'overview 24h'; Path = "/api/dashboard/overview?period=24h" },
+                     @{ Name = 'operations 7d'; Path = "/api/operations?period=7d" })) {
+        $samples = @()
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $t.Path -Client $demo
+            $sw.Stop()
+            Assert-Status $r 200 "[T24f] $($t.Name)"
+            $samples += [int]$sw.ElapsedMilliseconds
+        }
+        $t24Timings[$t.Name] = $samples
+    }
+    $t24TimingText = ($t24Timings.GetEnumerator() | ForEach-Object { "$($_.Key)=[$($_.Value -join ', ')] ms" }) -join '; '
+    $t24Slow = @($t24Timings.GetEnumerator() | Where-Object { ($_.Value | Measure-Object -Minimum).Minimum -gt 1000 } | ForEach-Object { $_.Key })
+    $e2eLogs.Add("[T24f] response times (3 samples each, includes curl): $t24TimingText; over 1s (min of 3): [$($t24Slow -join ', ')]")
+
     Write-Host "=== [4] demo 쓰기 거부(유효 CSRF) ==="
     $first = $queueByCapture.Values | ForEach-Object { $_ } | Select-Object -First 1
     $csrfControl = { param($label)

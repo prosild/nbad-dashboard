@@ -911,6 +911,126 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     }
                 }
 
+                # [11] 현황판 overview·운영 현황 기간·수집원(T24): 기간 다섯 × 수집원 조건에서 불변식(구간 합 + unbucketed = 큐 total = 캡처 행 합,
+                #      센서 = 그 캡처 합)을 PostgreSQL에서 확인한다. 허용 밖 captureId 403·감사, VIEWER 응답(overview·operations·큐)에
+                #      숨긴 캡처 문자열·가려지지 않은 IPv4 없음, /api/operations?period= 거르기.
+                #      작업 오류 글 마스킹을 실제로 보려고 검증 스택 DB(zeekad, 검증용 시드)에 IP가 든 실패 작업 하나를 넣는다(지금-10분).
+                $t24Job = 9100
+                $insJob = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-c",
+                    "INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count) VALUES ($t24Job, 'cic17-wed', 'zeekad-fusion/1', 'failed', now() - interval '11 minutes', now() - interval '10 minutes', 'connect to 192.168.10.50:5432 refused', 0)"))
+                $e2eLogs.Add("[11] inserted failed job $t24Job (cic17-wed, error with IP) into verify zeekad DB: $($insJob.Output.Trim())")
+                $q11Viewer = Join-Path $tmpDir "q11-viewer.cookies"
+                Assert-Status (Login-Api "viewer1" $q11Viewer) 200 "[11] viewer1 로그인"
+                $q11Analyst = Join-Path $tmpDir "q11-analyst.cookies"
+                Assert-Status (Login-Api "analyst1" $q11Analyst) 200 "[11] analyst1 로그인"
+                $hiddenMarkers = @('syn1-', 'lab-', 'zeekad-fusion/2', 'zeekad-fusion/3')
+
+                # [11a] 불변식: 기간 다섯 × 수집원(all·live·imported·캡처 하나), viewer1·analyst1
+                $invLines = [System.Collections.Generic.List[string]]::new()
+                $invFail = [System.Collections.Generic.List[string]]::new()
+                foreach ($who in @(@{ Name = 'viewer1'; Jar = $q11Viewer }, @{ Name = 'analyst1'; Jar = $q11Analyst })) {
+                    foreach ($period in @('1h', '24h', '7d', '30d', 'all')) {
+                        foreach ($cond in @('', '&source=live', '&source=imported', '&captureId=cic17-wed')) {
+                            $q = "period=$period$cond"
+                            $ov = Invoke-Http -Url "$baseHttps/api/dashboard/overview?$q" -CookieJar $who.Jar
+                            $qq = Invoke-Http -Url "$baseHttps/api/incidents/queue?$q&size=25" -CookieJar $who.Jar
+                            Assert-Status $ov 200 "[11a] $($who.Name) overview $q"
+                            Assert-Status $qq 200 "[11a] $($who.Name) queue $q"
+                            $bucketSum = 0
+                            foreach ($b in @($ov.Json.trend.buckets)) {
+                                $parts = [int]$b.high + [int]$b.medium + [int]$b.low + [int]$b.none
+                                if ($parts -ne [int]$b.total) { $invFail.Add("$($who.Name) $q bucket $($b.end) parts=$parts total=$($b.total)") }
+                                $bucketSum += $parts
+                            }
+                            $unb = [int]$ov.Json.trend.unbucketed.noDetectedAt + [int]$ov.Json.trend.unbucketed.afterAnchor
+                            $capSum = 0
+                            $bySensor = @{}
+                            foreach ($c in @($ov.Json.captures)) {
+                                $capSum += [int]$c.total
+                                if ($c.sensorKey) { $bySensor[$c.sensorKey] = [int]$bySensor[$c.sensorKey] + [int]$c.total }
+                            }
+                            $qTotal = [int]$qq.Json.summary.total
+                            $sensorText = @($ov.Json.sensors | ForEach-Object { "$($_.sensorKey)=$($_.total)/$($_.health)" }) -join ','
+                            foreach ($s in @($ov.Json.sensors)) {
+                                if ([int]$s.total -ne [int]$bySensor[$s.sensorKey]) { $invFail.Add("$($who.Name) $q sensor $($s.sensorKey) $($s.total) != $($bySensor[$s.sensorKey])") }
+                            }
+                            if (($bucketSum + $unb) -ne $qTotal -or $capSum -ne $qTotal) { $invFail.Add("$($who.Name) $q buckets=$bucketSum unbucketed=$unb captures=$capSum queue=$qTotal") }
+                            $invLines.Add("$($who.Name) $q -> buckets=$(@($ov.Json.trend.buckets).Count)($($ov.Json.trend.bucket)) sum=$bucketSum unbucketed=$unb captures=$capSum queue.summary.total=$qTotal sensors=[$sensorText] anchorMode=$($ov.Json.anchorMode)")
+                            if ($who.Name -eq 'viewer1') {
+                                foreach ($body in @($ov.Body, $qq.Body)) {
+                                    foreach ($m in $hiddenMarkers) { if ($body.Contains($m)) { $invFail.Add("viewer1 $q response contains hidden marker '$m'") } }
+                                    $ipHit = Get-UnmaskedIpv4 $body
+                                    if ($ipHit.Count) { $invFail.Add("viewer1 $q unmasked IPv4: $($ipHit -join ', ')") }
+                                }
+                            }
+                        }
+                    }
+                }
+                $e2eLogs.Add("[11a] overview invariants (PostgreSQL):`n      $($invLines -join "`n      ")`n      failures=$($invFail.Count)$(if ($invFail.Count) { "`n      " + ($invFail -join "`n      ") })")
+                Assert-True ($invFail.Count -eq 0) "[11a] 구간 합 + unbucketed = 큐 total = 캡처 행 합, 센서 = 캡처 합, viewer1 숨김·IPv4 0 (실패 $($invFail.Count))"
+
+                # [11b] 허용 밖 captureId 403·IDOR 감사, 잘못된 period 400
+                $idorBase11 = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username IN ('viewer1','analyst1')")
+                $d1 = Invoke-Http -Url "$baseHttps/api/dashboard/overview?period=24h&captureId=syn1-tue" -CookieJar $q11Viewer
+                $d2 = Invoke-Http -Url "$baseHttps/api/operations?period=7d&captureId=lab-20261118" -CookieJar $q11Viewer
+                $d3 = Invoke-Http -Url "$baseHttps/api/dashboard/overview?period=all&captureId=lab-fusion-v2" -CookieJar $q11Analyst
+                $bad = Invoke-Http -Url "$baseHttps/api/dashboard/overview?period=2d" -CookieJar $q11Viewer
+                $idorAfter11 = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username IN ('viewer1','analyst1')")
+                $e2eLogs.Add("[11b] viewer1 overview captureId=syn1-tue: $(Format-Resp $d1 120)`n      viewer1 operations captureId=lab-20261118: $(Format-Resp $d2 120)`n      analyst1 overview captureId=lab-fusion-v2: $(Format-Resp $d3 120)`n      viewer1 overview period=2d: $(Format-Resp $bad 160)`n      ACCESS_DENIED_IDOR rows viewer1/analyst1 before=$idorBase11 after=$idorAfter11")
+                Assert-Status $d1 403 "[11b] viewer1 overview 허용 밖 captureId"
+                Assert-Status $d2 403 "[11b] viewer1 operations 허용 밖 captureId"
+                Assert-Status $d3 403 "[11b] analyst1 overview 허용 밖 captureId"
+                Assert-Status $bad 400 "[11b] overview 잘못된 period"
+                Assert-True (($idorAfter11 - $idorBase11) -ge 3) "[11b] 허용 밖 요청 3건 IDOR 감사 기록 (증가 $($idorAfter11 - $idorBase11))"
+
+                # [11c] VIEWER 작업 오류 글 마스킹(overview·operations), 응답에 숨긴 캡처·IPv4 없음
+                $vOv = Invoke-Http -Url "$baseHttps/api/dashboard/overview?period=1h" -CookieJar $q11Viewer
+                $vOps = Invoke-Http -Url "$baseHttps/api/operations?period=1h" -CookieJar $q11Viewer
+                $vOpsAll = Invoke-Http -Url "$baseHttps/api/operations" -CookieJar $q11Viewer
+                $aOps = Invoke-Http -Url "$baseHttps/api/operations?period=1h" -CookieJar $q11Analyst
+                $vCapErr = @($vOv.Json.captures | Where-Object { $_.captureId -eq 'cic17-wed' } | ForEach-Object { $_.latestJob.error })
+                $vJobErr = @($vOps.Json.jobs | Where-Object { [int]$_.jobId -eq $t24Job } | ForEach-Object { $_.error })
+                $aJobErr = @($aOps.Json.jobs | Where-Object { [int]$_.jobId -eq $t24Job } | ForEach-Object { $_.error })
+                $leak11 = [System.Collections.Generic.List[string]]::new()
+                foreach ($pair in @(@('overview', $vOv), @('operations?period=1h', $vOps), @('operations', $vOpsAll))) {
+                    foreach ($m in $hiddenMarkers) { if ($pair[1].Body.Contains($m)) { $leak11.Add("$($pair[0]) contains '$m'") } }
+                    $ipHit = Get-UnmaskedIpv4 $pair[1].Body
+                    if ($ipHit.Count) { $leak11.Add("$($pair[0]) unmasked IPv4: $($ipHit -join ', ')") }
+                }
+                $e2eLogs.Add("[11c] viewer1 overview cic17-wed latestJob.error=[$($vCapErr -join ' | ')] state=$(@($vOv.Json.captures | ForEach-Object { "$($_.captureId):$($_.state)" }) -join ','); viewer1 operations?period=1h jobs=[$(@($vOps.Json.jobs | ForEach-Object { $_.jobId }) -join ',')] job $t24Job error=[$($vJobErr -join ' | ')]; analyst1 job $t24Job error=[$($aJobErr -join ' | ')]`n      viewer1 bundles=[$(@($vOpsAll.Json.bundles | ForEach-Object { $_.bundleId }) -join ', ')] sources=[$(@($vOpsAll.Json.sources | ForEach-Object { "$($_.captureId):$($_.sourceType)" }) -join ', ')]; leaks=$($leak11.Count)$(if ($leak11.Count) { ' ' + ($leak11 -join '; ') })")
+                Assert-True ($vCapErr.Count -eq 1 -and $vCapErr[0] -eq 'connect to 192.168.*.*:5432 refused') "[11c] viewer1 overview 작업 오류 글 마스킹 (PostgreSQL)" $vOv
+                Assert-True ($vJobErr.Count -eq 1 -and $vJobErr[0] -eq 'connect to 192.168.*.*:5432 refused') "[11c] viewer1 operations 작업 오류 글 마스킹" $vOps
+                Assert-True ($aJobErr.Count -eq 1 -and $aJobErr[0] -eq 'connect to 192.168.10.50:5432 refused') "[11c] analyst1은 원문" $aOps
+                Assert-True ($leak11.Count -eq 0) "[11c] viewer1 overview·operations에 숨긴 캡처 문자열·가려지지 않은 IPv4 없음 ($($leak11 -join '; '))"
+
+                # [11d] /api/operations?period= 거르기: 1h는 방금 넣은 작업만, all은 허용 캡처 작업 전체, latestJobs·판정 집계는 기간과 무관
+                $aOpsAll = Invoke-Http -Url "$baseHttps/api/operations?period=all" -CookieJar $q11Analyst
+                $aOpsLegacy = Invoke-Http -Url "$baseHttps/api/operations" -CookieJar $q11Analyst
+                $jobs1h = @($aOps.Json.jobs | ForEach-Object { [int]$_.jobId })
+                $jobsAll = @($aOpsAll.Json.jobs | ForEach-Object { [int]$_.jobId })
+                $jobsLegacy = @($aOpsLegacy.Json.jobs | ForEach-Object { [int]$_.jobId })
+                $sameLatest = ($aOps.Json.latestJobs | ConvertTo-Json -Depth 6 -Compress) -eq ($aOpsAll.Json.latestJobs | ConvertTo-Json -Depth 6 -Compress)
+                $sameFeedback = ($aOps.Json.feedbackSummaries | ConvertTo-Json -Depth 6 -Compress) -eq ($aOpsAll.Json.feedbackSummaries | ConvertTo-Json -Depth 6 -Compress)
+                $e2eLogs.Add("[11d] analyst1 operations period=1h jobs=[$($jobs1h -join ',')] total=$($aOps.Json.jobsTotal) truncated=$($aOps.Json.jobsTruncated) slack=$(@($aOps.Json.slackSummaries).Count); period=all jobs=[$($jobsAll -join ',')] slack=$(@($aOpsAll.Json.slackSummaries).Count); no period jobs=[$($jobsLegacy -join ',')] period=$($aOpsLegacy.Json.period); latestJobs same=$sameLatest feedbackSummaries same=$sameFeedback")
+                Assert-True (($jobs1h -join ',') -eq "$t24Job") "[11d] operations period=1h는 기간 안 작업만" $aOps
+                Assert-True (($jobsAll -join ',') -eq "$t24Job,101,100" -and ($jobsLegacy -join ',') -eq ($jobsAll -join ',')) "[11d] operations period=all = period 없음 = 허용 캡처 작업 전체(job_id 내림)" $aOpsAll
+                Assert-True ($sameLatest -and $sameFeedback) "[11d] latestJobs·판정 집계는 기간과 무관"
+
+                # [11e] 응답 시간(curl 포함, 3회)
+                $t11 = @()
+                foreach ($p in @("/api/dashboard/overview?period=all", "/api/dashboard/overview?period=24h", "/api/operations?period=7d")) {
+                    $ms = @()
+                    for ($k = 0; $k -lt 3; $k++) {
+                        $sw = [Diagnostics.Stopwatch]::StartNew()
+                        $r = Invoke-Http -Url "$baseHttps$p" -CookieJar $q11Analyst
+                        $sw.Stop()
+                        Assert-Status $r 200 "[11e] $p"
+                        $ms += [int]$sw.ElapsedMilliseconds
+                    }
+                    $t11 += "$p=[$($ms -join ', ')] ms"
+                }
+                $e2eLogs.Add("[11e] response times (analyst1, 3 samples, includes curl): $($t11 -join '; ')")
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
