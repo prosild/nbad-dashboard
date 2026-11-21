@@ -323,8 +323,16 @@ class StaticSecurityAndConfigTest {
         }
 
         assertThat(targets.size()).isGreaterThan(1);
+        // 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(SPEC 결정 2026-11-21, T20). 허용은 이 파일 하나뿐이다.
+        Path captureNameDictionary = Path.of("frontend/src/utils/labels.ts");
+        assertThat(captureNameDictionary).exists();
         for (Path file : targets) {
             String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (!file.normalize().equals(captureNameDictionary.normalize())) {
+                assertThat(content)
+                        .as("프론트엔드 프로덕션 파일 %s에는 실습망 캡처 ID를 두지 않습니다(캡처 표시 이름 사전 파일만 예외)", file)
+                        .doesNotContain("lab-20261119");
+            }
             assertThat(content)
                     .as("프론트엔드 프로덕션 파일 %s는 엄격한 CSP/XSS/도메인 규칙을 준수해야 합니다", file)
                     .doesNotContain("dangerouslySetInnerHTML")
@@ -334,7 +342,6 @@ class StaticSecurityAndConfigTest {
                     .doesNotContain("style={{")
                     .doesNotContain("style=\"")
                     .doesNotContain("정확도")
-                    .doesNotContain("lab-20261119")
                     .doesNotContain("10.10.0.50")
                     .doesNotContain("10.10.0.10")
                     .doesNotContain("https://fonts.googleapis.com")

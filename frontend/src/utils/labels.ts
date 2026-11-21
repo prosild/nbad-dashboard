@@ -367,20 +367,21 @@ const CAPTURE_FORMAT_TOOLTIP = {
 };
 
 /**
- * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-21). 키는 `lab-YYYYMMDD`의 날짜(YYYYMMDD)다.
+ * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-21). 키는 캡처 ID다.
+ * 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(SPEC 결정 2026-11-21, StaticSecurityAndConfigTest 허용 파일).
  * 표에 없는 새 lab-*는 덧붙임 없이 보인다.
  */
 export const LAB_CAPTURE_NOTES: Record<string, { note: string; description: string }> = {
-  '20261119': {
+  'lab-20261119': {
     note: 'Kali 공격 + 정상 배경',
     description:
       'Kali 공격만(실행 1), 정상 배경 35분(월요일 재생 + 합성 정상 클라이언트) 사이에 공격(실행 2). 시험 호스트 구분은 zeek_AD 2026-11-19 전달 글 5절.',
   },
-  '20261118': {
+  'lab-20261118': {
     note: '시험',
     description: '배포 VM 첫 실행. Kali nmap 첫 시험, ping·파일 회전 시험.',
   },
-  '20261201': {
+  'lab-20261201': {
     note: '시험(가짜 패킷)',
     description:
       'VM을 만들기 전 이 PC에서 시험용 생성기로 만든 패킷(날짜도 가짜). DB를 옮길 때 함께 넘어갔다. 시연 화면에서는 숨긴다(DB에서 지우지 않는다).',
@@ -410,8 +411,7 @@ export function captureInfo(id: string | null | undefined): CaptureLookup {
   const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw);
   if (lab) {
     const base = `실습망 ${lab[1]}-${lab[2]}-${lab[3]}`;
-    const date = `${lab[1]}${lab[2]}${lab[3]}`;
-    const extra = Object.prototype.hasOwnProperty.call(LAB_CAPTURE_NOTES, date) ? LAB_CAPTURE_NOTES[date] : null;
+    const extra = Object.prototype.hasOwnProperty.call(LAB_CAPTURE_NOTES, raw) ? LAB_CAPTURE_NOTES[raw] : null;
     if (extra) {
       return {
         text: `${base} · ${extra.note}`,
