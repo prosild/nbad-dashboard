@@ -397,5 +397,6 @@ INSERT INTO dashboard.raw_analyst_review_queue (
      TIMESTAMP WITH TIME ZONE '2026-11-17 04:20:30Z', FALSE),
     (211, 'syn1-wed|10.99.70.12|responder|1763352300', 2, '10.99.70.12', 'responder',
      '판단 모델 analyst_review: SMB 응답 증가 검토', TIMESTAMP WITH TIME ZONE '2026-11-17 04:07:00Z',
+     -- T21: 반영 중 결정(고정 시각이라 화면 기준으로는 늘 반영 지연이다. 계약 조합 규칙은 반영된 행만 본다)
      'confirm', 'analyst2', TIMESTAMP WITH TIME ZONE '2026-11-17 04:25:00Z',
      NULL, FALSE);

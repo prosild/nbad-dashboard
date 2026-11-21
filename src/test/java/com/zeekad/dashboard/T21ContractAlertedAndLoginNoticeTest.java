@@ -107,7 +107,11 @@ class T21ContractAlertedAndLoginNoticeTest {
                 .containsEntry("reason", "정기 백업 작업 트래픽으로 확인(오탐)"));
     }
 
-    /** 목록의 경보 발송 수가 캡처마다 feedback_summary 'all' 행 alerted와 같다(같은 식). */
+    /**
+     * 목록의 경보 발송 수가 캡처마다 feedback_summary 'all' 행 alerted와 같다(같은 식).
+     * H2 모의 feedback_summary는 원본과 같은 식을 dashboard.slack_deliveries로 옮긴 것이라(모의 뷰 기준),
+     * 원본(zeekad.slack_delivery)과의 동치는 리허설 E2E [3e]·[3f]가 확인한다.
+     */
     @Test
     void listAlertedCountEqualsFeedbackSummaryAllRowPerCapture() {
         List<String> captures = zeekadReadMapper.findDistinctCaptureIds();

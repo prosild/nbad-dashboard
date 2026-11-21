@@ -884,5 +884,6 @@ INSERT INTO dashboard.raw_analyst_review_queue (
      TIMESTAMPTZ '2026-11-17 04:20:30Z', FALSE),
     (211, 'syn1-wed|10.99.70.12|responder|1763352300', 2, '10.99.70.12', 'responder',
      '판단 모델 analyst_review: SMB 응답 증가 검토', TIMESTAMPTZ '2026-11-17 04:07:00Z',
+     -- T21: 반영 중(지연 전) 캡처용. 결정 시각이 적재 시각 기준이라 적재 10분 뒤부터는 화면이 반영 지연으로 보인다.
      'confirm', 'analyst2', NOW() - INTERVAL '1 minute',
      NULL, FALSE);
