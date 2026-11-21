@@ -381,13 +381,29 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($loginGet.Headers -notmatch "(?im)^Server:\s*nginx") "Server: nginx 헤더 비노출" $loginGet
                 Assert-True ($loginGet.Headers -notmatch "(?im)^Access-Control-Allow-Origin:\s*\*") "와일드카드 CORS 헤더 비노출" $loginGet
 
-                foreach ($protectedPath in @("/", "/incidents/101/rank/1")) {
+                # T27(설계자 답 1): 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store, 데이터 없음). 화면이 원래 주소를 싣고 로그인으로 보낸다.
+                #      그 경로의 API는 401 JSON 그대로, 화면 경로가 아닌 곳은 지금처럼 302 /login.
+                foreach ($pair in @(@("/", "/api/auth/me-not-public"), @("/incidents/101/rank/1", "/api/incidents/101/rank/1"), @("/incidents/1", "/api/incidents/no/1"))) {
+                    $protectedPath = $pair[0]
                     $protectedRes = Invoke-Http -Url "$baseHttps$protectedPath"
-                    $loc = Get-HeaderValue $protectedRes "Location"
-                    $e2eLogs.Add("[1c] unauthenticated GET $protectedPath -> HTTP $($protectedRes.Status) Location=$loc")
-                    Assert-Status $protectedRes 302 "비인증 GET $protectedPath"
-                    Assert-True ($loc -match "^(https://[^/]+)?/login$") "비인증 GET $protectedPath Location /login" $protectedRes
+                    $cc = Get-HeaderValue $protectedRes "Cache-Control"
+                    $bodyIp = @([regex]::Matches($protectedRes.Body, '\b(?:\d{1,3}\.){3}\d{1,3}\b') | ForEach-Object { $_.Value })
+                    $e2eLogs.Add("[1c] unauthenticated GET $protectedPath -> HTTP $($protectedRes.Status) Cache-Control=$cc shell=$(Test-SpaShell $protectedRes) bytes=$($protectedRes.Body.Length) ipv4=[$($bodyIp -join ', ')]")
+                    Assert-Status $protectedRes 200 "비인증 GET $protectedPath (셸)"
+                    Assert-True (Test-SpaShell $protectedRes) "비인증 GET $protectedPath SPA 셸" $protectedRes
+                    Assert-True ($cc -match "no-store") "비인증 GET $protectedPath Cache-Control no-store" $protectedRes
+                    Assert-True ($null -eq $protectedRes.Json -and $bodyIp.Count -eq 0 -and $protectedRes.Body -notmatch '"(incidentId|username|items|hostIp)"') "비인증 GET $protectedPath 본문에 API 데이터·사용자 정보 없음" $protectedRes
+                    Assert-True ([bool](Get-HeaderValue $protectedRes "Content-Security-Policy")) "비인증 GET $protectedPath 보안 헤더(CSP)" $protectedRes
+                    if ($pair[1] -ne "/api/auth/me-not-public") {
+                        $apiRes = Invoke-Http -Url "$baseHttps$($pair[1])"
+                        $e2eLogs.Add("[1c] unauthenticated GET $($pair[1]) -> $(Format-Resp $apiRes 200)")
+                        Assert-ApiError $apiRes 401 "UNAUTHENTICATED" "비인증 GET $($pair[1])"
+                    }
                 }
+                $nopeRes = Invoke-Http -Url "$baseHttps/nope"
+                $e2eLogs.Add("[1c] unauthenticated GET /nope (화면 경로 아님) -> HTTP $($nopeRes.Status) Location=$(Get-HeaderValue $nopeRes 'Location')")
+                Assert-Status $nopeRes 302 "비인증 GET /nope(화면 경로 아님)"
+                Assert-True ((Get-HeaderValue $nopeRes "Location") -match "^(https://[^/]+)?/login$") "비인증 GET /nope Location /login" $nopeRes
 
                 $jsAssets = @([regex]::Matches($loginGet.Body, 'src="(/assets/[^"]+\.js)"') | ForEach-Object { $_.Groups[1].Value })
                 $cssAssets = @([regex]::Matches($loginGet.Body, 'href="(/assets/[^"]+\.css)"') | ForEach-Object { $_.Groups[1].Value })
@@ -1242,6 +1258,105 @@ FROM v GROUP BY m ORDER BY m
                 }
                 $e2eLogs.Add("[12m] response times (analyst1, warm 1 + 3 samples, includes curl): $($t12 -join '; ')")
                 Assert-True ($slow12.Count -eq 0) "[12m] 응답 시간 최댓값 1초 이하 ($($slow12 -join ', '))"
+
+                # [13] 인시던트 번호·고정 주소(T27). 앱 시작 동기화로 새 DB에 매긴 번호, 번호 API 위치·403 감사·400, VIEWER, 추가만(psql),
+                #      /incidents/{번호}·옛 주소 nginx-waf 통과 SPA 200, 응답 시간.
+                $q13A1 = Join-Path $tmpDir "q13-a1.cookies"
+                $q13V = Join-Path $tmpDir "q13-v.cookies"
+                Assert-Status (Login-Api "analyst1" $q13A1) 200 "[13] analyst1 로그인"
+                Assert-Status (Login-Api "viewer1" $q13V) 200 "[13] viewer1 로그인"
+                $auditBase13 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+
+                # [13a] analyst1 큐 행에 모두 번호가 있고 겹치지 않는다
+                $q13 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=100" -CookieJar $q13A1
+                Assert-Status $q13 200 "[13a] analyst1 큐"
+                $items13 = @($q13.Json.items)
+                $nos13 = @($items13 | ForEach-Object { $_.incidentNo })
+                $e2eLogs.Add("[13a] analyst1 queue period=all items=$($items13.Count) total=$($q13.Json.total) incidentNo=[$((@($items13 | ForEach-Object { "$($_.jobId)/$($_.queueRank)=#$($_.incidentNo)" })) -join ', ')]")
+                Assert-True ($items13.Count -gt 0 -and @($nos13 | Where-Object { $null -eq $_ }).Count -eq 0) "[13a] 큐 행 모두 번호 있음"
+                Assert-True (@($nos13 | Select-Object -Unique).Count -eq $nos13.Count) "[13a] 번호 겹침 없음"
+
+                # [13b] 번호 API 위치 = 큐 행의 작업·순위, 그 위치 상세의 incident_id = 행의 incident_id
+                foreach ($it in $items13) {
+                    $loc13 = Invoke-Http -Url "$baseHttps/api/incidents/no/$($it.incidentNo)" -CookieJar $q13A1
+                    $det13 = Invoke-Http -Url "$baseHttps/api/incidents/$($loc13.Json.jobId)/rank/$($loc13.Json.queueRank)" -CookieJar $q13A1
+                    $e2eLogs.Add("[13b] #$($it.incidentNo) -> $(Format-Resp $loc13 200); detail incidentId=$($det13.Json.detail.incident.incidentId) incidentNo=$($det13.Json.incidentNo)")
+                    Assert-Status $loc13 200 "[13b] 번호 API #$($it.incidentNo)"
+                    Assert-True ([long]$loc13.Json.jobId -eq [long]$it.jobId -and [int]$loc13.Json.queueRank -eq [int]$it.queueRank -and $loc13.Json.latest -eq $true) "[13b] #$($it.incidentNo) 위치 = 큐 행 작업·순위(latest)" $loc13
+                    Assert-True ($det13.Json.detail.incident.incidentId -eq $it.incidentId -and [long]$det13.Json.incidentNo -eq [long]$it.incidentNo) "[13b] #$($it.incidentNo) 위치 상세의 incident_id·번호 = 행" $det13
+                }
+
+                # [13c] 새 DB 첫 동기화 묶음이 1절 순서(독립 SQL, 상대 순서). 첫 묶음 = created_at이 가장 이른 행들(한 묶음은 같은 시각으로 넣는다)
+                $batch13 = @((Invoke-AuditSelect "SELECT incident_id FROM incident_refs WHERE created_at = (SELECT MIN(created_at) FROM incident_refs) ORDER BY incident_no") -split "`r?`n" | Where-Object { $_ })
+                $refsCount13 = Invoke-AuditSelect "SELECT count(*), min(incident_no), max(incident_no), count(DISTINCT created_at) FROM incident_refs"
+                $expected13 = @((Invoke-ZeekadSelect ("SELECT lq.incident_id FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
+                    "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
+                    "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id " +
+                    "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE `"C`" ASC, lq.incident_id COLLATE `"C`" ASC")) -split "`r?`n" | Where-Object { $_ })
+                $batchSet13 = @{}; foreach ($b in $batch13) { $batchSet13[$b] = $true }
+                $expectedInBatch13 = @($expected13 | Where-Object { $batchSet13.ContainsKey($_) })
+                $e2eLogs.Add("[13c] incident_refs (count, min, max, batches) = $refsCount13`n      first batch ($($batch13.Count)) by incident_no: $($batch13 -join ' ; ')`n      independent order (latest queue $($expected13.Count)): $($expectedInBatch13 -join ' ; ')")
+                Assert-True ($batch13.Count -gt 0 -and $batch13.Count -eq $expected13.Count) "[13c] 첫 묶음 = 최신 큐 전체"
+                Assert-True (($batch13 -join '|') -eq ($expectedInBatch13 -join '|')) "[13c] 첫 묶음 번호 순서 = 탐지 시각·캡처·incident_id 순(독립 SQL)"
+
+                # [13d] 허용 밖 캡처 번호·없는 번호는 같은 403 + ACCESS_DENIED_IDOR(사유 구분), 숫자가 아니면 400(감사 없음)
+                $hiddenNo13 = Invoke-AuditSelect "SELECT incident_no FROM incident_refs WHERE capture_id NOT LIKE 'cic17-%' ORDER BY incident_no LIMIT 1"
+                $maxNo13 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(incident_no),0) FROM incident_refs")
+                $d13a = Invoke-Http -Url "$baseHttps/api/incidents/no/$hiddenNo13" -CookieJar $q13A1
+                $d13b = Invoke-Http -Url "$baseHttps/api/incidents/no/$($maxNo13 + 1000)" -CookieJar $q13A1
+                $d13c = Invoke-Http -Url "$baseHttps/api/incidents/no/abc" -CookieJar $q13A1
+                $reasons13 = Invoke-AuditSelect "SELECT action_type, detail_json FROM audit_logs WHERE id > $auditBase13 AND actor_username = 'analyst1' ORDER BY id"
+                $e2eLogs.Add("[13d] analyst1 #$hiddenNo13(허용 밖): $(Format-Resp $d13a 200)`n      #$($maxNo13 + 1000)(없음): $(Format-Resp $d13b 200)`n      abc: $(Format-Resp $d13c 200)`n      audit since [13]: $($reasons13 -replace "`n", "`n      ")")
+                Assert-ApiError $d13a 403 "FORBIDDEN" "[13d] 허용 밖 캡처 번호"
+                Assert-ApiError $d13b 403 "FORBIDDEN" "[13d] 없는 번호"
+                Assert-True ($d13a.Body -eq $d13b.Body) "[13d] 허용 밖·없는 번호 응답이 같다"
+                Assert-ApiError $d13c 400 "INVALID_REQUEST" "[13d] 숫자가 아닌 번호"
+                Assert-True ($reasons13 -match 'incident_no_capture_denied' -and $reasons13 -match 'incident_no_not_found' -and @($reasons13 -split "`r?`n" | Where-Object { $_ -match '^ACCESS_DENIED_IDOR' }).Count -eq 2) "[13d] IDOR 감사 2건(사유 구분), 400은 감사 없음"
+
+                # [13e] viewer1: 허용 캡처 번호 200, 응답에 가리지 않은 IPv4 없음
+                $vNo13 = Invoke-AuditSelect "SELECT incident_no FROM incident_refs WHERE capture_id LIKE 'cic17-%' ORDER BY incident_no LIMIT 1"
+                $v13 = Invoke-Http -Url "$baseHttps/api/incidents/no/$vNo13" -CookieJar $q13V
+                $v13d = Invoke-Http -Url "$baseHttps/api/incidents/$($v13.Json.jobId)/rank/$($v13.Json.queueRank)" -CookieJar $q13V
+                $vIp13 = @(Get-UnmaskedIpv4 ($v13.Body + $v13d.Body))
+                $e2eLogs.Add("[13e] viewer1 #$vNo13 -> $(Format-Resp $v13 200); detail incidentNo=$($v13d.Json.incidentNo) unmasked IPv4=[$($vIp13 -join ', ')]")
+                Assert-Status $v13 200 "[13e] viewer1 허용 캡처 번호"
+                Assert-True ($vIp13.Count -eq 0 -and [long]$v13d.Json.incidentNo -eq [long]$vNo13) "[13e] viewer1 번호 API·상세 IPv4 가림, 번호 같음"
+
+                # [13f] incident_refs UPDATE·DELETE 거부(psql)
+                $u13 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE incident_refs SET capture_id = capture_id WHERE incident_no = $vNo13")) -IgnoreExitCode
+                $x13 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "DELETE FROM incident_refs WHERE incident_no = $vNo13")) -IgnoreExitCode
+                $e2eLogs.Add("[13f] psql UPDATE incident_refs: exit=$($u13.ExitCode) $($u13.Output.Trim())`n      psql DELETE incident_refs: exit=$($x13.ExitCode) $($x13.Output.Trim())")
+                Assert-True ($u13.ExitCode -ne 0 -and $u13.Output -match 'append-only') "[13f] incident_refs UPDATE 거부"
+                Assert-True ($x13.ExitCode -ne 0 -and $x13.Output -match 'append-only') "[13f] incident_refs DELETE 거부"
+
+                # [13g] /incidents/{번호}·옛 주소가 nginx-waf를 지나 SPA 200(로그인 세션)
+                $first13 = $items13[0]
+                foreach ($pth in @("/incidents/$($first13.incidentNo)", "/incidents/$($first13.incidentNo)?tab=history", "/incidents/$($first13.jobId)/rank/$($first13.queueRank)")) {
+                    $g13 = Invoke-Http -Url "$baseHttps$pth" -CookieJar $q13A1
+                    $e2eLogs.Add("[13g] analyst1 GET $pth -> HTTP $($g13.Status) shell=$(Test-SpaShell $g13)")
+                    Assert-Status $g13 200 "[13g] GET $pth"
+                    Assert-True (Test-SpaShell $g13) "[13g] GET $pth SPA 셸" $g13
+                }
+
+                # [13h] 응답 시간: 데우기 1번 뒤 3번, 최댓값 1초 이하
+                $t13 = [System.Collections.Generic.List[string]]::new()
+                $slow13 = [System.Collections.Generic.List[string]]::new()
+                foreach ($p in @("/api/incidents/no/$($first13.incidentNo)", "/api/incidents/queue?period=all", "/api/incidents/queue?period=24h", "/api/incidents/$($first13.jobId)/rank/$($first13.queueRank)")) {
+                    $null = Invoke-Http -Url "$baseHttps$p" -CookieJar $q13A1
+                    $ms = @()
+                    for ($k = 0; $k -lt 3; $k++) {
+                        $sw = [Diagnostics.Stopwatch]::StartNew()
+                        $r = Invoke-Http -Url "$baseHttps$p" -CookieJar $q13A1
+                        $sw.Stop()
+                        Assert-Status $r 200 "[13h] $p"
+                        $ms += [int]$sw.ElapsedMilliseconds
+                    }
+                    $max = ($ms | Measure-Object -Maximum).Maximum
+                    $t13.Add("$p=[$($ms -join ', ')] max=$max ms")
+                    if ($max -gt 1000) { $slow13.Add($p) }
+                }
+                $e2eLogs.Add("[13h] response times (analyst1, warm 1 + 3 samples, includes curl): $($t13 -join '; ')")
+                Assert-True ($slow13.Count -eq 0) "[13h] 응답 시간 최댓값 1초 이하 ($($slow13 -join ', '))"
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")

@@ -1149,6 +1149,128 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($t25Leaks.Count -eq 0) "[T25d] 숨김 캡처 흔적 0"
     Assert-True ($t25IpHits.Count -eq 0) "[T25d] VIEWER 가려지지 않은 IPv4 0"
 
+    # ───────── [T27] 인시던트 번호(V3·시작 동기화·독립 SQL 순서·재시작·T25 이미지 되돌리기·VIEWER·응답 시간) ─────────
+    Write-Host "=== [T27] 인시던트 번호 ==="
+    $t27 = New-Client "198.51.100.94"
+    Assert-Status (Login-Api $t27 "demo" $env:DEMO_PASSWORD) 200 "[T27] demo 로그인"
+    $t27Bodies = [System.Collections.Generic.List[string]]::new()
+    $t27IpHits = [System.Collections.Generic.List[string]]::new()
+
+    # [T27a] V3 적용, 시작 동기화 뒤 최신 큐(모든 캡처)의 모든 인시던트에 번호, 걸린 시간(앱 로그)
+    $fw27 = (Invoke-Psql "zeekad_dashboard" "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank").Output.Trim()
+    $latestIds27 = @((Invoke-Psql "zeekad" "SELECT incident_id FROM dashboard.latest_incident_queue ORDER BY incident_id").Output.Trim() -split "`r?`n" | Where-Object { $_ })
+    $refIds27 = @((Invoke-Psql "zeekad_dashboard" "SELECT incident_id FROM incident_refs ORDER BY incident_id").Output.Trim() -split "`r?`n" | Where-Object { $_ })
+    $refSet27 = @{}; foreach ($r in $refIds27) { $refSet27[$r] = $true }
+    $missing27 = @($latestIds27 | Where-Object { -not $refSet27.ContainsKey($_) })
+    $appLogs27 = (Invoke-NativeCapture "docker" @("logs", (Get-ServiceContainer "dashboard-app")) -IgnoreExitCode).Output
+    $syncLog27 = @($appLogs27 -split "`r?`n" | Where-Object { $_ -match '인시던트 번호' } | ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() } | Select-Object -Last 3)
+    $refStats27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*), min(incident_no), max(incident_no), count(DISTINCT created_at) FROM incident_refs").Output.Trim()
+    $e2eLogs.Add("[T27a] flyway_schema_history:`n       $($fw27 -replace "`r?`n", "`n       ")`n       latest_incident_queue (all captures)=$($latestIds27.Count) incident_refs (count|min|max|batches)=$refStats27 missing=$($missing27.Count)`n       app log: $($syncLog27 -join ' / ')")
+    Assert-True ($fw27 -match '(?m)^3\|incident refs\|t$') "[T27a] 앱 DB에 V3 적용"
+    Assert-True ($latestIds27.Count -gt 0 -and $missing27.Count -eq 0) "[T27a] 시작 동기화 뒤 최신 큐 모든 인시던트에 번호"
+
+    # [T27b] 첫 묶음(created_at 최소) 번호 순서 = 탐지 시각(NULL 마지막)·capture_id·incident_id 순(독립 SQL, 문자열은 C 순서)
+    $batch27 = @((Invoke-Psql "zeekad_dashboard" "SELECT incident_id FROM incident_refs WHERE created_at = (SELECT MIN(created_at) FROM incident_refs) ORDER BY incident_no").Output.Trim() -split "`r?`n" | Where-Object { $_ })
+    $expected27 = @((Invoke-Psql "zeekad" ("SELECT lq.incident_id FROM dashboard.latest_incident_queue lq LEFT JOIN (SELECT q.capture_id, q.incident_id, MIN(j.finished_at) AS d " +
+        "FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL " +
+        "GROUP BY q.capture_id, q.incident_id) fs ON fs.capture_id = lq.capture_id AND fs.incident_id = lq.incident_id " +
+        "ORDER BY fs.d ASC NULLS LAST, lq.capture_id COLLATE `"C`" ASC, lq.incident_id COLLATE `"C`" ASC")).Output.Trim() -split "`r?`n" | Where-Object { $_ })
+    $bset27 = @{}; foreach ($b in $batch27) { $bset27[$b] = $true }
+    $expInBatch27 = @($expected27 | Where-Object { $bset27.ContainsKey($_) })
+    $orderOk27 = (($batch27 -join '|') -eq ($expInBatch27 -join '|'))
+    $e2eLogs.Add("[T27b] first batch rows=$($batch27.Count) (latest queue $($expected27.Count)); order equals independent SQL=$orderOk27; first 5 by incident_no: $(($batch27 | Select-Object -First 5) -join ' ; ')")
+    Assert-True ($batch27.Count -eq $expected27.Count -and $orderOk27) "[T27b] 첫 묶음 = 최신 큐 전체, 번호 순서 = 1절 순서"
+
+    # [T27c] demo 큐 행 번호(모두 있고 겹치지 않음), 번호 API 위치 = 행, 숨긴 캡처 번호 403, 응답에 IPv4·숨김 흔적 없음
+    $q27 = Invoke-Http -Path "/api/incidents/queue?period=all&size=100" -Client $t27
+    Assert-Status $q27 200 "[T27c] demo 큐"
+    $t27Bodies.Add($q27.Body); Find-UnmaskedIpv4 $q27.Json "queue[all]" $t27IpHits
+    $items27 = @($q27.Json.items)
+    $nos27 = @($items27 | ForEach-Object { $_.incidentNo })
+    Assert-True ($items27.Count -gt 0 -and @($nos27 | Where-Object { $null -eq $_ }).Count -eq 0 -and @($nos27 | Select-Object -Unique).Count -eq $nos27.Count) "[T27c] demo 큐 행 모두 번호, 겹침 없음"
+    $locBad27 = @()
+    foreach ($it in ($items27 | Select-Object -First 10)) {
+        $l = Invoke-Http -Path "/api/incidents/no/$($it.incidentNo)" -Client $t27
+        $t27Bodies.Add($l.Body); Find-UnmaskedIpv4 $l.Json "no[$($it.incidentNo)]" $t27IpHits
+        if ($l.Status -ne 200 -or [long]$l.Json.jobId -ne [long]$it.jobId -or [int]$l.Json.queueRank -ne [int]$it.queueRank -or $l.Json.latest -ne $true) { $locBad27 += "#$($it.incidentNo)" }
+    }
+    $hiddenList27 = (@($demoHiddenCaptures | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',')
+    $hiddenNo27 = if ($hiddenList27) { (Invoke-Psql "zeekad_dashboard" "SELECT incident_no FROM incident_refs WHERE capture_id IN ($hiddenList27) ORDER BY incident_no LIMIT 1").Output.Trim() } else { "" }
+    $h27 = if ($hiddenNo27) { Invoke-Http -Path "/api/incidents/no/$hiddenNo27" -Client $t27 } else { $null }
+    if ($h27) { $t27Bodies.Add($h27.Body) }
+    $spa27 = Invoke-Http -Path "/incidents/$($items27[0].incidentNo)" -Client $t27
+    $e2eLogs.Add("[T27c] demo queue items=$($items27.Count) locate mismatches=[$($locBad27 -join ', ')]; hidden capture number #$hiddenNo27 -> $(if ($h27) { Format-Resp $h27 160 } else { '(숨긴 캡처 없음)' }); GET /incidents/$($items27[0].incidentNo) -> HTTP $($spa27.Status) shell=$(Test-SpaShell $spa27)")
+    Assert-True ($locBad27.Count -eq 0) "[T27c] 번호 API 위치 = 큐 행(처음 10개)"
+    if ($h27) { Assert-ApiError $h27 403 "FORBIDDEN" "[T27c] demo 숨긴 캡처 번호" }
+    Assert-True ($spa27.Status -eq 200 -and (Test-SpaShell $spa27)) "[T27c] /incidents/{번호} SPA 200" $spa27
+
+    # [T27d] 응답 시간(데우기 1번 뒤 3번, 최댓값 1초 이하)
+    $t27Times = [ordered]@{}
+    $t27Slow = @()
+    foreach ($pth in @("/api/incidents/no/$($items27[0].incidentNo)", "/api/incidents/queue?period=24h&size=50", "/api/incidents/queue?period=all&size=50", "/api/incidents/$($items27[0].jobId)/rank/$($items27[0].queueRank)")) {
+        $warm = Invoke-Http -Path $pth -Client $t27
+        Assert-Status $warm 200 "[T27d] $pth (데우기)"
+        $ms = @()
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $pth -Client $t27
+            $sw.Stop()
+            Assert-Status $r 200 "[T27d] $pth"
+            $t27Bodies.Add($r.Body); Find-UnmaskedIpv4 $r.Json "t27[$pth]" $t27IpHits
+            $ms += [int]$sw.ElapsedMilliseconds
+        }
+        $max = ($ms | Measure-Object -Maximum).Maximum
+        $t27Times[$pth] = "[$($ms -join ', ')] max=$max ms"
+        if ($max -gt 1000) { $t27Slow += $pth }
+    }
+    $e2eLogs.Add("[T27d] response times (demo, warm 1 + 3 samples, includes curl): $(($t27Times.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; ')")
+    Assert-True ($t27Slow.Count -eq 0) "[T27d] 응답 시간 최댓값 1초 이하 (넘은 것: $($t27Slow -join ', '))"
+
+    # [T27e] 숨김 캡처 흔적 0, VIEWER 가려지지 않은 IPv4 0
+    $t27Leaks = @()
+    foreach ($body in $t27Bodies) { foreach ($hc in $demoHiddenCaptures) { if ($body.Contains($hc)) { $t27Leaks += $hc } } }
+    $e2eLogs.Add("[T27e] hidden capture traces=$($t27Leaks.Count) [$(@($t27Leaks | Select-Object -Unique) -join ', ')]; unmasked IPv4 JSON paths=$($t27IpHits.Count)$(if ($t27IpHits.Count) { ' ' + (($t27IpHits | Select-Object -First 20) -join ', ') })")
+    Assert-True ($t27Leaks.Count -eq 0) "[T27e] 숨김 캡처 흔적 0"
+    Assert-True ($t27IpHits.Count -eq 0) "[T27e] VIEWER 가려지지 않은 IPv4 0"
+
+    # [T27f] 앱 컨테이너를 다시 띄워도 번호가 그대로이고 새 행이 0
+    $before27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || md5(string_agg(incident_no || '=' || incident_id, ',' ORDER BY incident_no)) FROM incident_refs").Output.Trim()
+    $rs27 = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "--force-recreate", "dashboard-app")) -IgnoreExitCode
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+    $after27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || md5(string_agg(incident_no || '=' || incident_id, ',' ORDER BY incident_no)) FROM incident_refs").Output.Trim()
+    $restartLog27 = @(((Invoke-NativeCapture "docker" @("logs", (Get-ServiceContainer "dashboard-app")) -IgnoreExitCode).Output) -split "`r?`n" | Where-Object { $_ -match '인시던트 번호' } | ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() } | Select-Object -Last 2)
+    $e2eLogs.Add("[T27f] recreate dashboard-app exit=$($rs27.ExitCode); incident_refs (count:md5) before=$before27 after=$after27; app log: $($restartLog27 -join ' / ')")
+    Assert-True ($rs27.ExitCode -eq 0 -and $before27 -eq $after27 -and ($restartLog27 -join ' ') -match '새 번호 0건') "[T27f] 재시작 뒤 번호 그대로, 새 행 0"
+
+    # [T27g] 되돌리기 확인: V3가 적용된 앱 DB로 T25 이미지(zeek-ad-dashboard-app:pre-t27, main 0711836)가 정상으로 뜨는지. 확인 뒤 새 이미지로 되돌린다.
+    $pre27 = "zeek-ad-dashboard-app:pre-t27"
+    $pre27Id = (Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", $pre27)).Output.Trim()
+    $env:PORTFOLIO_APP_IMAGE = $pre27
+    $rb27Up = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "dashboard-app")) -IgnoreExitCode
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+    $rb27C = Get-ServiceContainer "dashboard-app"
+    $rb27Img = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.Image}}", $rb27C)).Output.Trim()
+    $rb27Health = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.Health.Status}}", $rb27C)).Output.Trim()
+    $rb27Fly = @(((Invoke-NativeCapture "docker" @("logs", $rb27C) -IgnoreExitCode).Output) -split "`r?`n" | Where-Object { $_ -match 'Flyway|flyway|Migrat|Validate|schema history' } | ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() } | Select-Object -Last 8)
+    $rb27Cl = New-Client "198.51.100.93"
+    $rb27Login = Login-Api $rb27Cl "demo" $env:DEMO_PASSWORD
+    $rb27Queue = Invoke-Http -Path "/api/incidents/queue?period=24h&size=25" -Client $rb27Cl
+    $rb27Detail = if (@($rb27Queue.Json.items).Count) { Invoke-Http -Path "/api/incidents/$($rb27Queue.Json.items[0].jobId)/rank/$($rb27Queue.Json.items[0].queueRank)" -Client $rb27Cl } else { $null }
+    $e2eLogs.Add("[T27g] rollback check: PORTFOLIO_APP_IMAGE=$pre27 ($pre27Id) up exit=$($rb27Up.ExitCode); container image=$rb27Img health=$rb27Health`n       app Flyway log (tail):`n       $($rb27Fly -join "`n       ")`n       demo login: $(Format-Resp $rb27Login 120)`n       demo queue 24h: HTTP $($rb27Queue.Status) total=$($rb27Queue.Json.total) incidentNo present=$($null -ne $rb27Queue.Json.items[0].incidentNo)`n       detail: HTTP $(if ($rb27Detail) { $rb27Detail.Status } else { '-' })")
+    Remove-Item env:PORTFOLIO_APP_IMAGE -ErrorAction SilentlyContinue
+    $rb27Ok = ($rb27Up.ExitCode -eq 0 -and $rb27Img -eq $pre27Id -and $rb27Health -eq 'healthy' -and $rb27Login.Status -eq 200 -and $rb27Queue.Status -eq 200 -and ($null -eq $rb27Detail -or $rb27Detail.Status -eq 200))
+    $fw27Up = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "dashboard-app")) -IgnoreExitCode
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+    $fw27Cl = New-Client "198.51.100.92"
+    $fw27Login = Login-Api $fw27Cl "demo" $env:DEMO_PASSWORD
+    $fw27Queue = Invoke-Http -Path "/api/incidents/queue?period=24h&size=25" -Client $fw27Cl
+    $e2eLogs.Add("[T27g] back to new image: up exit=$($fw27Up.ExitCode) demo login HTTP $($fw27Login.Status); queue 24h HTTP $($fw27Queue.Status) first incidentNo=$($fw27Queue.Json.items[0].incidentNo)")
+    Assert-True $rb27Ok "[T27g] V3가 적용된 DB로 T25 이미지가 정상으로 뜬다(되돌리기 가능)"
+    Assert-True ($fw27Up.ExitCode -eq 0 -and $fw27Login.Status -eq 200 -and $fw27Queue.Status -eq 200) "[T27g] 새 이미지로 복귀"
+
     # [T25e] 되돌리기 확인: V2가 적용된 앱 DB로 T24 이미지(zeek-ad-dashboard-app:pre-t25, main 1d0077a)가 정상으로 뜨는지
     #        (Flyway가 앞선 마이그레이션 V2를 무시하는지). 확인 뒤 새 이미지로 되돌린다.
     $preImg = "zeek-ad-dashboard-app:pre-t25"
@@ -1182,7 +1304,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
 
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="
