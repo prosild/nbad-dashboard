@@ -1,0 +1,319 @@
+import { useEffect, useState } from 'react';
+import { AlertTriangle, ClipboardCheck, History, Info, RefreshCw, Wrench } from 'lucide-react';
+import { ApiError } from '../../api/client';
+import { incidentsApi } from '../../api/endpoints';
+import type { IncidentDetailView } from '../../types/api';
+import { formatDateTime } from '../../utils/format';
+import { labelText, reviewReasonText } from '../../utils/labels';
+import { isClosedStatus } from '../../utils/triage';
+import {
+  IncidentStatusBadge,
+  LookupText,
+  ResolutionBadge,
+  ResumeStatusBadge,
+  ReviewActionBadge,
+} from '../StatusBadge';
+import { useToast } from '../ToastContext';
+import { buildTimeline, HistoryTimeline } from './HistoryTimeline';
+import { ReviewDecisionButtons } from './ReviewDecisionButtons';
+
+type Resolution = 'true_positive' | 'false_positive' | 'benign';
+
+/** 두 결정(에스컬레이션 결정·상태 변경)의 관계 안내 */
+export const REVIEW_STATUS_RELATION = '에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다.';
+
+/** 패널 아래쪽에 보이는 최근 이력 수 */
+const RECENT_HISTORY = 3;
+
+/**
+ * 인시던트 조치 패널(T19): 상태 변경과 에스컬레이션 결정을 한곳에 둔다.
+ * 조회자(쓰기 권한 없음)는 폼 없이 현재 상태·판정만 읽기 전용으로 본다. 폼 노출은 서버가 준 권한 값(canTransition·canDecide)을 따른다.
+ */
+export function ActionPanel({
+  detail,
+  readOnly,
+  onRefresh,
+  onShowHistory,
+}: {
+  detail: IncidentDetailView;
+  /** 조회자 계정이면 true */
+  readOnly: boolean;
+  onRefresh: () => Promise<void>;
+  onShowHistory: () => void;
+}) {
+  const { notify } = useToast();
+  const { incident, analystReview, currentStatus, nextAllowedStatus } = detail;
+  const canTransition = !readOnly && detail.canTransition && nextAllowedStatus !== null;
+  const canDecide = !readOnly && analystReview.present && analystReview.canDecide && !analystReview.reviewAction;
+
+  // 오탐 미리 채움(M3): 컴포넌트 상태가 아니라 서버 값(검토 결정 = 오탐 종결, 상태 ≠ 종결)에서 끌어낸다.
+  const dismissed = analystReview.reviewAction === 'dismiss' && !isClosedStatus(currentStatus);
+  const defaultResolution: Resolution = dismissed ? 'false_positive' : 'true_positive';
+
+  const [resolution, setResolution] = useState<Resolution>(defaultResolution);
+  const [reason, setReason] = useState('');
+  const [transitioning, setTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
+
+  const [reviewNote, setReviewNote] = useState('');
+  const [decidingReview, setDecidingReview] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setResolution(defaultResolution);
+  }, [defaultResolution, nextAllowedStatus]);
+
+  async function handleTransition(e: React.FormEvent) {
+    e.preventDefault();
+    if (!nextAllowedStatus) return;
+    setTransitionError(null);
+    setTransitioning(true);
+    try {
+      const res = await incidentsApi.transition(incident.jobId, incident.queueRank, {
+        toStatus: nextAllowedStatus,
+        resolution: nextAllowedStatus === 'closed' ? resolution : null,
+        reason: reason.trim(),
+      });
+      notify(res.message || '인시던트 상태를 바꿨습니다.', 'success');
+      setReason('');
+      await onRefresh();
+    } catch (err) {
+      setTransitionError(err instanceof ApiError ? err.message : '상태 변경 요청을 처리하지 못했습니다.');
+    } finally {
+      setTransitioning(false);
+    }
+  }
+
+  async function handleReviewDecision(action: 'confirm' | 'dismiss') {
+    setReviewError(null);
+    setDecidingReview(true);
+    try {
+      const res = await incidentsApi.reviewDecision(incident.jobId, incident.queueRank, {
+        action,
+        note: reviewNote.trim() || undefined,
+      });
+      notify(res.message || '검토 결정을 저장했습니다.', 'success');
+      setReviewNote('');
+      await onRefresh();
+    } catch (err) {
+      setReviewError(err instanceof ApiError ? err.message : '검토 결정을 저장하지 못했습니다.');
+    } finally {
+      setDecidingReview(false);
+    }
+  }
+
+  const statusEvents = buildTimeline(detail.statusHistory, analystReview);
+  const recent = statusEvents.slice(-RECENT_HISTORY).reverse();
+
+  return (
+    <section aria-label="조치" className="soc-card space-y-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+          <Wrench className="h-4 w-4 text-slate-400" aria-hidden="true" />
+          조치
+        </h2>
+        <div className="flex items-center gap-1">
+          <IncidentStatusBadge status={currentStatus} />
+          <ResolutionBadge resolution={detail.currentResolution} />
+        </div>
+      </div>
+
+      {detail.statusUpdatedAt && (
+        <div className="text-[11px] text-slate-400">
+          최근 변경 <span className="tabular-nums text-slate-300">{formatDateTime(detail.statusUpdatedAt)}</span> · 마지막
+          변경자{' '}
+          <span className="text-slate-300" data-raw="">
+            {detail.statusUpdatedByDisplay ?? '-'}
+          </span>
+        </div>
+      )}
+
+      {readOnly && (
+        <p className="flex items-start gap-1.5 text-xs text-slate-400">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          읽기 전용 계정입니다. 상태 변경과 에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.
+        </p>
+      )}
+
+      {/* 상태 변경 */}
+      {canTransition && nextAllowedStatus && (
+        <form onSubmit={(e) => void handleTransition(e)} className="space-y-2.5" aria-label="상태 변경">
+          <h3 className="soc-subhead">
+            상태 변경: {labelText('incidentStatus', currentStatus)} → {labelText('incidentStatus', nextAllowedStatus)}
+          </h3>
+
+          {transitionError && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+            >
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                {transitionError}
+              </span>
+              <button type="button" onClick={() => void onRefresh()} className="soc-btn-secondary py-1 text-[11px]">
+                <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                다시 불러오기
+              </button>
+            </div>
+          )}
+
+          {nextAllowedStatus === 'closed' && (
+            <div>
+              <label htmlFor="transition-resolution" className="mb-1 block text-xs font-medium text-slate-300">
+                판정 (필수)
+              </label>
+              <select
+                id="transition-resolution"
+                value={resolution}
+                onChange={(e) => setResolution(e.target.value as Resolution)}
+                className="soc-select w-full text-xs"
+              >
+                <option value="true_positive">{labelText('resolution', 'true_positive')}</option>
+                <option value="false_positive">{labelText('resolution', 'false_positive')}</option>
+                <option value="benign">{labelText('resolution', 'benign')}</option>
+              </select>
+              {dismissed && (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  에스컬레이션을 오탐 종결로 결정해 판정을 오탐으로 미리 채웠습니다. 바꿀 수 있습니다.
+                </p>
+              )}
+            </div>
+          )}
+
+          {nextAllowedStatus === 'investigating' && dismissed && (
+            <p className="text-[11px] text-slate-400">
+              에스컬레이션을 오탐 종결로 결정했습니다. 분석 중으로 바꾼 뒤 종결할 때 판정이 오탐으로 채워집니다.
+            </p>
+          )}
+
+          <div>
+            <label htmlFor="transition-reason" className="mb-1 block text-xs font-medium text-slate-300">
+              변경 사유 (필수)
+            </label>
+            <textarea
+              id="transition-reason"
+              rows={2}
+              required
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="분석 내용과 상태 변경 사유를 입력하세요."
+              className="soc-input text-xs"
+            />
+          </div>
+
+          <button type="submit" disabled={transitioning || !reason.trim()} className="soc-btn-primary w-full py-2 text-xs">
+            {transitioning ? '저장 중...' : nextAllowedStatus === 'investigating' ? '분석 중으로 변경' : '종결 처리'}
+          </button>
+        </form>
+      )}
+
+      {!readOnly && !canTransition && (
+        <p className="text-xs text-slate-400">
+          {isClosedStatus(currentStatus) ? '종결된 인시던트입니다. 더 바꿀 상태가 없습니다.' : '지금 바꿀 수 있는 상태가 없습니다.'}
+        </p>
+      )}
+
+      {/* 에스컬레이션 */}
+      <div className="space-y-2.5 border-t border-slate-800 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="soc-subhead flex items-center gap-1.5">
+            <ClipboardCheck className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            에스컬레이션
+          </h3>
+          {analystReview.present && (
+            <ReviewActionBadge action={analystReview.reviewAction} pending={analystReview.pending} />
+          )}
+        </div>
+
+        {!analystReview.present ? (
+          <p className="text-xs text-slate-400">이 인시던트에는 에스컬레이션이 없습니다.</p>
+        ) : (
+          <>
+            <div className="space-y-1 text-xs">
+              <div className="text-slate-200">
+                <LookupText label={reviewReasonText(analystReview.reviewReason)} />
+              </div>
+              <div className="text-[11px] tabular-nums text-slate-400">
+                요청 {formatDateTime(analystReview.requestedAt)}
+                {analystReview.decidedAt && ` · 결정 ${formatDateTime(analystReview.decidedAt)}`}
+              </div>
+              {analystReview.analystDisplay && (
+                <div className="text-[11px] text-slate-400">
+                  결정자{' '}
+                  <span className="text-slate-300" data-raw="">
+                    {analystReview.analystDisplay}
+                  </span>
+                </div>
+              )}
+              {analystReview.reviewAction && analystReview.resumeStatusLabel && (
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  반영 상태
+                  <ResumeStatusBadge
+                    label={analystReview.resumeStatusLabel}
+                    failed={analystReview.resumeFailed}
+                    resumed={analystReview.resumedAt !== null}
+                    pending={analystReview.pending}
+                  />
+                </div>
+              )}
+            </div>
+
+            <p className="flex items-start gap-1.5 rounded border border-slate-800 bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-400">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              {REVIEW_STATUS_RELATION}
+            </p>
+
+            {canDecide && (
+              <div className="space-y-2">
+                {reviewError && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+                  >
+                    {reviewError}
+                  </div>
+                )}
+                <div>
+                  <label htmlFor="detail-review-note" className="mb-1 block text-xs font-medium text-slate-300">
+                    검토 메모 (오탐 종결 때 필수)
+                  </label>
+                  <textarea
+                    id="detail-review-note"
+                    rows={2}
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                    placeholder="결정 근거를 적어 두세요."
+                    className="soc-input text-xs"
+                  />
+                </div>
+                <ReviewDecisionButtons
+                  note={reviewNote}
+                  noteInputId="detail-review-note"
+                  submitting={decidingReview}
+                  onDecide={(action) => void handleReviewDecision(action)}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* 최근 이력 */}
+      <div className="space-y-2 border-t border-slate-800 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="soc-subhead flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            최근 이력
+          </h3>
+          {statusEvents.length > 0 && (
+            <button type="button" onClick={onShowHistory} className="text-[11px] text-cyan-300 hover:underline">
+              전체 이력 {statusEvents.length}건
+            </button>
+          )}
+        </div>
+        <HistoryTimeline events={recent} emptyText="아직 이력이 없습니다." label="최근 이력" />
+      </div>
+    </section>
+  );
+}

@@ -1,191 +1,194 @@
-import { AlertTriangle, FileText } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import type { ReportView } from '../../types/api';
-import { formatDateTime, formatNumber, formatSeconds } from '../../utils/format';
+import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge, VerificationBadge } from '../StatusBadge';
 import { FactChips } from './FactChips';
 
-function tokenText(report: ReportView): string {
-  const parts: string[] = [];
-  if (report.llmInputTokens !== null) parts.push(`입력 ${formatNumber(report.llmInputTokens)}`);
-  if (report.llmOutputTokens !== null) parts.push(`출력 ${formatNumber(report.llmOutputTokens)}`);
-  if (report.llmThinkingTokens !== null) parts.push(`추론 ${formatNumber(report.llmThinkingTokens)}`);
-  return parts.length > 0 ? `${parts.join(' · ')} 토큰` : '-';
+/**
+ * AI 리포트 조각들. 요약 탭과 AI 리포트 탭이 같은 조각을 쓴다.
+ * 생성 정보(요청·응답 모델, 토큰, 소요 시간, 리포트·입력 버전, 실행 ID)와 가명 대응표는 화면에 두지 않는다(사용자 결정 2026-11-21).
+ */
+
+export function ReportClaims({ report }: { report: ReportView }) {
+  if (report.claims.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h4 className="soc-subhead">확인된 사실</h4>
+        <span className="text-[11px] text-slate-500">근거 번호를 누르면 근거 값을 볼 수 있습니다</span>
+      </div>
+      <ul className="space-y-1.5">
+        {report.claims.map((item, idx) => (
+          <li key={idx} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5">
+            <p className="text-sm text-slate-100">{item.claim}</p>
+            <FactChips facts={item.facts} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
+export function ReportExplanations({ report }: { report: ReportView }) {
+  if (report.possibleExplanations.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h4 className="soc-subhead">가능한 해석</h4>
+      <ul className="space-y-1.5">
+        {report.possibleExplanations.map((item, idx) => (
+          <li key={idx} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5">
+            <p className="text-sm text-slate-100">{item.explanation}</p>
+            {item.attackIds.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {item.attackIds.map((aid) => (
+                  <SocBadge key={aid} tone="neutral">
+                    <span className="font-mono">{aid}</span>
+                  </SocBadge>
+                ))}
+              </div>
+            )}
+            <FactChips facts={item.facts} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function ReportAttack({ report }: { report: ReportView }) {
+  if (report.attackCandidates.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="soc-subhead">관련 ATT&amp;CK 기법 후보</h4>
+        <SocBadge tone="neutral">확정이 아닌 가설</SocBadge>
+      </div>
+      <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+        {report.attackCandidates.map((cand, idx) => (
+          <li key={`${cand.attackId}-${idx}`} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono font-bold text-slate-100">{cand.attackId}</span>
+              <span className="text-right text-slate-200">{cand.name}</span>
+            </div>
+            {cand.tactics.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {cand.tactics.map((tac) => (
+                  <SocBadge key={tac} tone="muted">
+                    <CodeLabel dict="attackTactic" value={tac} />
+                  </SocBadge>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 추가 확인 권고: 체크 목록처럼 보인다. 표시는 이 화면에서만 유지되고 저장되지 않는다. */
+export function ReportFollowUp({ report, idPrefix }: { report: ReportView; idPrefix: string }) {
+  if (report.followUp.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h4 className="soc-subhead">추가 확인 권고</h4>
+        <span className="text-[11px] text-slate-500">확인 표시는 저장되지 않습니다</span>
+      </div>
+      <ul className="space-y-1">
+        {report.followUp.map((item, idx) => {
+          const id = `${idPrefix}-followup-${idx}`;
+          return (
+            <li key={idx} className="flex items-start gap-2 text-sm text-slate-200">
+              <input
+                id={id}
+                type="checkbox"
+                className="mt-1 h-3.5 w-3.5 shrink-0 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-500/30"
+              />
+              <label htmlFor={id}>{item}</label>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export function ReportLimitations({ report }: { report: ReportView }) {
+  if (report.limitations.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <h4 className="soc-subhead">리포트의 한계</h4>
+      <ul className="list-disc space-y-0.5 pl-4 text-xs text-slate-300">
+        {report.limitations.map((item, idx) => (
+          <li key={idx}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 검증 실패일 때만 사유·문제 항목을 보인다. */
+export function ReportVerificationProblems({ report }: { report: ReportView }) {
+  if (report.verificationPassed !== false) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+        검증 실패 사유: {report.verificationReason || '-'}
+      </div>
+      {report.verificationProblems.length > 0 && (
+        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+          {report.verificationProblems.map((prob, idx) => (
+            <li key={idx}>{prob}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** AI 리포트 탭: 리포트 전체(표시 항목만). */
 export function ReportSection({ report }: { report: ReportView }) {
   if (!report.present) {
-    return (
-      <section className="soc-card p-5">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-100">
-          <FileText className="h-4 w-4 text-slate-400" />
-          AI 분석 리포트
-        </div>
-        <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
-          이 인시던트에는 AI 분석 리포트가 없습니다.
-        </div>
-      </section>
-    );
+    return <p className="text-sm text-slate-400">이 인시던트에는 AI 분석 리포트가 없습니다.</p>;
   }
 
-  const pseudonymEntries = Object.entries(report.pseudonyms ?? {});
-
   return (
-    <section className="soc-card space-y-5 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-          <FileText className="h-4 w-4 text-slate-400" />
-          AI 분석 리포트
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SocBadge tone="neutral">
-            <CodeLabel dict="reportKind" value={report.reportKind} />
-          </SocBadge>
-          <VerificationBadge passed={report.verificationPassed} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-        <div className="soc-panel p-3">
-          <div className="text-slate-400">사용 모델(요청 / 응답)</div>
-          <div className="mt-1 text-slate-200">
-            <span className="font-mono" data-raw="">
-              {report.llmModelRequested ?? '-'}
-            </span>{' '}
-            /{' '}
-            <span className="font-mono" data-raw="">
-              {report.llmModelVersion ?? '-'}
-            </span>
-          </div>
-        </div>
-        <div className="soc-panel p-3">
-          <div className="text-slate-400">소요 시간 · 토큰</div>
-          <div className="mt-1 tabular-nums text-slate-200">
-            {formatSeconds(report.llmSeconds)} · {tokenText(report)}
-          </div>
-        </div>
-        <div className="soc-panel p-3">
-          <div className="text-slate-400">리포트 형식 · 입력 형식 · 실행 ID</div>
-          <div className="mt-1 break-all text-slate-200">
-            <span className="font-mono" data-raw="">
-              {report.reportVersion ?? '-'}
-            </span>{' '}
-            ·{' '}
-            <span className="font-mono" data-raw="">
-              {report.inputVersion ?? '-'}
-            </span>{' '}
-            ·{' '}
-            <span className="font-mono" data-raw="">
-              {report.sourceRun ?? '-'}
-            </span>
-          </div>
-        </div>
-        <div className="soc-panel p-3">
-          <div className="text-slate-400">작성 시각</div>
-          <div className="mt-1 tabular-nums text-slate-200">{formatDateTime(report.createdAt)}</div>
-        </div>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <SocBadge tone="neutral">
+          <CodeLabel dict="reportKind" value={report.reportKind} />
+        </SocBadge>
+        <VerificationBadge passed={report.verificationPassed} />
+        <span className="text-slate-400">
+          작성 시각 <span className="tabular-nums text-slate-300">{formatDateTime(report.createdAt)}</span>
+        </span>
       </div>
 
       {report.llmError && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200">
           <span className="font-semibold">AI 작성 오류: </span>
           {report.llmError}
         </div>
       )}
 
-      {report.verificationPassed === false && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200">
-          <div className="flex items-center gap-1.5 font-semibold">
-            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-            검증 실패 사유: {report.verificationReason || '-'}
-          </div>
-          {report.verificationProblems.length > 0 && (
-            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
-              {report.verificationProblems.map((prob, idx) => (
-                <li key={idx}>{prob}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      <ReportVerificationProblems report={report} />
 
       {report.observationSummary && (
-        <div className="soc-panel p-4">
-          <h4 className="soc-subhead mb-2">관측 요약</h4>
+        <div className="space-y-1.5">
+          <h4 className="soc-subhead">관측 요약</h4>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{report.observationSummary}</p>
         </div>
       )}
 
-      {report.claims.length > 0 && (
-        <div className="space-y-2.5">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h4 className="soc-subhead">확인된 사실</h4>
-            <span className="text-[11px] text-slate-500">근거 번호를 누르면 근거 값을 볼 수 있습니다</span>
-          </div>
-          <div className="space-y-2">
-            {report.claims.map((item, idx) => (
-              <div key={idx} className="soc-panel p-3.5">
-                <p className="text-sm text-slate-100">{item.claim}</p>
-                <FactChips facts={item.facts} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {report.possibleExplanations.length > 0 && (
-        <div className="space-y-2.5">
-          <h4 className="soc-subhead">가능한 해석</h4>
-          <div className="space-y-2">
-            {report.possibleExplanations.map((item, idx) => (
-              <div key={idx} className="soc-panel p-3.5">
-                <p className="text-sm text-slate-100">{item.explanation}</p>
-                {item.attackIds.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {item.attackIds.map((aid) => (
-                      <SocBadge key={aid} tone="neutral">
-                        <span className="font-mono">{aid}</span>
-                      </SocBadge>
-                    ))}
-                  </div>
-                )}
-                <FactChips facts={item.facts} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {report.attackCandidates.length > 0 && (
-        <div className="soc-panel space-y-3 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="soc-subhead">관련 ATT&amp;CK 기법 후보</h4>
-            <SocBadge tone="neutral">확정이 아닌 가설</SocBadge>
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {report.attackCandidates.map((cand, idx) => (
-              <div key={`${cand.attackId}-${idx}`} className="rounded-lg border border-slate-800 bg-[#090f1d] p-3 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono font-bold text-slate-100">{cand.attackId}</span>
-                  <span className="text-slate-200">{cand.name}</span>
-                </div>
-                {cand.tactics.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {cand.tactics.map((tac) => (
-                      <SocBadge key={tac} tone="muted">
-                        <CodeLabel dict="attackTactic" value={tac} />
-                      </SocBadge>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ReportClaims report={report} />
+      <ReportExplanations report={report} />
+      <ReportAttack report={report} />
 
       {report.sendRecommendation && (
-        <div className="soc-panel p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             <h4 className="soc-subhead">리포트의 경보 권고</h4>
             {report.sendRecommendation.choice && (
               <SocBadge tone="neutral">
@@ -198,45 +201,10 @@ export function ReportSection({ report }: { report: ReportView }) {
         </div>
       )}
 
-      {pseudonymEntries.length > 0 && (
-        <div className="soc-panel p-4">
-          <h4 className="soc-subhead mb-2">리포트 속 가명</h4>
-          <div className="flex flex-wrap gap-2">
-            {pseudonymEntries.map(([key, ip]) => (
-              <div key={key} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-1.5 font-mono text-xs">
-                <span className="font-semibold text-slate-100">{key}</span>
-                <span className="mx-1.5 text-slate-500">→</span>
-                <span className="text-slate-200">{ip}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(report.limitations.length > 0 || report.followUp.length > 0) && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {report.limitations.length > 0 && (
-            <div className="soc-panel p-4">
-              <h4 className="soc-subhead mb-2">리포트의 한계</h4>
-              <ul className="list-disc space-y-1 pl-4 text-xs text-slate-300">
-                {report.limitations.map((item, idx) => (
-                  <li key={idx}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {report.followUp.length > 0 && (
-            <div className="soc-panel p-4">
-              <h4 className="soc-subhead mb-2">추가 확인 권고</h4>
-              <ul className="list-disc space-y-1 pl-4 text-xs text-slate-300">
-                {report.followUp.map((item, idx) => (
-                  <li key={idx}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ReportFollowUp report={report} idPrefix="report-tab" />
+        <ReportLimitations report={report} />
+      </div>
+    </div>
   );
 }

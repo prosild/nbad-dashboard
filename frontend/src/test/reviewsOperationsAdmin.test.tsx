@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -103,6 +103,78 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
         action: 'confirm',
         note: '조사 진행',
       });
+    });
+  });
+
+  it('/reviews의 오탐 종결도 상세와 같이 메모 필수와 확인 단계를 거친다(T19 M4)', async () => {
+    const incidentId = 'cic17-wed|192.168.10.5|originator|100';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === '/api/auth/me') return adminMeResponse();
+      if (url.startsWith('/api/reviews?') || url === '/api/reviews') {
+        return new Response(
+          JSON.stringify({
+            maskedView: false,
+            canDecideReview: true,
+            allowedCaptures: ['cic17-wed'],
+            selectedCaptureId: null,
+            pendingOnly: false,
+            reviews: [
+              {
+                jobId: 99,
+                reviewJobId: 88,
+                captureId: 'cic17-wed',
+                incidentId,
+                queueRank: 1,
+                hostIp: '192.168.10.5',
+                zeekadRole: 'originator',
+                zeekadReviewReason: '경계선 점수 검토',
+                requestedAt: '2026-11-18T01:00:00Z',
+                zeekadReviewAction: null,
+                analyst: null,
+                analystDisplay: null,
+                decidedAt: null,
+                zeekadReviewResumedAt: null,
+                zeekadReviewResumeFailed: false,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url === '/api/reviews/decide') {
+        return new Response(JSON.stringify({ succeeded: true, code: 'OK', message: '검토 결정 반영됨' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const decideCalls = () => fetchMock.mock.calls.filter(([u]) => u === '/api/reviews/decide');
+
+    const user = userEvent.setup();
+    renderWithAdmin('/reviews', fetchMock as unknown as typeof fetch);
+    expect(await screen.findByText('경계선 점수 검토')).toBeInTheDocument();
+    const note = screen.getByLabelText(`${incidentId} 검토 메모`);
+
+    // 메모 없이 누르면 막고 메모 칸으로 포커스
+    await user.click(screen.getByRole('button', { name: '오탐 종결' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('오탐 종결에는 검토 메모가 필요합니다.');
+    expect(note).toHaveFocus();
+    expect(decideCalls()).toHaveLength(0);
+
+    // 메모 → 확인 단계 → 확정
+    await user.type(note, '정상 업무');
+    await user.click(screen.getByRole('button', { name: '오탐 종결' }));
+    const confirm = screen.getByRole('group', { name: `${incidentId} 오탐 종결 확인` });
+    expect(decideCalls()).toHaveLength(0);
+    await user.click(within(confirm).getByRole('button', { name: '오탐 종결 확정' }));
+    await waitFor(() => expect(decideCalls()).toHaveLength(1));
+    expect(JSON.parse(String(decideCalls()[0][1]?.body))).toEqual({
+      jobId: 88,
+      incidentId,
+      action: 'dismiss',
+      note: '정상 업무',
     });
   });
 

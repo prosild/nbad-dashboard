@@ -336,14 +336,32 @@ describe('인시던트 분류 화면(T18)', () => {
     row.focus();
     expect(row).toHaveFocus();
     await user.keyboard('{Enter}');
-    expect(loc()).toBe('/incidents/42/rank/11');
+    // T19: 목록 쿼리(캡처를 고르지 않았으면 서버가 고른 캡처)를 from=으로 넘긴다.
+    expect(loc()).toBe('/incidents/42/rank/11?from=captureId%3Dcic17-wed');
     first.unmount();
 
-    renderQueue();
+    renderQueue('/incidents?priority=high&sort=rank&dir=desc&page=1');
     await ready();
     const row2 = within(screen.getByRole('table')).getByText('10.0.21.1').closest('tr') as HTMLElement;
     fireEvent.click(within(row2).getAllByRole('cell')[4]);
-    expect(loc()).toBe('/incidents/42/rank/21');
+    expect(loc().split('?')[0]).toBe('/incidents/42/rank/21');
+    expect(new URLSearchParams(params().get('from') ?? '').toString()).toBe(
+      'priority=high&sort=rank&dir=desc&page=1&captureId=cic17-wed',
+    );
+  });
+
+  it('행 안에 상세로 가는 실제 링크가 있어 화면 판독기가 링크로 인식한다(T18 L3). 링크를 누르면 상세로 간다', async () => {
+    const user = userEvent.setup();
+    renderQueue('/incidents?status=open');
+    await ready();
+    const table = screen.getByRole('table');
+    const row = within(table).getByText('10.0.11.1').closest('tr') as HTMLElement;
+    const link = within(row).getByRole('link', { name: '인시던트 상세: 10.0.11.1 · 11위' });
+    expect(link).toHaveAttribute('href', '/incidents/42/rank/11?from=status%3Dopen%26captureId%3Dcic17-wed');
+    // 행 전체 클릭·Enter 동작은 그대로
+    expect(row).toHaveAttribute('tabindex', '0');
+    await user.click(link);
+    expect(loc()).toBe('/incidents/42/rank/11?from=status%3Dopen%26captureId%3Dcic17-wed');
   });
 
   it('행에 우선순위·숨기는 열의 정보(툴팁)·여러 호스트 이름 말줄임이 있다', async () => {
@@ -382,7 +400,7 @@ describe('인시던트 분류 화면(T18)', () => {
     expect(items).toHaveLength(50);
     const firstItem = items[0];
     const link = within(firstItem).getByRole('link');
-    expect(link).toHaveAttribute('href', '/incidents/42/rank/1');
+    expect(link).toHaveAttribute('href', '/incidents/42/rank/1?from=captureId%3Dcic17-wed');
     expect(within(firstItem).getByText('High')).toBeInTheDocument();
     expect(within(firstItem).getByText('10.0.1.1')).toBeInTheDocument();
     expect(within(firstItem).getByText('2026-11-18 09:01:00')).toBeInTheDocument();

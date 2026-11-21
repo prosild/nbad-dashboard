@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ClipboardCheck, ExternalLink, Info, XCircle } from 'lucide-react';
+import { ClipboardCheck, ExternalLink, Info } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { ReviewDecisionButtons } from '../components/incident/ReviewDecisionButtons';
 import { CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
 import { formatDateTime } from '../utils/format';
-import { labelText, reviewReasonText } from '../utils/labels';
+import { reviewReasonText } from '../utils/labels';
 
 function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSubmitted: () => Promise<void> }) {
   const { notify } = useToast();
@@ -40,36 +41,26 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
     }
   }
 
+  const noteId = `review-note-${targetJobId}-${item.incidentId}`;
   return (
     <div className="min-w-[230px] space-y-2">
       <input
+        id={noteId}
         type="text"
         aria-label={`${item.incidentId} 검토 메모`}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="검토 메모 (선택)"
+        placeholder="검토 메모 (오탐 종결 때 필수)"
         className="soc-input py-1 text-xs"
       />
-      <div className="flex gap-1.5">
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={() => void decide('confirm')}
-          className="soc-btn-emerald flex-1 px-2 py-1 text-xs"
-        >
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          {labelText('reviewAction', 'confirm')}
-        </button>
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={() => void decide('dismiss')}
-          className="soc-btn-secondary flex-1 px-2 py-1 text-xs"
-        >
-          <XCircle className="h-3.5 w-3.5" />
-          {labelText('reviewAction', 'dismiss')}
-        </button>
-      </div>
+      <ReviewDecisionButtons
+        note={note}
+        noteInputId={noteId}
+        submitting={submitting}
+        onDecide={(action) => void decide(action)}
+        compact
+        idPrefix={item.incidentId}
+      />
     </div>
   );
 }

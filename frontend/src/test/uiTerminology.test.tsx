@@ -749,27 +749,48 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
   });
 
   it('인시던트 상세(조회자)', async () => {
+    const user = userEvent.setup();
     const { container } = renderAt('/incidents/2/rank/1', viewerUser);
-    expect(await screen.findByText('증적 요약')).toBeInTheDocument();
+    const panel = () => screen.getByRole('tabpanel');
+    const openTab = async (name: string) => user.click(screen.getByRole('tab', { name }));
+    expect(await screen.findByRole('tab', { name: '요약', selected: true })).toBeInTheDocument();
     expect(screen.getAllByText('마스킹 적용')).toHaveLength(1);
-    expect(screen.getByText('이름 종류')).toBeInTheDocument();
-    expect(screen.getByText('식별 안 됨')).toBeInTheDocument();
-    expect(screen.getByText('http')).not.toHaveAttribute('data-unregistered');
-    expect(screen.getByText('컴퓨터 계정')).toBeInTheDocument();
-    expect(screen.getByText('2017-07-05 20:54:41')).toBeInTheDocument();
-    expect(screen.getByText('탐지 순위 5위 이내(현재 1위)')).toBeInTheDocument();
-    expect(screen.getByText('AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션')).toBeInTheDocument();
-    // T18b: 상세에는 탐지 모델 표시 이름과 "모델 종류 · 식별자"(data-raw)가 함께 보인다.
+    // T18b: 상세에는 탐지 모델 표시 이름과 "모델 종류 · 식별자"(data-raw)가 함께 보인다(헤더·요약 탭의 모델별 탐지 윈도우).
     expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('TGN(시간 그래프 신경망) · tgn_recon')).toHaveAttribute('data-raw');
-    expect(screen.getByText('통계 기준선 · tail_rarity_v2')).toHaveAttribute('data-raw');
+    expect(within(panel()).getByText('통계 기준선 · tail_rarity_v2')).toHaveAttribute('data-raw');
     expect(screen.getByText('교차 탐지 +2')).toBeInTheDocument();
-    expect(screen.getByText('최초 알림')).toBeInTheDocument();
-    expect(screen.getAllByText('Dry-run').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('주요 세션 (최대 10건)')).toBeInTheDocument();
-    // 세션 표의 열은 사건 단위 통신 방향(출발지·목적지)과 구분해 IP를 붙인다.
-    expect(screen.getAllByText('출발지 IP').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('반영 실패(관리자 확인 필요)')).toBeInTheDocument();
+    // 조치 패널(읽기 전용): 에스컬레이션 요청 사유와 반영 상태
+    const actions = screen.getByRole('region', { name: '조치' });
+    expect(within(actions).getByText('AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션')).toBeInTheDocument();
+    expect(within(actions).getByText('반영 실패(관리자 확인 필요)')).toBeInTheDocument();
+    expect(within(actions).queryByRole('button', { name: '종결 처리' })).toBeNull();
+    expectCleanText(container);
+
+    await openTab('증적');
+    expect(within(panel()).getByText('증적 요약')).toBeInTheDocument();
+    expect(within(panel()).getByText('식별 안 됨')).toBeInTheDocument();
+    expect(within(panel()).getByText('http')).not.toHaveAttribute('data-unregistered');
+    // T19: 관측 계정은 이름·종류·마지막 관측만(출처 로그·관측 횟수·처음 관측은 사용자 결정으로 뺐다)
+    expect(within(panel()).getByRole('columnheader', { name: '종류' })).toBeInTheDocument();
+    expect(within(panel()).getByText('컴퓨터 계정')).toBeInTheDocument();
+    expect(within(panel()).getByText('2017-07-06 05:00:33')).toBeInTheDocument();
+    expect(within(panel()).queryByText('출처 로그')).toBeNull();
+    expect(within(panel()).queryByText('2017-07-05 20:54:41')).toBeNull();
+    expect(within(panel()).getByText('주요 세션 (최대 10건)')).toBeInTheDocument();
+    // 세션 표의 열은 사건 단위 통신 방향(출발지·목적지)과 구분해 IP를 붙인다(T19: 필드별 열 "출발지 IP:포트").
+    expect(within(panel()).getByRole('columnheader', { name: '출발지 IP:포트' })).toBeInTheDocument();
+    expectCleanText(container);
+
+    await openTab('경보 판단');
+    expect(within(panel()).getByText('탐지 순위 5위 이내(현재 1위)')).toBeInTheDocument();
+    await openTab('Slack');
+    expect(within(panel()).getByText('최초 알림')).toBeInTheDocument();
+    expect(within(panel()).getAllByText('Dry-run').length).toBeGreaterThanOrEqual(1);
+    await openTab('AI 리포트');
+    expect(within(panel()).getByText('대상 호스트 H가 외부와 대량 연결을 주고받았습니다.')).toBeInTheDocument();
+    await openTab('이력');
+    expect(within(panel()).getByText('에스컬레이션 요청')).toBeInTheDocument();
     expectCleanText(container);
   });
 
@@ -777,6 +798,7 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     const { container } = renderAt('/incidents/2/rank/1', analystUser);
     expect(await screen.findByRole('button', { name: '종결 처리' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '정탐' })).toBeInTheDocument();
+    expect(screen.getByText('에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다. 상태는 상태 변경으로 바꿉니다.')).toBeInTheDocument();
     expectCleanText(container);
   });
 

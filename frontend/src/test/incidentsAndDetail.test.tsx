@@ -356,23 +356,40 @@ describe('인시던트 목록 및 상세 화면', () => {
       fetchMock as unknown as typeof fetch,
     );
 
-    expect(await screen.findByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
-    expect(screen.getByText('6 / 9')).toBeInTheDocument();
-    expect(screen.getByText('선택 확률')).toBeInTheDocument();
-    expect(screen.getByText('확정이 아닌 가설')).toBeInTheDocument();
-    expect(screen.getByText('채널에도 표시')).toBeInTheDocument();
-    expect(screen.getByText('Dry-run')).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain('정확도');
+    // T19: 상세는 탭으로 나뉜다. 탭 안으로 옮긴 내용은 그 탭을 연 뒤 같은 강도로 단언한다.
+    const panel = () => screen.getByRole('tabpanel');
+    const openTab = async (name: string) => user.click(screen.getByRole('tab', { name }));
 
-    // XSS 무해화 확인: 텍스트로만 출력되고 <script>/<img> 요소가 생성되지 않아야 함
-    expect(screen.getByText(`관측 요약 ${xssPayload}`)).toBeInTheDocument();
-    expect(container.querySelectorAll('script')).toHaveLength(0);
-    expect(container.querySelectorAll('img')).toHaveLength(0);
+    // 요약 탭(기본): 모델별 탐지 윈도우, ATT&CK 가설, 관측 요약(XSS 문자열은 글로만)
+    expect(await screen.findByRole('tab', { name: '요약', selected: true })).toBeInTheDocument();
+    expect(within(panel()).getByText('6 / 9')).toBeInTheDocument();
+    expect(within(panel()).getByText('확정이 아닌 가설')).toBeInTheDocument();
+    expect(within(panel()).getByText(`관측 요약 ${xssPayload}`)).toBeInTheDocument();
 
     // F1 클릭 시 근거 이름/값 펼치기
-    await user.click(screen.getByRole('button', { name: /F1/ }));
-    expect(screen.getByText('outbound_443_count')).toBeInTheDocument();
-    expect(screen.getByText('142')).toBeInTheDocument();
+    await user.click(within(panel()).getByRole('button', { name: /F1/ }));
+    expect(within(panel()).getByText('outbound_443_count')).toBeInTheDocument();
+    expect(within(panel()).getByText('142')).toBeInTheDocument();
+
+    // 증적 탭: 증적 조회 실패 문구
+    await openTab('증적');
+    expect(within(panel()).getByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
+
+    // 경보 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 사용자 결정으로 뺐다)
+    await openTab('경보 판단');
+    expect(within(panel()).getByText('선택 확률')).toBeInTheDocument();
+    expect(within(panel()).getByText('74.0%')).toBeInTheDocument();
+    expect(within(panel()).queryByText('선택지별 선택 확률')).toBeNull();
+
+    // Slack 탭: 채널 재알림·Dry-run
+    await openTab('Slack');
+    expect(within(panel()).getByText('채널에도 표시')).toBeInTheDocument();
+    expect(within(panel()).getByText('Dry-run')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('정확도');
+
+    // XSS 무해화 확인: 텍스트로만 출력되고 <script>/<img> 요소가 생성되지 않아야 함(숨은 탭 포함 전체 DOM)
+    expect(container.querySelectorAll('script')).toHaveLength(0);
+    expect(container.querySelectorAll('img')).toHaveLength(0);
 
     // 상태 전이 제출
     await user.type(screen.getByLabelText('변경 사유 (필수)'), '실제 공격 확인');
@@ -388,8 +405,8 @@ describe('인시던트 목록 및 상세 화면', () => {
       });
     });
 
-    // 검토 결정 제출
-    await user.type(screen.getByLabelText('검토 메모 (선택)'), '진행 승인');
+    // 검토 결정 제출(조치 패널. 메모는 오탐 종결 때만 필수)
+    await user.type(screen.getByLabelText('검토 메모 (오탐 종결 때 필수)'), '진행 승인');
     await user.click(screen.getByRole('button', { name: '승인' }));
 
     await waitFor(() => {
@@ -536,7 +553,9 @@ describe('인시던트 목록 및 상세 화면', () => {
 
     renderWithAnalyst('/incidents/10/rank/1', fetchMock as unknown as typeof fetch);
 
+    // 헤더의 리포트 없음, 경보 판단 탭의 빈 상태 한 줄
     expect(await screen.findByText('리포트 없음')).toBeInTheDocument();
-    expect(screen.getByText('이 인시던트는 경보 발송 판단 대상이 아닙니다.')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: '경보 판단' }));
+    expect(within(screen.getByRole('tabpanel')).getByText('이 인시던트는 경보 발송 판단 대상이 아닙니다.')).toBeInTheDocument();
   });
 });

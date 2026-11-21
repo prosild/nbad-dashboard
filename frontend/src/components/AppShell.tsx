@@ -41,11 +41,14 @@ export function AppShell({
   title,
   subtitle,
   actions,
+  stickyBar,
   children,
 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
+  /** 상단 바 아래에 붙어 스크롤해도 남는 띠(인시던트 상세의 요약 헤더 등) */
+  stickyBar?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { user, logout } = useAuth();
@@ -199,6 +202,7 @@ export function AppShell({
               {actions}
             </div>
           </div>
+          {stickyBar && <div className="mx-auto max-w-[1600px] px-4 pb-2.5 sm:px-6">{stickyBar}</div>}
         </header>
 
         <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 sm:px-6">{children}</main>

@@ -160,3 +160,71 @@ export function pageWindow(total: number, rawPage: string | null | undefined, si
     endIndex,
   };
 }
+
+/* ───────────── 목록 보기(화면 필터·정렬)와 상세 이전·다음(T19) ───────────── */
+
+/** 서버로 보내는 필터(API 파라미터). 응답 incidents는 서버가 이미 거른 집합이다. */
+export const SERVER_FILTER_KEYS = ['pickedBy', 'role', 'status', 'hasReport', 'wouldSend', 'asset'] as const;
+/** 응답 집합 위에서 화면이 거르는 필터 */
+export const CLIENT_FILTER_KEYS = ['priority', 'reviewPending', 'alerted'] as const;
+
+export interface ClientFilters {
+  priority: Priority | null;
+  reviewPending: boolean;
+  alerted: boolean;
+}
+
+export interface QueueView extends ClientFilters {
+  sortKey: SortKey;
+  sortDir: SortDir;
+}
+
+/** 목록 URL 쿼리에서 화면 필터와 정렬을 읽는다(목록 화면과 상세의 이전·다음이 같은 규칙을 쓴다). */
+export function parseQueueView(params: URLSearchParams): QueueView {
+  const priorityRaw = params.get('priority');
+  const priority = PRIORITY_VALUES.includes(priorityRaw as Priority) ? (priorityRaw as Priority) : null;
+  const parsedKey = parseSortKey(params.get('sort'));
+  const sortKey: SortKey = parsedKey ?? DEFAULT_SORT.key;
+  const sortDir: SortDir = parseSortDir(params.get('dir')) ?? (parsedKey ? DEFAULT_SORT_DIR[sortKey] : DEFAULT_SORT.dir);
+  return {
+    priority,
+    reviewPending: params.get('reviewPending') === 'true',
+    alerted: params.get('alerted') === 'true',
+    sortKey,
+    sortDir,
+  };
+}
+
+/** 화면 필터(우선순위·에스컬레이션 대기·경보 발송)를 적용한다. */
+export function applyClientFilters(items: readonly IncidentQueueItem[], filters: ClientFilters): IncidentQueueItem[] {
+  return items.filter((item) => {
+    if (filters.priority && computePriority(item) !== filters.priority) return false;
+    if (filters.reviewPending && !item.zeekadReviewPending) return false;
+    if (filters.alerted && !item.zeekadWouldSend) return false;
+    return true;
+  });
+}
+
+/** 목록 화면과 같은 순서: 화면 필터 → 정렬. */
+export function orderQueue(items: readonly IncidentQueueItem[], view: QueueView): IncidentQueueItem[] {
+  return sortIncidents(applyClientFilters(items, view), view.sortKey, view.sortDir);
+}
+
+export interface NeighborResult {
+  /** 0부터 센 현재 위치. 목록에 없으면 -1 */
+  index: number;
+  total: number;
+  prev: IncidentQueueItem | null;
+  next: IncidentQueueItem | null;
+}
+
+/** 정렬된 목록에서 현재 인시던트(탐지 작업 + 순위)의 앞뒤를 찾는다. */
+export function findNeighbors(ordered: readonly IncidentQueueItem[], jobId: number, queueRank: number): NeighborResult {
+  const index = ordered.findIndex((it) => it.jobId === jobId && it.queueRank === queueRank);
+  return {
+    index,
+    total: ordered.length,
+    prev: index > 0 ? ordered[index - 1] : null,
+    next: index >= 0 && index < ordered.length - 1 ? ordered[index + 1] : null,
+  };
+}

@@ -106,3 +106,24 @@ export function formatPercent(ratio: number | null | undefined, decimals = 1): s
   }
   return `${(ratio * 100).toFixed(decimals)}%`;
 }
+
+/**
+ * 세션(주요 세션 표) 지속 시간(초 단위 값): 1ms 미만은 "1ms 미만", 1초 미만은 정수 ms,
+ * 1분 미만은 소수 한 자리 초, 그 이상은 "m분 s초"(T19 L6).
+ */
+export function formatSessionDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+    return '-';
+  }
+  if (seconds < 0.001) {
+    return '1ms 미만';
+  }
+  if (seconds < 1) {
+    return `${Math.floor(seconds * 1000)}ms`;
+  }
+  if (seconds < 60) {
+    return `${(Math.floor(seconds * 10) / 10).toFixed(1)}초`;
+  }
+  const total = Math.floor(seconds);
+  return `${Math.floor(total / 60)}분 ${total % 60}초`;
+}

@@ -34,16 +34,16 @@ import type { IncidentQueueItem, IncidentQueueResponse, ScoringJob } from '../ty
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
 import { detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
 import {
+  CLIENT_FILTER_KEYS,
   computePriority,
-  DEFAULT_SORT,
   DEFAULT_SORT_DIR,
+  orderQueue,
   PAGE_SIZES,
   pageWindow,
   parsePageSize,
-  parseSortDir,
-  parseSortKey,
+  parseQueueView,
   PRIORITY_VALUES,
-  sortIncidents,
+  SERVER_FILTER_KEYS,
   type Priority,
   type SortDir,
   type SortKey,
@@ -58,18 +58,19 @@ function jobTimeLabel(job: ScoringJob | null | undefined): string {
   return when ? formatDateTime(when) : '시각 미기록';
 }
 
-/** 서버로 보내는 필터(API 파라미터). 응답 incidents는 서버가 이미 거른 집합이다. */
-const SERVER_FILTER_KEYS = ['pickedBy', 'role', 'status', 'hasReport', 'wouldSend', 'asset'] as const;
-/** 응답 집합 위에서 화면이 거르는 필터 */
-const CLIENT_FILTER_KEYS = ['priority', 'reviewPending', 'alerted'] as const;
 /** 필터·정렬·쪽 크기 변경 때 지우는 쪽 번호 키 */
 const PAGE_KEY = 'page';
 
 type RowItem = { item: IncidentQueueItem; priority: Priority | null };
 
-function detailUrl(item: IncidentQueueItem): string {
-  return `/incidents/${item.jobId}/rank/${item.queueRank}`;
+/**
+ * 상세 주소. 목록의 쿼리(서버 필터·화면 필터·정렬·쪽)를 `from=`으로 넘겨 상세의 이전·다음과 목록 복귀가 같은 순서를 쓴다(T19 M1).
+ * 캡처를 고르지 않은 기본 목록이면 서버가 고른 캡처를 넣어 새로 고침해도 같은 목록이 되게 한다.
+ */
+function detailUrl(item: IncidentQueueItem, listQuery: string): string {
+  return `/incidents/${item.jobId}/rank/${item.queueRank}?${new URLSearchParams({ from: listQuery }).toString()}`;
 }
+
 
 export function IncidentQueuePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,17 +88,12 @@ export function IncidentQueuePage() {
   const hasReport = searchParams.get('hasReport') ?? '';
   const wouldSend = searchParams.get('wouldSend') ?? '';
 
-  const priorityRaw = searchParams.get('priority');
-  const priorityFilter: Priority | null = PRIORITY_VALUES.includes(priorityRaw as Priority)
-    ? (priorityRaw as Priority)
-    : null;
-  const reviewPendingFilter = searchParams.get('reviewPending') === 'true';
-  const alertedFilter = searchParams.get('alerted') === 'true';
-
-  const sortKey: SortKey = parseSortKey(searchParams.get('sort')) ?? DEFAULT_SORT.key;
-  const sortDir: SortDir =
-    parseSortDir(searchParams.get('dir')) ??
-    (parseSortKey(searchParams.get('sort')) ? DEFAULT_SORT_DIR[sortKey] : DEFAULT_SORT.dir);
+  const view = parseQueueView(searchParams);
+  const priorityFilter: Priority | null = view.priority;
+  const reviewPendingFilter = view.reviewPending;
+  const alertedFilter = view.alerted;
+  const sortKey: SortKey = view.sortKey;
+  const sortDir: SortDir = view.sortDir;
   const pageSize = parsePageSize(searchParams.get('size'));
   const rawPage = searchParams.get(PAGE_KEY);
 
@@ -196,21 +192,30 @@ export function IncidentQueuePage() {
     return counts;
   }, [rows]);
 
+  // 화면 필터·정렬은 상세의 이전·다음과 같은 함수(orderQueue)를 쓴다.
   const filteredSorted = useMemo(() => {
     const priorityById = new Map(rows.map((r) => [r.item, r.priority]));
-    const filtered = rows
-      .filter(({ item, priority }) => {
-        if (priorityFilter && priority !== priorityFilter) return false;
-        if (reviewPendingFilter && !item.zeekadReviewPending) return false;
-        if (alertedFilter && !item.zeekadWouldSend) return false;
-        return true;
-      })
-      .map((r) => r.item);
-    return sortIncidents(filtered, sortKey, sortDir).map((item) => ({
-      item,
-      priority: priorityById.get(item) ?? null,
-    }));
+    const ordered = orderQueue(
+      rows.map((r) => r.item),
+      {
+        priority: priorityFilter,
+        reviewPending: reviewPendingFilter,
+        alerted: alertedFilter,
+        sortKey,
+        sortDir,
+      },
+    );
+    return ordered.map((item) => ({ item, priority: priorityById.get(item) ?? null }));
   }, [rows, priorityFilter, reviewPendingFilter, alertedFilter, sortKey, sortDir]);
+
+  /** 상세로 넘기는 목록 쿼리 */
+  const listQuery = useMemo(() => {
+    const q = new URLSearchParams(searchParams);
+    if (!q.get('captureId') && data?.selectedCaptureId) {
+      q.set('captureId', data.selectedCaptureId);
+    }
+    return q.toString();
+  }, [searchParams, data]);
 
   const win = pageWindow(filteredSorted.length, rawPage, pageSize);
   const pageRows = filteredSorted.slice(win.startIndex, win.endIndex);
@@ -495,8 +500,14 @@ export function IncidentQueuePage() {
               </p>
             ) : (
               <>
-                <QueueTable rows={pageRows} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <QueueMobileList rows={pageRows} />
+                <QueueTable
+                  rows={pageRows}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                  listQuery={listQuery}
+                />
+                <QueueMobileList rows={pageRows} listQuery={listQuery} />
               </>
             )}
             <Pagination
@@ -720,11 +731,13 @@ function QueueTable({
   sortKey,
   sortDir,
   onSort,
+  listQuery,
 }: {
   rows: RowItem[];
   sortKey: SortKey;
   sortDir: SortDir;
   onSort: (key: SortKey) => void;
+  listQuery: string;
 }) {
   const navigate = useNavigate();
 
@@ -745,7 +758,7 @@ function QueueTable({
   return (
     <div className="hidden overflow-x-auto md:block">
       <table className="w-full border-collapse text-left">
-        <caption className="sr-only">인시던트 목록. 행을 누르거나 행에서 Enter 키를 누르면 인시던트 상세로 갑니다.</caption>
+        <caption className="sr-only">인시던트 목록. 호스트 링크나 행을 누르거나 행에서 Enter 키를 누르면 인시던트 상세로 갑니다.</caption>
         <thead>
           <tr>
             <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
@@ -778,7 +791,7 @@ function QueueTable({
         </thead>
         <tbody>
           {rows.map(({ item, priority }) => {
-            const url = detailUrl(item);
+            const url = detailUrl(item, listQuery);
             const firstName = item.hostName[0];
             const moreNames = item.hostName.length - 1;
             return (
@@ -801,7 +814,15 @@ function QueueTable({
                 <td className="soc-td-compact soc-num font-semibold text-slate-100">{item.queueRank}</td>
                 <td className="soc-td-compact">
                   <div className="flex max-w-[17rem] items-baseline gap-2">
-                    <span className="shrink-0 font-mono font-semibold text-slate-100">{item.hostIp}</span>
+                    {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
+                    <Link
+                      to={url}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`인시던트 상세: ${item.hostIp} · ${item.queueRank}위`}
+                      className="shrink-0 font-mono font-semibold text-slate-100 hover:text-cyan-200 hover:underline focus:outline-none focus-visible:underline"
+                    >
+                      {item.hostIp}
+                    </Link>
                     {firstName !== undefined && (
                       <span
                         className="min-w-0 truncate font-mono text-[11px] text-slate-400"
@@ -937,13 +958,13 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
 
 /* ───────────────────────── 휴대폰 목록 ───────────────────────── */
 
-function QueueMobileList({ rows }: { rows: RowItem[] }) {
+function QueueMobileList({ rows, listQuery }: { rows: RowItem[]; listQuery: string }) {
   return (
     <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="인시던트 목록">
       {rows.map(({ item, priority }) => (
         <li key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}>
           <Link
-            to={detailUrl(item)}
+            to={detailUrl(item, listQuery)}
             className="block px-3 py-2.5 transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50"
           >
             <div className="flex items-center gap-2">
