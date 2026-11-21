@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, Bell, Cpu, Database, RefreshCw } from 'lucide-react';
 import { ApiError } from '../api/client';
@@ -8,7 +8,7 @@ import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { CaptureName, CodeLabel, DetectionModelName, JobStatusBadge, SocBadge } from '../components/StatusBadge';
 import type { FeedbackSummaryRecord, OperationsApiResponse } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber } from '../utils/format';
-import { captureText } from '../utils/labels';
+import { captureInfo, captureText } from '../utils/labels';
 import {
   SAMPLE_SHORT_LABEL,
   failedJobCount,
@@ -333,37 +333,77 @@ function ModelPanel({ models, className = '' }: { models: ReturnType<typeof mode
       {models.length === 0 ? (
         <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">탐지 모델별 집계가 없습니다.</div>
       ) : (
-        <table className="w-full border-collapse text-left text-xs">
-          <thead>
-            <tr>
-              <th className="soc-th">탐지 모델</th>
-              <th className="soc-th text-right" title="이 모델이 주 탐지 모델인 인시던트 수(교차 탐지를 빼지 않음)">
-                주 탐지 기준 인시던트 수
-              </th>
-              <th className="soc-th text-right">판정</th>
-              <th className="soc-th text-right">정탐률</th>
-            </tr>
-          </thead>
-          <tbody>
-            {models.map((m) => (
-              <tr key={m.model}>
-                <td className="soc-td">
-                  <DetectionModelName id={m.model} className="text-slate-100" />
-                </td>
-                <td className="soc-td soc-num">{formatNumber(m.incidents)}</td>
-                <td className="soc-td soc-num">{formatNumber(m.resolved)}</td>
-                <td className="soc-td text-right tabular-nums">
-                  <PrecisionCell resolved={m.resolved} precision={m.precision} />
-                </td>
+        // T26: 휴대폰 폭에서 표가 페이지를 넓히지 않게 가로 스크롤 상자로 감싸고, 긴 머리글은 md 미만에서 줄인다(뜻은 툴팁).
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead>
+              <tr>
+                <th className="soc-th">탐지 모델</th>
+                <th className="soc-th text-right" title="주 탐지 기준 인시던트 수: 이 모델이 주 탐지 모델인 인시던트 수(교차 탐지를 빼지 않음)">
+                  <span className="md:hidden">인시던트</span>
+                  <span className="hidden md:inline">주 탐지 기준 인시던트 수</span>
+                </th>
+                <th className="soc-th text-right">판정</th>
+                <th className="soc-th text-right">정탐률</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {models.map((m) => (
+                <tr key={m.model}>
+                  <td className="soc-td">
+                    <DetectionModelName id={m.model} className="text-slate-100" />
+                  </td>
+                  <td className="soc-td soc-num">{formatNumber(m.incidents)}</td>
+                  <td className="soc-td soc-num">{formatNumber(m.resolved)}</td>
+                  <td className="soc-td text-right tabular-nums">
+                    <PrecisionCell resolved={m.resolved} precision={m.precision} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
 }
 
+/** 휴대폰 폭 완료 시각: 연도·초를 뺀 `MM-DD HH:mm`(KST). 형식이 다르면 그대로 둔다. */
+function shortDateTime(iso: string | null | undefined): string {
+  const full = formatDateTime(iso);
+  return full.length === 19 ? full.slice(5, 16) : full;
+}
+
+/**
+ * 캡처 표시 이름을 공백에서만 줄바꿈한다(T26). `2026-11-19`·`CIC-IDS2017`처럼 하이픈이 든 조각 안에서는 끊지 않는다.
+ * 등록되지 않은 캡처 ID는 원문 그대로(공백이 없어 좁은 칸을 넘지 않게 어디서든 끊는다).
+ */
+function CaptureNameWords({ id, className = '' }: { id: string | null | undefined; className?: string }) {
+  const info = captureInfo(id);
+  if (!info.known) {
+    return <CaptureName id={id} className={`break-all ${className}`} />;
+  }
+  return (
+    <span className={className} title={info.tooltip || undefined} data-capture-name="">
+      {info.text.split(' ').map((word, idx) => (
+        <Fragment key={idx}>
+          {idx > 0 && ' '}
+          <span className="whitespace-nowrap">{word}</span>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+function jobStatusTitle(job: ReturnType<typeof latestJobPerCapture>[number]): string {
+  return job.error ? `오류: ${job.error}` : `탐지 작업 #${job.jobId}`;
+}
+
+/**
+ * 파이프라인(캡처마다 최근 탐지 작업).
+ * T26: md 미만은 카드 목록(캡처 이름 · 상태 / 짧은 완료 시각 · 모델 버전 보조 줄)으로 안쪽 가로 스크롤 없이 읽는다.
+ * md 이상은 지금 표 그대로이고, 가로 스크롤 상자로 감싼다.
+ */
 function PipelinePanel({ jobs, className = '' }: { jobs: ReturnType<typeof latestJobPerCapture>; className?: string }) {
   return (
     <section className={`soc-card space-y-3 p-4 ${className}`} aria-label="파이프라인">
@@ -371,32 +411,56 @@ function PipelinePanel({ jobs, className = '' }: { jobs: ReturnType<typeof lates
       {jobs.length === 0 ? (
         <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">탐지 작업 기록이 없습니다.</div>
       ) : (
-        <table className="w-full border-collapse text-left text-xs">
-          <thead>
-            <tr>
-              <th className="soc-th">캡처</th>
-              <th className="soc-th">상태</th>
-              <th className="soc-th">완료 시각</th>
-              <th className="soc-th">모델 버전</th>
-            </tr>
-          </thead>
-          <tbody>
+        <>
+          <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="파이프라인 목록">
             {jobs.map((job) => (
-              <tr key={job.jobId}>
-                <td className="soc-td">
-                  <CaptureName id={job.captureId} className="text-slate-100" />
-                </td>
-                <td className="soc-td" title={job.error ? `오류: ${job.error}` : `탐지 작업 #${job.jobId}`}>
-                  <JobStatusBadge status={job.status} />
-                </td>
-                <td className="soc-td whitespace-nowrap tabular-nums text-slate-300">{formatDateTime(job.finishedAt)}</td>
-                <td className="soc-td font-mono text-slate-400" data-raw="">
-                  {job.bundleId}
-                </td>
-              </tr>
+              <li key={job.jobId} className="py-2 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <CaptureNameWords id={job.captureId} className="min-w-0 text-slate-100" />
+                  <span className="shrink-0" title={jobStatusTitle(job)}>
+                    <JobStatusBadge status={job.status} />
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px]">
+                  <span className="tabular-nums text-slate-300" title={`완료 시각 ${formatDateTime(job.finishedAt)}`}>
+                    완료 {shortDateTime(job.finishedAt)}
+                  </span>
+                  <span className="break-all font-mono text-slate-500" title="모델 버전" data-raw="">
+                    {job.bundleId}
+                  </span>
+                </div>
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr>
+                  <th className="soc-th">캡처</th>
+                  <th className="soc-th">상태</th>
+                  <th className="soc-th">완료 시각</th>
+                  <th className="soc-th">모델 버전</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => (
+                  <tr key={job.jobId}>
+                    <td className="soc-td">
+                      <CaptureName id={job.captureId} className="text-slate-100" />
+                    </td>
+                    <td className="soc-td" title={jobStatusTitle(job)}>
+                      <JobStatusBadge status={job.status} />
+                    </td>
+                    <td className="soc-td whitespace-nowrap tabular-nums text-slate-300">{formatDateTime(job.finishedAt)}</td>
+                    <td className="soc-td font-mono text-slate-400" data-raw="">
+                      {job.bundleId}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   );

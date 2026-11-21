@@ -8,6 +8,7 @@ import { ToastProvider } from '../components/ToastContext';
 import type { IncidentDetailView, IncidentQueueItem, IncidentQueueMeta, QueueNeighborsResponse, UnifiedQueueItem } from '../types/api';
 import { formatSessionDuration } from '../utils/format';
 import { fakeNeighbors, unified } from './fakeQueueServer';
+import { expectAllTablesInScrollBox, tablesOutsideScrollBox } from './tableScrollBox';
 
 /** T19 인시던트 상세: 요약 헤더·조치 패널·탭·오탐 종결 안전장치·주요 세션 열·이전·다음 */
 
@@ -643,6 +644,21 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(raw.open).toBe(false);
     await user.click(within(panel()).getByText('원본 증적 데이터'));
     expect(raw.open).toBe(true);
+  });
+
+  it('T26 휴대폰 폭: 모든 탭의 표(증적 탭의 관측 계정 표 포함)는 가로 스크롤 상자 안에 있다', async () => {
+    const user = userEvent.setup();
+    renderDetail('/incidents/42/rank/1?tab=evidence');
+    await screen.findByRole('tab', { name: '증적', selected: true });
+    // 관측 계정 표가 그려지는 데이터(assetNames: WS-01$)로 본다
+    const accounts = within(panel()).getByText('WS-01$').closest('table') as HTMLTableElement;
+    expect(accounts).not.toBeNull();
+    expectAllTablesInScrollBox();
+    for (const tab of screen.getAllByRole('tab')) {
+      await user.click(tab);
+      await waitFor(() => expect(tab).toHaveAttribute('aria-selected', 'true'));
+      expect(tablesOutsideScrollBox()).toEqual([]);
+    }
   });
 
   it('뺀 항목(생성 정보·가명표·정책 ID·판단 모델 ID·확률 막대·Slack 원본·ts·관측 부가 필드)은 화면에 없다', async () => {

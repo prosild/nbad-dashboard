@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
+import { expectAllTablesInScrollBox, hiddenBelowMd } from './tableScrollBox';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -253,6 +254,40 @@ describe('관제 현황판', () => {
     expect(alertPanel).toHaveTextContent('일일 요약 기록2건');
   });
 
+  it('T26 휴대폰 폭: 현황판의 모든 표는 가로 스크롤 상자 안에 있다', async () => {
+    renderAt('/');
+    const pipeline = await screen.findByRole('region', { name: '파이프라인' });
+    await waitFor(() => expect(within(pipeline).getAllByRole('row')).toHaveLength(3));
+    await screen.findByRole('region', { name: '탐지 모델 상태' });
+    expectAllTablesInScrollBox();
+
+    // 파이프라인: md 미만은 카드 목록, md 이상은 표. (a) 표 쪽은 md 미만에서 숨는다
+    const table = within(pipeline).getByRole('table');
+    expect(hiddenBelowMd(table)).toBe(true);
+    // (b) 카드 목록에 캡처 이름·상태·완료 시각(짧게, 전체 값은 툴팁)이 있다. 모델 버전은 보조 줄
+    const list = within(pipeline).getByRole('list', { name: '파이프라인 목록' });
+    expect(hiddenBelowMd(list)).toBe(false);
+    expect(list.className.split(/\s+/)).toContain('md:hidden');
+    const items = within(list).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    const syn = items.find((li) => li.textContent?.includes('합성 APT')) as HTMLElement;
+    const synName = syn.querySelector('[data-capture-name]') as HTMLElement;
+    expect(synName).toHaveTextContent(/^CIC 목요일 \+ 합성 APT$/);
+    // 캡처 이름은 공백에서만 줄을 바꾼다: 조각마다 whitespace-nowrap
+    const words = Array.from(synName.children);
+    expect(words.map((w) => w.textContent)).toEqual(['CIC', '목요일', '+', '합성', 'APT']);
+    for (const w of words) expect(w.className).toContain('whitespace-nowrap');
+    expect(within(syn).getByText('실패')).toBeInTheDocument();
+    // syn1-thu 최근 작업 #9 완료 2026-11-20T05:00:00Z = KST 2026-11-20 14:00:00
+    const short = within(syn).getByText('완료 11-20 14:00');
+    expect(short).toHaveAttribute('title', '완료 시각 2026-11-20 14:00:00');
+    expect(within(syn).getByText('zeekad-fusion/3')).toBeInTheDocument();
+    // md 이상 표의 완료 시각은 지금 형식(연도·초) 그대로
+    const synRow = within(table).getByText('CIC 목요일 + 합성 APT').closest('tr') as HTMLElement;
+    expect(within(synRow).getByText('2026-11-20 14:00:00')).toBeInTheDocument();
+    expect(within(table).queryByText(/^11-20 14:00$/)).toBeNull();
+  });
+
   it('데이터가 없으면 빈 상태를 보인다', async () => {
     renderAt('/', {
       operations: () => json({ ...operationsResponse, jobs: [], feedbackSummaries: [], slackSummaries: [] }),
@@ -290,6 +325,12 @@ describe('운영 현황 재구성(T20)', () => {
     const alert = within(cards).getByRole('region', { name: '경보 상태' });
     expect(alert).toHaveTextContent('경보 발송 12건');
     expect(alert).toHaveTextContent('표본 부족 · 경보 판정 4/12건(33.3%)');
+  });
+
+  it('T26 휴대폰 폭: 운영 현황의 모든 표(접힌 영역 포함)는 가로 스크롤 상자 안에 있다', async () => {
+    renderAt('/operations');
+    await screen.findAllByText('모든 모델 합계');
+    expectAllTablesInScrollBox();
   });
 
   it('판정 집계는 모든 모델 합계 행만 기본 표시하고, 펼치면 탐지 모델별 행과 판정 없음 한 줄이 보인다', async () => {

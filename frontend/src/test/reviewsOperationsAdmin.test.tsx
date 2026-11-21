@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
+import { expectAllTablesInScrollBox } from './tableScrollBox';
 
 function renderWithAdmin(initialEntry: string, fetchImpl: typeof fetch) {
   document.cookie = 'XSRF-TOKEN=admin-xsrf-token; path=/';
@@ -87,6 +88,8 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     renderWithAdmin('/reviews', fetchMock as unknown as typeof fetch);
 
     expect(await screen.findByText('경계선 점수 검토')).toBeInTheDocument();
+    // T26: 휴대폰 폭에서 표가 페이지를 넓히지 않게 모든 표는 가로 스크롤 상자 안에 있다
+    expectAllTablesInScrollBox();
 
     await user.type(
       screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 검토 메모'),
@@ -336,6 +339,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     renderWithAdmin('/admin/users', fetchMock as unknown as typeof fetch);
 
     expect(await screen.findByText('analyst1')).toBeInTheDocument();
+    expectAllTablesInScrollBox();
 
     await user.click(screen.getByRole('button', { name: /신규 사용자 생성/ }));
     await user.type(screen.getByLabelText('아이디'), 'analyst3');
@@ -366,5 +370,6 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(badges.length).toBeGreaterThanOrEqual(2);
     await user.click(screen.getByRole('button', { name: /상세 보기/ }));
     expect(screen.getByText('{"created":"analyst3"}')).toBeInTheDocument();
+    expectAllTablesInScrollBox();
   });
 });

@@ -419,26 +419,29 @@ export function ObservedAccounts({ assetNames }: { assetNames: AssetNameRecord[]
       {rows.length === 0 ? (
         <p className="px-4 py-3 text-xs text-slate-500">관측된 Kerberos·NTLM 계정 이름이 없습니다.</p>
       ) : (
-        <table className="w-full border-collapse text-left">
-          <thead>
-            <tr>
-              <th scope="col" className="soc-th-compact">계정 이름</th>
-              <th scope="col" className="soc-th-compact">종류</th>
-              <th scope="col" className="soc-th-compact">마지막 관측</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, idx) => (
-              <tr key={`${row.name}-${idx}`}>
-                <td className="soc-td-compact font-mono text-slate-100">{row.name}</td>
-                <td className="soc-td-compact text-slate-300">
-                  {row.kind ? <CodeLabel dict="assetNameKind" value={row.kind} /> : (row.fallbackKind ?? '-')}
-                </td>
-                <td className="soc-td-compact tabular-nums text-slate-300">{formatDateTime(row.lastSeen)}</td>
+        // T26: 패널의 overflow-hidden(둥근 모서리)은 두고, 긴 계정 이름이 잘리지 않게 표만 가로 스크롤 상자로 감싼다.
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr>
+                <th scope="col" className="soc-th-compact">계정 이름</th>
+                <th scope="col" className="soc-th-compact">종류</th>
+                <th scope="col" className="soc-th-compact">마지막 관측</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row, idx) => (
+                <tr key={`${row.name}-${idx}`}>
+                  <td className="soc-td-compact font-mono text-slate-100">{row.name}</td>
+                  <td className="soc-td-compact text-slate-300">
+                    {row.kind ? <CodeLabel dict="assetNameKind" value={row.kind} /> : (row.fallbackKind ?? '-')}
+                  </td>
+                  <td className="soc-td-compact tabular-nums text-slate-300">{formatDateTime(row.lastSeen)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
