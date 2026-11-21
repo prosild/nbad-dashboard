@@ -83,6 +83,9 @@ services:
       # 공개 데모 계정을 남이 잠그지 못하게 계정 잠금을 사실상 끈다(0이나 작은 값은 첫 실패에 잠근다).
       # 대신 nginx-waf가 POST /api/auth/login을 클라이언트 IP당 속도 제한한다.
       DASHBOARD_MAX_FAILED_ATTEMPTS: ${PORTFOLIO_MAX_FAILED_ATTEMPTS:-1000000}
+      # T29: 비밀번호를 공개한 공유 조회 계정(VIEWER)만 계정 잠금에서 뺀다. 목록에 있어도 VIEWER가 아니면 잠긴다.
+      # 목록에는 비밀번호를 공개한 공유 조회 계정만 넣는다(비공개 비밀번호 계정을 넣으면 여러 IP 대입을 IP당 속도 제한만 막는다).
+      DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo}
       # T23: 기준 시각. 데이터가 더 늘지 않는 고정 스냅샷이라 "최근 24시간" 등을 데이터 최신 시각(사용자 허용 캡처 기준)에서 센다.
       # 화면 맨 위에 "고정 스냅샷 · 기준 시각"을 늘 보이고 새 인시던트 자동 갱신을 끈다. 데모 모드가 아니라 과거 데이터 조사용 일반 설정이다.
       DASHBOARD_TIME_ANCHOR: ${PORTFOLIO_TIME_ANCHOR:-latest-data}

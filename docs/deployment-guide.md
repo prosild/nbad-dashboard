@@ -106,6 +106,7 @@ cp .env.example .env
 | `DASHBOARD_SESSION_IDLE_TIMEOUT` | Spring 세션 유휴 만료 | `30m` | `30m` |
 | `DASHBOARD_MAX_FAILED_ATTEMPTS` | 로그인 연속 실패 잠금 횟수 | `5` | `5` |
 | `DASHBOARD_LOCKOUT_MINUTES` | 계정 잠금 유지 시간(분) | `15` | `15` |
+| `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES` | 계정 잠금 제외 공유 조회 계정(T29). 쉼표 목록, 대소문자·앞뒤 공백 무시. 로그인 때 DB 역할이 VIEWER인 계정만 빠지고(ANALYST·ADMIN은 목록에 있어도 잠긴다), 빠진 계정은 틀려도 실패 수·잠금을 바꾸지 않는다(실패 감사 `LOGIN_FAILURE`는 `lockoutExempt: true`로 남는다). **비밀번호를 공개한 공유 조회 계정만 넣는다**: 비공개 비밀번호 계정을 넣으면 여러 IP에서 대입할 때 막을 것이 IP당 로그인 속도 제한뿐이다. 목록의 계정이 없거나 VIEWER가 아니면 시작할 때 경고 로그(이름만)를 남기고 시작은 막지 않는다 | 비움 | 비움 |
 | `DASHBOARD_IDLE_TIMEOUT_MINUTES` | 필터 유휴 만료(분) | `30` | `30` |
 | `DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES` | 필터 절대 만료(분) | `480` | `480` |
 | `DASHBOARD_TIME_ANCHOR` | 기준 시각(T23). 인시던트 큐의 상대 기간(최근 1시간·24시간·7일·30일)을 이 시각에서 거꾸로 센다. `now` = 서버 현재 시각(데이터가 계속 들어오는 운영). `latest-data` = 그 사용자가 볼 수 있는 캡처의 성공 탐지 작업 완료 시각 최대값(데이터가 더 늘지 않는 고정 스냅샷, 과거 데이터 조사용). `latest-data`면 모든 화면 맨 위에 "고정 스냅샷 · 기준 시각"을 보이고 새 인시던트 자동 갱신을 끈다. 다른 값이면 앱이 시작하지 않는다 | `now` | `now` |
