@@ -327,6 +327,12 @@ try {
     $e2eLogs.Add("[seed] run1 exit=$($seed1.ExitCode) $([regex]::Match($seed1.Output, 'RESULT: [^\r\n]*').Value)`n[seed] run2 exit=$($seed2.ExitCode) $([regex]::Match($seed2.Output, 'RESULT: [^\r\n]*').Value); audit_logs rows before=$auditBefore after=$auditAfter`n[seed] users (username|role|enabled|totp_enabled|patterns):`n    $($userRows -replace "`r?`n", "`n    ")`n[seed] USER_ADMIN_CHANGE audit rows (id|actor|actor_role|action|detail):`n    $($seedAudit -replace "`r?`n", "`n    ")")
     Assert-True ($seed2.ExitCode -eq 0 -and $seed2.Output -match 'RESULT: NO_CHANGES' -and $auditBefore -eq $auditAfter) "시드 2차 실행 변경 없음(RESULT: NO_CHANGES, 감사 로그 증가 없음)`n$($seed2.Output)"
 
+    # T23: 숨김 캡처 = 리허설 DB dashboard.scoring_jobs의 전체 캡처 ID - 공개 캡처(manifest 사건 수 키가 아니다. 최신 작업 사건이 0건인 캡처도 빠지지 않게).
+    $dbCaptures = @((Invoke-Psql "zeekad" "SELECT DISTINCT capture_id FROM dashboard.scoring_jobs WHERE capture_id IS NOT NULL ORDER BY 1").Output -split "`r?`n" | Where-Object { $_ })
+    $demoPublicDb = @($dbCaptures | Where-Object { Test-DemoPattern $_ })
+    $demoHiddenCaptures = @($dbCaptures | Where-Object { -not (Test-DemoPattern $_) })
+    $e2eLogs.Add("[scope] DB scoring_jobs captures=[$($dbCaptures -join ', ')] public=[$($demoPublicDb -join ', ')] hidden=[$($demoHiddenCaptures -join ', ')] (manifest captures=[$($expectedCounts.Keys -join ', ')])")
+
     Write-Host "=== [0] 컨테이너 상태·포트·non-root·복원 DB 권한·근거 API ==="
     $ids = @((Invoke-NativeCapture "docker" ($composeArgs + @("ps", "-q"))).Output -split "`r?`n" | Where-Object { $_ })
     $states = @()
@@ -438,17 +444,24 @@ try {
     Assert-Status $defaultQueue 200 "demo 인시던트 목록(캡처 지정 없음)"
     $demoAllowed = @($defaultQueue.Json.allowedCaptures | Sort-Object)
     $e2eLogs.Add("[3-scope] demo GET /api/incidents -> HTTP $($defaultQueue.Status) allowedCaptures=[$($demoAllowed -join ', ')]")
-    Assert-True (($demoAllowed -join ',') -eq ((@($demoVisibleCaptures) | Sort-Object) -join ',')) "demo 캡처 목록 = 보이는 캡처 $($demoVisibleCaptures.Count)개(숨김 $($demoHiddenCaptures.Count)개 없음)" $defaultQueue
+    Assert-True (($demoAllowed -join ',') -eq ((@($demoPublicDb) | Sort-Object) -join ',')) "demo 캡처 목록 = DB 공개 캡처 $($demoPublicDb.Count)개(숨김 $($demoHiddenCaptures.Count)개 없음)" $defaultQueue
     foreach ($hiddenCap in $demoHiddenCaptures) {
         $hiddenQueue = Invoke-Http -Path "/api/incidents?captureId=$hiddenCap" -Client $demo
         $e2eLogs.Add("[3-scope] demo GET /api/incidents?captureId=$hiddenCap -> $(Format-Resp $hiddenQueue 200)")
         Assert-Status $hiddenQueue 403 "demo $hiddenCap 목록 직접 조회 거부"
-        $hiddenRow = (Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE capture_id = '$hiddenCap' ORDER BY queue_rank LIMIT 1").Output.Trim()
-        Assert-True ($hiddenRow -match '^\d+/\d+$') "$hiddenCap 인시던트가 스냅샷에 있음(직접 조회 대상)"
-        $hiddenJob, $hiddenRank = $hiddenRow -split '/'
-        $hiddenDetail = Invoke-Http -Path "/api/incidents/$hiddenJob/rank/$hiddenRank" -Client $demo
-        $e2eLogs.Add("[3-scope] demo GET /api/incidents/$hiddenJob/rank/$hiddenRank ($hiddenCap) -> $(Format-Resp $hiddenDetail 200)")
-        Assert-Status $hiddenDetail 403 "demo $hiddenCap 상세 직접 조회 거부"
+        $hiddenRow = (Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.incident_queue WHERE capture_id = '$hiddenCap' ORDER BY job_id DESC, queue_rank LIMIT 1").Output.Trim()
+        if ($hiddenRow -match '^\d+/\d+$') {
+            $hiddenJob, $hiddenRank = $hiddenRow -split '/'
+            $hiddenDetail = Invoke-Http -Path "/api/incidents/$hiddenJob/rank/$hiddenRank" -Client $demo
+            $e2eLogs.Add("[3-scope] demo GET /api/incidents/$hiddenJob/rank/$hiddenRank ($hiddenCap) -> $(Format-Resp $hiddenDetail 200)")
+            Assert-Status $hiddenDetail 403 "demo $hiddenCap 상세 직접 조회 거부"
+        } else {
+            # 사건이 0건인 숨김 캡처: 그 캡처의 작업으로 직접 조회한다
+            $hiddenJob = (Invoke-Psql "zeekad" "SELECT job_id FROM dashboard.scoring_jobs WHERE capture_id = '$hiddenCap' ORDER BY job_id DESC LIMIT 1").Output.Trim()
+            $hiddenJobRes = Invoke-Http -Path "/api/incidents?jobId=$hiddenJob" -Client $demo
+            $e2eLogs.Add("[3-scope] demo GET /api/incidents?jobId=$hiddenJob ($hiddenCap, no incidents) -> $(Format-Resp $hiddenJobRes 200)")
+            Assert-Status $hiddenJobRes 403 "demo $hiddenCap 작업 직접 조회 거부"
+        }
     }
     foreach ($cap in $demoVisibleCaptures) {
         $q = Invoke-Http -Path "/api/incidents?captureId=$cap" -Client $demo
@@ -550,6 +563,189 @@ try {
     Assert-True ([bool]($sdDef -match 'report_version\s+AS\s+zeekad_message_version')) "뷰 열 대응 report_version -> zeekad_message_version"
     $e2eLogs.Add("[3d] details checked=$($detailTargets.Count) evidence.available=$evidenceOk report.present=$reportOk sendDecision=$sendDecisionCount slackDeliveries=$slackCount; unmasked IPv4 JSON paths=$($ipHits.Count)$(if ($ipHits.Count) { ' ' + (($ipHits | Select-Object -First 20) -join ', ') })")
     Assert-True ($ipHits.Count -eq 0) "demo 응답(큐·상세·운영) 전체에 가려지지 않은 IPv4 없음"
+
+    Write-Host "=== [T23] 통합 인시던트 큐(latest-data 기준 시각, 합계·숨김 0·마스킹·쪽 이음·응답 시간) ==="
+    function ConvertTo-SqlArray([string[]]$Values) {
+        return "ARRAY[" + (($Values | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ",") + "]::text[]"
+    }
+    function Get-RefPriority($It) {
+        $s = ([string]$It.zeekadStatus).Trim().ToLowerInvariant()
+        if (-not $s) { $s = 'open' }
+        if ($s -eq 'closed') { return '' }
+        if ($It.zeekadWouldSend -eq $true -or $It.zeekadReviewPending -eq $true) { return 'high' }
+        if (@($It.zeekadAlsoFlaggedBy | Where-Object { $_ }).Count -ge 1 -or $It.hasReport -eq $true) { return 'medium' }
+        return 'low'
+    }
+    function Get-AllQueueItems($Client, [string]$Query, [int]$Size) {
+        $all = [System.Collections.Generic.List[object]]::new()
+        $first = Invoke-Http -Path "/api/incidents/queue?$Query&size=$Size&page=1" -Client $Client
+        Assert-Status $first 200 "demo 통합 큐 $Query size=$Size page=1"
+        $pages = [int]$first.Json.pageCount
+        for ($p = 1; $p -le $pages; $p++) {
+            $res = if ($p -eq 1) { $first } else { Invoke-Http -Path "/api/incidents/queue?$Query&size=$Size&page=$p" -Client $Client }
+            Assert-Status $res 200 "demo 통합 큐 $Query size=$Size page=$p"
+            Find-UnmaskedIpv4 $res.Json "queue[$Query p$p]" $t23IpHits
+            foreach ($it in @($res.Json.items)) { $all.Add($it) }
+        }
+        return [pscustomobject]@{ First = $first; Items = $all; Pages = $pages }
+    }
+    $t23IpHits = [System.Collections.Generic.List[string]]::new()
+    $publicArr = ConvertTo-SqlArray $demoPublicDb
+    $hiddenArr = if ($demoHiddenCaptures.Count) { ConvertTo-SqlArray $demoHiddenCaptures } else { "ARRAY[]::text[]" }
+
+    # [T23a] period=all 합계 = 공개 캡처 최신 작업 사건 수의 합 = feedback_summary 'all' 행 incidents 합(현황판 KPI)
+    $kpiSum = [int](Invoke-Psql "zeekad" "SELECT COALESCE(SUM(incidents),0) FROM dashboard.feedback_summary WHERE zeekad_picked_by = 'all' AND capture_id = ANY($publicArr)").Output.Trim()
+    $lqSum = [int](Invoke-Psql "zeekad" "SELECT count(*) FROM dashboard.latest_incident_queue WHERE capture_id = ANY($publicArr)").Output.Trim()
+    $all = Get-AllQueueItems $demo "period=all" 100
+    $allTotal = [int]$all.First.Json.total
+    $e2eLogs.Add("[T23a] demo GET /api/incidents/queue?period=all -> total=$allTotal pages=$($all.Pages) items=$($all.Items.Count); feedback_summary 'all' incidents sum (public)=$kpiSum; latest_incident_queue rows (public)=$lqSum; public captures=[$($demoPublicDb -join ', ')]")
+    Assert-True ($allTotal -eq $kpiSum -and $allTotal -eq $lqSum -and $all.Items.Count -eq $allTotal) "[T23a] period=all total = 공개 캡처 최신 작업 사건 수 합 = KPI(feedback_summary 'all') (total=$allTotal, KPI=$kpiSum, rows=$lqSum)"
+
+    # [T23b] 기준 시각 = 공개 캡처 성공 작업 finished_at 최대(SQL 따로 계산), snapshot, time-context
+    function ConvertTo-EpochMicros([string]$Iso) {
+        $dto = [DateTimeOffset]::Parse($Iso, [Globalization.CultureInfo]::InvariantCulture)
+        return [long](($dto.UtcTicks - [DateTimeOffset]::new(1970, 1, 1, 0, 0, 0, [TimeSpan]::Zero).UtcTicks) / 10)
+    }
+    function Format-Micros([long]$Micros) {
+        if ($Micros -le 0) { return '(none)' }
+        return [DateTimeOffset]::new(1970, 1, 1, 0, 0, 0, [TimeSpan]::Zero).AddTicks($Micros * 10).ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+    }
+    $anchorMicros = [long](Invoke-Psql "zeekad" "SELECT (EXTRACT(EPOCH FROM MAX(finished_at)) * 1000000)::bigint FROM dashboard.scoring_jobs WHERE status = 'succeeded' AND finished_at IS NOT NULL AND capture_id = ANY($publicArr)").Output.Trim()
+    $hiddenMaxRaw = (Invoke-Psql "zeekad" "SELECT COALESCE((EXTRACT(EPOCH FROM MAX(finished_at)) * 1000000)::bigint, 0) FROM dashboard.scoring_jobs WHERE status = 'succeeded' AND finished_at IS NOT NULL AND capture_id = ANY($hiddenArr)").Output.Trim()
+    $hiddenMaxMicros = [long]$hiddenMaxRaw
+    $anchorSql = Format-Micros $anchorMicros
+    $hiddenMax = Format-Micros $hiddenMaxMicros
+    $tc = Invoke-Http -Path "/api/time-context" -Client $demo
+    $apiAnchorMicros = ConvertTo-EpochMicros ([string]$all.First.Json.anchor)
+    $tcAnchorMicros = ConvertTo-EpochMicros ([string]$tc.Json.anchor)
+    $e2eLogs.Add("[T23b] anchor API(queue)=$($all.First.Json.anchor) API(time-context)=$($tc.Json.anchor) SQL(public max finished_at)=$anchorSql hidden max finished_at=$(if ($hiddenMax) { $hiddenMax } else { '(none)' }); anchorMode=$($all.First.Json.anchorMode) snapshot=$($all.First.Json.snapshot) time-context snapshot=$($tc.Json.snapshot)")
+    Assert-Status $tc 200 "[T23b] demo GET /api/time-context"
+    Assert-True ($apiAnchorMicros -eq $anchorMicros -and $tcAnchorMicros -eq $anchorMicros) "[T23b] 기준 시각 = 공개 캡처 성공 작업 finished_at 최대 (API=$apiAnchorMicros, SQL=$anchorMicros, time-context=$tcAnchorMicros us)"
+    Assert-True ($all.First.Json.snapshot -eq $true -and $all.First.Json.anchorMode -eq 'latest-data' -and $tc.Json.snapshot -eq $true) "[T23b] latest-data 고정 스냅샷"
+
+    # [T23c] 기본 24시간: 캡처별 수 = 인계 기대값 SQL(구현 SQL을 복사하지 않음)
+    # 인계의 기대값 SQL(:public = 공개 캡처, :anchor = 위 SQL 기준 시각). 구현 SQL을 복사하지 않았다.
+    $anchorExpr = "to_timestamp($anchorMicros / 1000000.0)"
+    $expect24Sql = "WITH first_seen AS (SELECT q.incident_id, MIN(j.finished_at) AS detected_at FROM dashboard.incident_queue q " +
+        "JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id) " +
+        "SELECT lq.capture_id, count(*) FROM dashboard.latest_incident_queue lq JOIN first_seen f ON f.incident_id = lq.incident_id " +
+        "WHERE lq.capture_id = ANY($publicArr) AND f.detected_at > $anchorExpr - interval '24 hours' AND f.detected_at <= $anchorExpr " +
+        "GROUP BY lq.capture_id ORDER BY 1"
+    $expect24 = (Invoke-Psql "zeekad" $expect24Sql).Output.Trim()
+    $expect24Map = [ordered]@{}
+    foreach ($line in @($expect24 -split "`r?`n" | Where-Object { $_ })) { $c, $n = $line -split '\|'; $expect24Map[$c] = [int]$n }
+    $d24 = Get-AllQueueItems $demo "period=24h" 100
+    $got24Map = [ordered]@{}
+    foreach ($g in @($d24.Items | Group-Object captureId | Sort-Object Name)) { $got24Map[$g.Name] = $g.Count }
+    $exp24Text = ($expect24Map.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+    $got24Text = ($got24Map.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+    $e2eLogs.Add("[T23c] default period=24h (anchor $anchorSql): API total=$($d24.First.Json.total) by capture [$got24Text]; expected SQL [$exp24Text]")
+    Assert-True ($exp24Text -eq $got24Text -and [int]$d24.First.Json.total -eq $d24.Items.Count) "[T23c] 기본 24시간 결과 캡처·수 = 기대 SQL (API [$got24Text], SQL [$exp24Text])"
+
+    # [T23d] summary = 모든 쪽 items로 센 값, 서버 우선순위 = 옛 규칙(PostgreSQL), 쪽 이음(25건씩) = 100건씩 결과, 마스킹
+    $s = $all.First.Json.summary
+    $cnt = @{ high = 0; medium = 0; low = 0; review = 0; alerted = 0; open = 0; investigating = 0; closed = 0; other = 0 }
+    foreach ($it in $all.Items) {
+        if ($it.priority) { $cnt[[string]$it.priority]++ }
+        if ($it.zeekadReviewPending -eq $true) { $cnt.review++ }
+        if ($it.alerted -eq $true) { $cnt.alerted++ }
+        $st = ([string]$it.zeekadStatus).Trim().ToLowerInvariant()
+        if (-not $st -or $st -eq 'open') { $cnt.open++ } elseif ($st -eq 'investigating') { $cnt.investigating++ } elseif ($st -eq 'closed') { $cnt.closed++ } else { $cnt.other++ }
+    }
+    $summaryText = "summary total=$($s.total) high=$($s.high) medium=$($s.medium) low=$($s.low) reviewPending=$($s.reviewPending) alerted=$($s.alerted) byStatus=$($s.byStatus | ConvertTo-Json -Compress)"
+    $countText = "items total=$($all.Items.Count) high=$($cnt.high) medium=$($cnt.medium) low=$($cnt.low) reviewPending=$($cnt.review) alerted=$($cnt.alerted) open=$($cnt.open) investigating=$($cnt.investigating) closed=$($cnt.closed) other=$($cnt.other)"
+    $prioMismatch = @($all.Items | Where-Object { ([string]$_.priority) -ne (Get-RefPriority $_) })
+    $e2eLogs.Add("[T23d] $summaryText`n       $countText`n       server priority vs old rule mismatches=$($prioMismatch.Count)$(if ($prioMismatch.Count) { ' ' + (($prioMismatch | Select-Object -First 5 | ForEach-Object { "$($_.jobId)/$($_.queueRank)" }) -join ',') })")
+    Assert-True ([int]$s.total -eq $all.Items.Count -and [int]$s.high -eq $cnt.high -and [int]$s.medium -eq $cnt.medium -and [int]$s.low -eq $cnt.low -and
+        [int]$s.reviewPending -eq $cnt.review -and [int]$s.alerted -eq $cnt.alerted -and [int]$s.byStatus.open -eq $cnt.open -and
+        [int]$s.byStatus.investigating -eq $cnt.investigating -and [int]$s.byStatus.closed -eq $cnt.closed -and [int]$s.byStatus.other -eq $cnt.other) "[T23d] summary = 모든 쪽 items로 센 값"
+    Assert-True ($prioMismatch.Count -eq 0) "[T23d] PostgreSQL 서버 우선순위 = 옛 화면 규칙 (불일치 $($prioMismatch.Count))"
+    $keys100 = @($all.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
+    $small = Get-AllQueueItems $demo "period=all" 25
+    $keys25 = @($small.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
+    $dups = @($keys25 | Group-Object | Where-Object { $_.Count -gt 1 }).Count
+    $e2eLogs.Add("[T23d] page join (sort=priority default): size25 pages=$($small.Pages) keys=$($keys25.Count) dups=$dups; size100 keys=$($keys100.Count); same order=$((($keys25 -join ',') -eq ($keys100 -join ',')))")
+    Assert-True ((($keys25 -join ',') -eq ($keys100 -join ',')) -and $dups -eq 0 -and $keys25.Count -eq $allTotal) "[T23d] 25건씩 쪽을 이으면 100건씩 결과와 같고 겹침·빠짐 없음"
+    Assert-True ($all.First.Json.maskedView -eq $true) "[T23d] demo maskedView"
+
+    # [T23e] 숨김 캡처 흔적 0: queue 행·sources·new-count(숨김만 더 늦은 since)·neighbors(숨김 작업 403)·time-context(위 T23b)
+    $rowCaps = @($all.Items | ForEach-Object { $_.captureId } | Select-Object -Unique | Sort-Object)
+    $srcCaps = @($all.First.Json.sources | ForEach-Object { $_.captureId } | Sort-Object)
+    $leakRows = @($all.Items | Where-Object { $demoHiddenCaptures -contains $_.captureId })
+    $sinceIso = $anchorSql
+    $nc = Invoke-Http -Path "/api/incidents/queue/new-count?since=$sinceIso" -Client $demo
+    $ncAll = Invoke-Http -Path "/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z" -Client $demo
+    $e2eLogs.Add("[T23e] queue row captures=[$($rowCaps -join ', ')] hidden rows=$($leakRows.Count); sources=[$($srcCaps -join ', ')] (public DB=[$((@($demoPublicDb | Sort-Object)) -join ', ')]); new-count since=$sinceIso (public max, hidden max=$hiddenMax) -> $(Format-Resp $nc 200); new-count since 2000 -> count=$($ncAll.Json.count)")
+    Assert-True ($leakRows.Count -eq 0 -and @($rowCaps | Where-Object { -not (Test-DemoPattern $_) }).Count -eq 0) "[T23e] 통합 큐에 숨김 캡처 행 0"
+    Assert-True (($srcCaps -join ',') -eq ((@($demoPublicDb | Sort-Object)) -join ',')) "[T23e] sources = 공개 캡처만"
+    Assert-True ($nc.Status -eq 200 -and [int]$nc.Json.count -eq 0) "[T23e] 숨김 캡처만 더 늦은 since로 new-count = 0"
+    Assert-True ($ncAll.Status -eq 200 -and [int]$ncAll.Json.count -eq $allTotal) "[T23e] new-count(since 2000) = 공개 합계"
+    foreach ($hiddenCap in $demoHiddenCaptures) {
+        $hq = Invoke-Http -Path "/api/incidents/queue?captureId=$hiddenCap" -Client $demo
+        $hjob = (Invoke-Psql "zeekad" "SELECT job_id FROM dashboard.scoring_jobs WHERE capture_id = '$hiddenCap' ORDER BY job_id DESC LIMIT 1").Output.Trim()
+        $hnb = Invoke-Http -Path "/api/incidents/queue/neighbors?jobId=$hjob&queueRank=1" -Client $demo
+        $hnc = Invoke-Http -Path "/api/incidents/queue/new-count?captureId=$hiddenCap&since=2000-01-01T00:00:00Z" -Client $demo
+        $e2eLogs.Add("[T23e] hidden ${hiddenCap}: queue?captureId -> HTTP $($hq.Status); neighbors jobId=$hjob -> HTTP $($hnb.Status); new-count?captureId -> HTTP $($hnc.Status)")
+        Assert-Status $hq 403 "[T23e] demo 통합 큐 숨김 캡처 $hiddenCap"
+        Assert-Status $hnb 403 "[T23e] demo neighbors 숨김 캡처 작업 $hjob"
+        Assert-Status $hnc 403 "[T23e] demo new-count 숨김 캡처 $hiddenCap"
+    }
+    $firstKey = $all.Items[0]
+    $nb = Invoke-Http -Path "/api/incidents/queue/neighbors?jobId=$($firstKey.jobId)&queueRank=$($firstKey.queueRank)&period=all" -Client $demo
+    $e2eLogs.Add("[T23e] neighbors first row: $(Format-Resp $nb 300)")
+    Assert-True ($nb.Status -eq 200 -and [int]$nb.Json.position -eq 1 -and [int]$nb.Json.total -eq $allTotal) "[T23e] neighbors 위치·전체 수(공개 합계)" $nb
+    Find-UnmaskedIpv4 $nb.Json "neighbors" $t23IpHits
+    Find-UnmaskedIpv4 $nc.Json "new-count" $t23IpHits
+
+    # [T23f] VIEWER 자산 검색(PostgreSQL): 가려지지 않은 IP의 뒤 두 옥텟으로는 0건, 가려진 앞부분·호스트 이름으로는 찾아짐
+    $maskedTexts = @($all.Items | ForEach-Object { @($_.hostIp) + @($_.hostName) } | Where-Object { $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    $realIps = @((Invoke-Psql "zeekad" "SELECT DISTINCT host_ip FROM dashboard.latest_incident_queue WHERE capture_id = ANY($publicArr) ORDER BY 1").Output -split "`r?`n" | Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}$' })
+    $tailIp = $null; $tail = $null
+    foreach ($ip in $realIps) {
+        $o = $ip -split '\.'
+        $cand = "$($o[2]).$($o[3])"
+        if (-not (@($maskedTexts | Where-Object { $_.Contains($cand) }).Count)) { $tailIp = $ip; $tail = $cand; break }
+    }
+    Assert-True ([bool]$tail) "[T23f] 가려진 값·호스트 이름에 없는 실제 IP 뒤 두 옥텟 후보"
+    $head = (($tailIp -split '\.')[0..1]) -join '.'
+    $hostSample = @($all.Items | ForEach-Object { @($_.hostName) } | Where-Object { $_ -and $_ -notmatch '\d+\.\d+\.\*\.\*' } | Select-Object -First 1)
+    $aTail = Invoke-Http -Path "/api/incidents/queue?period=all&asset=$tail" -Client $demo
+    $aHead = Invoke-Http -Path "/api/incidents/queue?period=all&asset=$head" -Client $demo
+    $aHost = if ($hostSample.Count) { Invoke-Http -Path "/api/incidents/queue?period=all&asset=$([uri]::EscapeDataString([string]$hostSample[0]))" -Client $demo } else { $null }
+    Find-UnmaskedIpv4 $aHead.Json "asset-head" $t23IpHits
+    $e2eLogs.Add("[T23f] demo asset search (masked view): tail of a real public IP '<a>.<b>.$tail' -> HTTP $($aTail.Status) total=$($aTail.Json.total); masked head '$head' -> total=$($aHead.Json.total); host name sample -> $(if ($aHost) { "HTTP $($aHost.Status) total=$($aHost.Json.total)" } else { '(no host name in public data)' })")
+    Assert-True ($aTail.Status -eq 200 -and [int]$aTail.Json.total -eq 0) "[T23f] demo 실제 IP 뒤 두 옥텟 검색 0건 (PostgreSQL)" $aTail
+    Assert-True ($aHead.Status -eq 200 -and [int]$aHead.Json.total -ge 1) "[T23f] demo 가려진 앞부분 검색은 찾아짐" $aHead
+    if ($aHost) { Assert-True ($aHost.Status -eq 200 -and [int]$aHost.Json.total -ge 1) "[T23f] demo 호스트 이름 검색은 찾아짐" $aHost }
+    $e2eLogs.Add("[T23d-f] unmasked IPv4 JSON paths in T23 responses=$($t23IpHits.Count)$(if ($t23IpHits.Count) { ' ' + (($t23IpHits | Select-Object -First 20) -join ', ') })")
+    Assert-True ($t23IpHits.Count -eq 0) "[T23] demo 통합 큐·neighbors·new-count·자산 검색 응답에 가려지지 않은 IPv4 없음"
+
+    # [T23g] 응답 시간(서버 경유 전체 요청 시간, curl 포함): period=all 첫 쪽, 자산 검색 첫 쪽, new-count
+    $timings = [ordered]@{}
+    foreach ($t in @(@{ Name = 'period=all page1'; Path = "/api/incidents/queue?period=all" },
+                     @{ Name = 'asset search page1'; Path = "/api/incidents/queue?period=all&asset=$head" },
+                     @{ Name = 'new-count'; Path = "/api/incidents/queue/new-count?since=$sinceIso" })) {
+        $samples = @()
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $t.Path -Client $demo
+            $sw.Stop()
+            Assert-Status $r 200 "[T23g] $($t.Name)"
+            $samples += [int]$sw.ElapsedMilliseconds
+        }
+        $timings[$t.Name] = $samples
+    }
+    $timingText = ($timings.GetEnumerator() | ForEach-Object { "$($_.Key)=[$($_.Value -join ', ')] ms" }) -join '; '
+    $slow = @($timings.GetEnumerator() | Where-Object { ($_.Value | Measure-Object -Minimum).Minimum -gt 1000 } | ForEach-Object { $_.Key })
+    $e2eLogs.Add("[T23g] response times (3 samples each, includes curl): $timingText; over 1s (min of 3): [$($slow -join ', ')]")
+
+    # [T23h] 진행 중·실습망 지연(최신 작업 finished_at - 최대 event_end)
+    $lagRows = (Invoke-Psql "zeekad" "SELECT lq.capture_id, j.job_id, to_char(j.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), to_char(MAX(lq.event_end) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), EXTRACT(EPOCH FROM (j.finished_at - MAX(lq.event_end)))::int FROM dashboard.latest_incident_queue lq JOIN dashboard.scoring_jobs j ON j.job_id = lq.job_id WHERE lq.capture_id LIKE 'lab-%' GROUP BY lq.capture_id, j.job_id, j.finished_at ORDER BY 1").Output.Trim()
+    $ongoingItems = @($all.Items | Where-Object { $_.ongoing -eq $true })
+    $liveItems = @($all.Items | Where-Object { $_.sourceType -eq 'live' })
+    $e2eLogs.Add("[T23h] live items=$($liveItems.Count) ongoing items=$($ongoingItems.Count) [$(@($ongoingItems | Select-Object -First 10 | ForEach-Object { "$($_.captureId) $($_.jobId)/$($_.queueRank) end=$($_.eventEnd)" }) -join '; ')]`n       lab latest job lag (capture|job|finished_at UTC|max event_end UTC|lag seconds):`n       $($lagRows -replace "`r?`n", "`n       ")")
+    Assert-True (@($ongoingItems | Where-Object { $_.sourceType -ne 'live' }).Count -eq 0) "[T23h] 진행 중은 실습망 센서만"
+    Assert-True (@($all.Items | Where-Object { ($_.captureId -like 'lab-*') -ne ($_.sourceType -eq 'live') }).Count -eq 0) "[T23h] 수집원 분류(lab-* = 실습망 센서)"
 
     Write-Host "=== [4] demo 쓰기 거부(유효 CSRF) ==="
     $first = $queueByCapture.Values | ForEach-Object { $_ } | Select-Object -First 1

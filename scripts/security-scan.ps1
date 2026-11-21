@@ -805,6 +805,112 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True (-not $wafIpError) "[9e] 조합 헤더 WAF 차단 확인 ($wafIpError)"
                 Assert-True ($wafLogIp -eq $ipB) "[9e] ModSecurity 감사 로그 client_ip=B (실제 $wafLogIp, B=$ipB)"
 
+                # [10] 통합 인시던트 큐(T23): 허용 캡처만, VIEWER 마스킹·자산 검색(가려진 값에만, PostgreSQL 실측),
+                #      허용 밖 captureId·jobId 403, 쪽 이음 = 정렬 결과, 서버 우선순위 = 옛 규칙(PostgreSQL cardinality),
+                #      new-count·neighbors·time-context 200. 기존 절은 작업 단위 API(/api/incidents?captureId=…)로 그대로 돈다.
+                function Get-UnmaskedIpv4([string]$Text) {
+                    return @([regex]::Matches($Text, '(?<![0-9.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![0-9.])') | Where-Object {
+                        [int]$_.Groups[1].Value -le 255 -and [int]$_.Groups[2].Value -le 255 -and [int]$_.Groups[3].Value -le 255 -and [int]$_.Groups[4].Value -le 255
+                    } | ForEach-Object { $_.Value })
+                }
+                function Get-RefPriority($It) {
+                    $s = ([string]$It.zeekadStatus).Trim().ToLowerInvariant()
+                    if (-not $s) { $s = 'open' }
+                    if ($s -eq 'closed') { return '' }
+                    if ($It.zeekadWouldSend -eq $true -or $It.zeekadReviewPending -eq $true) { return 'high' }
+                    if (@($It.zeekadAlsoFlaggedBy | Where-Object { $_ }).Count -ge 1 -or $It.hasReport -eq $true) { return 'medium' }
+                    return 'low'
+                }
+                function Get-QueueKeys([string]$Jar, [string]$Query, [int]$Size) {
+                    $keys = [System.Collections.Generic.List[string]]::new()
+                    $first = Invoke-Http -Url "$baseHttps/api/incidents/queue?$Query&size=$Size&page=1" -CookieJar $Jar
+                    Assert-Status $first 200 "queue $Query size=$Size page=1"
+                    $pages = [int]$first.Json.pageCount
+                    for ($p = 1; $p -le $pages; $p++) {
+                        $res = if ($p -eq 1) { $first } else { Invoke-Http -Url "$baseHttps/api/incidents/queue?$Query&size=$Size&page=$p" -CookieJar $Jar }
+                        Assert-Status $res 200 "queue $Query size=$Size page=$p"
+                        foreach ($it in @($res.Json.items)) { $keys.Add("$($it.jobId)/$($it.queueRank)") }
+                    }
+                    return [pscustomobject]@{ Keys = $keys; Total = [int]$first.Json.total }
+                }
+
+                $q10Viewer = Join-Path $tmpDir "q10-viewer.cookies"
+                Assert-Status (Login-Api "viewer1" $q10Viewer) 200 "[10] viewer1 로그인"
+                $q10Analyst = Join-Path $tmpDir "q10-analyst.cookies"
+                Assert-Status (Login-Api "analyst1" $q10Analyst) 200 "[10] analyst1 로그인"
+
+                $vq = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=100" -CookieJar $q10Viewer
+                $vqCaps = @($vq.Json.items | ForEach-Object { $_.captureId } | Select-Object -Unique)
+                $vqSources = @($vq.Json.sources | ForEach-Object { "$($_.captureId):$($_.sourceType):$($_.latestJobId)" })
+                $vqUnmasked = Get-UnmaskedIpv4 $vq.Body
+                $e2eLogs.Add("[10a] viewer1 GET /api/incidents/queue?period=all&size=100 -> HTTP $($vq.Status) total=$($vq.Json.total) items=$(@($vq.Json.items).Count) captures=[$($vqCaps -join ', ')] sources=[$($vqSources -join ', ')] maskedView=$($vq.Json.maskedView) anchorMode=$($vq.Json.anchorMode) snapshot=$($vq.Json.snapshot) unmaskedIPv4=$($vqUnmasked.Count) hostIp=[$(@($vq.Json.items | ForEach-Object { $_.hostIp }) -join ', ')]")
+                Assert-Status $vq 200 "[10a] viewer1 통합 큐"
+                Assert-True ($vq.Json.maskedView -eq $true -and @($vq.Json.items).Count -eq [int]$vq.Json.total -and [int]$vq.Json.total -gt 0) "[10a] viewer1 통합 큐 마스킹·건수" $vq
+                Assert-True (@($vqCaps | Where-Object { $_ -notlike 'cic17-*' }).Count -eq 0 -and @($vq.Json.sources | Where-Object { $_.captureId -notlike 'cic17-*' }).Count -eq 0) "[10a] viewer1 통합 큐에 허용 캡처(cic17-*)만" $vq
+                Assert-True ($vqUnmasked.Count -eq 0) "[10a] viewer1 통합 큐 응답에 가려지지 않은 IPv4 0건 (찾음: $($vqUnmasked -join ', '))" $vq
+                Assert-True ($vq.Json.anchorMode -eq 'now' -and $vq.Json.snapshot -eq $false) "[10a] VMware 스택 기준 시각 now" $vq
+
+                $vAssetTail = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&asset=10.50" -CookieJar $q10Viewer
+                $vAssetTail2 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&asset=.10.50" -CookieJar $q10Viewer
+                $vAssetHead = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&asset=192.168" -CookieJar $q10Viewer
+                $vAssetName = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&asset=dc01.corp" -CookieJar $q10Viewer
+                $vNewTail = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&asset=10.50" -CookieJar $q10Viewer
+                $aAssetTail = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&asset=10.50" -CookieJar $q10Analyst
+                $e2eLogs.Add("[10b] viewer1 asset=10.50 (real tail octets of 192.168.10.50) -> HTTP $($vAssetTail.Status) total=$($vAssetTail.Json.total); asset=.10.50 -> total=$($vAssetTail2.Json.total); new-count asset=10.50 -> count=$($vNewTail.Json.count)`n      viewer1 asset=192.168 (masked head) -> total=$($vAssetHead.Json.total) hostIp=[$(@($vAssetHead.Json.items | ForEach-Object { $_.hostIp }) -join ', ')]; asset=dc01.corp (host name) -> total=$($vAssetName.Json.total)`n      analyst1 asset=10.50 (unmasked) -> total=$($aAssetTail.Json.total)")
+                Assert-True ($vAssetTail.Status -eq 200 -and [int]$vAssetTail.Json.total -eq 0) "[10b] viewer1 실제 IP 뒤 두 옥텟(10.50) 검색 0건 (PostgreSQL)" $vAssetTail
+                Assert-True ($vAssetTail2.Status -eq 200 -and [int]$vAssetTail2.Json.total -eq 0) "[10b] viewer1 .10.50 검색 0건" $vAssetTail2
+                Assert-True ($vNewTail.Status -eq 200 -and [int]$vNewTail.Json.count -eq 0) "[10b] viewer1 new-count 자산 검색도 가려진 값에만" $vNewTail
+                Assert-True ($vAssetHead.Status -eq 200 -and [int]$vAssetHead.Json.total -ge 1 -and @($vAssetHead.Json.items | Where-Object { $_.hostIp -notlike '192.168.*' }).Count -eq 0 -and (Get-UnmaskedIpv4 $vAssetHead.Body).Count -eq 0) "[10b] viewer1 가려진 앞부분(192.168) 검색" $vAssetHead
+                Assert-True ($vAssetName.Status -eq 200 -and [int]$vAssetName.Json.total -eq 1) "[10b] viewer1 호스트 이름(dc01.corp) 검색" $vAssetName
+                Assert-True ($aAssetTail.Status -eq 200 -and [int]$aAssetTail.Json.total -ge 1) "[10b] analyst1 원문 IP 뒤 두 옥텟 검색은 찾아짐" $aAssetTail
+
+                $vDenyQ = Invoke-Http -Url "$baseHttps/api/incidents/queue?captureId=syn1-tue" -CookieJar $q10Viewer
+                $vDenyN = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?captureId=syn1-tue&since=2000-01-01T00:00:00Z" -CookieJar $q10Viewer
+                $vDenyNb = Invoke-Http -Url "$baseHttps/api/incidents/queue/neighbors?jobId=201&queueRank=1" -CookieJar $q10Viewer
+                $aDenyQ = Invoke-Http -Url "$baseHttps/api/incidents/queue?captureId=lab-20261118" -CookieJar $q10Analyst
+                $e2eLogs.Add("[10c] viewer1 queue captureId=syn1-tue: $(Format-Resp $vDenyQ 120)`n      viewer1 new-count captureId=syn1-tue: $(Format-Resp $vDenyN 120)`n      viewer1 neighbors jobId=201 (syn1-tue): $(Format-Resp $vDenyNb 120)`n      analyst1 queue captureId=lab-20261118: $(Format-Resp $aDenyQ 120)")
+                Assert-Status $vDenyQ 403 "[10c] viewer1 통합 큐 허용 밖 captureId"
+                Assert-Status $vDenyN 403 "[10c] viewer1 new-count 허용 밖 captureId"
+                Assert-Status $vDenyNb 403 "[10c] viewer1 neighbors 허용 밖 jobId"
+                Assert-Status $aDenyQ 403 "[10c] analyst1 통합 큐 허용 밖 captureId"
+                $idor10 = Invoke-AuditSelect "SELECT COUNT(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND id > $($script:auditCursor) AND actor_username IN ('viewer1','analyst1')"
+                $e2eLogs.Add("[10c] ACCESS_DENIED_IDOR audit rows since [9] for viewer1/analyst1 = $idor10")
+                Assert-True ([int]$idor10 -ge 4) "[10c] 허용 밖 요청 4건 IDOR 감사 기록 (실제 $idor10)"
+
+                $aq = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=100" -CookieJar $q10Analyst
+                $prioRows = @($aq.Json.items | ForEach-Object { "$($_.jobId)/$($_.queueRank) status=$($_.zeekadStatus) send=$($_.zeekadWouldSend) pending=$($_.zeekadReviewPending) also=$(@($_.zeekadAlsoFlaggedBy).Count) report=$($_.hasReport) -> server=$($_.priority) ref=$(Get-RefPriority $_)" })
+                $prioMismatch = @($aq.Json.items | Where-Object { ([string]$_.priority) -ne (Get-RefPriority $_) })
+                $e2eLogs.Add("[10d] analyst1 GET /api/incidents/queue?period=all -> HTTP $($aq.Status) total=$($aq.Json.total) summary=$($aq.Json.summary | ConvertTo-Json -Compress)`n      server priority vs old rule (PostgreSQL cardinality):`n      $($prioRows -join "`n      ")")
+                Assert-Status $aq 200 "[10d] analyst1 통합 큐"
+                Assert-True (@($aq.Json.items | Where-Object { $_.captureId -notlike 'cic17-*' }).Count -eq 0) "[10d] analyst1 통합 큐 허용 캡처만" $aq
+                Assert-True ($prioMismatch.Count -eq 0) "[10d] PostgreSQL 서버 우선순위 = 옛 화면 규칙 (불일치 $($prioMismatch.Count))" $aq
+                Assert-True ([int]$aq.Json.summary.total -eq [int]$aq.Json.total) "[10d] 띠 거르기 없으면 summary.total = total" $aq
+                foreach ($sort in @('priority', 'detected', 'start', 'connections', 'status')) {
+                    foreach ($dir in @('asc', 'desc')) {
+                        $small = Get-QueueKeys $q10Analyst "period=all&sort=$sort&dir=$dir" 25
+                        $big = Get-QueueKeys $q10Analyst "period=all&sort=$sort&dir=$dir" 100
+                        $same = (($small.Keys -join ',') -eq ($big.Keys -join ','))
+                        $dups = @($small.Keys | Group-Object | Where-Object { $_.Count -gt 1 }).Count
+                        $e2eLogs.Add("[10d] page join sort=$sort dir=$dir size25=[$($small.Keys -join ',')] size100=[$($big.Keys -join ',')] total=$($small.Total) same=$same dups=$dups")
+                        Assert-True ($same -and $dups -eq 0 -and $small.Keys.Count -eq $small.Total) "[10d] 쪽 이음 = 정렬 결과 (sort=$sort dir=$dir)"
+                    }
+                }
+
+                foreach ($who in @(@{ Name = 'viewer1'; Jar = $q10Viewer }, @{ Name = 'analyst1'; Jar = $q10Analyst })) {
+                    $nc = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z" -CookieJar $who.Jar
+                    $tc = Invoke-Http -Url "$baseHttps/api/time-context" -CookieJar $who.Jar
+                    $firstItem = @((Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=25" -CookieJar $who.Jar).Json.items)[0]
+                    $nb = Invoke-Http -Url "$baseHttps/api/incidents/queue/neighbors?jobId=$($firstItem.jobId)&queueRank=$($firstItem.queueRank)&period=all" -CookieJar $who.Jar
+                    $e2eLogs.Add("[10e] $($who.Name) new-count: $(Format-Resp $nc 200)`n      time-context: $(Format-Resp $tc 200)`n      neighbors($($firstItem.jobId)/$($firstItem.queueRank)): $(Format-Resp $nb 300)")
+                    Assert-Status $nc 200 "[10e] $($who.Name) new-count"
+                    Assert-Status $tc 200 "[10e] $($who.Name) time-context"
+                    Assert-Status $nb 200 "[10e] $($who.Name) neighbors"
+                    Assert-True ([int]$nb.Json.position -eq 1 -and $null -eq $nb.Json.prev -and [int]$nb.Json.current.jobId -eq [int]$firstItem.jobId) "[10e] $($who.Name) neighbors 첫 행 위치 1" $nb
+                    if ($who.Name -eq 'viewer1') {
+                        Assert-True ((Get-UnmaskedIpv4 $nb.Body).Count -eq 0 -and (Get-UnmaskedIpv4 $nc.Body).Count -eq 0) "[10e] viewer1 neighbors·new-count 응답에 가려지지 않은 IPv4 없음" $nb
+                    }
+                }
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
