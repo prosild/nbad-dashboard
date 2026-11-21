@@ -359,6 +359,8 @@ describe('인시던트 상세 화면(T19)', () => {
     const when = within(h).getByText('발생').parentElement as HTMLElement;
     expect(when.getAttribute('title')).toContain('모델 버전 zeekad-fusion/3');
     expect(when.getAttribute('title')).toContain('탐지 작업 2026-11-12 11:27:00');
+    // T20: 캡처 표시 이름(zeek_AD Q65)과 원래 ID도 같은 툴팁에
+    expect(when.getAttribute('title')).toContain('캡처 CIC-IDS2017 수요일 · cic17-wed');
     expect(document.body.textContent).not.toContain('zeekad-fusion/3');
     // 인시던트 ID 원문은 글로 보이지 않고, 복사 버튼은 원문을 복사한다
     expect(document.body.textContent).not.toContain(INCIDENT_ID);

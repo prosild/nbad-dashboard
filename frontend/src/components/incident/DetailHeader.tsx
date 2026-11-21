@@ -1,7 +1,7 @@
 import { Copy, FileX } from 'lucide-react';
 import type { IncidentDetailView } from '../../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../../utils/format';
-import { detectionModelInfo } from '../../utils/labels';
+import { captureInfo, detectionModelInfo } from '../../utils/labels';
 import { computePriority } from '../../utils/triage';
 import {
   CodeLabel,
@@ -26,7 +26,7 @@ function Field({ label, children, title }: { label: string; children: React.Reac
 
 /**
  * 인시던트 상세 고정 요약 헤더(T19): 스크롤해도 화면 위에 남는 두 줄.
- * 모델 버전·탐지 작업 시각은 발생 시각 툴팁에만 둔다. 인시던트 ID는 글로 보이지 않고 복사 버튼만 둔다(복사 값은 원문).
+ * 캡처·모델 버전·탐지 작업 시각은 발생 시각 툴팁에만 둔다. 인시던트 ID는 글로 보이지 않고 복사 버튼만 둔다(복사 값은 원문).
  */
 export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
   const { notify } = useToast();
@@ -34,7 +34,10 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
   // 상태 변경 직후에도 맞도록 상세의 현재 상태로 계산한다(L1).
   const priority = computePriority({ ...incident, zeekadStatus: detail.currentStatus });
   const jobWhen = detail.job ? (detail.job.finishedAt ?? detail.job.startedAt) : null;
+  const capture = captureInfo(incident.captureId);
   const timeTitle = [
+    // T20: 캡처 표시 이름(zeek_AD Q65)과 원래 ID. 헤더 배치는 바꾸지 않고 툴팁에만 둔다.
+    `캡처 ${capture.text}${capture.known && capture.raw ? ` · ${capture.raw}` : ''}`,
     `발생 구간 ${formatDateTimeRange(incident.eventStart, incident.eventEnd)}`,
     `탐지 작업 ${jobWhen ? formatDateTime(jobWhen) : `#${incident.jobId}`}`,
     `모델 버전 ${incident.bundleId}`,
