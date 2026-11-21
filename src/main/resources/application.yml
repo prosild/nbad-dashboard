@@ -38,6 +38,12 @@ dashboard:
   capture-sources:
     # 실습망 센서(live)로 볼 캡처 패턴(쉼표 목록, 접두어* 문법). 나머지는 가져온 데이터(imported)다. 잘못된 패턴이면 시작 때 실패한다.
     live-patterns: ${DASHBOARD_LIVE_CAPTURE_PATTERNS:lab-*}
+    # 센서 상태(T24, 현황판·운영 현황 수집원 상태). 기준 시각 − 센서의 마지막 채점(성공 작업 완료 시각)이
+    #   stale-after 이하면 정상, down-after 이하면 지연, 넘으면 중단이다. 가장 최근 끝난 작업이 실패면 실패다.
+    #   기본 15분(5분 파일 채점 세 번을 놓침)·1시간. 형식은 Spring Duration(PT15M, 15m 등).
+    #   형식이 틀리거나 0 이하이거나 stale-after ≥ down-after면 앱 시작 때 실패한다.
+    stale-after: ${DASHBOARD_SENSOR_STALE_AFTER:15m}
+    down-after: ${DASHBOARD_SENSOR_DOWN_AFTER:1h}
   datasource:
     app:
       url: jdbc:postgresql://${DASHBOARD_DB_HOST:127.0.0.1}:${DASHBOARD_DB_PORT:55432}/${DASHBOARD_DB_NAME:zeekad_dashboard}

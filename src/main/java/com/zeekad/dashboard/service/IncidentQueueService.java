@@ -301,6 +301,35 @@ public class IncidentQueueService {
                 isOngoing(latest, stat, anchor), latest.getJobId(), latest.getQueueRank());
     }
 
+    /* ───────────────────────── 현황판·운영 현황 조건(T24) ───────────────────────── */
+
+    /**
+     * 기간·수집원·캡처 조건(T24 현황판·운영 현황이 큐와 같은 조건 조립을 쓴다).
+     * allowed = 허용 캡처 전체, captureIds = 허용 ∩ 수집원 ∩ 고른 캡처, after = 기간 시작(불포함, all이면 null),
+     * criteria = 같은 조건 큐(띠 축 없음)의 조회 조건. 잘못된 값은 큐와 같은 400, 허용 밖 captureId는 403·감사 기록이다.
+     */
+    public record Condition(List<String> allowed,
+                            List<String> captureIds,
+                            OffsetDateTime anchor,
+                            String period,
+                            OffsetDateTime after,
+                            UnifiedQueueCriteria criteria) {
+    }
+
+    public Condition resolveCondition(DashboardUserPrincipal principal, String period, String source, String captureId,
+                                      String clientIp) {
+        QueueParams p = new QueueParams(period, source, captureId, null, null, null, null, null, null, null, null,
+                null, null, null, null, null);
+        Scope scope = resolveScope(principal, p, clientIp, true);
+        return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
+                scope.criteria().getDetectedAfter(), scope.criteria());
+    }
+
+    /** 기간 이름 → 길이(all이면 null) */
+    public static Duration periodLength(String period) {
+        return PERIODS.get(period);
+    }
+
     /* ───────────────────────── 내부 ───────────────────────── */
 
     private record Masked(UnifiedQueueRecord record, IncidentQueueItem item) {

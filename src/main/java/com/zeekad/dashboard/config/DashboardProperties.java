@@ -2,6 +2,8 @@ package com.zeekad.dashboard.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
+
 /**
  * 대시보드 애플리케이션 환경 설정 바인딩.
  */
@@ -61,6 +63,29 @@ public class DashboardProperties {
     public static class CaptureSources {
         /** 쉼표 목록, CapturePatternMatcher 문법(접두어*). 기본 lab-* */
         private String livePatterns = "lab-*";
+        /**
+         * 센서 상태(T24): 기준 시각 − 센서 마지막 채점이 이 값 이하면 정상(ok). 기본 15분(5분 파일 채점 세 번).
+         * Spring Duration 형식(PT15M, 15m). 0 이하이거나 down-after 이상이면 시작 때 실패한다.
+         */
+        private Duration staleAfter = Duration.ofMinutes(15);
+        /** 센서 상태(T24): 이 값 이하면 지연(stale), 넘으면 중단(down). 기본 1시간 */
+        private Duration downAfter = Duration.ofHours(1);
+
+        public Duration getStaleAfter() {
+            return staleAfter;
+        }
+
+        public void setStaleAfter(Duration staleAfter) {
+            this.staleAfter = staleAfter;
+        }
+
+        public Duration getDownAfter() {
+            return downAfter;
+        }
+
+        public void setDownAfter(Duration downAfter) {
+            this.downAfter = downAfter;
+        }
 
         public String getLivePatterns() {
             return livePatterns;

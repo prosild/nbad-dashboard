@@ -11,6 +11,7 @@ import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
 import com.zeekad.dashboard.model.zeekad.IncidentModelScore;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
+import com.zeekad.dashboard.model.zeekad.ScoringJob;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
 import org.springframework.stereotype.Service;
@@ -215,6 +216,26 @@ public class MaskingService {
         copy.setDecidedAt(item.getDecidedAt());
         copy.setZeekadReviewResumedAt(item.getZeekadReviewResumedAt());
         copy.setZeekadReviewResumeFailed(item.getZeekadReviewResumeFailed());
+        return copy;
+    }
+
+    /**
+     * 탐지 작업(T24, 빈틈 검토 H2): VIEWER면 오류 글 안의 IPv4를 가린다. 나머지 값은 그대로다.
+     * 현황판 overview와 /api/operations(jobs[].error, latestJobs) 두 곳에 같이 쓴다.
+     */
+    public ScoringJob maskScoringJob(ScoringJob job, UserRole role) {
+        if (job == null || !shouldMask(role)) {
+            return job;
+        }
+        ScoringJob copy = new ScoringJob();
+        copy.setJobId(job.getJobId());
+        copy.setCaptureId(job.getCaptureId());
+        copy.setBundleId(job.getBundleId());
+        copy.setStatus(job.getStatus());
+        copy.setStartedAt(job.getStartedAt());
+        copy.setFinishedAt(job.getFinishedAt());
+        copy.setError(maskIpsInText(job.getError()));
+        copy.setIncidentCount(job.getIncidentCount());
         return copy;
     }
 

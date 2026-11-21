@@ -11,7 +11,9 @@ import com.zeekad.dashboard.model.zeekad.ScoringJob;
 import com.zeekad.dashboard.model.zeekad.SendDecision;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
+import com.zeekad.dashboard.model.zeekad.CaptureJobStat;
 import com.zeekad.dashboard.model.zeekad.CaptureQueueStat;
+import com.zeekad.dashboard.model.zeekad.IncidentPoint;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow;
@@ -108,4 +110,34 @@ public interface ZeekadReadMapper {
     List<String> findDistinctLatestPickedBy(@Param("captureIds") List<String> captureIds);
 
     List<String> findDistinctLatestRoles(@Param("captureIds") List<String> captureIds);
+
+    /* ───── T24 현황판·운영 현황 ───── */
+
+    /** 통합 큐와 같은 조건(c 그대로)의 가벼운 투영 */
+    List<IncidentPoint> findUnifiedQueuePoints(@Param("c") UnifiedQueueCriteria criteria);
+
+    /** 캡처별 최근 끝난 작업·최근 성공 작업 ID와 (after, until] 안 실패 작업 수(finished_at, 없으면 started_at). null이면 그 쪽 시각 조건 없음 */
+    List<CaptureJobStat> findCaptureJobStats(@Param("captureIds") List<String> captureIds,
+                                             @Param("after") OffsetDateTime after,
+                                             @Param("until") OffsetDateTime until);
+
+    List<ScoringJob> findScoringJobsByIds(@Param("jobIds") List<Long> jobIds);
+
+    /** 캡처 목록의 작업(새로운 순). 시각은 finished_at(없으면 started_at) 기준 (after, until], limit null이면 전부 */
+    List<ScoringJob> findScoringJobsForCaptures(@Param("captureIds") List<String> captureIds,
+                                                @Param("after") OffsetDateTime after,
+                                                @Param("until") OffsetDateTime until,
+                                                @Param("limit") Integer limit);
+
+    long countScoringJobsForCaptures(@Param("captureIds") List<String> captureIds,
+                                     @Param("after") OffsetDateTime after,
+                                     @Param("until") OffsetDateTime until);
+
+    /** 캡처 목록의 작업이 쓴 모델 버전만(scoring_jobs.bundle_id 경유) */
+    List<ModelBundle> findModelBundlesUsedByCaptures(@Param("captureIds") List<String> captureIds);
+
+    /** 캡처 목록의 Slack 일일 요약(created_at (after, until]), 새로운 순 */
+    List<SlackSummary> findSlackSummariesForCaptures(@Param("captureIds") List<String> captureIds,
+                                                     @Param("after") OffsetDateTime after,
+                                                     @Param("until") OffsetDateTime until);
 }

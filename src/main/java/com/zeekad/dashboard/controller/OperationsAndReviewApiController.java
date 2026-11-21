@@ -8,6 +8,7 @@ import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.AnalystReviewDecisionService;
+import com.zeekad.dashboard.service.DashboardOverviewService;
 import com.zeekad.dashboard.service.IncidentQueryService;
 import com.zeekad.dashboard.service.MaskingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,11 +32,14 @@ public class OperationsAndReviewApiController {
     private final AnalystReviewDecisionService analystReviewDecisionService;
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
+    private final DashboardOverviewService dashboardOverviewService;
 
     public OperationsAndReviewApiController(IncidentQueryService incidentQueryService,
                                             AnalystReviewDecisionService analystReviewDecisionService,
                                             ClientIpResolver clientIpResolver,
-                                            MaskingService maskingService) {
+                                            MaskingService maskingService,
+                                            DashboardOverviewService dashboardOverviewService) {
+        this.dashboardOverviewService = dashboardOverviewService;
         this.incidentQueryService = incidentQueryService;
         this.analystReviewDecisionService = analystReviewDecisionService;
         this.clientIpResolver = clientIpResolver;
@@ -45,23 +49,14 @@ public class OperationsAndReviewApiController {
     @GetMapping("/operations")
     public ResponseEntity<OperationsApiResponse> operations(
             @RequestParam(name = "captureId", required = false) String captureId,
+            @RequestParam(name = "period", required = false) String period,
+            @RequestParam(name = "source", required = false) String source,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         String clientIp = clientIpResolver.resolve(request);
-
-        IncidentQueryService.OperationsViewResult view = incidentQueryService.loadOperationsView(
-                principal, captureId, clientIp);
-
-        return ResponseEntity.ok(new OperationsApiResponse(
-                maskingService.shouldMask(principal.getRole()),
-                view.allowedCaptures(),
-                view.selectedCaptureId(),
-                view.jobs(),
-                view.bundles(),
-                view.feedbackSummaries(),
-                view.slackSummaries()
-        ));
+        // T24: period·source를 더했다. period가 없으면 지금처럼 전체다(호환).
+        return ResponseEntity.ok(dashboardOverviewService.operations(principal, period, source, captureId, clientIp));
     }
 
     @GetMapping("/reviews")

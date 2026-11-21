@@ -17,6 +17,8 @@ import com.zeekad.dashboard.model.zeekad.SendDecision;
 import com.zeekad.dashboard.model.zeekad.SlackDelivery;
 import com.zeekad.dashboard.model.zeekad.SlackSummary;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
+import com.zeekad.dashboard.dto.OperationsApiResponse;
+import com.zeekad.dashboard.service.DashboardOverviewService;
 import com.zeekad.dashboard.service.IncidentQueryService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +42,9 @@ class ZeekadReadMapperTest {
 
     @Autowired
     private IncidentQueryService incidentQueryService;
+
+    @Autowired
+    private DashboardOverviewService dashboardOverviewService;
 
     @Autowired
     @Qualifier("zeekadReadDataSource")
@@ -306,8 +311,9 @@ class ZeekadReadMapperTest {
         cicUser.setEnabled(true);
         DashboardUserPrincipal cicPrincipal = new DashboardUserPrincipal(
                 cicUser, List.of("cic17-*"), Instant.now());
-        IncidentQueryService.OperationsViewResult cicOps =
-                incidentQueryService.loadOperationsView(cicPrincipal, null, "127.0.0.1");
+        // T24: 운영 현황은 DashboardOverviewService.operations로 옮겼다(period 없으면 지금과 같은 범위)
+        OperationsApiResponse cicOps =
+                dashboardOverviewService.operations(cicPrincipal, null, null, null, "127.0.0.1");
         assertThat(cicOps.feedbackSummaries()).hasSize(4);
         assertThat(cicOps.feedbackSummaries())
                 .extracting(FeedbackSummaryRecord::getCaptureId)
