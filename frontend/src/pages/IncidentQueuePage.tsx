@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -7,12 +7,14 @@ import {
   ArrowUpDown,
   Bell,
   BellOff,
+  BellRing,
   ChevronLeft,
   ChevronRight,
   FileText,
   FileX,
   Filter,
   Info,
+  Lock,
   RotateCcw,
   ShieldCheck,
   X,
@@ -22,146 +24,211 @@ import { incidentsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import {
+  CaptureName,
   CodeLabel,
   DetectionModelName,
   IncidentStatusBadge,
+  NewRowBadge,
+  OngoingBadge,
   PRIORITY_TOOLTIP,
   PriorityBadge,
   ResolutionBadge,
   ReviewActionBadge,
+  SOURCE_TYPE_LABEL,
+  SourceTypeBadge,
 } from '../components/StatusBadge';
-import type { IncidentQueueItem, IncidentQueueResponse, ScoringJob } from '../types/api';
-import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
+import type { QueueSource, SourceType, UnifiedQueueItem, UnifiedQueueResponse } from '../types/api';
+import {
+  formatDateTime,
+  formatDateTimeRange,
+  formatDuration,
+  formatNumber,
+  formatRelativeTo,
+} from '../utils/format';
 import { captureInfo, detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
 import {
-  CLIENT_FILTER_KEYS,
-  computePriority,
+  DEFAULT_PAGE_SIZE,
+  DEFAULT_PERIOD,
   DEFAULT_SORT_DIR,
-  orderQueue,
+  LEGACY_JOB_NOTICE,
+  migrateLegacyQueueParams,
   PAGE_SIZES,
-  pageWindow,
-  parsePageSize,
-  parseQueueView,
+  PANEL_FILTER_KEYS,
+  parseQueueQuery,
+  PERIODS,
+  periodLabel,
   PRIORITY_VALUES,
-  SERVER_FILTER_KEYS,
+  queueApiParams,
+  STRIP_FILTER_KEYS,
   type Priority,
   type SortDir,
   type SortKey,
 } from '../utils/triage';
 
-/** 탐지 작업은 날짜·시각으로 보여 주고 실행 번호는 툴팁에만 둔다. */
-function jobTimeLabel(job: ScoringJob | null | undefined): string {
-  if (!job) {
-    return '-';
-  }
-  const when = job.finishedAt ?? job.startedAt;
-  return when ? formatDateTime(when) : '시각 미기록';
-}
+/** 자동 갱신 주기(T23): 60초마다 새 인시던트 수를 묻는다. 화면이 숨겨지면 멈춘다. */
+export const NEW_INCIDENT_POLL_MS = 60_000;
 
 /** 필터·정렬·쪽 크기 변경 때 지우는 쪽 번호 키 */
 const PAGE_KEY = 'page';
 
-type RowItem = { item: IncidentQueueItem; priority: Priority | null };
-
 /**
- * 상세 주소. 목록의 쿼리(서버 필터·화면 필터·정렬·쪽)를 `from=`으로 넘겨 상세의 이전·다음과 목록 복귀가 같은 순서를 쓴다(T19 M1).
- * 캡처를 고르지 않은 기본 목록이면 서버가 고른 캡처를 넣어 새로 고침해도 같은 목록이 되게 한다.
+ * 상세 주소. 목록의 쿼리(기간·수집원·거르기·정렬·쪽)를 `from=`으로 넘겨 상세의 이전·다음(neighbors API)과 목록 복귀가 같은 조건을 쓴다.
  */
-function detailUrl(item: IncidentQueueItem, listQuery: string): string {
+function detailUrl(item: UnifiedQueueItem, listQuery: string): string {
   return `/incidents/${item.jobId}/rank/${item.queueRank}?${new URLSearchParams({ from: listQuery }).toString()}`;
 }
 
+/**
+ * 새 인시던트 수 확인(T23). 60초마다 `new-count`를 부르고, 화면이 숨겨지면 멈췄다가 다시 보이면 곧바로 한 번 부른다.
+ * since는 마지막으로 불러온 큐 응답의 latestDetectedAt(없으면 anchor)이며 브라우저 시각은 쓰지 않는다.
+ * 목록 행은 바꾸지 않고 수만 돌려준다.
+ */
+function useNewIncidentCount(enabled: boolean, since: string | null, paramsKey: string): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    setCount(0);
+    if (!enabled || !since) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const params = JSON.parse(paramsKey) as Record<string, string | undefined>;
+    const check = async () => {
+      try {
+        const res = await incidentsApi.newCount(params, since);
+        if (!cancelled) setCount(res.count);
+      } catch {
+        // 확인 실패는 띠를 바꾸지 않는다(다음 주기에 다시 묻는다).
+      }
+    };
+    const stop = () => {
+      if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+    };
+    const start = () => {
+      stop();
+      timer = setInterval(() => void check(), NEW_INCIDENT_POLL_MS);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+      } else {
+        void check();
+        start();
+      }
+    };
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [enabled, since, paramsKey]);
+  return count;
+}
 
 export function IncidentQueuePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<IncidentQueueResponse | null>(null);
+  const [data, setData] = useState<UnifiedQueueResponse | null>(null);
+  /** data를 받은 요청의 쿼리 키(지금 URL과 같을 때만 URL을 고친다) */
+  const [dataKey, setDataKey] = useState<string | null>(null);
+  const requestSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [legacyNotice, setLegacyNotice] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  /** 새 인시던트 띠를 눌렀을 때의 since. 다음 응답의 이보다 늦은 행에 "새" 표지를 붙인다. */
+  const pendingHighlightRef = useRef<string | null>(null);
+  const [highlightAfter, setHighlightAfter] = useState<string | null>(null);
 
-  const captureId = searchParams.get('captureId') ?? '';
-  const jobId = searchParams.get('jobId') ?? '';
-  const pickedBy = searchParams.get('pickedBy') ?? '';
-  const role = searchParams.get('role') ?? '';
-  const asset = searchParams.get('asset') ?? '';
-  const status = searchParams.get('status') ?? '';
-  const hasReport = searchParams.get('hasReport') ?? '';
-  const wouldSend = searchParams.get('wouldSend') ?? '';
-
-  const view = parseQueueView(searchParams);
-  const priorityFilter: Priority | null = view.priority;
-  const reviewPendingFilter = view.reviewPending;
-  const alertedFilter = view.alerted;
-  const sortKey: SortKey = view.sortKey;
-  const sortDir: SortDir = view.sortDir;
-  const pageSize = parsePageSize(searchParams.get('size'));
-  const rawPage = searchParams.get(PAGE_KEY);
-
-  const [assetDraft, setAssetDraft] = useState(asset);
-
+  // 옛 주소(T23): jobId는 지우고 안내를 한 번 보이며, sort=rank는 기본 정렬로 바꾼다.
+  const legacy = migrateLegacyQueueParams(searchParams);
   useEffect(() => {
-    setAssetDraft(asset);
-  }, [asset]);
+    if (!legacy.changed) return;
+    if (legacy.droppedJob) setLegacyNotice(true);
+    setSearchParams(legacy.next, { replace: true });
+  }, [legacy.changed, legacy.droppedJob, legacy.next, setSearchParams]);
+
+  const query = parseQueueQuery(legacy.changed ? legacy.next : searchParams);
+  const apiKey = JSON.stringify(queueApiParams(query));
+  const pollKey = JSON.stringify(queueApiParams(query, { paging: false, sort: false, period: false }));
+
+  const [assetDraft, setAssetDraft] = useState(query.asset);
+  useEffect(() => {
+    setAssetDraft(query.asset);
+  }, [query.asset]);
 
   const loadQueue = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await incidentsApi.list({
-        captureId: captureId || undefined,
-        jobId: jobId || undefined,
-        pickedBy: pickedBy || undefined,
-        role: role || undefined,
-        asset: asset || undefined,
-        status: status || undefined,
-        hasReport: hasReport || undefined,
-        wouldSend: wouldSend || undefined,
-      });
+      const res = await incidentsApi.queue(JSON.parse(apiKey) as Record<string, string | undefined>);
+      if (seq !== requestSeq.current) return;
       setData(res);
+      setDataKey(apiKey);
+      setHighlightAfter(pendingHighlightRef.current);
+      pendingHighlightRef.current = null;
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setErrorMsg(err instanceof ApiError ? err.message : '인시던트 목록을 불러오지 못했습니다.');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [captureId, jobId, pickedBy, role, asset, status, hasReport, wouldSend]);
+  }, [apiKey]);
 
   useEffect(() => {
+    if (legacy.changed) return;
     void loadQueue();
-  }, [loadQueue]);
+    // reloadTick: 같은 쿼리로 다시 부를 때(새 인시던트 불러오기)
+  }, [loadQueue, legacy.changed, reloadTick]);
+
+  // 범위 밖 page는 서버가 고친 쪽으로, 허용 밖 size는 50으로 URL을 고친다(응답을 받은 뒤에만).
+  useEffect(() => {
+    if (loading || !data || dataKey !== apiKey) return;
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    const rawPage = searchParams.get(PAGE_KEY);
+    if (rawPage !== null && rawPage !== String(data.page)) {
+      if (data.page === 1) next.delete(PAGE_KEY);
+      else next.set(PAGE_KEY, String(data.page));
+      changed = true;
+    }
+    const rawSize = searchParams.get('size');
+    if (rawSize !== null && rawSize !== String(query.size)) {
+      next.delete('size');
+      changed = true;
+    }
+    if (changed) setSearchParams(next, { replace: true });
+  }, [loading, data, dataKey, apiKey, searchParams, setSearchParams, query.size]);
+
+  const since = data ? (data.latestDetectedAt ?? data.anchor) : null;
+  const newCount = useNewIncidentCount(Boolean(data) && !data?.snapshot, since, pollKey);
 
   /** URL 쿼리를 바꾼다. 기본은 쪽 번호를 지운다(1쪽으로). */
-  function updateParams(changes: Record<string, string | null>, opts: { keepPage?: boolean; clearJobId?: boolean } = {}) {
+  function updateParams(changes: Record<string, string | null>, opts: { keepPage?: boolean } = {}) {
     const next = new URLSearchParams(searchParams);
     for (const [key, value] of Object.entries(changes)) {
-      if (value) {
-        next.set(key, value);
-      } else {
-        next.delete(key);
-      }
+      if (value) next.set(key, value);
+      else next.delete(key);
     }
-    if (opts.clearJobId) {
-      next.delete('jobId');
-    }
-    if (!opts.keepPage && !(PAGE_KEY in changes)) {
-      next.delete(PAGE_KEY);
-    }
+    if (!opts.keepPage && !(PAGE_KEY in changes)) next.delete(PAGE_KEY);
     setSearchParams(next);
   }
 
-  function updateParam(key: string, value: string, clearJobId = false) {
-    updateParams({ [key]: value || null }, { clearJobId });
+  function updateParam(key: string, value: string) {
+    updateParams({ [key]: value || null });
   }
 
-  /** 캡처·탐지 작업을 뺀 나머지를 모두 지운다. */
+  /** 거르기(수집원·필터·띠)를 모두 지운다. 기간·쪽 크기는 남긴다. */
   function handleResetFilters() {
     const next = new URLSearchParams();
-    const cap = captureId || data?.selectedCaptureId || '';
-    if (cap) {
-      next.set('captureId', cap);
-    }
-    if (jobId) {
-      next.set('jobId', jobId);
-    }
+    const period = searchParams.get('period');
+    if (period) next.set('period', period);
+    const size = searchParams.get('size');
+    if (size) next.set('size', size);
     setAssetDraft('');
     setSearchParams(next);
   }
@@ -172,158 +239,135 @@ export function IncidentQueuePage() {
   }
 
   function handleSort(key: SortKey) {
-    const dir: SortDir = key === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : DEFAULT_SORT_DIR[key];
+    const dir: SortDir = key === query.sortKey ? (query.sortDir === 'asc' ? 'desc' : 'asc') : DEFAULT_SORT_DIR[key];
     updateParams({ sort: key, dir });
   }
 
-  const rows: RowItem[] = useMemo(
-    () => (data?.incidents ?? []).map((item) => ({ item, priority: computePriority(item) })),
-    [data],
-  );
+  function handlePeriod(value: string) {
+    updateParams({ period: value === DEFAULT_PERIOD ? null : value });
+  }
 
-  /** 요약 띠 건수: 서버 응답 집합(서버 필터 적용 뒤, 화면 필터 적용 전) 기준 */
-  const summary = useMemo(() => {
-    const counts = { total: rows.length, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0 };
-    for (const { item, priority } of rows) {
-      if (priority) counts[priority] += 1;
-      if (item.zeekadReviewPending) counts.reviewPending += 1;
-      // T21: 경보 발송 = 사건 알림 Slack 기록(alerted). 발송 판단(zeekadWouldSend)이 아니다.
-      if (item.alerted) counts.alerted += 1;
+  /** 수집원 선택: '' = 전체, 'src:live|imported' = 종류 전체, 'cap:<id>' = 캡처 하나 */
+  function handleSource(value: string) {
+    if (value.startsWith('cap:')) {
+      updateParams({ captureId: value.slice(4), source: null });
+    } else if (value.startsWith('src:')) {
+      updateParams({ source: value.slice(4), captureId: null });
+    } else {
+      updateParams({ source: null, captureId: null });
     }
-    return counts;
-  }, [rows]);
+  }
 
-  // 화면 필터·정렬은 상세의 이전·다음과 같은 함수(orderQueue)를 쓴다.
-  const filteredSorted = useMemo(() => {
-    const priorityById = new Map(rows.map((r) => [r.item, r.priority]));
-    const ordered = orderQueue(
-      rows.map((r) => r.item),
-      {
-        priority: priorityFilter,
-        reviewPending: reviewPendingFilter,
-        alerted: alertedFilter,
-        sortKey,
-        sortDir,
-      },
-    );
-    return ordered.map((item) => ({ item, priority: priorityById.get(item) ?? null }));
-  }, [rows, priorityFilter, reviewPendingFilter, alertedFilter, sortKey, sortDir]);
-
-  /** 상세로 넘기는 목록 쿼리 */
-  const listQuery = useMemo(() => {
-    const q = new URLSearchParams(searchParams);
-    if (!q.get('captureId') && data?.selectedCaptureId) {
-      q.set('captureId', data.selectedCaptureId);
-    }
-    return q.toString();
-  }, [searchParams, data]);
-
-  const win = pageWindow(filteredSorted.length, rawPage, pageSize);
-  const pageRows = filteredSorted.slice(win.startIndex, win.endIndex);
-
-  // 범위 밖 page는 마지막 쪽으로, 허용 밖 size는 50으로 URL을 고친다(응답을 받은 뒤에만).
-  useEffect(() => {
-    if (loading || !data) return;
+  /** 새 인시던트 불러오기: 탐지 시각 최근순 1쪽을 다시 부르고 새 행에 표지를 붙인다. */
+  function handleLoadNew() {
+    pendingHighlightRef.current = since;
     const next = new URLSearchParams(searchParams);
-    let changed = false;
-    if (rawPage !== null && rawPage !== String(win.page)) {
-      if (win.page === 1) next.delete(PAGE_KEY);
-      else next.set(PAGE_KEY, String(win.page));
-      changed = true;
-    }
-    const rawSize = searchParams.get('size');
-    if (rawSize !== null && rawSize !== String(pageSize)) {
-      next.delete('size');
-      changed = true;
-    }
-    if (changed) {
-      setSearchParams(next, { replace: true });
-    }
-  }, [loading, data, rawPage, win.page, pageSize, searchParams, setSearchParams]);
+    next.set('sort', 'detected');
+    next.set('dir', 'desc');
+    next.delete(PAGE_KEY);
+    setSearchParams(next);
+    setReloadTick((n) => n + 1);
+  }
+
+  const listQuery = useMemo(() => searchParams.toString(), [searchParams]);
 
   const chips = useMemo(() => {
     const list: { key: string; label: string; raw?: string }[] = [];
-    if (pickedBy) {
-      const model = lookupLabel('detectionModel', pickedBy);
+    if (query.pickedBy) {
+      const model = lookupLabel('detectionModel', query.pickedBy);
       list.push(
         model.known
           ? { key: 'pickedBy', label: `탐지 모델: ${model.text}` }
-          : { key: 'pickedBy', label: '탐지 모델', raw: pickedBy },
+          : { key: 'pickedBy', label: '탐지 모델', raw: query.pickedBy },
       );
     }
-    if (role) list.push({ key: 'role', label: `통신 방향: ${labelText('hostRole', role)}` });
-    if (status) list.push({ key: 'status', label: `인시던트 상태: ${labelText('incidentStatus', status)}` });
-    if (hasReport)
-      list.push({ key: 'hasReport', label: `AI 리포트: ${hasReport === 'true' ? '리포트 있음' : '리포트 없음'}` });
-    if (wouldSend)
-      list.push({ key: 'wouldSend', label: `발송 판단: ${wouldSend === 'true' ? '발송' : '보류'}` });
-    if (asset) list.push({ key: 'asset', label: '자산 검색', raw: asset });
-    if (priorityFilter) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', priorityFilter)}` });
-    if (reviewPendingFilter) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
-    if (alertedFilter) list.push({ key: 'alerted', label: '경보 발송만' });
+    if (query.role) list.push({ key: 'role', label: `통신 방향: ${labelText('hostRole', query.role)}` });
+    if (query.status) list.push({ key: 'status', label: `인시던트 상태: ${labelText('incidentStatus', query.status)}` });
+    if (query.hasReport)
+      list.push({ key: 'hasReport', label: `AI 리포트: ${query.hasReport === 'true' ? '리포트 있음' : '리포트 없음'}` });
+    if (query.wouldSend)
+      list.push({ key: 'wouldSend', label: `발송 판단: ${query.wouldSend === 'true' ? '발송' : '보류'}` });
+    if (query.asset) list.push({ key: 'asset', label: '자산 검색', raw: query.asset });
+    if (query.priority) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', query.priority)}` });
+    if (query.reviewPending) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
+    if (query.alerted) list.push({ key: 'alerted', label: '경보 발송만' });
     return list;
-  }, [pickedBy, role, status, hasReport, wouldSend, asset, priorityFilter, reviewPendingFilter, alertedFilter]);
+  }, [query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted]);
 
-  function toggleClientFilter(key: (typeof CLIENT_FILTER_KEYS)[number], value: string) {
+  function toggleStripFilter(key: (typeof STRIP_FILTER_KEYS)[number], value: string) {
     const current = searchParams.get(key);
     updateParams({ [key]: current === value ? null : value });
   }
 
-  const serverFilterCount = SERVER_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
+  const panelFilterCount = PANEL_FILTER_KEYS.filter((k) => (searchParams.get(k) ?? '') !== '').length;
+  const anyFilter =
+    chips.length > 0 || query.source !== null || query.captureId !== null;
+  const sourceValue = query.captureId ? `cap:${query.captureId}` : query.source ? `src:${query.source}` : '';
+  const items = data?.items ?? [];
 
   return (
-    <AppShell title="인시던트" subtitle="탐지 모델이 올린 인시던트를 우선순위 순으로 확인하고 분석합니다">
+    <AppShell title="인시던트" subtitle="허용된 모든 수집원의 인시던트를 탐지 시각 기준으로 모아 우선순위 순으로 봅니다">
       <div className="space-y-3">
+        {legacyNotice && (
+          <div
+            role="status"
+            className="flex items-start justify-between gap-3 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs text-slate-200"
+          >
+            <span className="flex items-start gap-2">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+              {LEGACY_JOB_NOTICE}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLegacyNotice(false)}
+              aria-label="안내 닫기"
+              className="rounded p-0.5 text-slate-400 hover:text-slate-100"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
         <SummaryStrip
-          summary={summary}
-          priorityFilter={priorityFilter}
-          reviewPendingFilter={reviewPendingFilter}
-          alertedFilter={alertedFilter}
-          onToggle={toggleClientFilter}
+          summary={data?.summary ?? null}
+          priorityFilter={query.priority}
+          reviewPendingFilter={query.reviewPending}
+          alertedFilter={query.alerted}
+          onToggle={toggleStripFilter}
         />
 
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
-              <label htmlFor="filter-capture" className="shrink-0 text-xs font-medium text-slate-400">
-                캡처
-              </label>
-              <select
-                id="filter-capture"
-                value={data?.selectedCaptureId ?? captureId}
-                onChange={(e) => updateParam('captureId', e.target.value, true)}
-                className="soc-select w-full py-1.5 text-xs sm:w-60"
-                title={captureInfo(data?.selectedCaptureId ?? captureId).tooltip || undefined}
-              >
-                {(data?.allowedCaptures ?? []).map((cap) => {
-                  const info = captureInfo(cap);
+            <div className="flex items-center gap-2" role="group" aria-label="기간">
+              <span className="shrink-0 text-xs font-medium text-slate-400" aria-hidden="true">
+                기간
+              </span>
+              <div className="flex overflow-hidden rounded-md border border-slate-700">
+                {PERIODS.map((p) => {
+                  const active = p.value === query.period;
                   return (
-                    <option key={cap} value={cap} title={info.tooltip}>
-                      {info.text}
-                    </option>
+                    <button
+                      key={p.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => handlePeriod(p.value)}
+                      title={p.value === 'all' ? '탐지 시각 조건 없이 전체' : `기준 시각에서 최근 ${p.label} 안에 탐지된 인시던트`}
+                      className={`border-l border-slate-700 px-2 py-1 text-xs tabular-nums first:border-l-0 ${
+                        active ? 'bg-cyan-500/15 font-semibold text-cyan-200' : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
                   );
                 })}
-                {(data?.allowedCaptures?.length ?? 0) === 0 && <option value="">열람 허용 캡처 없음</option>}
-              </select>
+              </div>
             </div>
 
             <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto sm:flex-none">
-              <label htmlFor="filter-job" className="shrink-0 text-xs font-medium text-slate-400">
-                탐지 작업
+              <label htmlFor="filter-source" className="shrink-0 text-xs font-medium text-slate-400">
+                수집원
               </label>
-              <select
-                id="filter-job"
-                value={data?.selectedJob?.jobId ? String(data.selectedJob.jobId) : jobId}
-                onChange={(e) => updateParam('jobId', e.target.value)}
-                className="soc-select w-full py-1.5 text-xs tabular-nums sm:w-80"
-              >
-                {(data?.captureJobs ?? []).map((job, idx) => (
-                  <option key={job.jobId} value={String(job.jobId)} title={`탐지 작업 #${job.jobId}`}>
-                    {jobTimeLabel(job)} · {job.bundleId} · {labelText('jobStatus', job.status)}
-                    {idx === 0 ? ' · 최신' : ''}
-                  </option>
-                ))}
-              </select>
+              <SourceSelect sources={data?.sources ?? []} value={sourceValue} onChange={handleSource} />
             </div>
 
             <span className="hidden h-5 w-px bg-slate-800 sm:block" aria-hidden="true" />
@@ -337,9 +381,9 @@ export function IncidentQueuePage() {
             >
               <Filter className="h-3.5 w-3.5" aria-hidden="true" />
               필터
-              {serverFilterCount > 0 && (
+              {panelFilterCount > 0 && (
                 <span className="rounded bg-cyan-500/20 px-1.5 text-[11px] tabular-nums text-cyan-200">
-                  {serverFilterCount}
+                  {panelFilterCount}
                 </span>
               )}
             </button>
@@ -369,14 +413,25 @@ export function IncidentQueuePage() {
               </ul>
             )}
 
-            <button
-              type="button"
-              onClick={handleResetFilters}
-              className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 transition hover:text-slate-100"
-            >
-              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-              필터 초기화
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              {data?.snapshot && (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] text-slate-400"
+                  title="데이터가 더 늘지 않는 고정 스냅샷이라 새 인시던트를 확인하지 않습니다"
+                >
+                  <Lock className="h-3 w-3" aria-hidden="true" />
+                  고정 스냅샷 · 자동 갱신 꺼짐
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-400 transition hover:text-slate-100"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                필터 초기화
+              </button>
+            </div>
           </div>
 
           {filtersOpen && (
@@ -390,7 +445,7 @@ export function IncidentQueuePage() {
                 </label>
                 <select
                   id="filter-model"
-                  value={pickedBy}
+                  value={query.pickedBy}
                   onChange={(e) => updateParam('pickedBy', e.target.value)}
                   className="soc-select w-full py-1.5 text-xs"
                 >
@@ -409,7 +464,7 @@ export function IncidentQueuePage() {
                 </label>
                 <select
                   id="filter-role"
-                  value={role}
+                  value={query.role}
                   onChange={(e) => updateParam('role', e.target.value)}
                   className="soc-select w-full py-1.5 text-xs"
                 >
@@ -428,7 +483,7 @@ export function IncidentQueuePage() {
                 </label>
                 <select
                   id="filter-status"
-                  value={status}
+                  value={query.status}
                   onChange={(e) => updateParam('status', e.target.value)}
                   className="soc-select w-full py-1.5 text-xs"
                 >
@@ -445,7 +500,7 @@ export function IncidentQueuePage() {
                 </label>
                 <select
                   id="filter-has-report"
-                  value={hasReport}
+                  value={query.hasReport}
                   onChange={(e) => updateParam('hasReport', e.target.value)}
                   className="soc-select w-full py-1.5 text-xs"
                 >
@@ -461,7 +516,7 @@ export function IncidentQueuePage() {
                 </label>
                 <select
                   id="filter-would-send"
-                  value={wouldSend}
+                  value={query.wouldSend}
                   onChange={(e) => updateParam('wouldSend', e.target.value)}
                   className="soc-select w-full py-1.5 text-xs"
                 >
@@ -493,39 +548,166 @@ export function IncidentQueuePage() {
           )}
         </section>
 
+        {newCount > 0 && (
+          <div
+            role="status"
+            className="flex items-center justify-between gap-3 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100"
+          >
+            <span className="flex items-center gap-2">
+              <BellRing className="h-3.5 w-3.5 text-cyan-300" aria-hidden="true" />
+              새 인시던트 {formatNumber(newCount)}건
+            </span>
+            <button type="button" onClick={handleLoadNew} className="soc-btn-secondary px-2.5 py-1 text-xs">
+              불러오기
+            </button>
+          </div>
+        )}
+
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadQueue()} />}
 
         {loading && !data ? (
           <LoadingPanel label="인시던트 목록을 불러오는 중..." />
         ) : (
           <div className="soc-card overflow-hidden">
-            {pageRows.length === 0 ? (
-              <p className="px-4 py-12 text-center text-sm text-slate-400">
-                조건에 맞는 인시던트가 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
-              </p>
+            {items.length === 0 ? (
+              <EmptyState
+                data={data}
+                anyFilter={anyFilter}
+                onAllPeriod={() => handlePeriod('all')}
+                onReset={handleResetFilters}
+              />
             ) : (
               <>
                 <QueueTable
-                  rows={pageRows}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
+                  rows={items}
+                  sortKey={query.sortKey}
+                  sortDir={query.sortDir}
                   onSort={handleSort}
                   listQuery={listQuery}
+                  anchor={data?.anchor ?? null}
+                  snapshot={Boolean(data?.snapshot)}
+                  highlightAfter={highlightAfter}
                 />
-                <QueueMobileList rows={pageRows} listQuery={listQuery} />
+                <QueueMobileList
+                  rows={items}
+                  listQuery={listQuery}
+                  anchor={data?.anchor ?? null}
+                  snapshot={Boolean(data?.snapshot)}
+                  highlightAfter={highlightAfter}
+                />
               </>
             )}
             <Pagination
-              total={filteredSorted.length}
-              win={win}
-              pageSize={pageSize}
+              total={data?.total ?? 0}
+              page={data?.page ?? 1}
+              pageCount={data?.pageCount ?? 1}
+              pageSize={data?.size ?? query.size}
               onPage={(p) => updateParams({ [PAGE_KEY]: p === 1 ? null : String(p) }, { keepPage: true })}
-              onSize={(s) => updateParams({ size: s === 50 ? null : String(s) })}
+              onSize={(s) => updateParams({ size: s === DEFAULT_PAGE_SIZE ? null : String(s) })}
             />
           </div>
         )}
       </div>
     </AppShell>
+  );
+}
+
+/* ───────────────────────── 수집원 선택 ───────────────────────── */
+
+function SourceSelect({
+  sources,
+  value,
+  onChange,
+}: {
+  sources: QueueSource[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const groups: SourceType[] = ['live', 'imported'];
+  const known = new Set(sources.map((s) => `cap:${s.captureId}`));
+  const selectedCapture = value.startsWith('cap:') ? value.slice(4) : null;
+  return (
+    <select
+      id="filter-source"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="soc-select w-full py-1.5 text-xs sm:w-72"
+      title={selectedCapture ? captureInfo(selectedCapture).tooltip || undefined : undefined}
+    >
+      <option value="">전체 수집원</option>
+      {groups.map((g) => {
+        const members = sources.filter((s) => s.sourceType === g);
+        return [
+          <option key={`src-${g}`} value={`src:${g}`}>
+            {SOURCE_TYPE_LABEL[g]} 전체
+          </option>,
+          members.length > 0 ? (
+            <optgroup key={`grp-${g}`} label={SOURCE_TYPE_LABEL[g]}>
+              {members.map((s) => {
+                const info = captureInfo(s.captureId);
+                return (
+                  <option key={s.captureId} value={`cap:${s.captureId}`} title={info.tooltip}>
+                    {info.text}
+                  </option>
+                );
+              })}
+            </optgroup>
+          ) : null,
+        ];
+      })}
+      {/* 옛 링크의 captureId가 목록에 없으면(허용 밖 등) 그대로 보여 준다. 서버가 403으로 답한다. */}
+      {selectedCapture && !known.has(value) && <option value={value}>{captureInfo(selectedCapture).text}</option>}
+    </select>
+  );
+}
+
+/* ───────────────────────── 빈 결과 ───────────────────────── */
+
+function EmptyState({
+  data,
+  anyFilter,
+  onAllPeriod,
+  onReset,
+}: {
+  data: UnifiedQueueResponse | null;
+  anyFilter: boolean;
+  onAllPeriod: () => void;
+  onReset: () => void;
+}) {
+  if (data && data.newestOutsidePeriod) {
+    return (
+      <div className="space-y-2 px-4 py-12 text-center text-sm text-slate-300" data-empty="period">
+        <p>
+          이 기간에 탐지된 인시던트가 없습니다. 가장 최근 탐지:{' '}
+          <span className="tabular-nums text-slate-100">{formatDateTime(data.newestOutsidePeriod)}</span>
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button type="button" onClick={onAllPeriod} className="soc-btn-secondary px-3 py-1.5 text-xs">
+            기간: 전체로 보기
+          </button>
+          {anyFilter && (
+            <button type="button" onClick={onReset} className="soc-btn-secondary px-3 py-1.5 text-xs">
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              필터 초기화
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  if (anyFilter) {
+    return (
+      <p className="px-4 py-12 text-center text-sm text-slate-400" data-empty="filter">
+        조건에 맞는 인시던트가 없습니다. 필터를 줄이거나 [필터 초기화]를 누르세요.
+      </p>
+    );
+  }
+  return (
+    <p className="px-4 py-12 text-center text-sm text-slate-400" data-empty="none">
+      {data && data.period !== 'all'
+        ? `최근 ${periodLabel(data.period as Parameters<typeof periodLabel>[0])} 동안 탐지된 인시던트가 없습니다.`
+        : '표시할 인시던트가 없습니다.'}
+    </p>
   );
 }
 
@@ -538,12 +720,13 @@ function SummaryStrip({
   alertedFilter,
   onToggle,
 }: {
-  summary: { total: number; high: number; medium: number; low: number; reviewPending: number; alerted: number };
+  summary: UnifiedQueueResponse['summary'] | null;
   priorityFilter: Priority | null;
   reviewPendingFilter: boolean;
   alertedFilter: boolean;
   onToggle: (key: 'priority' | 'reviewPending' | 'alerted', value: string) => void;
 }) {
+  const s = summary ?? { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {} };
   const priorityDot: Record<Priority, string> = {
     high: 'bg-rose-400',
     medium: 'bg-slate-200',
@@ -561,7 +744,7 @@ function SummaryStrip({
     >
       <div className="flex items-baseline gap-2 px-2 py-1">
         <span className="text-slate-400">전체 인시던트</span>
-        <span className="text-lg font-bold tabular-nums text-slate-100">{formatNumber(summary.total)}</span>
+        <span className="text-lg font-bold tabular-nums text-slate-100">{formatNumber(s.total)}</span>
       </div>
 
       <span className="mx-1 hidden h-6 w-px bg-slate-800 sm:block" aria-hidden="true" />
@@ -571,12 +754,12 @@ function SummaryStrip({
           key={p}
           pressed={priorityFilter === p}
           onClick={() => onToggle('priority', p)}
-          ariaLabel={`우선순위 ${labelText('priority', p)} ${summary[p]}건만 보기`}
+          ariaLabel={`우선순위 ${labelText('priority', p)} ${s[p]}건만 보기`}
           title={PRIORITY_TOOLTIP}
         >
           <span className={`h-2 w-2 rounded-full ${priorityDot[p]}`} aria-hidden="true" />
           <span className="text-slate-400">{labelText('priority', p)}</span>
-          <span className={`text-base font-bold tabular-nums ${priorityNum[p]}`}>{formatNumber(summary[p])}</span>
+          <span className={`text-base font-bold tabular-nums ${priorityNum[p]}`}>{formatNumber(s[p])}</span>
         </StripButton>
       ))}
 
@@ -586,13 +769,13 @@ function SummaryStrip({
         <StripButton
           pressed={reviewPendingFilter}
           onClick={() => onToggle('reviewPending', 'true')}
-          ariaLabel={`에스컬레이션 대기 ${summary.reviewPending}건만 보기`}
+          ariaLabel={`에스컬레이션 대기 ${s.reviewPending}건만 보기`}
         >
           <span className="text-slate-400">에스컬레이션 대기</span>
           <span
-            className={`text-base font-bold tabular-nums ${summary.reviewPending > 0 ? 'text-amber-300' : 'text-slate-300'}`}
+            className={`text-base font-bold tabular-nums ${s.reviewPending > 0 ? 'text-amber-300' : 'text-slate-300'}`}
           >
-            {formatNumber(summary.reviewPending)}
+            {formatNumber(s.reviewPending)}
           </span>
         </StripButton>
         <Link to="/reviews?pendingOnly=true" className="px-1 text-[11px] text-cyan-300 hover:underline">
@@ -603,11 +786,11 @@ function SummaryStrip({
       <StripButton
         pressed={alertedFilter}
         onClick={() => onToggle('alerted', 'true')}
-        ariaLabel={`경보 발송 ${summary.alerted}건만 보기`}
+        ariaLabel={`경보 발송 ${s.alerted}건만 보기`}
       >
         <Bell className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
         <span className="text-slate-400">경보 발송</span>
-        <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(summary.alerted)}</span>
+        <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(s.alerted)}</span>
       </StripButton>
 
       <details className="relative ml-auto">
@@ -617,7 +800,7 @@ function SummaryStrip({
         </summary>
         <div className="soc-card absolute right-0 top-full z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs leading-relaxed text-slate-300">
           <p className="mb-2 text-slate-400">
-            우선순위는 파이프라인 결과로 화면이 자동 계산한 값입니다. 분석가 판정이 아닙니다.
+            우선순위는 파이프라인 결과로 서버가 자동 계산한 값입니다. 분석가 판정이 아닙니다.
           </p>
           <ul className="space-y-1">
             <li>
@@ -633,7 +816,10 @@ function SummaryStrip({
             </li>
             <li className="text-slate-400">종결된 인시던트는 우선순위를 매기지 않습니다(-).</li>
           </ul>
-          <p className="mt-2 text-slate-400">기본 정렬은 우선순위, 같으면 탐지 순위 순입니다.</p>
+          <p className="mt-2 text-slate-400">
+            기본 정렬은 우선순위, 같으면 탐지 시각 최근 순입니다. 기간은 탐지 시각(인시던트가 처음 탐지된 분석 완료
+            시각) 기준입니다.
+          </p>
         </div>
       </details>
     </section>
@@ -675,8 +861,8 @@ function StripButton({
 
 const SORT_LABEL: Record<SortKey, string> = {
   priority: '우선순위',
-  rank: '순위',
-  start: '관측 시작',
+  detected: '탐지 시각',
+  start: '발생 시각',
   connections: '세션 수',
   status: '상태',
 };
@@ -723,7 +909,7 @@ function SortHeader({
   );
 }
 
-function hiddenInfoTitle(item: IncidentQueueItem): string {
+function hiddenInfoTitle(item: UnifiedQueueItem): string {
   const review = item.zeekadReviewPending
     ? '대기'
     : item.zeekadReviewAction
@@ -732,18 +918,51 @@ function hiddenInfoTitle(item: IncidentQueueItem): string {
   return `통신 방향 ${labelText('hostRole', item.zeekadRole)} · 세션 ${formatNumber(item.connectionCount)}건 · 에스컬레이션 ${review}`;
 }
 
+function isNewRow(item: UnifiedQueueItem, highlightAfter: string | null): boolean {
+  if (!highlightAfter || !item.detectedAt) return false;
+  return new Date(item.detectedAt).getTime() > new Date(highlightAfter).getTime();
+}
+
+/** 탐지 시각: 기준 시각에서 얼마 전인지 + 절대 시각(보조 글자·툴팁) */
+function DetectedCell({ item, anchor }: { item: UnifiedQueueItem; anchor: string | null }) {
+  if (!item.detectedAt) {
+    return <span className="text-slate-500">-</span>;
+  }
+  return (
+    <span title={`탐지 시각 ${formatDateTime(item.detectedAt)}`} className="whitespace-nowrap">
+      <span className="text-slate-200">{formatRelativeTo(item.detectedAt, anchor)}</span>
+      <span className="ml-1.5 text-[11px] tabular-nums text-slate-500">{formatDateTime(item.detectedAt).slice(5, 16)}</span>
+    </span>
+  );
+}
+
+function SourceCell({ item }: { item: UnifiedQueueItem }) {
+  return (
+    <div className="flex max-w-[15rem] flex-col items-start gap-0.5">
+      <SourceTypeBadge type={item.sourceType} />
+      <CaptureName id={item.captureId} className="max-w-full truncate text-[11px] text-slate-400" />
+    </div>
+  );
+}
+
 function QueueTable({
   rows,
   sortKey,
   sortDir,
   onSort,
   listQuery,
+  anchor,
+  snapshot,
+  highlightAfter,
 }: {
-  rows: RowItem[];
+  rows: UnifiedQueueItem[];
   sortKey: SortKey;
   sortDir: SortDir;
   onSort: (key: SortKey) => void;
   listQuery: string;
+  anchor: string | null;
+  snapshot: boolean;
+  highlightAfter: string | null;
 }) {
   const navigate = useNavigate();
 
@@ -768,14 +987,27 @@ function QueueTable({
         <thead>
           <tr>
             <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
-            <SortHeader column="rank" label="순위" align="right" {...headerProps} />
+            <SortHeader
+              column="detected"
+              label="탐지 시각"
+              title="인시던트가 처음 탐지된 분석 완료 시각"
+              {...headerProps}
+            />
             <th scope="col" className="soc-th-compact">
               호스트
+            </th>
+            <th scope="col" className="soc-th-compact">
+              수집원
             </th>
             <th scope="col" className="soc-th-compact hidden 2xl:table-cell">
               통신 방향
             </th>
-            <SortHeader column="start" label="관측 시작 · 지속" {...headerProps} />
+            <SortHeader
+              column="start"
+              label="발생 시각 · 지속"
+              title="트래픽이 관측된 시각(원본 그대로)"
+              {...headerProps}
+            />
             <th scope="col" className="soc-th-compact">
               탐지 모델
             </th>
@@ -796,7 +1028,7 @@ function QueueTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ item, priority }) => {
+          {rows.map((item) => {
             const url = detailUrl(item, listQuery);
             const firstName = item.hostName[0];
             const moreNames = item.hostName.length - 1;
@@ -815,16 +1047,21 @@ function QueueTable({
                 className="cursor-pointer transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/70"
               >
                 <td className="soc-td-compact">
-                  <PriorityBadge priority={priority} />
+                  <div className="flex items-center gap-1">
+                    <PriorityBadge priority={item.priority} />
+                    {isNewRow(item, highlightAfter) && <NewRowBadge />}
+                  </div>
                 </td>
-                <td className="soc-td-compact soc-num font-semibold text-slate-100">{item.queueRank}</td>
+                <td className="soc-td-compact tabular-nums">
+                  <DetectedCell item={item} anchor={anchor} />
+                </td>
                 <td className="soc-td-compact">
                   <div className="flex max-w-[17rem] items-baseline gap-2">
                     {/* 화면 판독기가 행을 링크로 알 수 있게 실제 링크를 둔다(T18 L3). 행 클릭과 겹치지 않게 전파를 막는다. */}
                     <Link
                       to={url}
                       onClick={(e) => e.stopPropagation()}
-                      aria-label={`인시던트 상세: ${item.hostIp} · ${item.queueRank}위`}
+                      aria-label={`인시던트 상세: ${item.hostIp} · ${captureInfo(item.captureId).text}`}
                       className="shrink-0 font-mono font-semibold text-slate-100 hover:text-cyan-200 hover:underline focus:outline-none focus-visible:underline"
                     >
                       {item.hostIp}
@@ -840,18 +1077,26 @@ function QueueTable({
                     )}
                   </div>
                 </td>
+                <td className="soc-td-compact">
+                  <SourceCell item={item} />
+                </td>
                 <td className="soc-td-compact hidden text-slate-300 2xl:table-cell">
                   <CodeLabel dict="hostRole" value={item.zeekadRole} />
                 </td>
                 <td
                   className="soc-td-compact tabular-nums"
-                  title={`관측 구간 ${formatDateTimeRange(item.eventStart, item.eventEnd)}`}
+                  title={`발생 구간 ${formatDateTimeRange(item.eventStart, item.eventEnd)}`}
                 >
                   <span className="text-slate-200">{formatDateTime(item.eventStart)}</span>
                   <span className="mx-1.5 text-slate-600" aria-hidden="true">
                     ·
                   </span>
                   <span className="text-slate-400">{formatDuration(item.eventStart, item.eventEnd)}</span>
+                  {item.ongoing && (
+                    <span className="ml-1.5 inline-block align-middle">
+                      <OngoingBadge snapshot={snapshot} />
+                    </span>
+                  )}
                 </td>
                 <td className="soc-td-compact">
                   <DetectionModelName id={item.zeekadPickedBy} className="font-semibold text-slate-100" />
@@ -904,7 +1149,7 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
 const CHIP_BASE = 'inline-flex h-5 w-5 items-center justify-center rounded border';
 
 /** 리포트·검증·발송 판단을 묶은 아이콘 칩(T21: 세 번째 칩은 발송 판단 zeekadWouldSend이며 "경보 발송"이 아니다). 각 칩은 접근성 이름과 툴팁을 가진다. */
-function SignalChips({ item }: { item: IncidentQueueItem }) {
+function SignalChips({ item }: { item: UnifiedQueueItem }) {
   const hasReport = item.zeekadReportJobId !== null;
   const kind = labelText('reportKind', item.zeekadReportKind);
   return (
@@ -969,22 +1214,42 @@ function SignalChips({ item }: { item: IncidentQueueItem }) {
 
 /* ───────────────────────── 휴대폰 목록 ───────────────────────── */
 
-function QueueMobileList({ rows, listQuery }: { rows: RowItem[]; listQuery: string }) {
+function QueueMobileList({
+  rows,
+  listQuery,
+  anchor,
+  snapshot,
+  highlightAfter,
+}: {
+  rows: UnifiedQueueItem[];
+  listQuery: string;
+  anchor: string | null;
+  snapshot: boolean;
+  highlightAfter: string | null;
+}) {
   return (
     <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="인시던트 목록">
-      {rows.map(({ item, priority }) => (
+      {rows.map((item) => (
         <li key={`${item.jobId}-${item.queueRank}-${item.incidentId}`}>
           <Link
             to={detailUrl(item, listQuery)}
             className="block px-3 py-2.5 transition hover:bg-slate-800/40 focus:outline-none focus-visible:bg-slate-800/50"
           >
             <div className="flex items-center gap-2">
-              <PriorityBadge priority={priority} />
+              <PriorityBadge priority={item.priority} />
+              {isNewRow(item, highlightAfter) && <NewRowBadge />}
               <span className="shrink-0 font-mono text-sm font-semibold text-slate-100">{item.hostIp}</span>
               {item.hostName[0] !== undefined && (
                 <span className="min-w-0 truncate font-mono text-[11px] text-slate-400">{item.hostName[0]}</span>
               )}
-              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-500">{item.queueRank}위</span>
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-400" title={`탐지 시각 ${formatDateTime(item.detectedAt)}`}>
+                탐지 {formatRelativeTo(item.detectedAt, anchor)}
+              </span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <SourceTypeBadge type={item.sourceType} />
+              <CaptureName id={item.captureId} className="min-w-0 truncate text-[11px] text-slate-400" />
+              {item.ongoing && <OngoingBadge snapshot={snapshot} />}
             </div>
             <div className="mt-1 flex items-center gap-2 text-xs">
               <span className="tabular-nums text-slate-300">{formatDateTime(item.eventStart)}</span>
@@ -1015,24 +1280,28 @@ function pageList(page: number, pageCount: number): (number | 'gap')[] {
 
 function Pagination({
   total,
-  win,
+  page,
+  pageCount,
   pageSize,
   onPage,
   onSize,
 }: {
   total: number;
-  win: ReturnType<typeof pageWindow>;
+  page: number;
+  pageCount: number;
   pageSize: number;
   onPage: (page: number) => void;
   onSize: (size: number) => void;
 }) {
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
   return (
     <nav
       aria-label="쪽 이동"
       className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-3 py-2 text-xs text-slate-400"
     >
       <span className="tabular-nums" aria-live="polite">
-        전체 {formatNumber(total)}건 중 {formatNumber(win.from)}–{formatNumber(win.to)}
+        전체 {formatNumber(total)}건 중 {formatNumber(from)}–{formatNumber(to)}
       </span>
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1.5">
@@ -1053,14 +1322,14 @@ function Pagination({
         <div className="flex items-center gap-0.5">
           <button
             type="button"
-            onClick={() => onPage(win.page - 1)}
-            disabled={win.page <= 1}
+            onClick={() => onPage(page - 1)}
+            disabled={page <= 1}
             aria-label="이전 쪽"
             className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </button>
-          {pageList(win.page, win.pageCount).map((p, i) =>
+          {pageList(page, pageCount).map((p, i) =>
             p === 'gap' ? (
               <span key={`gap-${i}`} className="px-1 text-slate-600" aria-hidden="true">
                 …
@@ -1070,12 +1339,10 @@ function Pagination({
                 key={p}
                 type="button"
                 onClick={() => onPage(p)}
-                aria-current={p === win.page ? 'page' : undefined}
+                aria-current={p === page ? 'page' : undefined}
                 aria-label={`${p}쪽`}
                 className={`min-w-[1.75rem] rounded px-1.5 py-0.5 tabular-nums ${
-                  p === win.page
-                    ? 'bg-cyan-500/15 font-semibold text-cyan-200'
-                    : 'hover:bg-slate-800 hover:text-slate-100'
+                  p === page ? 'bg-cyan-500/15 font-semibold text-cyan-200' : 'hover:bg-slate-800 hover:text-slate-100'
                 }`}
               >
                 {p}
@@ -1084,8 +1351,8 @@ function Pagination({
           )}
           <button
             type="button"
-            onClick={() => onPage(win.page + 1)}
-            disabled={win.page >= win.pageCount}
+            onClick={() => onPage(page + 1)}
+            disabled={page >= pageCount}
             aria-label="다음 쪽"
             className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >

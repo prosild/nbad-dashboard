@@ -110,6 +110,91 @@ export interface IncidentQueueResponse {
   availableRoles: string[];
 }
 
+/* ───────────── T23 통합 인시던트 큐 ───────────── */
+
+export type QueuePriority = 'high' | 'medium' | 'low';
+export type SourceType = 'live' | 'imported';
+
+/** 통합 큐 한 행: 큐 행 필드 + 서버가 계산한 탐지 시각·수집원 종류·우선순위·진행 중 */
+export interface UnifiedQueueItem extends IncidentQueueItem {
+  detectedAt: string | null;
+  sourceType: SourceType;
+  /** 종결이면 null */
+  priority: QueuePriority | null;
+  ongoing: boolean;
+}
+
+export interface UnifiedQueueSummary {
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+  reviewPending: number;
+  alerted: number;
+  byStatus: Record<string, number>;
+}
+
+export interface QueueSource {
+  captureId: string;
+  sourceType: SourceType;
+  latestJobId: number | null;
+}
+
+export interface UnifiedQueueResponse {
+  items: UnifiedQueueItem[];
+  total: number;
+  page: number;
+  size: number;
+  pageCount: number;
+  summary: UnifiedQueueSummary;
+  anchor: string;
+  anchorMode: string;
+  snapshot: boolean;
+  period: string;
+  latestDetectedAt: string | null;
+  newestOutsidePeriod: string | null;
+  sources: QueueSource[];
+  maskedView: boolean;
+  availableModels: string[];
+  availableRoles: string[];
+}
+
+export interface QueueNewCountResponse {
+  count: number;
+  latestDetectedAt: string | null;
+  since: string;
+}
+
+export interface QueueNeighborKey {
+  jobId: number;
+  queueRank: number;
+  hostIp: string | null;
+}
+
+export interface QueueNeighborsResponse {
+  current: QueueNeighborKey | null;
+  position: number | null;
+  total: number;
+  prev: QueueNeighborKey | null;
+  next: QueueNeighborKey | null;
+}
+
+export interface TimeContextResponse {
+  anchor: string;
+  anchorMode: string;
+  snapshot: boolean;
+}
+
+/** 상세 헤더 메타데이터(T23) */
+export interface IncidentQueueMeta {
+  sourceType: SourceType;
+  detectedAt: string | null;
+  priority: QueuePriority | null;
+  ongoing: boolean;
+  latestJobId: number | null;
+  latestQueueRank: number | null;
+}
+
 export interface IncidentModelScore {
   jobId: number;
   incidentId: string;
@@ -300,6 +385,8 @@ export interface IncidentDetailApiResponse {
   maskedView: boolean;
   canDecideReview: boolean;
   detail: IncidentDetailView;
+  /** T23: 수집원·탐지 시각·서버 우선순위·진행 중(없으면 null) */
+  queueMeta?: IncidentQueueMeta | null;
 }
 
 export interface AnalystReviewItem {

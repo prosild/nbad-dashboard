@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
@@ -14,14 +14,8 @@ import { ReportSection } from '../components/incident/ReportSection';
 import { SendDecisionSection } from '../components/incident/SendDecisionSection';
 import { SlackThreadsSection } from '../components/incident/SlackThreadsSection';
 import { SummaryTab } from '../components/incident/SummaryTab';
-import type { IncidentDetailApiResponse, IncidentQueueItem } from '../types/api';
-import {
-  findNeighbors,
-  orderQueue,
-  parseQueueView,
-  SERVER_FILTER_KEYS,
-  sortIncidents,
-} from '../utils/triage';
+import type { IncidentDetailApiResponse, QueueNeighborKey, QueueNeighborsResponse } from '../types/api';
+import { parseQueueQuery, queueApiParams } from '../utils/triage';
 
 /** 상세 탭. URL `tab=`에 남긴다(요약은 기본이라 남기지 않는다). */
 export const DETAIL_TABS = [
@@ -40,53 +34,41 @@ function isDetailTab(value: string | null): value is DetailTab {
 }
 
 interface NavState {
-  /** 목록 쿼리로 만든 순서면 'list', 쿼리가 없어 파이프라인 순위 순이면 'pipeline' */
-  basis: 'list' | 'pipeline';
-  ordered: IncidentQueueItem[];
-  /** 목록 조회 실패(T21: 헤더에 안내와 다시 시도를 둔다) */
+  result: QueueNeighborsResponse | null;
+  /** 이동 목록 조회 실패(T21: 헤더에 안내와 다시 시도를 둔다) */
   failed: boolean;
 }
 
 /** 이동 목록 조회 실패 안내(T21) */
 export const NAV_LOAD_FAILED_TEXT = '이동 목록을 불러오지 못했습니다';
+/** 거르기 결과에 이 인시던트가 없을 때(T23) */
+export const NAV_NOT_IN_LIST_TEXT = '목록이 갱신되어 이 인시던트가 지금 목록에 없습니다';
+/** 보고 있는 탐지 작업이 최신이 아닐 때(T23) */
+export const NEWER_RESULT_TEXT = '이 인시던트의 더 새로운 분석 결과가 있습니다';
 
 /**
- * 이전·다음 순서(M1). 목록이 넘긴 `from=` 쿼리로 `GET /api/incidents`를 한 번 불러 목록과 같은 함수(orderQueue)로 순서를 만든다.
- * 쿼리가 없으면 같은 캡처·탐지 작업의 목록을 파이프라인 순위 순으로 쓴다.
+ * 이전·다음(T23). 목록이 넘긴 `from=` 쿼리(기간·수집원·거르기·정렬)로 서버 neighbors API를 부른다.
+ * 쿼리가 없으면 기본 큐(기간 24시간, 우선순위 순) 조건을 쓴다. 목록 전체를 받지 않는다.
  */
-function useNeighborOrder(
+function useNeighbors(
   fromQuery: string | null,
-  captureId: string | null,
-  jobId: number | null,
+  jobId: string | undefined,
+  queueRank: string | undefined,
 ): { nav: NavState | null; retry: () => void } {
   const [nav, setNav] = useState<NavState | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const baseKey = fromQuery !== null ? `from:${fromQuery}` : captureId ? `job:${captureId}|${jobId}` : null;
-  const key = baseKey === null ? null : `${baseKey}#${attempt}`;
-  // 같은 목록 안에서 이전·다음으로 옮겨 가도 다시 부르지 않도록 key가 바뀔 때만 부른다.
+  const key = jobId && queueRank ? `${jobId}|${queueRank}|${fromQuery ?? ''}#${attempt}` : null;
   useEffect(() => {
-    if (key === null) return;
+    if (key === null || !jobId || !queueRank) return undefined;
     let cancelled = false;
     setNav(null);
     void (async () => {
       try {
-        if (fromQuery !== null) {
-          const params = new URLSearchParams(fromQuery);
-          const filters: Record<string, string | undefined> = {
-            captureId: params.get('captureId') || undefined,
-            jobId: params.get('jobId') || undefined,
-          };
-          for (const k of SERVER_FILTER_KEYS) filters[k] = params.get(k) || undefined;
-          const res = await incidentsApi.list(filters);
-          if (!cancelled)
-            setNav({ basis: 'list', ordered: orderQueue(res.incidents, parseQueueView(params)), failed: false });
-        } else {
-          const res = await incidentsApi.list({ captureId: captureId ?? undefined, jobId: jobId ?? undefined });
-          if (!cancelled)
-            setNav({ basis: 'pipeline', ordered: sortIncidents(res.incidents, 'rank', 'asc'), failed: false });
-        }
+        const query = parseQueueQuery(new URLSearchParams(fromQuery ?? ''));
+        const res = await incidentsApi.neighbors(jobId, queueRank, queueApiParams(query, { paging: false }));
+        if (!cancelled) setNav({ result: res, failed: false });
       } catch {
-        if (!cancelled) setNav({ basis: fromQuery !== null ? 'list' : 'pipeline', ordered: [], failed: true });
+        if (!cancelled) setNav({ result: null, failed: true });
       }
     })();
     return () => {
@@ -102,7 +84,7 @@ function useNeighborOrder(
 export function IncidentDetailPage() {
   const { jobId, queueRank } = useParams<{ jobId: string; queueRank: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, timeContext } = useAuth();
   const [data, setData] = useState<IncidentDetailApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -148,13 +130,13 @@ export function IncidentDetailPage() {
   const current =
     incident && String(incident.jobId) === jobId && String(incident.queueRank) === queueRank ? detail : undefined;
 
-  const { nav, retry: retryNav } = useNeighborOrder(fromQuery, incident?.captureId ?? null, incident?.jobId ?? null);
-  const neighbors = useMemo(
-    () => (nav && jobId && queueRank ? findNeighbors(nav.ordered, Number(jobId), Number(queueRank)) : null),
-    [nav, jobId, queueRank],
-  );
+  const { nav, retry: retryNav } = useNeighbors(fromQuery, jobId, queueRank);
+  const neighbors = nav?.result ?? null;
+  const currentKey = neighbors?.current ?? null;
+  const stale =
+    currentKey !== null && (String(currentKey.jobId) !== jobId || String(currentKey.queueRank) !== queueRank);
 
-  function linkTo(item: IncidentQueueItem): string {
+  function linkTo(item: QueueNeighborKey): string {
     const next = new URLSearchParams();
     if (fromQuery !== null) next.set('from', fromQuery);
     if (tab !== 'summary') next.set('tab', tab);
@@ -162,12 +144,8 @@ export function IncidentDetailPage() {
     return `/incidents/${item.jobId}/rank/${item.queueRank}${qs ? `?${qs}` : ''}`;
   }
 
-  const backUrl =
-    fromQuery !== null
-      ? `/incidents${fromQuery ? `?${fromQuery}` : ''}`
-      : incident
-        ? `/incidents?captureId=${encodeURIComponent(incident.captureId)}`
-        : '/incidents';
+  // 목록으로: 넘겨받은 목록 쿼리로 돌아가고, 없으면 기본 큐다(캡처 쿼리를 새로 만들지 않는다).
+  const backUrl = fromQuery ? `/incidents?${fromQuery}` : '/incidents';
 
   function selectTab(next: DetailTab) {
     const params = new URLSearchParams(searchParams);
@@ -186,7 +164,7 @@ export function IncidentDetailPage() {
     document.getElementById(`detail-tab-${DETAIL_TABS[target].key}`)?.focus();
   }
 
-  const navBasisLabel = nav?.basis === 'pipeline' ? '파이프라인 순위 순' : '목록 순서';
+  const navBasisLabel = fromQuery !== null ? '목록 순서' : '기본 목록 순서';
   const navActions = (
     <nav aria-label="인시던트 이동" className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap">
       <Link to={backUrl} className="soc-btn-secondary py-1.5 text-xs">
@@ -204,9 +182,15 @@ export function IncidentDetailPage() {
           </button>
         </span>
       )}
-      {neighbors && neighbors.index >= 0 && (
+      {neighbors && neighbors.position !== null && (
         <span className="text-[11px] tabular-nums text-slate-400" title={`이전·다음 기준: ${navBasisLabel}`}>
-          {neighbors.index + 1} / {neighbors.total}
+          {neighbors.position} / {neighbors.total}
+        </span>
+      )}
+      {neighbors && neighbors.position === null && (
+        <span className="inline-flex items-center gap-1 text-[11px] text-slate-400" data-nav-missing="">
+          <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {NAV_NOT_IN_LIST_TEXT}
         </span>
       )}
       <NeighborLink item={neighbors?.next ?? null} to={linkTo} label="다음 인시던트" icon="next" />
@@ -220,9 +204,27 @@ export function IncidentDetailPage() {
     <AppShell
       title="인시던트 상세"
       actions={navActions}
-      stickyBar={current ? <DetailHeader detail={current} /> : undefined}
+      stickyBar={
+        current ? (
+          <DetailHeader detail={current} meta={data?.queueMeta ?? null} snapshot={Boolean(timeContext?.snapshot)} />
+        ) : undefined
+      }
     >
       <div className="space-y-4">
+        {stale && currentKey && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-500/35 bg-sky-500/10 px-3 py-2 text-xs text-sky-100"
+          >
+            <span className="flex items-center gap-2">
+              <Info className="h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden="true" />
+              {NEWER_RESULT_TEXT}
+            </span>
+            <Link to={linkTo(currentKey)} className="soc-btn-secondary px-2.5 py-1 text-xs">
+              최신 보기
+            </Link>
+          </div>
+        )}
         {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadDetail()} />}
 
         {loading && !current ? (
@@ -309,8 +311,8 @@ function NeighborLink({
   label,
   icon,
 }: {
-  item: IncidentQueueItem | null;
-  to: (item: IncidentQueueItem) => string;
+  item: QueueNeighborKey | null;
+  to: (item: QueueNeighborKey) => string;
   label: string;
   icon: 'prev' | 'next';
 }) {
@@ -331,7 +333,7 @@ function NeighborLink({
     <Link
       to={to(item)}
       aria-label={label}
-      title={`${label}: ${item.hostIp} · ${item.queueRank}위`}
+      title={item.hostIp ? `${label}: ${item.hostIp}` : label}
       className="soc-btn-secondary px-2 py-1.5 text-xs"
     >
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />

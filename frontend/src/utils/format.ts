@@ -127,3 +127,31 @@ export function formatSessionDuration(seconds: number | null | undefined): strin
   const total = Math.floor(seconds);
   return `${Math.floor(total / 60)}분 ${total % 60}초`;
 }
+
+/**
+ * 상대 시각(T23 탐지 시각): 기준 시각(서버가 준 anchor)에서 얼마 전인지. 브라우저 시각은 쓰지 않는다.
+ * 1분 미만 "방금", 1시간 미만 "N분 전", 1일 미만 "N시간 전", 그 밖 "N일 전". 기준보다 늦으면 "방금".
+ */
+export function formatRelativeTo(iso: string | null | undefined, referenceIso: string | null | undefined): string {
+  if (!iso || !referenceIso) {
+    return '-';
+  }
+  const t = new Date(iso).getTime();
+  const ref = new Date(referenceIso).getTime();
+  if (Number.isNaN(t) || Number.isNaN(ref)) {
+    return '-';
+  }
+  const diffSec = Math.floor((ref - t) / 1000);
+  if (diffSec < 60) {
+    return '방금';
+  }
+  const minutes = Math.floor(diffSec / 60);
+  if (minutes < 60) {
+    return `${minutes}분 전`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}시간 전`;
+  }
+  return `${formatNumber(Math.floor(hours / 24))}일 전`;
+}

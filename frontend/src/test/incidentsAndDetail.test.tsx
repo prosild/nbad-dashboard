@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
+import type { IncidentQueueItem } from '../types/api';
+import { fakeQueue, unified } from './fakeQueueServer';
 
 function renderWithAnalyst(initialEntry: string, fetchImpl: typeof fetch) {
   document.cookie = 'XSRF-TOKEN=xsrf-test-token; path=/';
@@ -43,35 +45,9 @@ describe('인시던트 목록 및 상세 화면', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return analystMeResponse();
-      if (url.startsWith('/api/incidents')) {
-        return new Response(
-          JSON.stringify({
-            maskedView: false,
-            allowedCaptures: ['cic17-wed', 'cic17-thu'],
-            selectedCaptureId: 'cic17-wed',
-            selectedJob: {
-              jobId: 42,
-              captureId: 'cic17-wed',
-              bundleId: 'zeekad-fusion/3',
-              status: 'succeeded',
-              startedAt: '2026-11-18T00:00:00Z',
-              finishedAt: '2026-11-18T00:02:00Z',
-              error: null,
-              incidentCount: 2,
-            },
-            captureJobs: [
-              {
-                jobId: 42,
-                captureId: 'cic17-wed',
-                bundleId: 'zeekad-fusion/3',
-                status: 'succeeded',
-                startedAt: null,
-                finishedAt: null,
-                error: null,
-                incidentCount: 2,
-              },
-            ],
-            incidents: [
+      if (url.startsWith('/api/incidents/queue')) {
+        // T23: 통합 큐 응답(우선순위는 서버 값)
+        const items = [
               {
                 jobId: 42,
                 captureId: 'cic17-wed',
@@ -96,6 +72,7 @@ describe('인시던트 목록 및 상세 화면', () => {
                 zeekadWouldSend: true,
                 zeekadReviewAction: null,
                 zeekadReviewPending: true,
+                alerted: true,
               },
               {
                 jobId: 42,
@@ -121,11 +98,16 @@ describe('인시던트 목록 및 상세 화면', () => {
                 zeekadWouldSend: false,
                 zeekadReviewAction: 'dismiss',
                 zeekadReviewPending: false,
+                alerted: false,
               },
-            ],
-            availableModels: ['ae_v2', 'iforest_v1'],
-            availableRoles: ['originator', 'responder'],
-          }),
+            ] as IncidentQueueItem[];
+        return new Response(
+          JSON.stringify(
+            fakeQueue(url, {
+              items: [unified(items[0], { priority: 'high' }), unified(items[1], { priority: null })],
+              availableModels: ['ae_v2', 'iforest_v1'],
+            }),
+          ),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }

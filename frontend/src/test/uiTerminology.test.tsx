@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
+import type { IncidentQueueItem, QueuePriority } from '../types/api';
+import { fakeQueue, unified } from './fakeQueueServer';
 
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
@@ -166,9 +168,10 @@ const queueResponse = {
   selectedJob: scoringJob,
   captureJobs: [scoringJob, { ...scoringJob, jobId: 1, status: 'failed', error: 'timeout' }],
   incidents: [
-    queueItem,
+    { ...queueItem, priority: 'high' },
     {
       ...queueItem,
+      priority: null,
       queueRank: 2,
       incidentId: 'cic17-wed|192.168.*.*|originator|1499262300',
       zeekadRole: 'originator',
@@ -563,7 +566,22 @@ function renderAt(path: string, user: unknown, overrides: { queue?: unknown } = 
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return json({ authenticated: user !== null, user });
       if (url.startsWith('/api/incidents/2/rank/1')) return json(detailResponse(masked));
-      if (url.startsWith('/api/incidents')) return json({ ...(overrides.queue ?? queueResponse), maskedView: masked });
+      if (url.startsWith('/api/incidents/queue/neighbors'))
+        return json({ current: null, position: null, total: 0, prev: null, next: null });
+      if (url.startsWith('/api/incidents/queue')) {
+        // T23: 통합 큐. 우선순위는 시험 데이터가 정한 서버 값이다.
+        const q = (overrides.queue ?? queueResponse) as {
+          incidents: (IncidentQueueItem & { priority?: QueuePriority | null })[];
+          availableModels: string[];
+        };
+        return json(
+          fakeQueue(url, {
+            items: q.incidents.map((i) => unified(i, { priority: i.priority ?? null })),
+            maskedView: masked,
+            availableModels: q.availableModels,
+          }),
+        );
+      }
       if (url.startsWith('/api/reviews')) return json(reviewsResponse(masked));
       if (url.startsWith('/api/operations')) return json({ ...operationsResponse, maskedView: masked });
       if (url.startsWith('/api/admin/users')) return json(usersResponse);
@@ -617,10 +635,11 @@ describe('관제 표준 용어(T18b)', () => {
       ...queueResponse,
       incidents: [
         // High: 발송 판단 발송, 에스컬레이션 대기, 목적지, 분석 중 (경보 발송 = 사건 알림 기록 있음)
-        { ...base, queueRank: 1, incidentId: 'a|1', zeekadStatus: 'investigating', zeekadRole: 'responder', alerted: true },
+        { ...base, priority: 'high', queueRank: 1, incidentId: 'a|1', zeekadStatus: 'investigating', zeekadRole: 'responder', alerted: true },
         // Medium: 교차 탐지, 승인, 출발지, 신규
         {
           ...base,
+          priority: 'medium',
           queueRank: 2,
           incidentId: 'a|2',
           zeekadStatus: 'open',
@@ -638,6 +657,7 @@ describe('관제 표준 용어(T18b)', () => {
         // Low
         {
           ...base,
+          priority: 'low',
           queueRank: 3,
           incidentId: 'a|3',
           zeekadStatus: 'open',
@@ -654,6 +674,7 @@ describe('관제 표준 용어(T18b)', () => {
         // 종결 · 오탐 · 오탐 종결
         {
           ...base,
+          priority: null,
           queueRank: 4,
           incidentId: 'a|4',
           zeekadStatus: 'closed',
@@ -665,6 +686,7 @@ describe('관제 표준 용어(T18b)', () => {
         // 종결 · 정탐 / 종결 · 정상
         {
           ...base,
+          priority: null,
           queueRank: 5,
           incidentId: 'a|5',
           zeekadStatus: 'closed',
@@ -674,6 +696,7 @@ describe('관제 표준 용어(T18b)', () => {
         },
         {
           ...base,
+          priority: null,
           queueRank: 6,
           incidentId: 'a|6',
           zeekadStatus: 'closed',
@@ -692,11 +715,9 @@ describe('관제 표준 용어(T18b)', () => {
     expect(within(nav).getByRole('link', { name: '운영 현황' })).toBeInTheDocument();
 
     const table = await screen.findByRole('table');
-    // 둘째 칸이 순위다.
+    // T23: 순위 열이 없다. 서버 순서(우선순위 → 탐지 시각 → 캡처 → 순위)가 시험 데이터의 순위 순서와 같다.
     const row = (rank: number) => {
-      const found = within(table)
-        .getAllByRole('row')
-        .find((r) => within(r).queryAllByRole('cell')[1]?.textContent === String(rank));
+      const found = within(table).getAllByRole('row').slice(1)[rank - 1];
       if (!found) throw new Error(`순위 ${rank} 행 없음`);
       return found;
     };

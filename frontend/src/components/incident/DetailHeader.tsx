@@ -1,9 +1,9 @@
 import { Copy, FileX } from 'lucide-react';
-import type { IncidentDetailView } from '../../types/api';
+import type { IncidentDetailView, IncidentQueueMeta } from '../../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../../utils/format';
 import { captureInfo, detectionModelInfo } from '../../utils/labels';
-import { computePriority } from '../../utils/triage';
 import {
+  CaptureName,
   CodeLabel,
   DetectionModelName,
   IncidentStatusBadge,
@@ -12,6 +12,8 @@ import {
   SocBadge,
   VerificationBadge,
   AlertedBadge,
+  OngoingBadge,
+  SourceTypeBadge,
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
 
@@ -26,13 +28,22 @@ function Field({ label, children, title }: { label: string; children: React.Reac
 
 /**
  * 인시던트 상세 고정 요약 헤더(T19): 스크롤해도 화면 위에 남는 두 줄.
- * 캡처·모델 버전·탐지 작업 시각은 발생 시각 툴팁에만 둔다. 인시던트 ID는 글로 보이지 않고 복사 버튼만 둔다(복사 값은 원문).
+ * 모델 버전·탐지 작업 시각은 발생 시각 툴팁에만 둔다. 인시던트 ID는 글로 보이지 않고 복사 버튼만 둔다(복사 값은 원문).
+ * T23: 우선순위는 서버 값(queueMeta.priority, 상태 변경 뒤 상세를 다시 불러오면 함께 바뀐다)이고,
+ * 수집원(종류 + 표시 이름)·탐지 시각·캡처 내 순위·진행 중 표지를 보인다.
  */
-export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
+export function DetailHeader({
+  detail,
+  meta = null,
+  snapshot = false,
+}: {
+  detail: IncidentDetailView;
+  meta?: IncidentQueueMeta | null;
+  snapshot?: boolean;
+}) {
   const { notify } = useToast();
   const incident = detail.incident;
-  // 상태 변경 직후에도 맞도록 상세의 현재 상태로 계산한다(L1).
-  const priority = computePriority({ ...incident, zeekadStatus: detail.currentStatus });
+  const priority = meta?.priority ?? null;
   const jobWhen = detail.job ? (detail.job.finishedAt ?? detail.job.startedAt) : null;
   const capture = captureInfo(incident.captureId);
   const timeTitle = [
@@ -57,6 +68,7 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
     <section aria-label="인시던트 요약" className="space-y-1.5 text-xs">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:flex-nowrap xl:overflow-hidden">
         <PriorityBadge priority={priority} />
+        {meta?.ongoing && <OngoingBadge snapshot={snapshot} />}
         <span className="flex items-center gap-1">
           <IncidentStatusBadge status={detail.currentStatus} />
           <ResolutionBadge resolution={detail.currentResolution} />
@@ -85,6 +97,16 @@ export function DetailHeader({ detail }: { detail: IncidentDetailView }) {
         </Field>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:flex-nowrap xl:overflow-hidden">
+        <Field label="수집원">
+          <SourceTypeBadge type={meta?.sourceType} />
+          <CaptureName id={incident.captureId} className="max-w-[14rem] truncate text-slate-200" />
+        </Field>
+        <Field label="탐지" title="인시던트가 처음 탐지된 분석 완료 시각">
+          <span className="tabular-nums text-slate-200">{formatDateTime(meta?.detectedAt ?? null)}</span>
+        </Field>
+        <Field label="캡처 내 순위">
+          <span className="tabular-nums text-slate-200">{incident.queueRank}위</span>
+        </Field>
         <Field label="발생" title={timeTitle}>
           <span className="tabular-nums text-slate-200">{formatDateTime(incident.eventStart)}</span>
           <span className="tabular-nums text-slate-400">{formatDuration(incident.eventStart, incident.eventEnd)}</span>

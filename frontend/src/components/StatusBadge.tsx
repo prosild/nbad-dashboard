@@ -8,8 +8,10 @@ import {
   Circle,
   CircleDot,
   Clock,
+  Database,
   Loader,
   Minus,
+  Radio,
   ShieldCheck,
 } from 'lucide-react';
 import {
@@ -22,6 +24,7 @@ import {
   type LabelLookup,
 } from '../utils/labels';
 import type { Priority } from '../utils/triage';
+import type { SourceType } from '../types/api';
 
 /**
  * 색 체계(docs/ui-terminology.md '색·배지 체계'):
@@ -342,7 +345,7 @@ export function UserRoleBadge({ role }: { role: string | null | undefined }) {
 }
 
 /** 자동 분류 우선순위 툴팁. 분석가 판정이 아니라 화면이 계산한 값임을 알린다. */
-export const PRIORITY_TOOLTIP = '자동 분류 우선순위: 파이프라인 결과로 화면이 계산한 값이며 분석가 판정이 아닙니다';
+export const PRIORITY_TOOLTIP = '자동 분류 우선순위: 파이프라인 결과로 서버가 계산한 값이며 분석가 판정이 아닙니다';
 export const NO_PRIORITY_TOOLTIP = '종결된 인시던트는 우선순위를 매기지 않습니다';
 
 /**
@@ -364,6 +367,55 @@ export function PriorityBadge({ priority }: { priority: Priority | null }) {
     <SocBadge tone={tone} title={PRIORITY_TOOLTIP}>
       <Icon className="h-3 w-3" aria-hidden="true" />
       {labelText('priority', priority)}
+    </SocBadge>
+  );
+}
+
+/* ───────────── T23 통합 큐: 수집원·진행 중·새 인시던트 ───────────── */
+
+/** 수집원 종류 표시 이름(docs/ui-terminology.md) */
+export const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
+  live: '실습망 센서',
+  imported: '가져온 데이터',
+};
+
+export const SOURCE_TYPE_TOOLTIP: Record<SourceType, string> = {
+  live: '실습망 센서: 실습망 VM이 실제로 수집하고 5분 파일마다 다시 분석하는 수집원',
+  imported: '가져온 데이터: 공개 데이터셋(PCAP)을 가져와 분석한 수집원. 발생 시각은 원본 그대로입니다',
+};
+
+/** 수집원 종류 배지(정보성: 중립색, 아이콘으로 구분) */
+export function SourceTypeBadge({ type }: { type: SourceType | null | undefined }) {
+  if (type !== 'live' && type !== 'imported') {
+    return <SocBadge tone="muted">-</SocBadge>;
+  }
+  const Icon = type === 'live' ? Radio : Database;
+  return (
+    <SocBadge tone="neutral" title={SOURCE_TYPE_TOOLTIP[type]}>
+      <Icon className="h-3 w-3 text-slate-400" aria-hidden="true" />
+      {SOURCE_TYPE_LABEL[type]}
+    </SocBadge>
+  );
+}
+
+export const ONGOING_TOOLTIP =
+  '진행 중: 실습망 센서의 종결되지 않은 인시던트이며, 마지막 윈도우가 그 캡처의 최신 윈도우이고 기준 시각 15분 안에 끝났습니다';
+
+/** 진행 중 표지(하늘색 = 진행 중). 고정 스냅샷이면 툴팁에 "기준 시각 기준"을 적는다. */
+export function OngoingBadge({ snapshot = false }: { snapshot?: boolean }) {
+  return (
+    <SocBadge tone="info" title={snapshot ? `${ONGOING_TOOLTIP}(기준 시각 기준)` : ONGOING_TOOLTIP}>
+      <Loader className="h-3 w-3" aria-hidden="true" />
+      진행 중
+    </SocBadge>
+  );
+}
+
+/** 새 인시던트 표지(새 인시던트 띠로 불러온 행, 다음 불러오기 전까지) */
+export function NewRowBadge() {
+  return (
+    <SocBadge tone="emphasis" title="방금 불러온 새 인시던트">
+      새
     </SocBadge>
   );
 }

@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
-import type { IncidentDetailView, IncidentQueueItem } from '../types/api';
+import type { IncidentDetailView, IncidentQueueItem, IncidentQueueMeta, QueueNeighborsResponse, UnifiedQueueItem } from '../types/api';
 import { formatSessionDuration } from '../utils/format';
-import { findNeighbors, orderQueue, parseQueueView } from '../utils/triage';
+import { fakeNeighbors, unified } from './fakeQueueServer';
 
 /** T19 인시던트 상세: 요약 헤더·조치 패널·탭·오탐 종결 안전장치·주요 세션 열·이전·다음 */
 
@@ -242,11 +242,31 @@ function LocationProbe() {
 interface Setup {
   role?: 'VIEWER' | 'ANALYST' | 'ADMIN';
   detail?: (current: IncidentDetailView) => IncidentDetailView;
-  list?: IncidentQueueItem[];
+  /** T23: 가짜 neighbors 서버가 쓸 큐 행(우선순위는 서버 값으로 준다) */
+  list?: UnifiedQueueItem[];
+  /** T23: neighbors 응답을 직접 정한다(list보다 먼저) */
+  neighbors?: QueueNeighborsResponse;
+  /** T23: 상세 응답의 queueMeta(기본: 가져온 데이터, High, 탐지 2026-11-12 11:27) */
+  meta?: IncidentQueueMeta | null;
+  snapshot?: boolean;
   /** POST 뒤 상세를 바꾸는 함수(상태 변경 흐름) */
   onPost?: (url: string, body: Record<string, unknown>, state: { detail: IncidentDetailView }) => void;
-  /** T21: 이동 목록(GET /api/incidents) 조회가 실패할 횟수 */
+  /** T21: 이동 목록(T23: GET /api/incidents/queue/neighbors) 조회가 실패할 횟수 */
   listFailures?: number;
+}
+
+const DEFAULT_META: IncidentQueueMeta = {
+  sourceType: 'imported',
+  detectedAt: '2026-11-12T02:27:00Z',
+  priority: 'high',
+  ongoing: false,
+  latestJobId: 42,
+  latestQueueRank: 1,
+};
+
+/** 서버 우선순위를 준 큐 행 */
+function listItem(overrides: Partial<IncidentQueueItem>, priority: UnifiedQueueItem['priority'] = 'high'): UnifiedQueueItem {
+  return unified(queueItem(overrides), { priority, detectedAt: '2026-11-12T02:27:00Z' });
 }
 
 function renderDetail(path: string, setup: Setup = {}) {
@@ -262,27 +282,31 @@ function renderDetail(path: string, setup: Setup = {}) {
       setup.onPost?.(url, body, state);
       return json({ succeeded: true, code: 'OK', message: '처리했습니다' });
     }
+    if (url === '/api/time-context') {
+      return json({ anchor: '2026-11-21T00:00:00Z', anchorMode: setup.snapshot ? 'latest-data' : 'now', snapshot: Boolean(setup.snapshot) });
+    }
     const m = url.match(/^\/api\/incidents\/(\d+)\/rank\/(\d+)$/);
     if (m) {
       const d = state.detail;
       const incident = { ...d.incident, jobId: Number(m[1]), queueRank: Number(m[2]) };
-      return json({ maskedView: role === 'VIEWER', canDecideReview: role !== 'VIEWER', detail: { ...d, incident } });
+      return json({
+        maskedView: role === 'VIEWER',
+        canDecideReview: role !== 'VIEWER',
+        detail: { ...d, incident },
+        queueMeta: setup.meta === undefined ? DEFAULT_META : setup.meta,
+      });
     }
-    if (url === '/api/incidents' || url.startsWith('/api/incidents?')) {
+    if (url.startsWith('/api/incidents/queue/neighbors')) {
       listCalls.push(url);
       if (listCalls.length <= (setup.listFailures ?? 0)) {
         return json({ code: 'INTERNAL', message: '일시 오류' }, 500);
       }
-      return json({
-        maskedView: false,
-        allowedCaptures: ['cic17-wed'],
-        selectedCaptureId: 'cic17-wed',
-        selectedJob: null,
-        captureJobs: [],
-        incidents: setup.list ?? [],
-        availableModels: [],
-        availableRoles: [],
-      });
+      if (setup.neighbors) return json(setup.neighbors);
+      return json(fakeNeighbors(url, { items: setup.list ?? [] }));
+    }
+    if (url === '/api/incidents' || url.startsWith('/api/incidents?') || url.startsWith('/api/incidents/queue')) {
+      // T23: 상세는 목록 전체를 받지 않는다
+      throw new Error(`상세가 목록 API를 불렀다: ${url}`);
     }
     return json({}, 404);
   });
@@ -361,6 +385,14 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(h).getByText('155,261건')).toBeInTheDocument();
     expect(within(h).getByText('경보 발송')).toBeInTheDocument();
     expect(within(h).getByText('검증 통과')).toBeInTheDocument();
+    // T23: 수집원(종류 + 표시 이름)·탐지 시각·캡처 내 순위
+    expect(within(h).getByText('가져온 데이터')).toBeInTheDocument();
+    expect(within(h).getByText('CIC-IDS2017 수요일')).toBeInTheDocument();
+    expect(within(h).getByText('탐지')).toBeInTheDocument();
+    expect(within(h).getByText('2026-11-12 11:27:00')).toBeInTheDocument();
+    expect(within(h).getByText('캡처 내 순위')).toBeInTheDocument();
+    expect(within(h).getByText('1위')).toBeInTheDocument();
+    expect(within(h).queryByText('진행 중')).toBeNull();
     // 모델 버전·탐지 작업 시각은 툴팁에만
     const when = within(h).getByText('발생').parentElement as HTMLElement;
     expect(when.getAttribute('title')).toContain('모델 버전 zeekad-fusion/3');
@@ -374,14 +406,36 @@ describe('인시던트 상세 화면(T19)', () => {
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe(INCIDENT_ID));
   });
 
-  it('헤더 우선순위는 상세의 현재 상태로 계산한다(종결이면 우선순위 없음)', async () => {
-    renderDetail('/incidents/42/rank/1', {
+  it('헤더 우선순위는 서버 값(queueMeta.priority)이다(종결이면 서버가 없음을 준다. 화면이 다시 계산하지 않는다)', async () => {
+    const first = renderDetail('/incidents/42/rank/1', {
       detail: (d) => ({ ...d, currentStatus: 'closed', currentResolution: 'true_positive', canTransition: false, nextAllowedStatus: null }),
+      meta: { ...DEFAULT_META, priority: null },
     });
     await screen.findByRole('tab', { name: '요약', selected: true });
     expect(within(header()).getByText('우선순위 없음')).toBeInTheDocument();
     expect(within(header()).queryByText('High')).toBeNull();
     expect(within(actions()).getByText('종결된 인시던트입니다. 더 바꿀 상태가 없습니다.')).toBeInTheDocument();
+    first.unmount();
+
+    // 발송 판단 "발송"인 행이어도 서버가 Low를 주면 Low를 보인다
+    renderDetail('/incidents/42/rank/1', { meta: { ...DEFAULT_META, priority: 'low' } });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(within(header()).getByText('Low')).toBeInTheDocument();
+  });
+
+  it('진행 중이면 헤더에 표지를 붙이고, 고정 스냅샷이면 툴팁에 기준 시각 기준을 적는다. 실습망 센서 표시', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      meta: { ...DEFAULT_META, sourceType: 'live', ongoing: true },
+      detail: (d) => ({ ...d, incident: { ...d.incident, captureId: 'lab-20261118' } }),
+      snapshot: true,
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const h = header();
+    expect(within(h).getByText('실습망 센서')).toBeInTheDocument();
+    expect(within(h).getByText('실습망 2026-11-18 · 시험')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(h).getByText('진행 중').closest('[title]')).toHaveAttribute('title', expect.stringContaining('기준 시각 기준')),
+    );
   });
 
   it('조회자에게는 조치 폼이 없고 현재 상태·판정만 읽기 전용으로 보인다', async () => {
@@ -692,22 +746,32 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(document.body.textContent).not.toContain('담당자');
   });
 
-  it('이전·다음: 목록이 넘긴 from= 쿼리의 필터·정렬 순서를 따르고, 목록으로 돌아가면 그 쿼리로 간다', async () => {
+  it('이전·다음: 목록이 넘긴 from= 쿼리(기간·수집원·거르기·정렬)로 서버 neighbors를 부르고, 목록으로 돌아가면 그 쿼리로 간다', async () => {
     const user = userEvent.setup();
     const list = [
-      queueItem({ queueRank: 1, hostIp: '10.0.0.1', zeekadWouldSend: false, zeekadReviewPending: false, zeekadAlsoFlaggedBy: [], hasReport: false, zeekadReportJobId: null }),
-      queueItem({ queueRank: 2, hostIp: '10.0.0.2' }),
-      queueItem({ queueRank: 3, hostIp: '10.0.0.3' }),
-      queueItem({ queueRank: 4, hostIp: '10.0.0.4' }),
+      listItem({ queueRank: 1, hostIp: '10.0.0.1' }, 'low'),
+      listItem({ queueRank: 2, hostIp: '10.0.0.2', connectionCount: 20 }),
+      listItem({ queueRank: 3, hostIp: '10.0.0.3', connectionCount: 30 }),
+      listItem({ queueRank: 4, hostIp: '10.0.0.4', connectionCount: 40 }),
     ];
-    // 목록: High만, 순위 내림 → 4, 3, 2
-    const from = 'captureId=cic17-wed&status=investigating&priority=high&sort=rank&dir=desc&page=1';
+    // 목록: High만, 세션 수 내림 → 4, 3, 2
+    const from = 'period=all&source=imported&status=investigating&priority=high&sort=connections&dir=desc&page=1';
     const { listCalls } = renderDetail(`/incidents/42/rank/3?from=${encodeURIComponent(from)}&tab=evidence`, { list });
     await screen.findByRole('tab', { name: '증적', selected: true });
     const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
     await waitFor(() => expect(within(nav).getByText('2 / 3')).toBeInTheDocument());
-    // 서버 필터만 API로 보낸다
-    expect(listCalls).toEqual(['/api/incidents?captureId=cic17-wed&status=investigating']);
+    // 목록 조건을 그대로(쪽 번호·크기 없이) 보낸다
+    const sent = new URLSearchParams(listCalls[0].split('?')[1]);
+    expect(Object.fromEntries(sent)).toEqual({
+      jobId: '42',
+      queueRank: '3',
+      period: 'all',
+      source: 'imported',
+      priority: 'high',
+      status: 'investigating',
+      sort: 'connections',
+      dir: 'desc',
+    });
     expect(within(nav).getByRole('link', { name: '이전 인시던트' })).toHaveAttribute(
       'href',
       `/incidents/42/rank/4?from=${encodeURIComponent(from).replace(/%20/g, '+')}&tab=evidence`,
@@ -718,24 +782,55 @@ describe('인시던트 상세 화면(T19)', () => {
     );
     expect(within(nav).getByRole('link', { name: '인시던트 목록으로' })).toHaveAttribute('href', `/incidents?${from}`);
 
-    // 다음으로 가면 목록을 다시 부르지 않고 끝에서는 다음 버튼이 꺼진다
+    // 다음으로 가면 그 인시던트 기준으로 다시 묻고, 끝에서는 다음 버튼이 꺼진다
     await user.click(within(nav).getByRole('link', { name: '다음 인시던트' }));
     await waitFor(() => expect(within(nav).getByText('3 / 3')).toBeInTheDocument());
     expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('aria-disabled', 'true');
-    expect(listCalls).toHaveLength(1);
+    expect(listCalls).toHaveLength(2);
   });
 
-  it('from= 쿼리가 없으면 같은 캡처·탐지 작업의 목록을 파이프라인 순위 순으로 쓰고, 맨 앞에서는 이전이 꺼진다', async () => {
-    const list = [queueItem({ queueRank: 2 }), queueItem({ queueRank: 1 }), queueItem({ queueRank: 3 })];
+  it('from= 쿼리가 없으면 기본 큐(기간 24시간·우선순위 순) 조건을 쓰고 목록으로는 기본 큐(/incidents)로 간다(캡처 쿼리를 만들지 않는다)', async () => {
+    const list = [listItem({ queueRank: 2 }, 'medium'), listItem({ queueRank: 1 }), listItem({ queueRank: 3 }, 'low')];
     const { listCalls } = renderDetail('/incidents/42/rank/1', { list });
     await screen.findByRole('tab', { name: '요약', selected: true });
     const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
     await waitFor(() => expect(within(nav).getByText('1 / 3')).toBeInTheDocument());
-    expect(listCalls).toEqual(['/api/incidents?captureId=cic17-wed&jobId=42']);
-    expect(within(nav).getByText('1 / 3')).toHaveAttribute('title', '이전·다음 기준: 파이프라인 순위 순');
+    const sent = new URLSearchParams(listCalls[0].split('?')[1]);
+    expect(sent.get('period')).toBe('24h');
+    expect(sent.get('sort')).toBe('priority');
+    expect(sent.get('captureId')).toBeNull();
+    expect(within(nav).getByText('1 / 3')).toHaveAttribute('title', '이전·다음 기준: 기본 목록 순서');
     expect(within(nav).getByRole('link', { name: '이전 인시던트' })).toHaveAttribute('aria-disabled', 'true');
     expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('href', '/incidents/42/rank/2');
-    expect(within(nav).getByRole('link', { name: '인시던트 목록으로' })).toHaveAttribute('href', '/incidents?captureId=cic17-wed');
+    expect(within(nav).getByRole('link', { name: '인시던트 목록으로' })).toHaveAttribute('href', '/incidents');
+  });
+
+  it('보고 있는 탐지 작업이 최신이 아니면 더 새로운 분석 결과 안내와 최신 보기 링크를 보인다', async () => {
+    const from = 'period=all';
+    renderDetail(`/incidents/41/rank/5?from=${encodeURIComponent(from)}`, {
+      neighbors: {
+        current: { jobId: 44, queueRank: 2, hostIp: '192.168.10.5' },
+        position: 1,
+        total: 1,
+        prev: null,
+        next: null,
+      },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    expect(await screen.findByText('이 인시던트의 더 새로운 분석 결과가 있습니다')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '최신 보기' })).toHaveAttribute('href', '/incidents/44/rank/2?from=period%3Dall');
+  });
+
+  it('거르기 결과에 없으면(위치 없음) 목록이 갱신되었다고 알리고 이전·다음을 끈다. 최신이면 새 결과 안내는 없다', async () => {
+    renderDetail('/incidents/42/rank/1', {
+      neighbors: { current: { jobId: 42, queueRank: 1, hostIp: '192.168.10.5' }, position: null, total: 7, prev: null, next: null },
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
+    expect(await within(nav).findByText('목록이 갱신되어 이 인시던트가 지금 목록에 없습니다')).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: '이전 인시던트' })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByText('이 인시던트의 더 새로운 분석 결과가 있습니다')).toBeNull();
   });
 });
 
@@ -752,21 +847,6 @@ describe('T19 순수 함수', () => {
     expect(formatSessionDuration(3725.5)).toBe('62분 5초');
     expect(formatSessionDuration(null)).toBe('-');
     expect(formatSessionDuration(-1)).toBe('-');
-  });
-
-  it('목록 순서(orderQueue)와 이웃 찾기(findNeighbors)', () => {
-    const items = [
-      queueItem({ queueRank: 1, zeekadWouldSend: false, zeekadReviewPending: false, zeekadAlsoFlaggedBy: [], hasReport: false }),
-      queueItem({ queueRank: 2 }),
-      queueItem({ queueRank: 3, jobId: 7 }),
-    ];
-    const ordered = orderQueue(items, parseQueueView(new URLSearchParams('priority=high&sort=rank&dir=desc')));
-    expect(ordered.map((i) => i.queueRank)).toEqual([3, 2]);
-    expect(findNeighbors(ordered, 42, 2)).toMatchObject({ index: 1, total: 2, next: null });
-    expect(findNeighbors(ordered, 42, 2).prev?.queueRank).toBe(3);
-    expect(findNeighbors(ordered, 42, 1)).toMatchObject({ index: -1, prev: null, next: null });
-    // 기본 정렬은 우선순위 → 순위
-    expect(orderQueue(items, parseQueueView(new URLSearchParams(''))).map((i) => i.queueRank)).toEqual([2, 3, 1]);
   });
 });
 
@@ -921,8 +1001,8 @@ describe('T21: 결정 반영 상태·반영 지연·오탐 미리 채움·이력
   it('이동 목록 조회가 실패하면 헤더에 안내와 다시 시도가 있고, 다시 시도하면 이동 버튼이 살아난다', async () => {
     const user = userEvent.setup();
     const list = [
-      queueItem({ queueRank: 1, hostIp: '10.0.0.1' }),
-      queueItem({ queueRank: 2, hostIp: '10.0.0.2', incidentId: 'b|2' }),
+      listItem({ queueRank: 1, hostIp: '10.0.0.1' }),
+      listItem({ queueRank: 2, hostIp: '10.0.0.2', incidentId: 'b|2' }),
     ];
     const { listCalls } = renderDetail('/incidents/42/rank/1', { list, listFailures: 1 });
     await screen.findByRole('tab', { name: '요약', selected: true });

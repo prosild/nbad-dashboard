@@ -209,19 +209,19 @@ function KpiRow({
   return (
     <section aria-label="핵심 지표" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiCard
-        to="/incidents"
+        to="/incidents?period=all"
         label="전체 인시던트"
         value={formatNumber(totals.incidents)}
         sub="캡처마다 최신 탐지 작업 기준"
-        title="캡처별 '모든 모델 합계'의 인시던트 수를 더한 값입니다. 누르면 인시던트 목록으로 갑니다(목록은 캡처 하나씩 봅니다)."
+        title="캡처별 '모든 모델 합계'의 인시던트 수를 더한 값입니다(기간 없음). 누르면 기간 '전체'의 인시던트 목록으로 갑니다."
       />
       <KpiCard
-        to="/incidents?alerted=true"
+        to="/incidents?period=all&alerted=true"
         label="경보 발송"
         value={formatNumber(totals.alerted)}
         tone={totals.alerted > 0 ? 'notice' : 'default'}
         sub={totals.incidents > 0 ? `인시던트의 ${ratioPercent(totals.alerted / totals.incidents)}` : undefined}
-        title="상태 알림이 아닌 Slack 발송 기록이 있는 인시던트 수입니다. 누르면 인시던트 목록에서 경보 발송 인시던트만 봅니다(목록은 캡처 하나씩 봅니다)."
+        title="상태 알림이 아닌 Slack 발송 기록이 있는 인시던트 수입니다(기간 없음). 누르면 기간 '전체'의 인시던트 목록에서 경보 발송 인시던트만 봅니다."
       />
       <KpiCard
         to="/operations"
@@ -287,7 +287,7 @@ function CapturePanel({ rows, className = '' }: { rows: FeedbackSummaryRecord[];
           {rows.map((row) => (
             <li key={`${row.captureId}-${row.bundleId}`}>
               <Link
-                to={`/incidents?captureId=${encodeURIComponent(row.captureId ?? '')}`}
+                to={`/incidents?period=all&captureId=${encodeURIComponent(row.captureId ?? '')}`}
                 aria-label={`${captureText(row.captureId)} 인시던트 목록`}
                 className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto] items-center gap-3 rounded px-1 py-2 text-xs transition hover:bg-slate-800/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
               >

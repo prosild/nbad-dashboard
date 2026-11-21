@@ -11,6 +11,10 @@ import type {
   IncidentDetailApiResponse,
   IncidentQueueResponse,
   OperationsApiResponse,
+  QueueNeighborsResponse,
+  QueueNewCountResponse,
+  TimeContextResponse,
+  UnifiedQueueResponse,
   ReviewsApiResponse,
   TotpSetupResponse,
   TotpVerifyResponse,
@@ -82,6 +86,15 @@ export const incidentsApi = {
         wouldSend: filters.wouldSend,
       })}`,
     ),
+  /** T23 통합 큐. params는 utils/triage.ts queueApiParams가 만든 값(빈 값은 빠진다). */
+  queue: (params: Record<string, string | undefined>) =>
+    apiRequest<UnifiedQueueResponse>(`/api/incidents/queue${buildQuery(params)}`),
+  newCount: (params: Record<string, string | undefined>, since: string) =>
+    apiRequest<QueueNewCountResponse>(`/api/incidents/queue/new-count${buildQuery({ ...params, since })}`),
+  neighbors: (jobId: number | string, queueRank: number | string, params: Record<string, string | undefined>) =>
+    apiRequest<QueueNeighborsResponse>(
+      `/api/incidents/queue/neighbors${buildQuery({ jobId: String(jobId), queueRank: String(queueRank), ...params })}`,
+    ),
   detail: (jobId: number | string, queueRank: number | string) =>
     apiRequest<IncidentDetailApiResponse>(`/api/incidents/${jobId}/rank/${queueRank}`),
   transition: (
@@ -102,6 +115,12 @@ export const incidentsApi = {
       method: 'POST',
       body,
     }),
+};
+
+export const timeApi = {
+  /** T23: 기준 시각(그 사용자 허용 캡처 기준)과 고정 스냅샷 여부 */
+  // 실패해도 로그인·TOTP 화면으로 보내지 않는다(띠만 보이지 않는다).
+  context: () => apiRequest<TimeContextResponse>('/api/time-context', { skipAuthRedirect: true }),
 };
 
 export const reviewsApi = {

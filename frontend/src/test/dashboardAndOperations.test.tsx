@@ -68,13 +68,25 @@ const reviewsResponse = {
   ],
 };
 
+/** T23 통합 큐 빈 응답 */
 const emptyQueue = {
+  items: [],
+  total: 0,
+  page: 1,
+  size: 50,
+  pageCount: 1,
+  summary: { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {} },
+  anchor: '2026-11-21T00:00:00Z',
+  anchorMode: 'now',
+  snapshot: false,
+  period: 'all',
+  latestDetectedAt: null,
+  newestOutsidePeriod: null,
+  sources: [
+    { captureId: 'cic17-wed', sourceType: 'imported', latestJobId: 1 },
+    { captureId: 'syn1-thu', sourceType: 'imported', latestJobId: 2 },
+  ],
   maskedView: false,
-  allowedCaptures: ['cic17-wed', 'syn1-thu'],
-  selectedCaptureId: 'cic17-wed',
-  selectedJob: null,
-  captureJobs: [],
-  incidents: [],
   availableModels: [],
   availableRoles: [],
 };
@@ -94,6 +106,7 @@ function renderAt(
     if (url === '/api/auth/me') return json({ authenticated: true, user: analystUser });
     if (url.startsWith('/api/operations')) return options.operations ? options.operations() : json(operationsResponse);
     if (url.startsWith('/api/reviews')) return options.reviews ? options.reviews() : json(reviewsResponse);
+    if (url === '/api/time-context') return json({ anchor: '2026-11-21T00:00:00Z', anchorMode: 'now', snapshot: false });
     if (url.startsWith('/api/incidents')) return json(emptyQueue);
     return json({}, 404);
   });
@@ -111,8 +124,9 @@ function renderAt(
   return { ...utils, fetchMock };
 }
 
+/** 화면이 부른 API(로그인 확인과 T23 기준 시각은 화면마다가 아니라 로그인한 사용자마다 한 번 부르므로 뺀다) */
 const apiCalls = (fetchMock: ReturnType<typeof vi.fn>) =>
-  fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u !== '/api/auth/me');
+  fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u !== '/api/auth/me' && u !== '/api/time-context');
 
 describe('라우팅과 사이드바(T20)', () => {
   it("'/'는 현황판이고 사이드바의 현황판만 활성이다", async () => {
@@ -186,14 +200,37 @@ describe('관제 현황판', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/reviews?pendingOnly=true');
   });
 
-  it('KPI 경보 발송은 경보 발송 필터, 캡처 행은 그 캡처의 인시던트 목록', async () => {
+  it('KPI 경보 발송은 경보 발송 필터, 캡처 행은 그 캡처의 인시던트 목록. 목록 링크는 모두 기간 전체(T23: KPI는 기간 없는 수)', async () => {
     const user = userEvent.setup();
     const first = renderAt('/');
     const kpi = await screen.findByRole('region', { name: '핵심 지표' });
-    expect(within(kpi).getByRole('link', { name: /전체 인시던트/ })).toHaveAttribute('href', '/incidents');
+    const total = within(kpi).getByRole('link', { name: /전체 인시던트/ });
+    expect(total).toHaveAttribute('href', '/incidents?period=all');
+    expect(total.getAttribute('title')).not.toContain('캡처 하나씩');
+    expect(within(kpi).getByRole('link', { name: /경보 발송/ }).getAttribute('title')).not.toContain('캡처 하나씩');
     await user.click(within(kpi).getByRole('link', { name: /경보 발송/ }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?alerted=true');
+    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&alerted=true');
     first.unmount();
+
+    // 현황판·운영 현황의 /incidents 링크는 모두 period=all을 붙인다(KPI 수와 목록 수가 어긋나지 않게)
+    const again = renderAt('/');
+    await screen.findByRole('region', { name: '캡처별 현황' });
+    await waitFor(() => expect(again.container.querySelectorAll('a[href^="/incidents"]').length).toBeGreaterThan(2));
+    const hrefs = [...again.container.querySelectorAll('a[href^="/incidents"]')].map((a) => a.getAttribute('href') ?? '');
+    for (const href of hrefs) {
+      if (href === '/incidents') continue; // 사이드바 메뉴(기본 큐)
+      expect(new URLSearchParams(href.split('?')[1] ?? '').get('period'), href).toBe('all');
+    }
+    again.unmount();
+
+    const ops = renderAt('/operations');
+    await screen.findByRole('heading', { name: '운영 현황' });
+    for (const a of ops.container.querySelectorAll('a[href^="/incidents"]')) {
+      const href = a.getAttribute('href') ?? '';
+      if (href === '/incidents') continue;
+      expect(new URLSearchParams(href.split('?')[1] ?? '').get('period'), href).toBe('all');
+    }
+    ops.unmount();
 
     renderAt('/');
     const captures = await screen.findByRole('region', { name: '캡처별 현황' });
@@ -201,7 +238,7 @@ describe('관제 현황판', () => {
     // 캡처는 표시 이름, 원래 ID는 툴팁
     expect(within(link).getByText('CIC 목요일 + 합성 APT')).toHaveAttribute('title', expect.stringContaining('캡처 ID: syn1-thu'));
     await user.click(link);
-    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?captureId=syn1-thu');
+    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&captureId=syn1-thu');
   });
 
   it('파이프라인·경보 패널: 캡처마다 최근 작업, 최근 일일 요약과 Dry-run', async () => {

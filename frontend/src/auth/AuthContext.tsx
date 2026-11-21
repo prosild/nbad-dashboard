@@ -9,8 +9,8 @@ import {
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { registerApiCallbacks } from '../api/client';
-import { authApi } from '../api/endpoints';
-import type { AuthUserDto } from '../types/api';
+import { authApi, timeApi } from '../api/endpoints';
+import type { AuthUserDto, TimeContextResponse } from '../types/api';
 
 interface AuthContextValue {
   user: AuthUserDto | null;
@@ -20,6 +20,8 @@ interface AuthContextValue {
   refreshMe: () => Promise<AuthUserDto | null>;
   setAuthenticatedUser: (user: AuthUserDto | null) => void;
   logout: () => Promise<void>;
+  /** T23: 기준 시각·고정 스냅샷(로그인한 사용자 허용 캡처 기준). 불러오기 전·실패면 null */
+  timeContext: TimeContextResponse | null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,7 +30,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUserDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [timeContext, setTimeContext] = useState<TimeContextResponse | null>(null);
   const navigate = useNavigate();
+
+  // 로그인한 사용자가 바뀔 때만 한 번 묻는다(화면을 옮길 때마다 부르지 않는다). 실패하면 띠를 보이지 않는다.
+  const username = user?.username ?? null;
+  const totpPending = Boolean(user && user.totpRequired && !user.totpVerified);
+  useEffect(() => {
+    setTimeContext(null);
+    if (!username || totpPending) return undefined;
+    let cancelled = false;
+    timeApi
+      .context()
+      .then((res) => {
+        if (!cancelled) setTimeContext(res);
+      })
+      .catch(() => {
+        if (!cancelled) setTimeContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [username, totpPending]);
 
   const refreshMe = useCallback(async () => {
     try {
@@ -93,8 +116,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshMe,
       setAuthenticatedUser,
       logout,
+      timeContext,
     }),
-    [user, loading, sessionExpired, clearSessionExpired, refreshMe, setAuthenticatedUser, logout],
+    [user, loading, sessionExpired, clearSessionExpired, refreshMe, setAuthenticatedUser, logout, timeContext],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
