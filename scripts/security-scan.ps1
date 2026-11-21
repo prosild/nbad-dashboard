@@ -785,16 +785,17 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $failIp = if ($failRow) { $failRow.ClientIp } else { "" }
                 $e2eLogs.Add("[9c] viewer1 wrong password with combined headers -> HTTP $($ip9Fail.Status); audit: $(Format-Ip9Rows $ip9Fail.Rows)")
 
-                # 9d 비인증 리다이렉트 Location(호스트·경로 위조 단독)
-                $redirBase = Invoke-Http -Url "$baseHttps/incidents"
+                # 9d 비인증 리다이렉트 Location(호스트·경로 위조 단독). T27부터 화면 경로(/incidents)는 302 대신 셸 200이라
+                #    아직 302 /login으로 가는 화면 경로 아닌 곳(/nope)으로 같은 위조를 본다.
+                $redirBase = Invoke-Http -Url "$baseHttps/nope"
                 $redirBaseLoc = Get-HeaderValue $redirBase "Location"
-                $e2eLogs.Add("[9d] unauthenticated GET /incidents (no forwarding headers) -> HTTP $($redirBase.Status) Location=$redirBaseLoc")
+                $e2eLogs.Add("[9d] unauthenticated GET /nope (no forwarding headers) -> HTTP $($redirBase.Status) Location=$redirBaseLoc")
                 $redirResults = [System.Collections.Generic.List[object]]::new()
                 foreach ($h in @("X-Forwarded-Host: evil.example", "Forwarded: host=evil.example;proto=http", "X-Forwarded-Prefix: /evil")) {
-                    $rr = Invoke-Http -Url "$baseHttps/incidents" -ExtraHeaders @($h)
+                    $rr = Invoke-Http -Url "$baseHttps/nope" -ExtraHeaders @($h)
                     $rrLoc = Get-HeaderValue $rr "Location"
                     $redirResults.Add([pscustomobject]@{ Header = $h; Status = $rr.Status; Location = $rrLoc })
-                    $e2eLogs.Add("[9d] unauthenticated GET /incidents with '$h' -> HTTP $($rr.Status) Location=$rrLoc")
+                    $e2eLogs.Add("[9d] unauthenticated GET /nope with '$h' -> HTTP $($rr.Status) Location=$rrLoc")
                 }
 
                 # 9e 조합 헤더를 붙인 WAF 차단 요청의 ModSecurity 기록 IP
@@ -814,7 +815,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     Assert-True ($res9.Status -eq 200 -and $res9.Ip -eq $ipB) "[$($res9.Label)] 로그인 200이고 감사 로그 client_ip=B (실제 HTTP $($res9.Status), client_ip=$($res9.Ip), B=$ipB)"
                 }
                 Assert-True ($ip9Fail.Status -eq 401 -and $failIp -eq $ipB) "[9c] 위조 헤더 실패 로그인 401이고 LOGIN_FAILURE client_ip=B (실제 HTTP $($ip9Fail.Status), client_ip=$failIp)"
-                Assert-Status $redirBase 302 "[9d] 비인증 GET /incidents"
+                Assert-Status $redirBase 302 "[9d] 비인증 GET /nope"
                 foreach ($rr in $redirResults) {
                     Assert-True ($rr.Status -eq 302 -and $rr.Location -eq $redirBaseLoc -and $rr.Location -notmatch 'evil') "[9d] '$($rr.Header)' Location이 헤더 없는 Location과 같고 evil 없음 (실제 $($rr.Status) $($rr.Location))"
                 }

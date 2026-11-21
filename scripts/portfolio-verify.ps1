@@ -400,14 +400,18 @@ try {
     Assert-True ([bool](Get-HeaderValue $loginGet "Referrer-Policy")) "Referrer-Policy" $loginGet
     Assert-True ($loginGet.Headers -notmatch "(?im)^Server:\s*nginx") "Server: nginx 헤더 비노출" $loginGet
     $locationOk = "^(/login|https://$([regex]::Escape($PublicHost))(:443)?/login)$"
-    $rootRes = Invoke-Http -Path "/"
+    # T27(설계자 답 1): 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store). 리다이렉트 Location 위조 확인은 화면 경로가 아닌 /nope로 한다.
+    $rootShell = Invoke-Http -Path "/"
+    $e2eLogs.Add("[1b] unauthenticated GET / -> HTTP $($rootShell.Status) Cache-Control=$(Get-HeaderValue $rootShell 'Cache-Control') shell=$(Test-SpaShell $rootShell)")
+    Assert-True ($rootShell.Status -eq 200 -and (Test-SpaShell $rootShell) -and (Get-HeaderValue $rootShell "Cache-Control") -match "no-store") "비인증 GET / 셸 200(no-store)" $rootShell
+    $rootRes = Invoke-Http -Path "/nope"
     $rootLoc = Get-HeaderValue $rootRes "Location"
-    $e2eLogs.Add("[1b] unauthenticated GET / -> HTTP $($rootRes.Status) Location=$rootLoc")
-    Assert-Status $rootRes 302 "비인증 GET /"
-    Assert-True ($rootLoc -match $locationOk) "비인증 GET / Location이 상대 경로이거나 https://$PublicHost/login(포트 없음 또는 :443)" $rootRes
-    $spoofRes = Invoke-Http -Path "/" -ExtraHeaders @("X-Forwarded-Host: evil.example", "X-Forwarded-Port: 8080", "Forwarded: for=192.0.2.66;host=evil.example;proto=http", "X-Forwarded-Prefix: /evil", "X-Forwarded-Ssl: off")
+    $e2eLogs.Add("[1b] unauthenticated GET /nope -> HTTP $($rootRes.Status) Location=$rootLoc")
+    Assert-Status $rootRes 302 "비인증 GET /nope"
+    Assert-True ($rootLoc -match $locationOk) "비인증 GET /nope Location이 상대 경로이거나 https://$PublicHost/login(포트 없음 또는 :443)" $rootRes
+    $spoofRes = Invoke-Http -Path "/nope" -ExtraHeaders @("X-Forwarded-Host: evil.example", "X-Forwarded-Port: 8080", "Forwarded: for=192.0.2.66;host=evil.example;proto=http", "X-Forwarded-Prefix: /evil", "X-Forwarded-Ssl: off")
     $spoofLoc = Get-HeaderValue $spoofRes "Location"
-    $e2eLogs.Add("[1c] (위조 전달 헤더 X-Forwarded-Host/Port, Forwarded, X-Forwarded-Prefix/Ssl를 붙인) GET / -> HTTP $($spoofRes.Status) Location=$spoofLoc")
+    $e2eLogs.Add("[1c] (위조 전달 헤더 X-Forwarded-Host/Port, Forwarded, X-Forwarded-Prefix/Ssl를 붙인) GET /nope -> HTTP $($spoofRes.Status) Location=$spoofLoc")
     Assert-True ($spoofRes.Status -eq 302 -and $spoofLoc -match $locationOk) "방문자가 붙인 전달 헤더가 Location에 반영되지 않음" $spoofRes
     # T21: 로그인 화면 안내 문구(compose.portfolio.yml DASHBOARD_LOGIN_NOTICE). 로그인 전 공개 GET이고, 문구만 있고 비밀번호가 없어야 한다.
     $noticeRes = Invoke-Http -Path "/api/auth/login-notice"
