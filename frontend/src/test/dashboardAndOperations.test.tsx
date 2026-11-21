@@ -548,6 +548,24 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     expect(within(rows[1]).getByText('가져온 데이터')).toBeInTheDocument();
   });
 
+  it('수집원 상태: 오늘 캡처가 실패하면(state=failed) 지난 날짜에 접지 않고 실패 표시와 함께 펼쳐 둔다(review-2 M1)', async () => {
+    const sensors = [{ ...SENSOR, health: 'failed' as const, latestJob: jobRef(61, 'lab-20261120', 'failed', 3, '수집 중단') }];
+    const captures = CAPTURES.map((c) => (c.captureId === 'lab-20261120' ? { ...c, state: 'failed' as const } : c));
+    renderAt('/', { overview: (url) => json(fakeOverview(url, { sensors, captures })) });
+    const panel = await screen.findByRole('region', { name: '수집원 상태' });
+    const sensor = await within(panel).findByRole('link', { name: '실습망 센서 인시던트 목록' });
+    const li = sensor.closest('li') as HTMLElement;
+    const ended = li.querySelector('details[data-ended-captures]') as HTMLElement;
+    expect(within(ended).getByText('지난 날짜 1개')).toBeInTheDocument();
+    expect(within(ended).queryByText('실습 11-20')).toBeNull();
+    const chip = li.querySelector('a[data-capture-chip="failed"]') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.closest('details')).toBeNull();
+    expect(chip).toHaveTextContent('실습 11-20');
+    expect(chip).toHaveTextContent('실패');
+    expect(chip).toHaveAttribute('href', '/incidents?period=24h&captureId=lab-20261120');
+  });
+
   it('수집원 상태 배지 문구 여섯 가지(정상·지연·중단·실패·기록 없음·가져온 데이터)와 뜻 툴팁', async () => {
     const healths = ['ok', 'stale', 'down', 'failed', 'none'] as const;
     const sensors = healths.map((h, i) => ({ ...SENSOR, sensorKey: `s${i}-*`, label: `센서 s${i}-*`, health: h }));

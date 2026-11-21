@@ -197,8 +197,10 @@ function SensorItem({
   shortNames: Map<string, string>;
   period: string;
 }) {
-  const active = captures.filter((c) => c.state === 'active');
-  const others = captures.filter((c) => c.state !== 'active');
+  // "지난 날짜"로 접는 것은 ended뿐이다. 수집 중(active)과 실패(failed)·기록 없음(none) 캡처는 펼쳐 둔다
+  // (오늘 캡처가 실패하면 서버 상태는 failed라 active로만 고르면 지난 날짜에 묻혔다, T24 review-2 M1).
+  const active = captures.filter((c) => c.state !== 'ended');
+  const others = captures.filter((c) => c.state === 'ended');
   return (
     <li className="soc-panel p-2.5 text-xs" data-sensor={sensor.sensorKey}>
       <Link
@@ -252,13 +254,22 @@ function SensorItem({
 
 function CaptureChip({ row, shortNames, period }: { row: CaptureRow; shortNames: Map<string, string>; period: string }) {
   const info = captureInfo(row.captureId);
+  const flagged = row.state === 'failed' || row.state === 'none';
   return (
     <Link
       to={`/incidents?period=${period}&captureId=${encodeURIComponent(row.captureId)}`}
       title={`${info.text} · 캡처 ID: ${row.captureId}\n${CAPTURE_STATE_TOOLTIP[row.state]}`}
-      className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-0.5 text-slate-200 hover:border-slate-500"
+      data-capture-chip={row.state}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-slate-200 ${
+        row.state === 'failed' ? 'border-amber-500/60 hover:border-amber-400' : 'border-slate-700 hover:border-slate-500'
+      }`}
     >
       <span aria-hidden="true">{shortNameOf(shortNames, row.captureId)}</span>
+      {flagged && (
+        <span className={row.state === 'failed' ? 'text-amber-200' : 'text-slate-400'} aria-hidden="true">
+          {CAPTURE_STATE_LABEL[row.state]}
+        </span>
+      )}
       <span className="sr-only">{`${info.text} · 캡처 ID: ${row.captureId} · ${CAPTURE_STATE_LABEL[row.state]}`}</span>
       <span className="tabular-nums text-slate-400" aria-hidden="true">
         {formatNumber(row.total)}
