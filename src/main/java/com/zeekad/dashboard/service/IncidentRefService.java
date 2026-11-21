@@ -5,9 +5,12 @@ import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.model.IncidentRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -25,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -38,6 +42,9 @@ import java.util.concurrent.locks.ReentrantLock;
  *       예약 작업은 없다.</li>
  *   <li>실패: 전체 동기화가 실패하면 30초 동안 다시 시도하지 않는다. 읽기 API는 실패하지 않고 그 행의 번호만 null이다.</li>
  *   <li>동시성: 한 JVM 안에서는 동기화(전체·행만)가 한 번에 하나만 돈다. 같은 incident_id 충돌은 ON CONFLICT DO NOTHING.</li>
+ *   <li>한 묶음은 한 행씩 정한 순서로 넣되 트랜잭션 하나로 커밋한다(NAS처럼 커밋마다 WAL fsync가 느린 곳에서 행마다 커밋하면
+ *       2,192행에 약 12분 걸렸다, T27 NAS 1회차). 읽기는 돌고 있는 동기화를 최대 {@link #READ_WAIT}만 기다리고,
+ *       넘으면 그 행의 번호를 null로 두고 응답한다(읽기 API가 동기화 때문에 느려지거나 실패하지 않게).</li>
  * </ul>
  * zeekad DB에는 쓰지 않는다(zeekad 값을 읽어 대시보드 DB에만 쓴다).
  */
@@ -50,6 +57,8 @@ public class IncidentRefService {
     public static final Duration FAILURE_BACKOFF = Duration.ofSeconds(30);
     /** 번호 조회 바인드 한 번의 최대 incident_id 수 */
     static final int READ_CHUNK = 1000;
+    /** 읽기 중 번호 없는 행을 만났을 때 돌고 있는 동기화를 기다리는 최대 시간 */
+    public static final Duration READ_WAIT = Duration.ofSeconds(5);
 
     /** 매기는 순서: 탐지 시각 오름차순(NULL 마지막) → capture_id → incident_id */
     static final Comparator<IncidentRef> ORDER = Comparator
@@ -60,6 +69,7 @@ public class IncidentRefService {
     private final IncidentRefMapper refMapper;
     private final ZeekadReadMapper zeekadReadMapper;
     private final Clock clock;
+    private final TransactionTemplate tx;
 
     private final ReentrantLock lock = new ReentrantLock();
     /** 실패한 전체 동기화 뒤 이 시각 전까지는 동기화(전체·행만)를 하지 않는다 */
@@ -71,7 +81,9 @@ public class IncidentRefService {
     /** 마지막 전체 동기화가 성공했는지 */
     private volatile boolean lastSyncSucceeded;
 
-    public IncidentRefService(IncidentRefMapper refMapper, ZeekadReadMapper zeekadReadMapper, Clock clock) {
+    public IncidentRefService(IncidentRefMapper refMapper, ZeekadReadMapper zeekadReadMapper, Clock clock,
+                              @Qualifier("appTransactionManager") PlatformTransactionManager appTransactionManager) {
+        this.tx = new TransactionTemplate(appTransactionManager);
         this.refMapper = refMapper;
         this.zeekadReadMapper = zeekadReadMapper;
         this.clock = clock;
@@ -137,7 +149,15 @@ public class IncidentRefService {
         }
 
         long seen = completedSyncs;
-        lock.lock();
+        try {
+            if (!lock.tryLock(READ_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                // 동기화가 오래 돈다: 이번 응답은 번호 없이(null) 보낸다
+                return found;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return found;
+        }
         try {
             // 기다리는 동안 다른 동기화가 매겼을 수 있다
             Map<String, Long> again = readNumbers(missing);
@@ -239,11 +259,15 @@ public class IncidentRefService {
         List<IncidentRef> sorted = new ArrayList<>(rows);
         sorted.sort(ORDER);
         OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
-        int inserted = 0;
-        for (IncidentRef r : sorted) {
-            inserted += refMapper.insertIfAbsent(r.getIncidentId(), r.getCaptureId(), r.getDetectedAt(), now);
-        }
-        return inserted;
+        // 한 행씩 이 순서로 넣고(번호 = 순서) 커밋은 한 번만 한다
+        Integer inserted = tx.execute(status -> {
+            int n = 0;
+            for (IncidentRef r : sorted) {
+                n += refMapper.insertIfAbsent(r.getIncidentId(), r.getCaptureId(), r.getDetectedAt(), now);
+            }
+            return n;
+        });
+        return inserted == null ? 0 : inserted;
     }
 
     private Map<String, Long> readNumbers(Collection<String> incidentIds) {

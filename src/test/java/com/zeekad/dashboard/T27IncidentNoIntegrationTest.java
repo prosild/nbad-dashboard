@@ -313,6 +313,55 @@ class T27IncidentNoIntegrationTest {
         assertThat(q3.get("items").get(0).get("incidentNo").isNumber()).isTrue();
     }
 
+    @Test
+    void batchIsOneTransactionSoAFailureMidwayInsertsNothing() {
+        job(97090, CAP_A, "2026-11-20T10:00:00Z");
+        for (int i = 1; i <= 4; i++) {
+            incident(97090, CAP_A, i, "10.77.9." + i);
+        }
+        // 실제 삽입은 같은 트랜잭션의 JdbcTemplate로 하고(스파이 프록시는 실제 메서드를 부를 수 없다), 셋째 행에서 실패시킨다
+        int[] calls = {0};
+        Mockito.doAnswer(inv -> {
+            if (++calls[0] == 3) {
+                throw new org.springframework.dao.DataAccessResourceFailureException("mid-batch");
+            }
+            return app().update("INSERT INTO incident_refs (incident_id, capture_id, detected_at, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                    (String) inv.getArgument(0), (String) inv.getArgument(1), inv.getArgument(2), inv.getArgument(3));
+        }).when(refMapper).insertIfAbsent(anyString(), anyString(), any(), any());
+        assertThat(refService.syncAll().succeeded()).isFalse();
+        for (int i = 1; i <= 4; i++) {
+            assertThat(count(id(CAP_A, "10.77.9." + i))).as("rank " + i).isZero();
+        }
+        // 다음 동기화(제한과 상관없는 syncAll)는 네 행 모두 순서대로 넣는다
+        Mockito.reset(refMapper);
+        assertThat(refService.syncAll().succeeded()).isTrue();
+        assertThat(no(id(CAP_A, "10.77.9.1"))).isLessThan(no(id(CAP_A, "10.77.9.4")));
+    }
+
+    @Test
+    void readsDoNotWaitLongerThanReadWaitForASlowSync() throws Exception {
+        job(97095, CAP_A, "2026-11-20T10:00:00Z");
+        for (int i = 1; i <= 20; i++) {
+            incident(97095, CAP_A, i, "10.77.95." + i);
+        }
+        // 느린 동기화: 한 행에 0.5초(20행 = 10초)
+        Mockito.doAnswer(inv -> {
+            Thread.sleep(500);
+            return 0;
+        }).when(refMapper).insertIfAbsent(anyString(), anyString(), any(), any());
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        Future<?> sync = pool.submit(() -> refService.syncAll());
+        Thread.sleep(300);
+        MockHttpSession s = login(UserRole.ANALYST, CAP_A);
+        long t0 = System.nanoTime();
+        JsonNode q = getJson(s, "/api/incidents/queue?period=all&size=100&captureId=" + CAP_A);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        assertThat(ms).isLessThan(IncidentRefService.READ_WAIT.toMillis() + 3000);
+        assertThat(q.get("items").get(0).get("incidentNo").isNull()).isTrue();
+        sync.get();
+        pool.shutdown();
+    }
+
     /* ───────────── 번호 API ───────────── */
 
     @Test
