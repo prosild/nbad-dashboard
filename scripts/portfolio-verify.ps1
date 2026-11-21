@@ -1000,9 +1000,189 @@ try {
     Assert-ApiError $oldLogin 401 "INVALID_CREDENTIALS" "이전 demo 비밀번호 거부"
     Assert-ApiError $v1Login 403 "ACCOUNT_DISABLED" "재시드 뒤 viewer1 비활성"
 
+    Write-Host "=== [T25] 담당·착수 지연·처리 시간(V2 적용·독립 SQL·모든 인시던트 담당 성능·T24 이미지 되돌리기) ==="
+    $t25 = New-Client "198.51.100.95"
+    Assert-Status (Login-Api $t25 "demo" $env:DEMO_PASSWORD) 200 "[T25] demo 로그인"
+    $t25Bodies = [System.Collections.Generic.List[string]]::new()
+    $t25IpHits = [System.Collections.Generic.List[string]]::new()
+
+    # [T25a] 앱 DB에 Flyway V2(담당 표 둘)가 적용됐다
+    $fwRows = (Invoke-Psql "zeekad_dashboard" "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank").Output.Trim()
+    $t25Tables = (Invoke-Psql "zeekad_dashboard" "SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables WHERE table_name IN ('incident_assignments', 'incident_assignment_history')").Output.Trim()
+    $e2eLogs.Add("[T25a] flyway_schema_history (version|description|success):`n       $($fwRows -replace "`r?`n", "`n       ")`n       tables=$t25Tables")
+    Assert-True ($fwRows -match '(?m)^2\|incident assignments\|t$' -and $t25Tables -eq 'incident_assignment_history,incident_assignments') "[T25a] 앱 DB에 V2 적용"
+
+    # [T25b] handlingTimes(period=all·7d) = 독립 SQL(percentile_disc), workload.ackOverdue = 큐 overdue=true total = summary.overdue = 독립 SQL
+    #        (고정 스냅샷이라 정확히 같아야 한다). 구현 SQL을 복사하지 않고 정의(인계 3절)대로 다시 쓴다.
+    function Get-T25HandlingSql([string]$Period) {
+        $range = if ($Period -eq 'all') { { param($x) "TRUE" } } else { { param($x) "($x > $anchorExpr - interval '7 days' AND $x <= $anchorExpr)" } }
+        return @"
+WITH lq AS (SELECT * FROM dashboard.latest_incident_queue WHERE capture_id = ANY($publicArr)),
+fs AS (SELECT q.incident_id, MIN(j.finished_at) AS det FROM dashboard.incident_queue q
+       JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL
+       WHERE q.capture_id = ANY($publicArr) GROUP BY q.incident_id),
+h AS (SELECT incident_id, MIN(changed_at) AS ack FROM dashboard.incident_status_history WHERE LOWER(TRIM(to_status)) = 'investigating' GROUP BY incident_id),
+b AS (SELECT lq.incident_id, lq.capture_id LIKE 'lab-%' AS live, lq.event_start, fs.det, h.ack,
+             CASE WHEN LOWER(TRIM(COALESCE(lq.zeekad_status, ''))) = 'closed' THEN lq.status_updated_at END AS closed_at,
+             COALESCE(NULLIF(LOWER(TRIM(lq.zeekad_resolution)), ''), 'none') AS res
+      FROM lq LEFT JOIN fs ON fs.incident_id = lq.incident_id LEFT JOIN h ON h.incident_id = lq.incident_id),
+v AS (SELECT 'detection' AS m, FLOOR(EXTRACT(EPOCH FROM (det - event_start)))::bigint AS s FROM b WHERE live AND det IS NOT NULL AND $(& $range 'det')
+      UNION ALL SELECT 'acknowledge', FLOOR(EXTRACT(EPOCH FROM (ack - det)))::bigint FROM b WHERE ack IS NOT NULL AND $(& $range 'ack')
+      UNION ALL SELECT 'acknowledge', NULL FROM b WHERE closed_at IS NOT NULL AND ack IS NULL AND $(& $range 'closed_at')
+      UNION ALL SELECT 'resolve', FLOOR(EXTRACT(EPOCH FROM (closed_at - det)))::bigint FROM b WHERE closed_at IS NOT NULL AND $(& $range 'closed_at')
+      UNION ALL SELECT 'resolve:' || res, FLOOR(EXTRACT(EPOCH FROM (closed_at - det)))::bigint FROM b WHERE closed_at IS NOT NULL AND $(& $range 'closed_at'))
+SELECT m, COUNT(*) FILTER (WHERE s >= 0),
+       COALESCE((percentile_disc(0.5) WITHIN GROUP (ORDER BY s) FILTER (WHERE s >= 0))::text, ''),
+       COALESCE((percentile_disc(0.9) WITHIN GROUP (ORDER BY s) FILTER (WHERE s >= 0))::text, ''),
+       COUNT(*) FILTER (WHERE s IS NULL OR s < 0)
+FROM v GROUP BY m ORDER BY m
+"@
+    }
+    $t25Fail = [System.Collections.Generic.List[string]]::new()
+    foreach ($period in @('all', '7d')) {
+        $ops = Invoke-Http -Path "/api/operations?period=$period" -Client $t25
+        Assert-Status $ops 200 "[T25b] demo operations period=$period"
+        $t25Bodies.Add($ops.Body)
+        Find-UnmaskedIpv4 $ops.Json "operations[$period]" $t25IpHits
+        $sql = @{}
+        foreach ($l in @((Invoke-Psql "zeekad" (Get-T25HandlingSql $period)).Output.Trim() -split "`r?`n" | Where-Object { $_ })) { $p = $l -split '\|'; $sql[$p[0]] = $p }
+        $api = @{ detection = $ops.Json.handlingTimes.detection; acknowledge = $ops.Json.handlingTimes.acknowledge; resolve = $ops.Json.handlingTimes.resolve.all }
+        foreach ($r in @($ops.Json.handlingTimes.resolve.byResolution)) { $api["resolve:$($r.resolution)"] = $r.stat }
+        $lines = [System.Collections.Generic.List[string]]::new()
+        foreach ($k in @(@($api.Keys) + @($sql.Keys) | Sort-Object -Unique)) {
+            $a = $api[$k]
+            $aText = if ($a) { "n=$($a.n) median=$($a.medianSeconds) p90=$($a.p90Seconds) excluded=$($a.excluded)" } else { "(없음)" }
+            $s = $sql[$k]
+            $sText = if ($s) { "n=$($s[1]) median=$($s[2]) p90=$($s[3]) excluded=$($s[4])" } else { "n=0 median= p90= excluded=0" }
+            $lines.Add("$k api[$aText] sql[$sText]")
+            if ($aText -ne $sText) { $t25Fail.Add("period=$period $k") }
+        }
+        $e2eLogs.Add("[T25b] demo handlingTimes period=$period vs 독립 SQL (percentile_disc):`n       $($lines -join "`n       ")")
+    }
+    $overdueSql = @"
+WITH lq AS (SELECT * FROM dashboard.latest_incident_queue WHERE capture_id = ANY($publicArr)),
+fs AS (SELECT q.incident_id, MIN(j.finished_at) AS det FROM dashboard.incident_queue q
+       JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL
+       WHERE q.capture_id = ANY($publicArr) GROUP BY q.incident_id),
+p AS (SELECT lq.capture_id, fs.det,
+             (TRIM(COALESCE(lq.zeekad_status, '')) = '' OR LOWER(TRIM(lq.zeekad_status)) = 'open') AS is_open,
+             CASE WHEN COALESCE(lq.zeekad_would_send, FALSE) OR COALESCE(lq.zeekad_review_pending, FALSE) THEN interval '30 minutes'
+                  WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) >= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN interval '4 hours'
+                  ELSE interval '24 hours' END AS target
+      FROM lq LEFT JOIN fs ON fs.incident_id = lq.incident_id)
+SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT NULL AND det + target < $anchorExpr
+"@
+    $sqlOverdue = [int](Invoke-Psql "zeekad" $overdueSql).Output.Trim()
+    $odQ = Invoke-Http -Path "/api/incidents/queue?period=all&overdue=true&size=25" -Client $t25
+    $allQ = Invoke-Http -Path "/api/incidents/queue?period=all&size=25" -Client $t25
+    $w7 = (Invoke-Http -Path "/api/operations?period=7d" -Client $t25).Json.workload
+    $wSum = 0; foreach ($l in @($w7.byAssignee)) { $wSum += [int]$l.open + [int]$l.investigating }
+    $t25Bodies.Add($odQ.Body)
+    Find-UnmaskedIpv4 $odQ.Json "queue[overdue]" $t25IpHits
+    $e2eLogs.Add("[T25b] ackOverdue: independent SQL=$sqlOverdue; queue overdue=true total=$($odQ.Json.total); queue(period=all).summary.overdue=$($allQ.Json.summary.overdue); workload=$($w7 | ConvertTo-Json -Compress -Depth 4)")
+    if (-not ($sqlOverdue -eq [int]$odQ.Json.total -and $sqlOverdue -eq [int]$allQ.Json.summary.overdue -and $sqlOverdue -eq [int]$w7.ackOverdue)) { $t25Fail.Add("ackOverdue sql=$sqlOverdue queue=$($odQ.Json.total) summary=$($allQ.Json.summary.overdue) workload=$($w7.ackOverdue)") }
+    if ([int]$w7.unclosed -ne [int]$w7.assigned + [int]$w7.unassigned -or [int]$w7.assigned -ne $wSum) { $t25Fail.Add("workload invariants") }
+    # 공개 데모에는 담당 기록이 없다(지어 넣지 않음): 큐 assignee 모두 null, byAssignee 비어 있음
+    if (@($allQ.Json.items | Where-Object { $null -ne $_.assignee }).Count -ne 0 -or @($w7.byAssignee).Count -ne 0) { $t25Fail.Add("seeded assignments visible before perf step") }
+    Assert-True ($t25Fail.Count -eq 0) "[T25b] handlingTimes·ackOverdue·summary.overdue = 독립 SQL, workload 불변식 (실패 $($t25Fail -join '; '))"
+
+    # [T25c] 성능: 리허설 앱 DB(일회용)에 SQL로 모든 인시던트(모든 캡처의 최신 큐)의 담당 행을 analyst1로 넣는다.
+    #        방법: postgres 컨테이너 안 스크립트가 zeekad에서 incident_id·capture_id를 CSV로 꺼내 임시 표로 \copy 한 뒤 INSERT ... ON CONFLICT DO NOTHING.
+    #        analyst1(리허설 비밀번호, 공개 시드는 비활성)을 SQL로 잠시 활성화해 assignee=me를 잰다. 데우기 1번 뒤 3번, 최댓값 1초 이하.
+    $pgC = Get-ServiceContainer "postgres"
+    $perfSh = "set -e`n" +
+        "psql -v ON_ERROR_STOP=1 -U postgres -d zeekad -At -c ""COPY (SELECT incident_id, capture_id FROM dashboard.latest_incident_queue) TO STDOUT WITH CSV"" > /tmp/t25-ids.csv`n" +
+        "psql -v ON_ERROR_STOP=1 -U postgres -d zeekad_dashboard -At -c ""CREATE TEMP TABLE t25src (incident_id varchar(255), capture_id varchar(128))"" " +
+        "-c ""\copy t25src FROM '/tmp/t25-ids.csv' WITH CSV"" " +
+        "-c ""INSERT INTO incident_assignments (incident_id, capture_id, assignee_user_id, assigned_at, assigned_by, version) SELECT s.incident_id, s.capture_id, u.id, now(), 't25-perf', 1 FROM t25src s CROSS JOIN users u WHERE u.username = 'analyst1' ON CONFLICT DO NOTHING"" " +
+        "-c ""SELECT count(*) FROM t25src"" -c ""SELECT count(*) FROM incident_assignments WHERE assignee_user_id IS NOT NULL""`n" +
+        "rm -f /tmp/t25-ids.csv`n"
+    $perfFile = Join-Path $tmpDir "t25-perf.sh"
+    [IO.File]::WriteAllText($perfFile, $perfSh, $utf8NoBom)
+    [void](Invoke-NativeCapture "docker" @("cp", $perfFile, "${pgC}:/tmp/t25-perf.sh"))
+    $perfRes = Invoke-NativeCapture "docker" @("exec", $pgC, "sh", "/tmp/t25-perf.sh")
+    [void](Invoke-Psql "zeekad_dashboard" "UPDATE users SET enabled = TRUE WHERE username = 'analyst1'")
+    $latestCount = (Invoke-Psql "zeekad" "SELECT count(*) FROM dashboard.latest_incident_queue").Output.Trim()
+    $a1 = New-Client "198.51.100.96"
+    Assert-Status (Login-Api $a1 "analyst1" $env:BOOTSTRAP_ANALYST1_PASSWORD) 200 "[T25c] analyst1 로그인(리허설에서만 SQL로 활성화)"
+    $e2eLogs.Add("[T25c] seeded assignments (t25src rows / assigned rows): $($perfRes.Output.Trim() -replace "`r?`n", ' / '); latest_incident_queue rows (all captures)=$latestCount; analyst1 enabled by SQL for this step")
+    $t25Timings = [ordered]@{}
+    $t25Slow = [System.Collections.Generic.List[string]]::new()
+    $firstPublic = @($allQ.Json.items)[0]
+    foreach ($t in @(@{ Name = 'demo queue all none'; Path = "/api/incidents/queue?period=all&assignee=none"; Client = $t25 },
+                     @{ Name = 'demo queue 24h none'; Path = "/api/incidents/queue?period=24h&assignee=none"; Client = $t25 },
+                     @{ Name = 'analyst1 queue all me'; Path = "/api/incidents/queue?period=all&assignee=me"; Client = $a1 },
+                     @{ Name = 'analyst1 queue 24h me'; Path = "/api/incidents/queue?period=24h&assignee=me"; Client = $a1 },
+                     @{ Name = 'demo queue all overdue'; Path = "/api/incidents/queue?period=all&overdue=true"; Client = $t25 },
+                     @{ Name = 'demo detail'; Path = "/api/incidents/$($firstPublic.jobId)/rank/$($firstPublic.queueRank)"; Client = $t25 },
+                     @{ Name = 'demo operations 7d'; Path = "/api/operations?period=7d"; Client = $t25 })) {
+        $warm = Invoke-Http -Path $t.Path -Client $t.Client
+        Assert-Status $warm 200 "[T25c] $($t.Name) (데우기)"
+        $samples = @()
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $t.Path -Client $t.Client
+            $sw.Stop()
+            Assert-Status $r 200 "[T25c] $($t.Name)"
+            $samples += [int]$sw.ElapsedMilliseconds
+            if ($t.Client -eq $t25) { $t25Bodies.Add($r.Body); Find-UnmaskedIpv4 $r.Json "$($t.Name)" $t25IpHits }
+        }
+        $max = ($samples | Measure-Object -Maximum).Maximum
+        $t25Timings[$t.Name] = "[$($samples -join ', ')] max=$max ms total=$($warm.Json.total)"
+        if ($max -gt 1000) { $t25Slow.Add($t.Name) }
+    }
+    $noneAll = Invoke-Http -Path "/api/incidents/queue?period=all&assignee=none&size=25" -Client $t25
+    $meAll = Invoke-Http -Path "/api/incidents/queue?period=all&assignee=me&size=25" -Client $a1
+    $a1All = Invoke-Http -Path "/api/incidents/queue?period=all&size=25" -Client $a1
+    $demoOpsAfter = Invoke-Http -Path "/api/operations?period=7d" -Client $t25
+    $t25Bodies.Add($demoOpsAfter.Body)
+    $e2eLogs.Add("[T25c] response times with every incident assigned (warm 1 + 3 samples, includes curl): $(($t25Timings.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; ')`n       demo none total=$($noneAll.Json.total) (all=$($allQ.Json.total)); analyst1 me total=$($meAll.Json.total) (analyst1 all=$($a1All.Json.total)); demo workload after=$($demoOpsAfter.Json.workload | ConvertTo-Json -Compress -Depth 4)")
+    Assert-True ([int]$noneAll.Json.total -eq 0 -and [int]$meAll.Json.total -eq [int]$a1All.Json.total) "[T25c] 모두 담당이면 demo 미배정 0, analyst1 내 담당 = 그 집합 전체"
+    Assert-True ([int]$demoOpsAfter.Json.workload.unassigned -eq 0 -and [int]$demoOpsAfter.Json.workload.assigned -eq [int]$demoOpsAfter.Json.workload.unclosed) "[T25c] demo 담당 현황(모두 배정, demo 집합 안에서만 셈)"
+    Assert-True ($t25Slow.Count -eq 0) "[T25c] 응답 시간 최댓값 1초 이하 (넘은 것: $($t25Slow -join ', '))"
+    [void](Invoke-Psql "zeekad_dashboard" "UPDATE users SET enabled = FALSE WHERE username = 'analyst1'")
+
+    # [T25d] 숨김 캡처 흔적 0, VIEWER 가려지지 않은 IPv4 0(담당 행에는 숨김 캡처 인시던트도 있다)
+    $t25Leaks = @()
+    foreach ($body in $t25Bodies) { foreach ($hc in $demoHiddenCaptures) { if ($body.Contains($hc)) { $t25Leaks += $hc } } }
+    $e2eLogs.Add("[T25d] hidden capture traces in T25 bodies=$($t25Leaks.Count) [$(@($t25Leaks | Select-Object -Unique) -join ', ')]; unmasked IPv4 JSON paths=$($t25IpHits.Count)$(if ($t25IpHits.Count) { ' ' + (($t25IpHits | Select-Object -First 20) -join ', ') })")
+    Assert-True ($t25Leaks.Count -eq 0) "[T25d] 숨김 캡처 흔적 0"
+    Assert-True ($t25IpHits.Count -eq 0) "[T25d] VIEWER 가려지지 않은 IPv4 0"
+
+    # [T25e] 되돌리기 확인: V2가 적용된 앱 DB로 T24 이미지(zeek-ad-dashboard-app:pre-t25, main 1d0077a)가 정상으로 뜨는지
+    #        (Flyway가 앞선 마이그레이션 V2를 무시하는지). 확인 뒤 새 이미지로 되돌린다.
+    $preImg = "zeek-ad-dashboard-app:pre-t25"
+    $preId = (Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", $preImg)).Output.Trim()
+    $env:PORTFOLIO_APP_IMAGE = $preImg
+    $rbUp = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "dashboard-app")) -IgnoreExitCode
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+    $rbUpWaf = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode
+    $rbAppC = Get-ServiceContainer "dashboard-app"
+    $rbImg = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.Image}}", $rbAppC)).Output.Trim()
+    $rbHealth = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.Health.Status}}", $rbAppC)).Output.Trim()
+    $rbLogs = (Invoke-NativeCapture "docker" @("logs", $rbAppC) -IgnoreExitCode).Output
+    $rbFlyway = @($rbLogs -split "`r?`n" | Where-Object { $_ -match 'Flyway|flyway|Migrat|Validate|schema history' } | ForEach-Object { ($_ -replace '^\S+\s+', '').Trim() } | Select-Object -Last 8)
+    $rb = New-Client "198.51.100.97"
+    $rbLogin = Login-Api $rb "demo" $env:DEMO_PASSWORD
+    $rbQueue = Invoke-Http -Path "/api/incidents/queue?period=24h&size=25" -Client $rb
+    $rbFw = (Invoke-Psql "zeekad_dashboard" "SELECT string_agg(version || ':' || success, ',' ORDER BY installed_rank) FROM flyway_schema_history").Output.Trim()
+    $e2eLogs.Add("[T25e] rollback check: PORTFOLIO_APP_IMAGE=$preImg ($preId) up exit=$($rbUp.ExitCode) waf up exit=$($rbUpWaf.ExitCode); container image=$rbImg health=$rbHealth`n       app Flyway log (tail):`n       $($rbFlyway -join "`n       ")`n       demo login: $(Format-Resp $rbLogin 120)`n       demo queue 24h: HTTP $($rbQueue.Status) total=$($rbQueue.Json.total) summary.overdue present=$($null -ne $rbQueue.Json.summary.overdue)`n       flyway_schema_history after T24 app start=$rbFw")
+    Remove-Item env:PORTFOLIO_APP_IMAGE -ErrorAction SilentlyContinue
+    $rbOk = ($rbUp.ExitCode -eq 0 -and $rbImg -eq $preId -and $rbHealth -eq 'healthy' -and $rbLogin.Status -eq 200 -and $rbQueue.Status -eq 200 -and $null -eq $rbQueue.Json.summary.overdue)
+    # 새 이미지로 되돌린다(뒤의 [9] ZAP은 새 이미지 대상)
+    $fwUp = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "dashboard-app")) -IgnoreExitCode
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+    $fw2 = New-Client "198.51.100.98"
+    $fwLogin = Login-Api $fw2 "demo" $env:DEMO_PASSWORD
+    $fwQueue = Invoke-Http -Path "/api/incidents/queue?period=24h&size=25" -Client $fw2
+    $e2eLogs.Add("[T25e] back to new image: up exit=$($fwUp.ExitCode) image=$((Invoke-NativeCapture "docker" @("inspect", "--format", "{{.Image}}", (Get-ServiceContainer "dashboard-app"))).Output.Trim()); demo login HTTP $($fwLogin.Status); queue 24h HTTP $($fwQueue.Status) summary.overdue=$($fwQueue.Json.summary.overdue)")
+    Assert-True $rbOk "[T25e] V2가 적용된 DB로 T24 이미지가 정상으로 뜬다(되돌리기 가능)"
+    Assert-True ($fwUp.ExitCode -eq 0 -and $fwLogin.Status -eq 200 -and $fwQueue.Status -eq 200 -and $null -ne $fwQueue.Json.summary.overdue) "[T25e] 새 이미지로 복귀"
+
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="

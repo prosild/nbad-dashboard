@@ -1031,6 +1031,218 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 }
                 $e2eLogs.Add("[11e] response times (analyst1, 3 samples, includes curl): $($t11 -join '; ')")
 
+                # [12] 담당자·착수 지연·처리 시간 지표(T25). 검증 시드: cic17-wed(작업 101) 1·3위 종결, 2위 조사 중 / syn1-wed(작업 211) 1·2위 신규.
+                #      viewer1·analyst1 = cic17-*, analyst2 = syn1-*. 지정 규칙(권한·IDOR·담당 가능·종결·충돌·CSRF), 자동 지정, 이력 추가만(psql),
+                #      사용자별 불변식(none + 그 집합 안 담당 있음 = total), handlingTimes = 독립 SQL(percentile_disc), workload.ackOverdue ≈ 큐 overdue total,
+                #      VIEWER 응답 IPv4, 응답 시간(데우기 1번 뒤 3번, 최댓값 1초 이하).
+                function Invoke-ZeekadSelect([string]$Sql) {
+                    return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-AtF", "|", "-c", $Sql))).Output.Trim()
+                }
+                function Get-WafInterrupted([string]$ProbeId) {
+                    $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                    return @($wafLogs -split "`r?`n" | Where-Object { $_.Contains($ProbeId) -and $_ -match '"is_interrupted":true' })
+                }
+                $q12A1 = Join-Path $tmpDir "q12-a1.cookies"
+                $q12A2 = Join-Path $tmpDir "q12-a2.cookies"
+                $q12V = Join-Path $tmpDir "q12-v.cookies"
+                Assert-Status (Login-Api "analyst1" $q12A1) 200 "[12] analyst1 로그인"
+                Assert-Status (Login-Api "analyst2" $q12A2) 200 "[12] analyst2 로그인"
+                Assert-Status (Login-Api "viewer1" $q12V) 200 "[12] viewer1 로그인"
+                $iid1012 = 'cic17-wed|10.20.30.40|responder|1700000300'
+                $auditBase12 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                $idorA1 = { [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase12 AND action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst1'") }
+                $idorV1 = { [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase12 AND action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'viewer1'") }
+
+                # [12a] analyst1이 허용 캡처 인시던트(101/2, 조사 중)를 자기에게 지정: 200, 감사·이력, 큐 assignee=me = 1, nginx-waf 통과
+                $a12 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $q12A1 -SaveCookies -Csrf `
+                    -JsonBody ([ordered]@{ assignee = 'analyst1'; expected = $null }) -ProbeId "e2e-t25-assign"
+                $assignAudit = Invoke-AuditSelect "SELECT action_type, actor_username, target_capture_id, target_job_id, target_incident_id, detail_json FROM audit_logs WHERE id > $auditBase12 AND action_type = 'INCIDENT_ASSIGNMENT' ORDER BY id"
+                $histRows = Invoke-AuditSelect "SELECT h.incident_id, h.capture_id, h.job_id, COALESCE(f.username,'-'), COALESCE(t.username,'-'), h.actor_username, h.reason FROM incident_assignment_history h LEFT JOIN users f ON f.id = h.from_user_id LEFT JOIN users t ON t.id = h.to_user_id ORDER BY h.id"
+                $meQ = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&assignee=me&size=25" -CookieJar $q12A1
+                $wafHits12 = Get-WafInterrupted "e2e-t25-assign"
+                $e2eLogs.Add("[12a] analyst1 POST /api/incidents/101/rank/2/assignment (self): $(Format-Resp $a12 400)`n      audit INCIDENT_ASSIGNMENT rows:`n      $($assignAudit -replace "`n", "`n      ")`n      incident_assignment_history:`n      $($histRows -replace "`n", "`n      ")`n      analyst1 queue assignee=me total=$($meQ.Json.total) items=[$(@($meQ.Json.items | ForEach-Object { "$($_.jobId)/$($_.queueRank):$($_.assignee.username)" }) -join ', ')]`n      nginx-waf interrupted lines for probe e2e-t25-assign = $($wafHits12.Count)")
+                Assert-Status $a12 200 "[12a] analyst1 자기 지정"
+                Assert-True ($a12.Json.assignment.assignee.username -eq 'analyst1') "[12a] 응답 담당자 analyst1" $a12
+                Assert-True ($assignAudit -match "INCIDENT_ASSIGNMENT\|analyst1\|cic17-wed\|101\|$([regex]::Escape($iid1012))\|" -and $assignAudit -match '"to":"analyst1"' -and $assignAudit -match '"reason":"manual"') "[12a] 감사 기록 INCIDENT_ASSIGNMENT(from·to·reason·대상)"
+                Assert-True ($histRows -match "$([regex]::Escape($iid1012))\|cic17-wed\|101\|-\|analyst1\|analyst1\|manual") "[12a] 이력 행(미배정 → analyst1, manual)"
+                Assert-True ([int]$meQ.Json.total -eq 1) "[12a] 큐 assignee=me = 1" $meQ
+                Assert-True ($wafHits12.Count -eq 0) "[12a] 지정 POST가 nginx-waf(CRS)에 차단되지 않음"
+
+                # [12b] analyst1이 허용 밖 캡처(syn1-wed 211/1) 지정 → 403 + ACCESS_DENIED_IDOR
+                $b12 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/assignment" -Method POST -CookieJar $q12A1 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst1'; expected = $null })
+                $idorA1After = & $idorA1
+                $e2eLogs.Add("[12b] analyst1 POST 211/1 assignment (허용 밖): $(Format-Resp $b12 200); analyst1 IDOR rows since [12] = $idorA1After")
+                Assert-Status $b12 403 "[12b] analyst1 허용 밖 지정"
+                Assert-True ($idorA1After -eq 1) "[12b] 허용 밖 지정 IDOR 감사 기록 1건"
+
+                # [12c] 그 캡처를 볼 수 없는 analyst2를 지정 → 400 ASSIGNEE_NOT_ELIGIBLE
+                $c12 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $q12A1 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst2'; expected = 'analyst1' })
+                $e2eLogs.Add("[12c] analyst1 POST 101/2 assignee=analyst2(syn1-*만): $(Format-Resp $c12 300)")
+                Assert-ApiError $c12 400 "ASSIGNEE_NOT_ELIGIBLE" "[12c] 담당 가능 아님"
+
+                # [12d] viewer1: 허용 캡처면 403(IDOR 감사 없음), 허용 밖이면 403 + IDOR(인시던트 접근 검사가 먼저)
+                $v12p = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $q12V -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'viewer1'; expected = 'analyst1' })
+                $v12g = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignees" -CookieJar $q12V
+                $idorV1Mid = & $idorV1
+                $v12p2 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/assignment" -Method POST -CookieJar $q12V -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'viewer1'; expected = $null })
+                $v12g2 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/assignees" -CookieJar $q12V
+                $idorV1End = & $idorV1
+                $e2eLogs.Add("[12d] viewer1 POST 101/2: $(Format-Resp $v12p 200)`n      viewer1 GET 101/2/assignees: $(Format-Resp $v12g 200)`n      viewer1 IDOR rows after 허용 캡처 요청 = $idorV1Mid`n      viewer1 POST 211/1: $(Format-Resp $v12p2 200)`n      viewer1 GET 211/1/assignees: $(Format-Resp $v12g2 200)`n      viewer1 IDOR rows after 허용 밖 요청 = $idorV1End")
+                Assert-Status $v12p 403 "[12d] viewer1 지정(허용 캡처)"
+                Assert-Status $v12g 403 "[12d] viewer1 담당 가능자 목록(허용 캡처)"
+                Assert-True ($idorV1Mid -eq 0) "[12d] viewer1 허용 캡처 요청은 IDOR 감사 없음"
+                Assert-Status $v12p2 403 "[12d] viewer1 지정(허용 밖)"
+                Assert-Status $v12g2 403 "[12d] viewer1 담당 가능자 목록(허용 밖)"
+                Assert-True ($idorV1End -eq 2) "[12d] viewer1 허용 밖 요청 2건 IDOR 감사"
+
+                # [12e] CSRF 없는 POST → 403(바뀌지 않음)
+                $e12 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $q12A1 -JsonBody ([ordered]@{ assignee = $null; expected = 'analyst1' })
+                $e2eLogs.Add("[12e] analyst1 POST without X-XSRF-TOKEN: $(Format-Resp $e12 200)")
+                Assert-Status $e12 403 "[12e] CSRF 없는 지정"
+
+                # [12f] expected 어긋남 → 409 ASSIGNMENT_CONFLICT, 종결(101/3) → 409 INCIDENT_CLOSED
+                $f12 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $q12A1 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = $null; expected = $null })
+                $f12c = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/3/assignment" -Method POST -CookieJar $q12A1 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst1'; expected = $null })
+                $e2eLogs.Add("[12f] analyst1 POST 101/2 expected=null(서버 analyst1): $(Format-Resp $f12 300)`n      analyst1 POST 101/3(종결): $(Format-Resp $f12c 300)")
+                Assert-ApiError $f12 409 "ASSIGNMENT_CONFLICT" "[12f] expected 어긋남"
+                Assert-ApiError $f12c 409 "INCIDENT_CLOSED" "[12f] 종결된 인시던트"
+
+                # [12g] 미배정 인시던트(211/2, 신규)를 analyst2가 조사 시작 → 자동 지정(auto_on_start). 211/1은 analyst2가 직접 지정
+                $g12 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/2/transition" -Method POST -CookieJar $q12A2 -SaveCookies -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T25 E2E 조사 시작" }
+                $g12d = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/2" -CookieJar $q12A2
+                $g12m = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/assignment" -Method POST -CookieJar $q12A2 -SaveCookies -Csrf -JsonBody ([ordered]@{ assignee = 'analyst2'; expected = $null })
+                $e2eLogs.Add("[12g] analyst2 POST 211/2 transition investigating: $(Format-Resp $g12 300)`n      211/2 detail assignment=$($g12d.Json.assignment | ConvertTo-Json -Compress -Depth 4) history=$($g12d.Json.assignmentHistory | ConvertTo-Json -Compress -Depth 4)`n      analyst2 POST 211/1 assignment(self): $(Format-Resp $g12m 300)")
+                Assert-Status $g12 200 "[12g] 조사 시작"
+                Assert-True (-not ([string]$g12.Json.message).Contains('자동 지정은 실패')) "[12g] 자동 지정 실패 안내 없음" $g12
+                Assert-True ($g12d.Json.assignment.assignee.username -eq 'analyst2' -and @($g12d.Json.assignmentHistory)[0].reason -eq 'auto_on_start') "[12g] 조사 시작한 사람이 담당자(auto_on_start)" $g12d
+                Assert-Status $g12m 200 "[12g] analyst2 자기 지정"
+
+                # [12h] 이력 표 UPDATE·DELETE 거부(psql)
+                $histCount = Invoke-AuditSelect "SELECT count(*) FROM incident_assignment_history"
+                $upd = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE incident_assignment_history SET reason = 'manual'")) -IgnoreExitCode
+                $del = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "DELETE FROM incident_assignment_history")) -IgnoreExitCode
+                $histCount2 = Invoke-AuditSelect "SELECT count(*) FROM incident_assignment_history"
+                $e2eLogs.Add("[12h] psql UPDATE incident_assignment_history: $($upd.Output.Trim())`n      psql DELETE incident_assignment_history: $($del.Output.Trim())`n      rows before=$histCount after=$histCount2")
+                Assert-True ($upd.Output -match "append-only" -and $del.Output -match "append-only" -and $histCount -eq $histCount2) "[12h] 이력 표 UPDATE·DELETE 거부(PostgreSQL 트리거)"
+
+                # [12i] 사용자별 불변식: none + (그 사용자가 보는 집합 안 담당 있음) = total, me + 다른 사람 담당 + none = total
+                $inv12 = [System.Collections.Generic.List[string]]::new()
+                foreach ($who in @(@{ Name = 'analyst1'; Jar = $q12A1 }, @{ Name = 'analyst2'; Jar = $q12A2 }, @{ Name = 'viewer1'; Jar = $q12V })) {
+                    foreach ($q in @('period=all', 'period=24h', 'period=all&source=imported', 'period=all&status=investigating')) {
+                        $all = Invoke-Http -Url "$baseHttps/api/incidents/queue?$q&size=100" -CookieJar $who.Jar
+                        $none = Invoke-Http -Url "$baseHttps/api/incidents/queue?$q&assignee=none&size=100" -CookieJar $who.Jar
+                        $me = Invoke-Http -Url "$baseHttps/api/incidents/queue?$q&assignee=me&size=100" -CookieJar $who.Jar
+                        $assignedInSet = @($all.Json.items | Where-Object { $null -ne $_.assignee }).Count
+                        $line = "$($who.Name) $q total=$($all.Json.total) none=$($none.Json.total) assignedInSet=$assignedInSet me=$($me.Json.total) summary(none)=$($none.Json.summary.total)"
+                        $e2eLogs.Add("[12i] $line")
+                        if ([int]$none.Json.total + $assignedInSet -ne [int]$all.Json.total) { $inv12.Add($line) }
+                        if ([int]$none.Json.summary.total -ne [int]$none.Json.total) { $inv12.Add("summary $line") }
+                        if ($who.Name -eq 'viewer1' -and [int]$me.Json.total -ne 0) { $inv12.Add("viewer me $line") }
+                    }
+                }
+                Assert-True ($inv12.Count -eq 0) "[12i] 사용자별 담당 불변식 (실패 $($inv12.Count): $($inv12 -join '; '))"
+
+                # [12j] /api/operations?period=all handlingTimes = 독립 SQL(PostgreSQL percentile_disc). admin(실습망 포함)·analyst1·analyst2
+                function Get-HandlingSql([string[]]$Patterns) {
+                    $cond = if ($Patterns -contains '*') { 'TRUE' } else { '(' + (@($Patterns | ForEach-Object { "{0}.capture_id LIKE '" + ($_ -replace '\*$', '%') + "'" }) -join ' OR ') + ')' }
+                    $lqCond = $cond -replace '\{0\}', 'l'
+                    $qCond = $cond -replace '\{0\}', 'q'
+                    return @"
+WITH lq AS (SELECT * FROM dashboard.latest_incident_queue l WHERE $lqCond),
+fs AS (SELECT q.incident_id, MIN(j.finished_at) AS det FROM dashboard.incident_queue q
+       JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL
+       WHERE $qCond GROUP BY q.incident_id),
+h AS (SELECT incident_id, MIN(changed_at) AS ack FROM dashboard.incident_status_history WHERE LOWER(TRIM(to_status)) = 'investigating' GROUP BY incident_id),
+b AS (SELECT lq.incident_id, lq.capture_id LIKE 'lab-%' AS live, lq.event_start, fs.det, h.ack,
+             CASE WHEN LOWER(TRIM(COALESCE(lq.zeekad_status, ''))) = 'closed' THEN lq.status_updated_at END AS closed_at,
+             COALESCE(NULLIF(LOWER(TRIM(lq.zeekad_resolution)), ''), 'none') AS res
+      FROM lq LEFT JOIN fs ON fs.incident_id = lq.incident_id LEFT JOIN h ON h.incident_id = lq.incident_id),
+v AS (SELECT 'detection' AS m, FLOOR(EXTRACT(EPOCH FROM (det - event_start)))::bigint AS s FROM b WHERE live AND det IS NOT NULL
+      UNION ALL SELECT 'acknowledge', FLOOR(EXTRACT(EPOCH FROM (ack - det)))::bigint FROM b WHERE ack IS NOT NULL
+      UNION ALL SELECT 'acknowledge', NULL FROM b WHERE closed_at IS NOT NULL AND ack IS NULL
+      UNION ALL SELECT 'resolve', FLOOR(EXTRACT(EPOCH FROM (closed_at - det)))::bigint FROM b WHERE closed_at IS NOT NULL
+      UNION ALL SELECT 'resolve:' || res, FLOOR(EXTRACT(EPOCH FROM (closed_at - det)))::bigint FROM b WHERE closed_at IS NOT NULL)
+SELECT m, COUNT(*) FILTER (WHERE s >= 0),
+       COALESCE((percentile_disc(0.5) WITHIN GROUP (ORDER BY s) FILTER (WHERE s >= 0))::text, ''),
+       COALESCE((percentile_disc(0.9) WITHIN GROUP (ORDER BY s) FILTER (WHERE s >= 0))::text, ''),
+       COUNT(*) FILTER (WHERE s IS NULL OR s < 0)
+FROM v GROUP BY m ORDER BY m
+"@
+                }
+                function Compare-Handling([string]$Name, [string]$Jar, [string[]]$Patterns) {
+                    $ops = Invoke-Http -Url "$baseHttps/api/operations?period=all" -CookieJar $Jar
+                    Assert-Status $ops 200 "[12j] $Name operations?period=all"
+                    $sqlOut = Invoke-ZeekadSelect (Get-HandlingSql $Patterns)
+                    $sql = @{}
+                    foreach ($l in @($sqlOut -split "`r?`n" | Where-Object { $_ })) { $p = $l -split '\|'; $sql[$p[0]] = $p }
+                    $api = @{ detection = $ops.Json.handlingTimes.detection; acknowledge = $ops.Json.handlingTimes.acknowledge; resolve = $ops.Json.handlingTimes.resolve.all }
+                    foreach ($r in @($ops.Json.handlingTimes.resolve.byResolution)) { $api["resolve:$($r.resolution)"] = $r.stat }
+                    $diff = [System.Collections.Generic.List[string]]::new()
+                    $lines = [System.Collections.Generic.List[string]]::new()
+                    foreach ($k in @(@($api.Keys) + @($sql.Keys) | Sort-Object -Unique)) {
+                        $a = $api[$k]
+                        $aText = if ($a) { "n=$($a.n) median=$($a.medianSeconds) p90=$($a.p90Seconds) excluded=$($a.excluded)" } else { "(없음)" }
+                        $s = $sql[$k]
+                        $sText = if ($s) { "n=$($s[1]) median=$($s[2]) p90=$($s[3]) excluded=$($s[4])" } else { "n=0 median= p90= excluded=0" }
+                        $lines.Add("$k api[$aText] sql[$sText]")
+                        if ($aText -ne $sText) { $diff.Add($k) }
+                    }
+                    $e2eLogs.Add("[12j] $Name handlingTimes(period=all) vs 독립 SQL (percentile_disc):`n      $($lines -join "`n      ")`n      diff=[$($diff -join ', ')]")
+                    Assert-True ($diff.Count -eq 0) "[12j] $Name handlingTimes = 독립 SQL (차이 $($diff -join ', '))"
+                    return $ops
+                }
+                $null = Compare-Handling 'analyst1' $q12A1 @('cic17-*')
+                $null = Compare-Handling 'analyst2' $q12A2 @('syn1-*')
+                $q12Adm = Join-Path $tmpDir "q12-admin.cookies"
+                Assert-Status (Login-Api "admin" $q12Adm) 200 "[12j] admin 1차 로그인"
+                $admTotp = $null
+                for ($try = 0; $try -lt 3; $try++) {
+                    $admTotp = Invoke-Http -Url "$baseHttps/api/auth/totp/verify" -Method POST -CookieJar $q12Adm -SaveCookies -Csrf -JsonBody @{ code = (Get-TotpCode $adminTotpSecret) }
+                    if ($admTotp.Status -eq 200) { break }
+                    Start-Sleep -Seconds 31
+                }
+                Assert-Status $admTotp 200 "[12j] admin TOTP"
+                $null = Compare-Handling 'admin' $q12Adm @('*')
+
+                # [12k] workload: unclosed = assigned + unassigned, assigned = byAssignee 합, ackOverdue ≈ 큐 overdue=true total(실시간 기준 시각, 차이 1 이하)
+                foreach ($who in @(@{ Name = 'analyst1'; Jar = $q12A1 }, @{ Name = 'analyst2'; Jar = $q12A2 }, @{ Name = 'admin'; Jar = $q12Adm }, @{ Name = 'viewer1'; Jar = $q12V })) {
+                    $w = (Invoke-Http -Url "$baseHttps/api/operations?period=7d" -CookieJar $who.Jar).Json.workload
+                    $od = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&overdue=true&size=25" -CookieJar $who.Jar
+                    $sum = 0; foreach ($l in @($w.byAssignee)) { $sum += [int]$l.open + [int]$l.investigating }
+                    $e2eLogs.Add("[12k] $($who.Name) workload=$($w | ConvertTo-Json -Compress -Depth 4) queue overdue=true total=$($od.Json.total) summary.overdue=$($od.Json.summary.overdue)")
+                    Assert-True ([int]$w.unclosed -eq [int]$w.assigned + [int]$w.unassigned -and [int]$w.assigned -eq $sum) "[12k] $($who.Name) workload 불변식"
+                    Assert-True ([math]::Abs([int]$w.ackOverdue - [int]$od.Json.total) -le 1) "[12k] $($who.Name) workload.ackOverdue ≈ 큐 overdue total"
+                }
+
+                # [12l] VIEWER 응답(큐·상세·운영 현황)에 가려지지 않은 IPv4 없음, 담당자 이름은 보인다
+                $vq = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&size=100" -CookieJar $q12V
+                $vd = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $q12V
+                $vo = Invoke-Http -Url "$baseHttps/api/operations?period=all" -CookieJar $q12V
+                $vIp = @(Get-UnmaskedIpv4 $vq.Body) + @(Get-UnmaskedIpv4 $vd.Body) + @(Get-UnmaskedIpv4 $vo.Body)
+                $e2eLogs.Add("[12l] viewer1 queue/detail/operations unmasked IPv4=[$($vIp -join ', ')] detail assignment=$($vd.Json.assignment | ConvertTo-Json -Compress -Depth 4) canAssign=$($vd.Json.canAssign) workload.byAssignee=$($vo.Json.workload.byAssignee | ConvertTo-Json -Compress -Depth 4)")
+                Assert-True ($vIp.Count -eq 0) "[12l] viewer1 큐·상세·운영 현황 IPv4 가림"
+                Assert-True ($vd.Json.assignment.assignee.username -eq 'analyst1' -and $vd.Json.canAssign -eq $false) "[12l] viewer1 담당자 이름은 보이고 바꿀 수 없음" $vd
+
+                # [12m] 응답 시간: 데우기 1번 뒤 3번, 최댓값 1초 이하(curl 포함)
+                $t12 = [System.Collections.Generic.List[string]]::new()
+                $slow12 = [System.Collections.Generic.List[string]]::new()
+                foreach ($p in @("/api/incidents/queue?period=24h&assignee=none", "/api/incidents/queue?period=all&assignee=me", "/api/incidents/queue?period=7d&overdue=true", "/api/incidents/101/rank/2", "/api/operations?period=7d")) {
+                    $null = Invoke-Http -Url "$baseHttps$p" -CookieJar $q12A1
+                    $ms = @()
+                    for ($k = 0; $k -lt 3; $k++) {
+                        $sw = [Diagnostics.Stopwatch]::StartNew()
+                        $r = Invoke-Http -Url "$baseHttps$p" -CookieJar $q12A1
+                        $sw.Stop()
+                        Assert-Status $r 200 "[12m] $p"
+                        $ms += [int]$sw.ElapsedMilliseconds
+                    }
+                    $max = ($ms | Measure-Object -Maximum).Maximum
+                    $t12.Add("$p=[$($ms -join ', ')] max=$max ms")
+                    if ($max -gt 1000) { $slow12.Add($p) }
+                }
+                $e2eLogs.Add("[12m] response times (analyst1, warm 1 + 3 samples, includes curl): $($t12 -join '; ')")
+                Assert-True ($slow12.Count -eq 0) "[12m] 응답 시간 최댓값 1초 이하 ($($slow12 -join ', '))"
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
