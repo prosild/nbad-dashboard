@@ -154,8 +154,10 @@ public class AnalystReviewDecisionService {
         );
 
         String successMessage = "confirm".equals(normalizedAction)
-                ? "검토 결정을 '승인'으로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다."
-                : "검토 결정을 '오탐 종결'로 저장했습니다. 30초 안팎으로 자동 처리에 반영됩니다.";
+                // T21: zeek_AD 계약대로 결정은 파이프라인이 반영하면 상태를 바꾼다. 시간 약속은 쓰지 않는다
+                // (공개 스냅샷·로컬 시드처럼 파이프라인이 돌지 않는 환경이 있다).
+                ? "검토 결정을 '승인'으로 저장했습니다. 파이프라인이 반영하면 인시던트가 분석 중으로 바뀝니다."
+                : "검토 결정을 '오탐 종결'로 저장했습니다. 파이프라인이 반영하면 인시던트가 종결(오탐)됩니다.";
         return DecisionResult.success(successMessage);
     }
 

@@ -305,7 +305,9 @@ class AnalystReviewDecisionIntegrationTest {
                         .content(spoofedPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.succeeded").value(true))
-                .andExpect(jsonPath("$.code").value("OK"));
+                .andExpect(jsonPath("$.code").value("OK"))
+                // T21: 계약대로(반영되면 상태가 바뀐다), 시간 약속 없이
+                .andExpect(jsonPath("$.message").value("검토 결정을 '승인'으로 저장했습니다. 파이프라인이 반영하면 인시던트가 분석 중으로 바뀝니다."));
 
         AnalystReviewItem decided1 = zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_1);
         assertThat(decided1).isNotNull();
@@ -367,7 +369,8 @@ class AnalystReviewDecisionIntegrationTest {
                         .content(objectMapper.writeValueAsString(
                                 new IncidentReviewDecisionRequest("dismiss", "정상 백업 트래픽 확인"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.succeeded").value(true));
+                .andExpect(jsonPath("$.succeeded").value(true))
+                .andExpect(jsonPath("$.message").value("검토 결정을 '오탐 종결'로 저장했습니다. 파이프라인이 반영하면 인시던트가 종결(오탐)됩니다."));
 
         mockMvc.perform(get("/api/incidents/{jobId}/rank/2", JOB_LATEST).session(adminSession))
                 .andExpect(status().isOk())
