@@ -32,7 +32,7 @@ import {
 } from '../components/StatusBadge';
 import type { IncidentQueueItem, IncidentQueueResponse, ScoringJob } from '../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../utils/format';
-import { detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
+import { captureInfo, detectionModelInfo, labelText, lookupLabel } from '../utils/labels';
 import {
   CLIENT_FILTER_KEYS,
   computePriority,
@@ -291,13 +291,17 @@ export function IncidentQueuePage() {
                 id="filter-capture"
                 value={data?.selectedCaptureId ?? captureId}
                 onChange={(e) => updateParam('captureId', e.target.value, true)}
-                className="soc-select w-full py-1.5 font-mono text-xs sm:w-44"
+                className="soc-select w-full py-1.5 text-xs sm:w-60"
+                title={captureInfo(data?.selectedCaptureId ?? captureId).tooltip || undefined}
               >
-                {(data?.allowedCaptures ?? []).map((cap) => (
-                  <option key={cap} value={cap}>
-                    {cap}
-                  </option>
-                ))}
+                {(data?.allowedCaptures ?? []).map((cap) => {
+                  const info = captureInfo(cap);
+                  return (
+                    <option key={cap} value={cap} title={info.tooltip}>
+                      {info.text}
+                    </option>
+                  );
+                })}
                 {(data?.allowedCaptures?.length ?? 0) === 0 && <option value="">열람 허용 캡처 없음</option>}
               </select>
             </div>

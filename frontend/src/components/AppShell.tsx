@@ -6,6 +6,7 @@ import {
   Clock,
   EyeOff,
   FileSearch,
+  LayoutDashboard,
   Lock,
   LogOut,
   Menu,
@@ -30,6 +31,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { to: '/', label: '현황판', icon: LayoutDashboard, matchPrefix: '/' },
   { to: '/incidents', label: '인시던트', icon: Radar, matchPrefix: '/incidents' },
   { to: '/reviews', label: '에스컬레이션', icon: ClipboardCheck, matchPrefix: '/reviews' },
   { to: '/operations', label: '운영 현황', icon: Activity, matchPrefix: '/operations' },
@@ -58,8 +60,9 @@ export function AppShell({
   const visibleNav = NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === 'ADMIN');
 
   const isActive = (item: NavItem) => {
-    if (item.to === '/incidents' && location.pathname === '/') {
-      return true;
+    // 현황판('/')은 정확히 '/'일 때만 활성이다(다른 모든 경로가 '/'로 시작하므로).
+    if (item.matchPrefix === '/') {
+      return location.pathname === '/';
     }
     return location.pathname === item.matchPrefix || location.pathname.startsWith(`${item.matchPrefix}/`);
   };
@@ -81,6 +84,7 @@ export function AppShell({
             <Link
               key={item.to}
               to={item.to}
+              aria-current={active ? 'page' : undefined}
               onClick={() => setMobileOpen(false)}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                 active

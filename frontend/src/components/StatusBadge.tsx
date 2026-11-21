@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import {
+  captureInfo,
   detectionModelInfo,
   labelText,
   lookupLabel,
@@ -138,6 +139,26 @@ export function DetectionModelName({
   }
   return (
     <span className={className} title={info.tooltip}>
+      {info.text}
+    </span>
+  );
+}
+
+/**
+ * 캡처(수집 구간) 표시 이름(zeek_AD Q65). 표시 이름만 보이고 zeek_AD 설명과 원래 캡처 ID는 툴팁에 둔다.
+ * 규칙에 맞지 않는 ID는 원래 ID를 흐리게 보이고 "미등록 값" 툴팁을 단다(이때 글은 ID 원문이라 data-raw).
+ */
+export function CaptureName({ id, className = '' }: { id: string | null | undefined; className?: string }) {
+  const info = captureInfo(id);
+  if (!info.known) {
+    return (
+      <span data-unregistered="" data-raw="" title={info.tooltip} className={`font-mono text-slate-500 ${className}`}>
+        {info.text}
+      </span>
+    );
+  }
+  return (
+    <span className={className} title={info.tooltip || undefined}>
       {info.text}
     </span>
   );

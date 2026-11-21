@@ -8,6 +8,7 @@ import {
 import { ToastProvider } from './components/ToastContext';
 import { AdminAuditLogsPage } from './pages/AdminAuditLogsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { IncidentDetailPage } from './pages/IncidentDetailPage';
 import { IncidentQueuePage } from './pages/IncidentQueuePage';
 import { LoginPage } from './pages/LoginPage';
@@ -39,7 +40,7 @@ export function AppRoutes() {
         path="/"
         element={
           <RequireAuth>
-            <IncidentQueuePage />
+            <DashboardPage />
           </RequireAuth>
         }
       />

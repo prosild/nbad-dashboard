@@ -178,7 +178,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     });
   });
 
-  it('/operations에서 feedback_summary all 행 강조, null 안전 정밀도 및 재현율 한계 안내를 표시한다', async () => {
+  it('/operations에서 feedback_summary all 행 강조, null 안전 정탐률·표본 부족 및 미탐 한계 안내를 표시한다', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return adminMeResponse();
@@ -208,8 +208,8 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
                 extraAttributes: {},
                 allModel: true,
                 effectiveAlertedResolved: 4,
-                precisionSummaryText: '정밀도 0.60, 결론 5/18 (27.8%)',
-                alertPrecisionSummaryText: '정밀도 0.75, 결론 4/6 (66.7%)',
+                precisionSummaryText: '표본 부족 · 판정 5/18건(27.8%)',
+                alertPrecisionSummaryText: '표본 부족 · 경보 판정 4/6건(66.7%)',
               },
               {
                 captureId: 'cic17-wed',
@@ -228,8 +228,8 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
                 extraAttributes: {},
                 allModel: false,
                 effectiveAlertedResolved: 0,
-                precisionSummaryText: '- (결론 없음)',
-                alertPrecisionSummaryText: '- (알림 없음)',
+                precisionSummaryText: '판정 없음',
+                alertPrecisionSummaryText: '경보 없음',
               },
             ],
             slackSummaries: [],
@@ -243,9 +243,17 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     renderWithAdmin('/operations', fetchMock as unknown as typeof fetch);
 
     expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
-    expect(screen.getByText('정밀도 0.60, 결론 5/18 (27.8%)')).toBeInTheDocument();
-    expect(screen.getByText('- (결론 없음)')).toBeInTheDocument();
-    expect(screen.getByText('이 표는 탐지된 인시던트만 셉니다. 놓친 공격 수는 알 수 없습니다.')).toBeInTheDocument();
+    // T20: 판정 5건(10건 미만)이라 정탐률 대신 표본 부족, 실제 값(60.0%)은 툴팁. 경보도 같은 규칙.
+    const table = screen.getByText('모든 모델 합계').closest('table') as HTMLElement;
+    const precision = within(table).getByText('표본 부족 · 판정 5/18건(27.8%)');
+    expect(precision).toHaveAttribute('title', expect.stringContaining('정탐률 60.0%(판정 5건)'));
+    const alertPrecision = within(table).getByText('표본 부족 · 경보 판정 4/6건(66.7%)');
+    expect(alertPrecision).toHaveAttribute('title', expect.stringContaining('경보 정탐률 75.0%(판정 4건)'));
+    // 판정 없는 탐지 모델 행은 기본으로 접혀 있고, 펼치면 "판정 없음" 한 줄로 보인다.
+    expect(within(table).queryByText('판정 없음')).not.toBeInTheDocument();
+    await userEvent.setup().click(within(table).getByRole('button', { name: /탐지 모델별 1개 펼치기/ }));
+    expect(within(table).getByText('판정 없음')).toBeInTheDocument();
+    expect(screen.getByText(/미탐\(재현율\)은 이 집계로 알 수 없음 — 이 표는 탐지된 인시던트만 셉니다/)).toBeInTheDocument();
   });
 
   it('/admin/users에서 신규 사용자를 생성하고 /admin/audit-logs에서 상세 JSON을 펼친다', async () => {

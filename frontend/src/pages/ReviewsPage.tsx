@@ -6,11 +6,11 @@ import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { ReviewDecisionButtons } from '../components/incident/ReviewDecisionButtons';
-import { CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
+import { CaptureName, CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
 import { formatDateTime } from '../utils/format';
-import { reviewReasonText } from '../utils/labels';
+import { captureInfo, reviewReasonText } from '../utils/labels';
 
 function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSubmitted: () => Promise<void> }) {
   const { notify } = useToast();
@@ -131,11 +131,14 @@ export function ReviewsPage() {
                 className="soc-select text-xs"
               >
                 <option value="">열람 허용 캡처 전체</option>
-                {(data?.allowedCaptures ?? []).map((cap) => (
-                  <option key={cap} value={cap}>
-                    {cap}
-                  </option>
-                ))}
+                {(data?.allowedCaptures ?? []).map((cap) => {
+                  const info = captureInfo(cap);
+                  return (
+                    <option key={cap} value={cap} title={info.tooltip}>
+                      {info.text}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -199,10 +202,10 @@ export function ReviewsPage() {
                       return (
                         <tr key={`${item.reviewJobId ?? item.jobId}-${item.incidentId}`} className="hover:bg-slate-800/35">
                           <td
-                            className="soc-td font-mono text-xs font-semibold text-slate-200"
+                            className="soc-td text-xs font-semibold text-slate-200"
                             title={`에스컬레이션 작업 #${item.reviewJobId ?? item.jobId ?? '-'}`}
                           >
-                            {item.captureId ?? '-'}
+                            <CaptureName id={item.captureId} />
                           </td>
                           <td className="soc-td text-xs">
                             <div className="flex flex-wrap items-baseline gap-x-2">

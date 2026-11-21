@@ -351,3 +351,81 @@ export function detectionModelInfo(id: string | null | undefined): DetectionMode
 export function unregisteredTitle(raw: string): string {
   return `미등록 값: ${raw} (표시 이름 사전에 없음)`;
 }
+
+/**
+ * 수집 구간(캡처) 표시 이름(zeek_AD 데이터 계약 v2 "수집 구간(캡처) 표시 이름" 절, Q65, zeek_AD 커밋 0117401).
+ * 캡처 ID는 DB 값 그대로 두고 화면에만 이 이름을 쓴다. 원래 ID와 zeek_AD 설명은 툴팁에 둔다.
+ * 열람 허용 패턴(`cic17-*` 등)은 이 사전을 쓰지 않고 ID 그대로 보인다.
+ */
+const CAPTURE_WEEKDAY: Record<string, string> = { mon: '월', tue: '화', wed: '수', thu: '목', fri: '금' };
+
+const CAPTURE_FORMAT_TOOLTIP = {
+  cic17: '공개 데이터셋 CIC-IDS2017의 원본 트래픽(평가용). 월요일 정상만 학습에 썼다.',
+  syn1: (day: string) =>
+    `CIC ${day}요일 Zeek 로그 사본에 합성 APT 패턴 5종(beacon, 느린 유출, DNS 터널, 측면 이동, 느린 정찰)을 하나씩 코드로 끼워 넣었다. 네트워크로 보낸 트래픽이 아니다(zeek_AD 설계 결정 DD-008).`,
+  lab: '배포 VM이 격리 실습망에서 실제로 수집한 트래픽(날짜는 UTC). 하루가 처리 단위다.',
+};
+
+/**
+ * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-21). 키는 `lab-YYYYMMDD`의 날짜(YYYYMMDD)다.
+ * 표에 없는 새 lab-*는 덧붙임 없이 보인다.
+ */
+export const LAB_CAPTURE_NOTES: Record<string, { note: string; description: string }> = {
+  '20261119': {
+    note: 'Kali 공격 + 정상 배경',
+    description:
+      'Kali 공격만(실행 1), 정상 배경 35분(월요일 재생 + 합성 정상 클라이언트) 사이에 공격(실행 2). 시험 호스트 구분은 zeek_AD 2026-11-19 전달 글 5절.',
+  },
+  '20261118': {
+    note: '시험',
+    description: '배포 VM 첫 실행. Kali nmap 첫 시험, ping·파일 회전 시험.',
+  },
+  '20261201': {
+    note: '시험(가짜 패킷)',
+    description:
+      'VM을 만들기 전 이 PC에서 시험용 생성기로 만든 패킷(날짜도 가짜). DB를 옮길 때 함께 넘어갔다. 시연 화면에서는 숨긴다(DB에서 지우지 않는다).',
+  },
+};
+
+export interface CaptureLookup extends LabelLookup {
+  /** 툴팁 글: zeek_AD 설명(형식별·실습망별) + 원래 캡처 ID. 미등록이면 미등록 값 툴팁 */
+  tooltip: string;
+}
+
+/** 캡처 ID → 표시 이름. 규칙에 맞지 않는 ID는 known=false(원래 ID 그대로, "미등록 값"). */
+export function captureInfo(id: string | null | undefined): CaptureLookup {
+  if (id === null || id === undefined || id.trim() === '') {
+    return { text: '-', known: true, raw: '', tooltip: '' };
+  }
+  const raw = id.trim();
+  const idLine = `캡처 ID: ${raw}`;
+  const weekday = /^(cic17|syn1)-(mon|tue|wed|thu|fri)$/.exec(raw);
+  if (weekday) {
+    const day = CAPTURE_WEEKDAY[weekday[2]];
+    if (weekday[1] === 'cic17') {
+      return { text: `CIC-IDS2017 ${day}요일`, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.cic17}\n${idLine}` };
+    }
+    return { text: `CIC ${day}요일 + 합성 APT`, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.syn1(day)}\n${idLine}` };
+  }
+  const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw);
+  if (lab) {
+    const base = `실습망 ${lab[1]}-${lab[2]}-${lab[3]}`;
+    const date = `${lab[1]}${lab[2]}${lab[3]}`;
+    const extra = Object.prototype.hasOwnProperty.call(LAB_CAPTURE_NOTES, date) ? LAB_CAPTURE_NOTES[date] : null;
+    if (extra) {
+      return {
+        text: `${base} · ${extra.note}`,
+        known: true,
+        raw,
+        tooltip: `${CAPTURE_FORMAT_TOOLTIP.lab}\n${extra.description}\n${idLine}`,
+      };
+    }
+    return { text: base, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.lab}\n${idLine}` };
+  }
+  return { text: raw, known: false, raw, tooltip: unregisteredTitle(raw) };
+}
+
+/** 글만 필요한 곳(<option> 등)의 캡처 표시 이름 */
+export function captureText(id: string | null | undefined): string {
+  return captureInfo(id).text;
+}

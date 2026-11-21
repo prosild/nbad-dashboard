@@ -42,6 +42,15 @@ const OLD_TERMS = [
   '개인정보 가림',
   '자산 송신 바이트',
   '자산 수신 바이트',
+  // T20: 운영 지표를 관제 표준 용어(정탐률·판정·미탐)로 바꿨다. "모든 모델 합계"는 zeek_AD 표기라 남긴다.
+  '정밀도',
+  '경보 정밀도',
+  '알림 정밀도',
+  '알림 없음',
+  '결론',
+  '판정 비율',
+  '놓친 공격',
+  '전체 (all)',
 ];
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
@@ -430,8 +439,8 @@ const operationsResponse = {
       extraAttributes: {},
       allModel: true,
       effectiveAlertedResolved: 1,
-      precisionSummaryText: '정밀도 1.00, 결론 1/79 (1.3%)',
-      alertPrecisionSummaryText: '정밀도 1.00, 결론 1/9 (11.1%)',
+      precisionSummaryText: '표본 부족 · 판정 1/79건(1.3%)',
+      alertPrecisionSummaryText: '표본 부족 · 경보 판정 1/9건(11.1%)',
     },
     {
       captureId: 'cic17-wed',
@@ -450,8 +459,8 @@ const operationsResponse = {
       extraAttributes: {},
       allModel: false,
       effectiveAlertedResolved: 0,
-      precisionSummaryText: '- (결론 0/30, 0.0%)',
-      alertPrecisionSummaryText: '- (알림 없음)',
+      precisionSummaryText: '판정 없음',
+      alertPrecisionSummaryText: '경보 없음',
     },
   ],
   slackSummaries: [
@@ -816,9 +825,22 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expectCleanText(analyst.container);
   });
 
+  it('현황판(첫 화면)', async () => {
+    const { container } = renderAt('/', viewerUser);
+    expect(await screen.findByRole('heading', { name: '현황판' })).toBeInTheDocument();
+    expect(await screen.findByText('전체 인시던트')).toBeInTheDocument();
+    // 캡처는 표시 이름(zeek_AD Q65), 원래 ID는 툴팁
+    expect(screen.getAllByText('CIC-IDS2017 수요일').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('판정 없음').length).toBeGreaterThanOrEqual(1);
+    expectCleanText(container);
+  });
+
   it('운영 현황', async () => {
     const { container } = renderAt('/operations', viewerUser);
     expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
+    // T20: 탐지 모델별 행은 펼쳐야 보인다.
+    await userEvent.setup().click(screen.getByRole('button', { name: /탐지 모델별 1개 펼치기/ }));
     // T18b: 결론 집계의 모델·임계값 키도 탐지 모델 표시 이름 사전을 쓴다.
     expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('실패').length).toBeGreaterThanOrEqual(1);

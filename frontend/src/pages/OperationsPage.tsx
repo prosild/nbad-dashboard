@@ -1,69 +1,40 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Activity, BarChart3, Info, Layers, MessageSquare } from 'lucide-react';
+import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers, MessageSquare } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
-import { CodeLabel, DetectionModelName, JobStatusBadge, SocBadge, type BadgeTone } from '../components/StatusBadge';
+import {
+  CaptureName,
+  CodeLabel,
+  DetectionModelName,
+  JobStatusBadge,
+  SocBadge,
+  type BadgeTone,
+} from '../components/StatusBadge';
 import { SvgProgressBar } from '../components/SvgProgressBar';
 import type { FeedbackSummaryRecord, OperationsApiResponse } from '../types/api';
-import { formatDateTime, formatNumber, formatPercent } from '../utils/format';
-
-function isAllModelRow(row: FeedbackSummaryRecord): boolean {
-  if (row.allModel !== undefined) {
-    return row.allModel;
-  }
-  return (row.zeekadPickedBy ?? '').trim().toLowerCase() === 'all';
-}
-
-// 정밀도 문장은 백엔드 문구와 같은 형식이다. 문장 개편은 T20 범위라 이번에는 그대로 둔다.
-function buildPrecisionText(row: FeedbackSummaryRecord): string {
-  if (row.precisionSummaryText) {
-    return row.precisionSummaryText;
-  }
-  const incidents = row.incidents ?? 0;
-  const resolved = row.resolved ?? 0;
-  if (incidents <= 0) {
-    return row.zeekadPrecision === null || row.zeekadPrecision === undefined
-      ? '- (결론 없음)'
-      : `정밀도 ${row.zeekadPrecision.toFixed(2)}`;
-  }
-  const pct = ((resolved / incidents) * 100).toFixed(1);
-  if (row.zeekadPrecision !== null && row.zeekadPrecision !== undefined) {
-    return `정밀도 ${row.zeekadPrecision.toFixed(2)}, 결론 ${resolved}/${incidents} (${pct}%)`;
-  }
-  return `- (결론 ${resolved}/${incidents}, ${pct}%)`;
-}
-
-function buildAlertPrecisionText(row: FeedbackSummaryRecord): string {
-  if (row.alertPrecisionSummaryText) {
-    return row.alertPrecisionSummaryText;
-  }
-  const alerted = row.alerted ?? 0;
-  if (alerted <= 0) {
-    return '- (알림 없음)';
-  }
-  const effResolved =
-    row.effectiveAlertedResolved ??
-    row.alertedResolved ??
-    (row.zeekadAlertResolvedRate !== null && row.zeekadAlertResolvedRate !== undefined
-      ? Math.round(row.zeekadAlertResolvedRate * alerted)
-      : null);
-  const rateSuffix =
-    row.zeekadAlertResolvedRate !== null && row.zeekadAlertResolvedRate !== undefined
-      ? ` (${(row.zeekadAlertResolvedRate * 100).toFixed(1)}%)`
-      : '';
-  if (effResolved === null) {
-    return row.zeekadAlertPrecision === null || row.zeekadAlertPrecision === undefined
-      ? '- (결론 없음)'
-      : `정밀도 ${row.zeekadAlertPrecision.toFixed(2)}${rateSuffix}`;
-  }
-  if (row.zeekadAlertPrecision !== null && row.zeekadAlertPrecision !== undefined) {
-    return `정밀도 ${row.zeekadAlertPrecision.toFixed(2)}, 결론 ${effResolved}/${alerted}${rateSuffix}`;
-  }
-  return `- (결론 ${effResolved}/${alerted}${rateSuffix})`;
-}
+import { formatDateTime, formatNumber } from '../utils/format';
+import { captureInfo } from '../utils/labels';
+import {
+  SAMPLE_MIN,
+  alertPrecisionSummaryText,
+  effectiveAlertedResolved,
+  failedJobCount,
+  isAllModelRow,
+  isFailedJob,
+  isQuietRow,
+  latestJobPerCapture,
+  latestSlackSummary,
+  latestSucceededJob,
+  precisionSummaryText,
+  precisionValue,
+  sampleShortTooltip,
+  selectSummaryRows,
+  sumAllRows,
+  totalsAsRow,
+} from '../utils/operations';
 
 /** 판정 건수 배지: 0이면 색을 쓰지 않는다 */
 function ResolutionCountBadge({ code, count, tone }: { code: string; count: number; tone: BadgeTone }) {
@@ -75,11 +46,35 @@ function ResolutionCountBadge({ code, count, tone }: { code: string; count: numb
   );
 }
 
+interface SummaryGroup {
+  all: FeedbackSummaryRecord;
+  models: FeedbackSummaryRecord[];
+}
+
+/** '모든 모델 합계' 행마다 같은 캡처·모델 버전의 탐지 모델별 행을 묶는다. */
+function groupSummaries(rows: FeedbackSummaryRecord[]): SummaryGroup[] {
+  const groups: SummaryGroup[] = [];
+  const byKey = new Map<string, SummaryGroup>();
+  for (const row of rows) {
+    if (!isAllModelRow(row)) continue;
+    const group = { all: row, models: [] as FeedbackSummaryRecord[] };
+    byKey.set(`${row.captureId}|${row.bundleId}`, group);
+    groups.push(group);
+  }
+  for (const row of rows) {
+    if (isAllModelRow(row)) continue;
+    const group = byKey.get(`${row.captureId}|${row.bundleId}`);
+    if (group) group.models.push(row);
+  }
+  return groups;
+}
+
 export function OperationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<OperationsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const captureId = searchParams.get('captureId') ?? '';
 
@@ -107,33 +102,66 @@ export function OperationsPage() {
     setSearchParams(next);
   }
 
+  const groups = useMemo(() => groupSummaries(data?.feedbackSummaries ?? []), [data]);
+  const status = useMemo(() => {
+    if (!data) return null;
+    const { allRows } = selectSummaryRows(data.feedbackSummaries, data.jobs);
+    const latestJobs = latestJobPerCapture(data.jobs);
+    return {
+      totalsRow: totalsAsRow(sumAllRows(allRows)),
+      latestJobs,
+      latestFailed: latestJobs.filter(isFailedJob).length,
+      failedAll: failedJobCount(data.jobs),
+      latestOk: latestSucceededJob(data.jobs),
+      latestSlack: latestSlackSummary(data.slackSummaries),
+    };
+  }, [data]);
+
+  const groupKey = (g: SummaryGroup) => `${g.all.captureId}|${g.all.bundleId}`;
+  const allExpanded = groups.length > 0 && groups.every((g) => g.models.length === 0 || expanded.has(groupKey(g)));
+
+  function toggleGroup(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setExpanded(allExpanded ? new Set() : new Set(groups.map(groupKey)));
+  }
+
   return (
-    <AppShell title="운영 현황" subtitle="모델별 탐지 성과, 탐지 작업 기록, Slack 일일 요약을 확인합니다">
-      <div className="space-y-6">
-        <section className="soc-card flex flex-wrap items-center justify-between gap-4 p-4">
-          <div>
-            <label htmlFor="ops-capture" className="mb-1 block text-[11px] font-medium text-slate-400">
+    <AppShell title="운영 현황" subtitle="파이프라인·탐지 모델 판정·경보 상태와 판정 집계를 확인합니다">
+      <div className="space-y-4">
+        <section className="soc-card flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <label htmlFor="ops-capture" className="text-xs font-medium text-slate-400">
               캡처
             </label>
             <select
               id="ops-capture"
               value={captureId}
               onChange={(e) => handleCaptureChange(e.target.value)}
-              className="soc-select text-xs"
+              className="soc-select py-1.5 text-xs"
             >
               <option value="">열람 허용 캡처 전체</option>
-              {(data?.allowedCaptures ?? []).map((cap) => (
-                <option key={cap} value={cap}>
-                  {cap}
-                </option>
-              ))}
+              {(data?.allowedCaptures ?? []).map((cap) => {
+                const info = captureInfo(cap);
+                return (
+                  <option key={cap} value={cap} title={info.tooltip}>
+                    {info.text}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div className="flex flex-wrap gap-3 text-xs tabular-nums text-slate-400">
-            <span>판정 집계 {data?.feedbackSummaries.length ?? 0}행</span>
-            <span>· 탐지 작업 {data?.jobs.length ?? 0}건</span>
-            <span>· 모델 버전 {data?.bundles.length ?? 0}개</span>
-            <span>· Slack 일일 요약 {data?.slackSummaries.length ?? 0}건</span>
+            <span>탐지 작업 {formatNumber(data?.jobs.length ?? 0)}건</span>
+            <span>· 모델 버전 {formatNumber(data?.bundles.length ?? 0)}개</span>
+            <span>· Slack 일일 요약 {formatNumber(data?.slackSummaries.length ?? 0)}건</span>
           </div>
         </section>
 
@@ -143,19 +171,79 @@ export function OperationsPage() {
           <LoadingPanel label="운영 현황을 불러오는 중..." />
         ) : (
           <>
-            <section className="soc-card space-y-4 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            {status && (
+              <section aria-label="상태 요약" className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <StatusCard icon={Activity} title="파이프라인" tone={status.latestFailed > 0 ? 'attention' : 'ok'}>
+                  <div className="text-base font-semibold text-slate-50">
+                    {status.latestJobs.length === 0
+                      ? '탐지 작업 없음'
+                      : status.latestFailed > 0
+                        ? `최근 작업 실패 ${formatNumber(status.latestFailed)}개 캡처`
+                        : `최근 작업 모두 완료(${formatNumber(status.latestJobs.length)}개 캡처)`}
+                  </div>
+                  <div className="text-xs text-slate-400" title="가장 최근에 성공한 탐지 작업의 완료 시각">
+                    데이터 기준 <span className="tabular-nums text-slate-300">{formatDateTime(status.latestOk?.finishedAt)}</span>
+                  </div>
+                  <div className="text-xs text-slate-400" title="열람 허용 캡처의 탐지 작업 기록 전체 기준">
+                    실패한 탐지 작업 <span className="tabular-nums text-slate-300">{formatNumber(status.failedAll)}건</span>
+                  </div>
+                </StatusCard>
+                <StatusCard icon={Cpu} title="모델 판정" tone="neutral">
+                  <div
+                    className="text-base font-semibold text-slate-50"
+                    title={
+                      (status.totalsRow.resolved ?? 0) > 0 && (status.totalsRow.resolved ?? 0) < SAMPLE_MIN
+                        ? sampleShortTooltip('정탐률', status.totalsRow.resolved ?? 0, status.totalsRow.zeekadPrecision)
+                        : undefined
+                    }
+                  >
+                    {precisionSummaryText(status.totalsRow)}
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    인시던트 <span className="tabular-nums text-slate-300">{formatNumber(status.totalsRow.incidents)}건</span> · 미판정{' '}
+                    <span className="tabular-nums text-slate-300">
+                      {formatNumber((status.totalsRow.incidents ?? 0) - (status.totalsRow.resolved ?? 0))}건
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400">캡처마다 최신 탐지 작업의 모든 모델 합계 기준</div>
+                </StatusCard>
+                <StatusCard icon={Bell} title="경보" tone="neutral">
+                  <div className="text-base font-semibold text-slate-50">
+                    경보 발송 {formatNumber(status.totalsRow.alerted)}건
+                  </div>
+                  <div className="text-xs text-slate-300">{alertPrecisionSummaryText(status.totalsRow)}</div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+                    최근 일일 요약{' '}
+                    <span className="tabular-nums text-slate-300">
+                      {status.latestSlack
+                        ? formatDateTime(status.latestSlack.deliveredAt ?? status.latestSlack.createdAt)
+                        : '기록 없음'}
+                    </span>
+                    {status.latestSlack?.dryRunOrRecorded && <SocBadge tone="muted">Dry-run</SocBadge>}
+                  </div>
+                </StatusCard>
+              </section>
+            )}
+
+            <section className="soc-card space-y-3 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                   <BarChart3 className="h-4 w-4 text-slate-400" />
                   분석가 판정 집계
-                </div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <Info className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>이 표는 탐지된 인시던트만 셉니다. 놓친 공격 수는 알 수 없습니다.</span>
-                </div>
+                </h2>
+                {groups.some((g) => g.models.length > 0) && (
+                  <button type="button" onClick={toggleAll} className="soc-btn-secondary py-1 text-xs">
+                    {allExpanded ? '탐지 모델별 행 모두 접기' : '탐지 모델별 행 모두 펼치기'}
+                  </button>
+                )}
               </div>
+              <p className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                미탐(재현율)은 이 집계로 알 수 없음 — 이 표는 탐지된 인시던트만 셉니다. 정탐률은 판정 {SAMPLE_MIN}건 미만이면
+                표본 부족으로 보입니다.
+              </p>
 
-              {(data?.feedbackSummaries ?? []).length === 0 ? (
+              {groups.length === 0 ? (
                 <div className="soc-panel px-4 py-6 text-center text-sm text-slate-400">
                   아직 분석가 판정이 기록된 인시던트가 없습니다.
                 </div>
@@ -165,97 +253,40 @@ export function OperationsPage() {
                     <thead>
                       <tr>
                         <th className="soc-th">캡처 · 모델 버전</th>
-                        <th className="soc-th">탐지 모델</th>
-                        <th className="soc-th text-right">인시던트 / 경보 / 판정</th>
+                        <th className="soc-th" title="탐지 모델별 행은 주 탐지 기준 인시던트 수입니다(교차 탐지를 빼지 않음)">
+                          탐지 모델
+                        </th>
+                        <th className="soc-th text-right">인시던트 / 경보 발송 / 판정</th>
                         <th className="soc-th">판정 분포</th>
-                        <th className="soc-th">전체 정밀도</th>
-                        <th className="soc-th">경보 정밀도 · 판정 비율</th>
+                        <th className="soc-th">정탐률</th>
+                        <th className="soc-th">경보 정탐률 · 경보 판정률</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(data?.feedbackSummaries ?? []).map((row, idx) => {
-                        const isAll = isAllModelRow(row);
+                      {groups.map((group) => {
+                        const key = groupKey(group);
+                        const open = expanded.has(key);
                         return (
-                          <tr
-                            key={`${row.captureId}-${row.bundleId}-${row.zeekadPickedBy}-${idx}`}
-                            className={isAll ? 'bg-slate-800/40 hover:bg-slate-800/60' : 'hover:bg-slate-800/35'}
-                          >
-                            <td className="soc-td text-xs">
-                              <div className="font-mono font-semibold text-slate-100">{row.captureId ?? '-'}</div>
-                              <div className="mt-0.5 font-mono text-[11px] text-slate-400" data-raw="">
-                                {row.bundleId ?? '-'}
-                              </div>
-                            </td>
-                            <td className="soc-td text-xs">
-                              {isAll ? (
-                                <span className="font-semibold text-slate-100">모든 모델 합계</span>
-                              ) : (
-                                <DetectionModelName id={row.zeekadPickedBy} className="text-slate-200" />
+                          <Fragment key={key}>
+                            <SummaryRow row={group.all} isAll>
+                              {group.models.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroup(key)}
+                                  aria-expanded={open}
+                                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200"
+                                >
+                                  {open ? (
+                                    <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                                  )}
+                                  탐지 모델별 {formatNumber(group.models.length)}개 {open ? '접기' : '펼치기'}
+                                </button>
                               )}
-                            </td>
-                            <td className="soc-td soc-num text-xs text-slate-200">
-                              <div>인시던트 {formatNumber(row.incidents)}</div>
-                              <div className="text-slate-400">
-                                경보 {formatNumber(row.alerted)} · 판정 {formatNumber(row.resolved)}
-                              </div>
-                            </td>
-                            <td className="soc-td text-xs">
-                              <div className="flex flex-wrap gap-1">
-                                <ResolutionCountBadge code="true_positive" count={row.truePositive ?? 0} tone="danger" />
-                                <ResolutionCountBadge code="false_positive" count={row.falsePositive ?? 0} tone="violet" />
-                                <ResolutionCountBadge code="benign" count={row.benign ?? 0} tone="positive" />
-                              </div>
-                            </td>
-                            <td className="soc-td min-w-[210px] text-xs">
-                              <div className="tabular-nums text-slate-100">{buildPrecisionText(row)}</div>
-                              <div className="mt-1.5">
-                                <SvgProgressBar
-                                  value={row.zeekadPrecision ?? 0}
-                                  max={1}
-                                  tone={row.zeekadPrecision !== null && row.zeekadPrecision !== undefined ? 'cyan' : 'slate'}
-                                  label="전체 정밀도"
-                                />
-                              </div>
-                            </td>
-                            <td className="soc-td min-w-[220px] text-xs">
-                              <div className="tabular-nums text-slate-100">{buildAlertPrecisionText(row)}</div>
-                              <div className="mt-1.5 grid grid-cols-2 gap-2">
-                                <div>
-                                  <div className="mb-0.5 text-[11px] tabular-nums text-slate-400">
-                                    경보 정밀도{' '}
-                                    {row.zeekadAlertPrecision !== null && row.zeekadAlertPrecision !== undefined
-                                      ? row.zeekadAlertPrecision.toFixed(2)
-                                      : '-'}
-                                  </div>
-                                  <SvgProgressBar
-                                    value={row.zeekadAlertPrecision ?? 0}
-                                    max={1}
-                                    tone={
-                                      row.zeekadAlertPrecision !== null && row.zeekadAlertPrecision !== undefined
-                                        ? 'emerald'
-                                        : 'slate'
-                                    }
-                                    label="경보 정밀도"
-                                  />
-                                </div>
-                                <div>
-                                  <div className="mb-0.5 text-[11px] tabular-nums text-slate-400">
-                                    판정 비율 {formatPercent(row.zeekadAlertResolvedRate)}
-                                  </div>
-                                  <SvgProgressBar
-                                    value={row.zeekadAlertResolvedRate ?? 0}
-                                    max={1}
-                                    tone={
-                                      row.zeekadAlertResolvedRate !== null && row.zeekadAlertResolvedRate !== undefined
-                                        ? 'purple'
-                                        : 'slate'
-                                    }
-                                    label="경보 판정 비율"
-                                  />
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
+                            </SummaryRow>
+                            {open && group.models.map((row) => <SummaryRow key={`${key}|${row.zeekadPickedBy}`} row={row} />)}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -264,11 +295,7 @@ export function OperationsPage() {
               )}
             </section>
 
-            <section className="soc-card space-y-4 p-5">
-              <div className="flex items-center gap-2 border-b border-slate-800 pb-3 text-sm font-semibold text-slate-100">
-                <Activity className="h-4 w-4 text-slate-400" />
-                탐지 작업 기록
-              </div>
+            <CollapsibleSection icon={Activity} title="탐지 작업 기록" count={`${formatNumber(data?.jobs.length ?? 0)}건`}>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
@@ -298,7 +325,9 @@ export function OperationsPage() {
                           >
                             {formatDateTime(job.finishedAt)}
                           </td>
-                          <td className="soc-td font-mono text-xs">{job.captureId}</td>
+                          <td className="soc-td text-xs">
+                            <CaptureName id={job.captureId} />
+                          </td>
                           <td className="soc-td font-mono text-xs text-slate-300" data-raw="">
                             {job.bundleId}
                           </td>
@@ -316,20 +345,15 @@ export function OperationsPage() {
                   </tbody>
                 </table>
               </div>
-            </section>
+            </CollapsibleSection>
 
-            <section className="soc-card space-y-4 p-5">
-              <div className="flex items-center gap-2 border-b border-slate-800 pb-3 text-sm font-semibold text-slate-100">
-                <Layers className="h-4 w-4 text-slate-400" />
-                모델 버전
-              </div>
+            <CollapsibleSection icon={Layers} title="모델 버전" count={`${formatNumber(data?.bundles.length ?? 0)}개`}>
               {(data?.bundles ?? []).length === 0 ? (
                 <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">등록된 모델 버전이 없습니다.</div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {(data?.bundles ?? []).map((bundle) => {
-                    const thresholds = bundle.thresholdEntries ?? {};
-                    const thresholdList = Object.entries(thresholds);
+                    const thresholdList = Object.entries(bundle.thresholdEntries ?? {});
                     return (
                       <div key={bundle.bundleId} className="soc-panel space-y-2.5 p-4 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -376,13 +400,13 @@ export function OperationsPage() {
                   })}
                 </div>
               )}
-            </section>
+            </CollapsibleSection>
 
-            <section className="soc-card space-y-4 p-5">
-              <div className="flex items-center gap-2 border-b border-slate-800 pb-3 text-sm font-semibold text-slate-100">
-                <MessageSquare className="h-4 w-4 text-slate-400" />
-                Slack 일일 요약
-              </div>
+            <CollapsibleSection
+              icon={MessageSquare}
+              title="Slack 일일 요약"
+              count={`${formatNumber(data?.slackSummaries.length ?? 0)}건`}
+            >
               {(data?.slackSummaries ?? []).length === 0 ? (
                 <div className="soc-panel px-4 py-6 text-center text-xs text-slate-400">Slack 일일 요약 기록이 없습니다.</div>
               ) : (
@@ -391,17 +415,12 @@ export function OperationsPage() {
                     <div key={`${summary.jobId ?? idx}-${summary.captureId ?? idx}`} className="soc-panel space-y-2 p-4 text-xs">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span
-                            className="font-mono font-semibold text-slate-100"
-                            title={[
-                              summary.jobId !== null ? `탐지 작업 #${summary.jobId}` : null,
-                              summary.zeekadMessageVersion ? `메시지 형식 ${summary.zeekadMessageVersion}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          >
-                            {summary.captureId ?? '-'}
-                          </span>
+                          <CaptureName id={summary.captureId} className="font-semibold text-slate-100" />
+                          {summary.jobId !== null && (
+                            <span className="text-[11px] text-slate-500" title={summary.zeekadMessageVersion ? `메시지 형식 ${summary.zeekadMessageVersion}` : undefined}>
+                              탐지 작업 #{summary.jobId}
+                            </span>
+                          )}
                           {summary.dryRunOrRecorded && <SocBadge tone="muted">Dry-run</SocBadge>}
                         </div>
                         <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400">
@@ -421,10 +440,140 @@ export function OperationsPage() {
                   ))}
                 </div>
               )}
-            </section>
+            </CollapsibleSection>
           </>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function StatusCard({
+  icon: Icon,
+  title,
+  tone,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  tone: 'ok' | 'attention' | 'neutral';
+  children: React.ReactNode;
+}) {
+  const border = tone === 'attention' ? 'border-l-amber-400' : tone === 'ok' ? 'border-l-emerald-400' : 'border-l-slate-600';
+  return (
+    <section className={`soc-card space-y-1 border-l-4 px-4 py-3 ${border}`} aria-label={`${title} 상태`}>
+      <h2 className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function CollapsibleSection({
+  icon: Icon,
+  title,
+  count,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  count: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="soc-card group p-4">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-slate-100">
+        <ChevronRight className="h-4 w-4 text-slate-400 transition group-open:rotate-90" aria-hidden="true" />
+        <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />
+        {title}
+        <span className="text-xs font-normal tabular-nums text-slate-400">{count}</span>
+      </summary>
+      <div className="mt-3 border-t border-slate-800 pt-3">{children}</div>
+    </details>
+  );
+}
+
+function SummaryRow({ row, isAll = false, children }: { row: FeedbackSummaryRecord; isAll?: boolean; children?: React.ReactNode }) {
+  const quiet = isQuietRow(row);
+  const resolved = row.resolved ?? 0;
+  const alertResolved = effectiveAlertedResolved(row) ?? 0;
+  const precision = precisionValue(resolved, row.zeekadPrecision);
+  const alertPrecision = precisionValue(alertResolved, row.zeekadAlertPrecision);
+  return (
+    <tr className={isAll ? 'bg-slate-800/40 hover:bg-slate-800/60' : 'hover:bg-slate-800/35'}>
+      <td className={`soc-td text-xs ${isAll ? '' : 'pl-8'}`}>
+        {isAll ? (
+          <>
+            <CaptureName id={row.captureId} className="font-semibold text-slate-100" />
+            <div className="mt-0.5 font-mono text-[11px] text-slate-400" data-raw="">
+              {row.bundleId ?? '-'}
+            </div>
+            {children}
+          </>
+        ) : (
+          <span className="text-[11px] text-slate-500">└</span>
+        )}
+      </td>
+      <td className="soc-td text-xs">
+        {isAll ? (
+          <span className="font-semibold text-slate-100">모든 모델 합계</span>
+        ) : (
+          <DetectionModelName id={row.zeekadPickedBy} className="text-slate-200" />
+        )}
+      </td>
+      <td className="soc-td soc-num text-xs text-slate-200">
+        <div>인시던트 {formatNumber(row.incidents)}</div>
+        <div className="text-slate-400">
+          경보 발송 {formatNumber(row.alerted)} · 판정 {formatNumber(row.resolved)}
+        </div>
+      </td>
+      {quiet ? (
+        <td className="soc-td text-xs text-slate-500" colSpan={3}>
+          판정 없음
+        </td>
+      ) : (
+        <>
+          <td className="soc-td text-xs">
+            <div className="flex flex-wrap gap-1">
+              <ResolutionCountBadge code="true_positive" count={row.truePositive ?? 0} tone="danger" />
+              <ResolutionCountBadge code="false_positive" count={row.falsePositive ?? 0} tone="violet" />
+              <ResolutionCountBadge code="benign" count={row.benign ?? 0} tone="positive" />
+            </div>
+          </td>
+          <td className="soc-td min-w-[220px] text-xs">
+            <div
+              className="tabular-nums text-slate-100"
+              title={resolved > 0 && precision === null ? sampleShortTooltip('정탐률', resolved, row.zeekadPrecision) : undefined}
+            >
+              {precisionSummaryText(row)}
+            </div>
+            {precision !== null && (
+              <div className="mt-1.5">
+                <SvgProgressBar value={precision} max={1} tone="cyan" label="정탐률" />
+              </div>
+            )}
+          </td>
+          <td className="soc-td min-w-[240px] text-xs">
+            <div
+              className="tabular-nums text-slate-100"
+              title={
+                alertResolved > 0 && alertPrecision === null
+                  ? sampleShortTooltip('경보 정탐률', alertResolved, row.zeekadAlertPrecision)
+                  : undefined
+              }
+            >
+              {alertPrecisionSummaryText(row)}
+            </div>
+            {alertPrecision !== null && (
+              <div className="mt-1.5">
+                <SvgProgressBar value={alertPrecision} max={1} tone="emerald" label="경보 정탐률" />
+              </div>
+            )}
+          </td>
+        </>
+      )}
+    </tr>
   );
 }
