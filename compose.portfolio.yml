@@ -83,6 +83,8 @@ services:
       # 공개 데모 계정을 남이 잠그지 못하게 계정 잠금을 사실상 끈다(0이나 작은 값은 첫 실패에 잠근다).
       # 대신 nginx-waf가 POST /api/auth/login을 클라이언트 IP당 속도 제한한다.
       DASHBOARD_MAX_FAILED_ATTEMPTS: ${PORTFOLIO_MAX_FAILED_ATTEMPTS:-1000000}
+      # T21: 로그인 화면 안내 문구(일반 텍스트, 300자 이하). 비밀번호는 넣지 않는다.
+      DASHBOARD_LOGIN_NOTICE: "포트폴리오 공개 데모입니다. 읽기 전용 계정 demo로 둘러볼 수 있습니다(비밀번호는 포트폴리오 소개 글에 있습니다). 데이터는 공개 데이터셋 CIC-IDS2017과 합성 APT 패턴, 격리 실습망 트래픽입니다."
       # 부트스트랩은 users 표가 비었을 때(첫 기동) 한 번만 돈다. 계정마다 서로 다른 비공개 무작위 비밀번호.
       DASHBOARD_BOOTSTRAP_PASSWORD: ""
       BOOTSTRAP_VIEWER1_PASSWORD: ${BOOTSTRAP_VIEWER1_PASSWORD:-}

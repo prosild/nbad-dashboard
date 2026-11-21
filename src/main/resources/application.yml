@@ -27,6 +27,8 @@ server:
     include-binding-errors: never
 
 dashboard:
+  # 로그인 화면 안내 문구(일반 텍스트, 최대 300자. 넘으면 시작 때 실패). 기본 빈 값이면 화면에 아무것도 보이지 않는다.
+  login-notice: ${DASHBOARD_LOGIN_NOTICE:}
   datasource:
     app:
       url: jdbc:postgresql://${DASHBOARD_DB_HOST:127.0.0.1}:${DASHBOARD_DB_PORT:55432}/${DASHBOARD_DB_NAME:zeekad_dashboard}

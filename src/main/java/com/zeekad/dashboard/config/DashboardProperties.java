@@ -12,6 +12,16 @@ public class DashboardProperties {
     private final EvidenceApi evidenceApi = new EvidenceApi();
     private final Security security = new Security();
     private final Bootstrap bootstrap = new Bootstrap();
+    /** 로그인 화면 안내 문구(T21, 환경 변수 DASHBOARD_LOGIN_NOTICE). 일반 텍스트, 기본 빈 값. */
+    private String loginNotice = "";
+
+    public String getLoginNotice() {
+        return loginNotice;
+    }
+
+    public void setLoginNotice(String loginNotice) {
+        this.loginNotice = loginNotice;
+    }
 
     public Datasource getDatasource() {
         return datasource;
