@@ -170,7 +170,7 @@ docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | sort > ~/zeekad-po
 # 옮길 네 태그가 이미 있는지(아무것도 나오지 않는 것이 정상). 있으면 3.3 대조 전에 ID를 image-ids.txt와 비교하고,
 # 다른 ID면 멈춘다(docker load가 기존 태그를 새 이미지로 옮겨 기존 컨테이너가 쓰던 이미지를 바꿀 수 있다).
 grep -E '^(zeek-ad-dashboard-app:local|zeek-ad-dashboard-waf:local|zeekad-pipeline:dev|pgvector/pgvector:0\.8\.1-pg17) ' ~/zeekad-portfolio-check/images-before.txt || echo "no target tags"
-# 포트 18480이 비어 있는지(아무것도 나오지 않아야 한다). 18080은 nexus-portal이 쓴다.
+# 포트 18480이 비어 있는지(아무것도 나오지 않아야 한다). 18080은 같은 NAS의 기존 포트폴리오 컨테이너가 쓴다.
 netstat -tln 2>/dev/null | grep -E ':18480\b' || echo "18480 free"
 # 배포 폴더를 sudo 없이 만들 수 있는지(/volume1/docker 쓰기 권한)
 ls -ld /volume1/docker; test -w /volume1/docker && echo "volume1/docker writable"
@@ -560,7 +560,7 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
 
 ## 4. DSM 설정
 
-DSM 7.3 기준 메뉴 경로다. `T13`에서 사용자가 이 절의 메뉴 경로와 값 그대로 설정했다.
+DSM 7.3 기준 메뉴 경로다. `T13`에서 이 절의 메뉴 경로와 값으로 설정해 확인했다.
 
 ### 4.1 하위 도메인 인증서
 
@@ -584,7 +584,7 @@ DSM 7.3 기준 메뉴 경로다. `T13`에서 사용자가 이 절의 메뉴 경�
 - `localhost`가 IPv6 `::1`로 풀려 연결되지 않으면 대상 호스트 이름을 `127.0.0.1`로 바꾼다(`T13`에서는 이 문제가 없었다).
 - **인증서 연결**: **제어판 > 보안 > 인증서 > 설정**에서 서비스 `soc.<DDNS 이름>.synology.me`에 4.1의 인증서를 고른다.
 - DSM은 HSTS를 켜면 `Strict-Transport-Security: max-age=15768000; includeSubdomains; preload`를 붙인다. 앱도 `max-age=31536000 ; includeSubDomains`를 보내므로 응답에 HSTS 헤더가 두 개 있다(동작 영향 없음). DSM 앞단은 `Server: nginx`(버전 없음)를 붙이며 이 스택에서 바꿀 수 없다.
-- 공유기·모뎀 포트 포워딩과 기존 포트폴리오(`nexus-portal`)의 역방향 프록시 규칙은 바꾸지 않는다.
+- 공유기·모뎀 포트 포워딩과 기존 포트폴리오의 역방향 프록시 규칙은 바꾸지 않는다.
 
 ### 4.3 DSM이 실제로 보내는 헤더 확인(T13)
 
@@ -596,7 +596,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
   psql -U postgres -d zeekad_dashboard -c "SELECT occurred_at, actor_username, client_ip FROM audit_logs WHERE action_type='LOGIN_SUCCESS' ORDER BY id DESC LIMIT 3"
 ```
 
-- `occurred_at`은 UTC다. 사용자가 알려 준 로그인 시각(한국 시간이면 9시간을 뺀다)으로 줄을 구분한다.
+- `occurred_at`은 UTC다. 외부망에서 로그인한 시각(한국 시간이면 9시간을 뺀다)으로 줄을 구분한다.
 - `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 스택 서브넷 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다(`T13`에서는 필요 없었다).
 - `docker compose ... logs nginx-waf`: 접근 로그 줄의 마지막 칸은 받은 `X-Forwarded-For` 원문이다(DSM이 덧붙인 마지막 주소 = 방문자 IP). ModSecurity JSON 로그(`"client_ip"`)는 차단·오류 응답 등 관련 있는 요청만 남으므로 성공한 로그인(200)은 접근 로그로 본다.
 - DSM이 넘기는 헤더를 직접 보려면 실패하는 로그인(401) 요청에 `X-E2E-Probe: <표지>` 헤더를 붙여 보내고, ModSecurity JSON 로그에서 그 표지가 있는 줄의 `request.headers`를 본다.
@@ -619,7 +619,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
 - [ ] 로그아웃 상태에서 `https://soc.<DDNS 이름>.synology.me/`에 접속하면 `https://soc.<DDNS 이름>.synology.me/login`으로 간다(주소에 `:8080`·`:18480`·`http://`가 없다). (리허설 [1])
 - [ ] LAN에서 `http://<NAS 주소>:18480/`로 직접 접근할 수 없다. NAS의 이 스택 포트는 `127.0.0.1:18480` 하나뿐이다. (3.6, 리허설 [0])
-- [ ] 같은 NAS의 기존 컨테이너(`nexus-portal` 등)와 기존 포트폴리오 주소가 그대로 동작한다. (3.6)
+- [ ] 같은 NAS의 기존 컨테이너와 기존 포트폴리오 주소가 그대로 동작한다. (3.6)
 
 ## 5. 계정 시드의 직접 SQL 단계와 위험
 

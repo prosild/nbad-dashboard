@@ -49,4 +49,4 @@
 - "데이터 계약 v2": `docs/data-contract-v2.md`
 - "설계 토론 Q63·Q65·Q67"(예: "zeek_AD Q65"): `docs/design-discussion-log.md`의 해당 질문 번호
 - "설계 결정 DD-008"(합성 APT 주입): `docs/design-decisions/DD-008-synthetic-apt-injection.md`
-- 대시보드 연동 안내: `docs/dashboard-handoff-2026-11-21.md`
+- 대시보드 연동 안내("2026-11-19 전달 글" 등): `docs/dashboard-handoff-2026-11-19.md`, `docs/dashboard-handoff-2026-11-21.md`
