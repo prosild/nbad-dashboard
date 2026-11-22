@@ -21,6 +21,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -48,6 +50,12 @@ public class IncidentQueueService {
     public static final List<Integer> PAGE_SIZES = List.of(25, 50, 100);
     public static final int DEFAULT_PAGE_SIZE = 50;
     public static final String DEFAULT_PERIOD = "24h";
+    /** T34 사용자 지정 기간: period=custom, start·end(오프셋 있는 ISO-8601), 범위 (start, end] */
+    public static final String PERIOD_CUSTOM = "custom";
+    /** 지정 기간 길이 상한 */
+    public static final Duration CUSTOM_MAX_LENGTH = Duration.ofDays(366);
+    /** 지정 기간 시작 하한(이 시각 포함 이후) */
+    public static final OffsetDateTime CUSTOM_MIN_START = OffsetDateTime.parse("2000-01-01T00:00:00+09:00");
 
     private static final Map<String, Duration> PERIODS = Map.of(
             "1h", Duration.ofHours(1),
@@ -106,13 +114,25 @@ public class IncidentQueueService {
                               String size,
                               /* T25: 담당 조건 me·none, 착수 지연 띠 축 */
                               String assignee,
-                              String overdue) {
+                              String overdue,
+                              /* T34: 사용자 지정 기간(period=custom일 때만) */
+                              String start,
+                              String end) {
+        /** T34 앞 호출 호환(지정 기간 없음) */
+        public QueueParams(String period, String source, String captureId, String priority, String status,
+                           String reviewPending, String alerted, String pickedBy, String role, String hasReport,
+                           String wouldSend, String asset, String sort, String dir, String page, String size,
+                           String assignee, String overdue) {
+            this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, null, null);
+        }
+
         /** T25 앞 호출 호환(담당·착수 지연 조건 없음) */
         public QueueParams(String period, String source, String captureId, String priority, String status,
                            String reviewPending, String alerted, String pickedBy, String role, String hasReport,
                            String wouldSend, String asset, String sort, String dir, String page, String size) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, null, null);
+                    wouldSend, asset, sort, dir, page, size, null, null, null, null);
         }
     }
 
@@ -121,6 +141,8 @@ public class IncidentQueueService {
                          List<String> captureIds,
                          OffsetDateTime anchor,
                          String period,
+                         OffsetDateTime periodStart,
+                         OffsetDateTime periodEnd,
                          UnifiedQueueCriteria criteria,
                          String asset,
                          UserRole role) {
@@ -153,7 +175,8 @@ public class IncidentQueueService {
 
         if (scope.captureIds().isEmpty()) {
             return new UnifiedQueueResponse(List.of(), 0, 1, size, 1, emptySummary(), scope.anchor(),
-                    timeContextService.mode(), timeContextService.isSnapshot(), scope.period(), null, null,
+                    timeContextService.mode(), timeContextService.isSnapshot(), scope.period(),
+                    scope.periodStart(), scope.periodEnd(), null, null,
                     0L, sources, masked, models, roles);
         }
 
@@ -166,9 +189,11 @@ public class IncidentQueueService {
         OffsetDateTime latestDetectedAt;
         // T29 기간 밖: outsidePeriod = 기간 전체 total − 지금 total(같은 조건, 띠 축 포함), 기간 전체면 0.
         // newestOutsidePeriod = 기간 시작 이하에 탐지된 행(같은 조건)의 최대 탐지 시각. 알 수 없으면 null.
+        // T34 지정 기간: outsidePeriod는 앞뒤를 합친 수(전체 − 기간 안)이고 newestOutsidePeriod는 null이다.
         Long outsidePeriod = 0L;
         OffsetDateTime newestOutsidePeriod = null;
         boolean periodApplied = !"all".equals(scope.period());
+        boolean custom = PERIOD_CUSTOM.equals(scope.period());
 
         if (scope.asset() == null) {
             UnifiedQueueCriteria c = scope.criteria();
@@ -183,7 +208,7 @@ public class IncidentQueueService {
                 long all = split == null ? 0 : split.getTotalAll();
                 outsidePeriod = all - total;
                 latestDetectedAt = split == null ? null : split.getLatestInPeriod();
-                newestOutsidePeriod = split == null ? null : split.getNewestBeforePeriod();
+                newestOutsidePeriod = split == null || custom ? null : split.getNewestBeforePeriod();
             } else {
                 total = zeekadReadMapper.countUnifiedQueue(c);
                 latestDetectedAt = total > 0 ? zeekadReadMapper.findMaxUnifiedDetectedAt(c) : null;
@@ -217,7 +242,7 @@ public class IncidentQueueService {
                     long inCount = allFiltered.stream()
                             .filter(m -> inPeriod(m.record().getDetectedAt(), after, until)).count();
                     outsidePeriod = allFiltered.size() - inCount;
-                    newestOutsidePeriod = allFiltered.stream()
+                    newestOutsidePeriod = custom ? null : allFiltered.stream()
                             .map(m -> m.record().getDetectedAt())
                             .filter(d -> d != null && !d.isAfter(after))
                             .max(OffsetDateTime::compareTo)
@@ -269,7 +294,8 @@ public class IncidentQueueService {
         }
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
-                timeContextService.mode(), timeContextService.isSnapshot(), scope.period(), latestDetectedAt,
+                timeContextService.mode(), timeContextService.isSnapshot(), scope.period(),
+                scope.periodStart(), scope.periodEnd(), latestDetectedAt,
                 newestOutsidePeriod, outsidePeriod, sources, masked, models, roles);
     }
 
@@ -399,6 +425,7 @@ public class IncidentQueueService {
     /**
      * 기간·수집원·캡처 조건(T24 현황판·운영 현황이 큐와 같은 조건 조립을 쓴다).
      * allowed = 허용 캡처 전체, captureIds = 허용 ∩ 수집원 ∩ 고른 캡처, after = 기간 시작(불포함, all이면 null),
+     * until = 기간 끝(포함, all이면 null). 프리셋은 기준 시각이고 T34 지정 기간은 받은 끝이라 기준 시각 뒤일 수 있다.
      * criteria = 같은 조건 큐(띠 축 없음)의 조회 조건. 잘못된 값은 큐와 같은 400, 허용 밖 captureId는 403·감사 기록이다.
      */
     public record Condition(List<String> allowed,
@@ -406,19 +433,26 @@ public class IncidentQueueService {
                             OffsetDateTime anchor,
                             String period,
                             OffsetDateTime after,
+                            OffsetDateTime until,
                             UnifiedQueueCriteria criteria) {
     }
 
     public Condition resolveCondition(DashboardUserPrincipal principal, String period, String source, String captureId,
                                       String clientIp) {
-        QueueParams p = new QueueParams(period, source, captureId, null, null, null, null, null, null, null, null,
-                null, null, null, null, null);
-        Scope scope = resolveScope(principal, p, clientIp, true);
-        return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
-                scope.criteria().getDetectedAfter(), scope.criteria());
+        return resolveCondition(principal, period, null, null, source, captureId, clientIp);
     }
 
-    /** 기간 이름 → 길이(all이면 null) */
+    /** T34: 지정 기간(period=custom, start·end)까지 받는다 */
+    public Condition resolveCondition(DashboardUserPrincipal principal, String period, String start, String end,
+                                      String source, String captureId, String clientIp) {
+        QueueParams p = new QueueParams(period, source, captureId, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, start, end);
+        Scope scope = resolveScope(principal, p, clientIp, true);
+        return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
+                scope.criteria().getDetectedAfter(), scope.criteria().getDetectedUntil(), scope.criteria());
+    }
+
+    /** 기간 이름 → 길이(all·custom이면 null) */
     public static Duration periodLength(String period) {
         return PERIODS.get(period);
     }
@@ -474,9 +508,10 @@ public class IncidentQueueService {
             captureAccessService.requireCaptureAccess(principal, captureId, clientIp);
         }
         String period = trimToNull(p.period()) == null ? DEFAULT_PERIOD : p.period().trim().toLowerCase(Locale.ROOT);
-        if (!"all".equals(period) && !PERIODS.containsKey(period)) {
+        if (!"all".equals(period) && !PERIOD_CUSTOM.equals(period) && !PERIODS.containsKey(period)) {
             throw invalid("기간 값이 올바르지 않습니다.");
         }
+        OffsetDateTime[] customRange = resolveCustomRange(period, p.start(), p.end());
         String source = trimToNull(p.source());
         if (source != null) {
             source = source.toLowerCase(Locale.ROOT);
@@ -549,9 +584,19 @@ public class IncidentQueueService {
         c.setAckMediumBefore(anchor.minus(ackTargetService.medium()));
         c.setAckLowBefore(anchor.minus(ackTargetService.low()));
         c.setOverdue("true".equalsIgnoreCase(trimToNull(p.overdue())));
-        if (applyPeriod && !"all".equals(period)) {
-            c.setDetectedAfter(anchor.minus(PERIODS.get(period)));
-            c.setDetectedUntil(anchor);
+        // T34: 응답의 periodStart·periodEnd(UTC). 프리셋은 (기준 시각 − P, 기준 시각], 전체는 null, 지정은 받은 값
+        OffsetDateTime periodStart = null;
+        OffsetDateTime periodEnd = null;
+        if (customRange != null) {
+            periodStart = customRange[0];
+            periodEnd = customRange[1];
+        } else if (!"all".equals(period)) {
+            periodStart = anchor.minus(PERIODS.get(period)).withOffsetSameInstant(ZoneOffset.UTC);
+            periodEnd = anchor.withOffsetSameInstant(ZoneOffset.UTC);
+        }
+        if (applyPeriod && periodStart != null) {
+            c.setDetectedAfter(periodStart);
+            c.setDetectedUntil(periodEnd);
         }
         c.setPickedBy(trimToNull(p.pickedBy()));
         c.setRole(trimToNull(p.role()));
@@ -566,7 +611,48 @@ public class IncidentQueueService {
         c.setSortAsc(asc);
 
         UserRole role = principal != null ? principal.getRole() : UserRole.VIEWER;
-        return new Scope(allowed, c.getCaptureIds(), anchor, period, c, trimToNull(p.asset()), role);
+        return new Scope(allowed, c.getCaptureIds(), anchor, period, periodStart, periodEnd, c,
+                trimToNull(p.asset()), role);
+    }
+
+    /**
+     * T34 지정 기간 검사. custom이 아니면 start·end가 오면 안 된다(400). custom이면 둘 다 오프셋 있는 ISO-8601이고
+     * 시작 &lt; 끝, 길이 366일 이하, 시작이 2000-01-01T00:00+09:00 이후다. 끝이 기준 시각 뒤인 것은 받는다.
+     * 오류 문장에 입력 값을 넣지 않는다. 결과는 UTC {시작, 끝}, custom이 아니면 null.
+     */
+    static OffsetDateTime[] resolveCustomRange(String period, String rawStart, String rawEnd) {
+        String start = trimToNull(rawStart);
+        String end = trimToNull(rawEnd);
+        if (!PERIOD_CUSTOM.equals(period)) {
+            if (start != null || end != null) {
+                throw invalid("기간 지정(start·end)은 period=custom일 때만 쓸 수 있습니다.");
+            }
+            return null;
+        }
+        if (start == null || end == null) {
+            throw invalid("기간 지정에는 시작과 끝이 모두 필요합니다.");
+        }
+        OffsetDateTime s = parseRangeTime(start, "시작");
+        OffsetDateTime e = parseRangeTime(end, "끝");
+        if (!s.isBefore(e)) {
+            throw invalid("기간 지정의 시작은 끝보다 앞이어야 합니다.");
+        }
+        if (Duration.between(s, e).compareTo(CUSTOM_MAX_LENGTH) > 0) {
+            throw invalid("기간 지정은 366일을 넘을 수 없습니다.");
+        }
+        if (s.isBefore(CUSTOM_MIN_START)) {
+            throw invalid("기간 지정의 시작은 2000-01-01 00:00 KST 이후여야 합니다.");
+        }
+        return new OffsetDateTime[]{s.withOffsetSameInstant(ZoneOffset.UTC), e.withOffsetSameInstant(ZoneOffset.UTC)};
+    }
+
+    /** 오프셋(Z 또는 ±hh:mm)이 반드시 있는 ISO-8601. 초·소수 초는 있어도 없어도 된다 */
+    private static OffsetDateTime parseRangeTime(String raw, String label) {
+        try {
+            return OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        } catch (DateTimeParseException ex) {
+            throw invalid("기간 지정의 " + label + " 시각 형식이 올바르지 않습니다(오프셋이 있는 ISO-8601).");
+        }
     }
 
     /**

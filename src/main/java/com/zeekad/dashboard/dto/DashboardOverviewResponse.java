@@ -7,12 +7,15 @@ import java.util.List;
  * GET /api/dashboard/overview 응답(T24). 기간·수집원 조건 안의 탐지 추이, 센서·캡처 상태, 경보 발송 상태.
  * 수(summary)는 넣지 않는다: 화면은 같은 조건 큐 API의 summary를 쓴다.
  * 불변식: buckets 합 + unbucketed 합 = 같은 조건 큐 summary.total = captures[].total 합, 센서 total = 그 센서 캡처 행 합.
+ * T34: periodStart·periodEnd는 큐 응답과 같다(UTC, 전체면 null).
  */
 public record DashboardOverviewResponse(
         OffsetDateTime anchor,
         String anchorMode,
         boolean snapshot,
         String period,
+        OffsetDateTime periodStart,
+        OffsetDateTime periodEnd,
         String timeZone,
         long staleAfterSeconds,
         long downAfterSeconds,
@@ -31,7 +34,7 @@ public record DashboardOverviewResponse(
                          long high, long medium, long low, long none, long total) {
     }
 
-    /** 구간에 들지 않는 행(기간 all에서만 생긴다): 탐지 시각 없음, 기준 시각 뒤 */
+    /** 구간에 들지 않는 행(기간 all, 또는 끝이 기준 시각 뒤인 T34 지정 기간에서 생긴다): 탐지 시각 없음, 기준 시각 뒤 */
     public record Unbucketed(long noDetectedAt, long afterAnchor) {
     }
 

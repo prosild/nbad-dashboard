@@ -14,6 +14,7 @@ import java.util.List;
  * T24: period가 있으면 jobs·slackSummaries는 기간 안만(jobs는 최대 500건, 넘으면 jobsTruncated·jobsTotal),
  * period가 없으면 지금처럼 전체다. feedbackSummaries는 기간 없이 누적이다. latestJobs는 기간과 무관하다.
  * bundles는 조건 수집원의 작업이 쓴 모델 버전만이다. sources는 허용 캡처 전체와 수집원 종류(조건 줄 선택지)다.
+ * T34: periodStart·periodEnd는 큐 응답과 같다. period가 없으면(호환) 둘 다 null이다.
  * T25: handlingTimes는 period가 있을 때만(없으면 응답에 넣지 않는다), workload는 기간과 무관한 지금 값이다.
  */
 public record OperationsApiResponse(
@@ -25,6 +26,8 @@ public record OperationsApiResponse(
         List<FeedbackSummaryRecord> feedbackSummaries,
         List<SlackSummary> slackSummaries,
         String period,
+        OffsetDateTime periodStart,
+        OffsetDateTime periodEnd,
         String source,
         OffsetDateTime anchor,
         boolean jobsTruncated,

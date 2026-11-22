@@ -33,6 +33,8 @@ public class IncidentQueueApiController {
     @GetMapping("/api/incidents/queue")
     public ResponseEntity<UnifiedQueueResponse> queue(
             @RequestParam(name = "period", required = false) String period,
+            @RequestParam(name = "start", required = false) String start,
+            @RequestParam(name = "end", required = false) String end,
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "priority", required = false) String priority,
@@ -54,7 +56,7 @@ public class IncidentQueueApiController {
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
-                pickedBy, role, hasReport, wouldSend, asset, sort, dir, page, size, assignee, overdue);
+                pickedBy, role, hasReport, wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end);
         return ResponseEntity.ok(incidentQueueService.loadQueue(principal, params, clientIpResolver.resolve(request)));
     }
 
@@ -88,6 +90,8 @@ public class IncidentQueueApiController {
             @RequestParam(name = "jobId") Long jobId,
             @RequestParam(name = "queueRank") Integer queueRank,
             @RequestParam(name = "period", required = false) String period,
+            @RequestParam(name = "start", required = false) String start,
+            @RequestParam(name = "end", required = false) String end,
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "priority", required = false) String priority,
@@ -107,7 +111,7 @@ public class IncidentQueueApiController {
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
-                pickedBy, role, hasReport, wouldSend, asset, sort, dir, null, null, assignee, overdue);
+                pickedBy, role, hasReport, wouldSend, asset, sort, dir, null, null, assignee, overdue, start, end);
         return ResponseEntity.ok(incidentQueueService.neighbors(
                 principal, jobId, queueRank, params, clientIpResolver.resolve(request)));
     }

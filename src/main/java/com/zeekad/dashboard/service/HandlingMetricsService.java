@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 처리 시간 지표와 담당 현황(T25). 모두 기준 시각 기준이고 기간은 (anchor − P, anchor](period all이면 경계 없음, T24와 같다).
+ * 처리 시간 지표와 담당 현황(T25). 모두 기준 시각 기준이고 기간은 (anchor − P, anchor](period all이면 경계 없음, T24와 같다). T34 지정 기간은 (시작, 끝].
  * <ul>
  *   <li>탐지 지연(MTTD): detectedAt − event_start. 실습망 수집원이고 detectedAt이 기간 안. 가져온 데이터는 event_start가
  *       원본 데이터셋 시각이라 뺀다.</li>
@@ -66,7 +66,7 @@ public class HandlingMetricsService {
         }
         OffsetDateTime after = periodGiven ? cond.after() : null;
         List<HandlingPoint> points = zeekadReadMapper.findHandlingPoints(cond.criteria(), after);
-        OffsetDateTime until = after == null ? null : cond.anchor();
+        OffsetDateTime until = after == null ? null : cond.until(); // T34: 프리셋은 기준 시각, 지정 기간은 받은 끝
         HandlingTimes times = periodGiven ? handlingTimes(points, after, until) : null;
         return new Result(times, workload(points, cond.anchor()));
     }

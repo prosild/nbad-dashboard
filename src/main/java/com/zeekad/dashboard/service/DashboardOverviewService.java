@@ -95,15 +95,22 @@ public class DashboardOverviewService {
 
     public DashboardOverviewResponse overview(DashboardUserPrincipal principal, String period, String source,
                                               String captureId, String clientIp) {
-        IncidentQueueService.Condition cond = incidentQueueService.resolveCondition(principal, period, source, captureId, clientIp);
+        return overview(principal, period, null, null, source, captureId, clientIp);
+    }
+
+    /** T34: 지정 기간(period=custom, start·end)까지 받는다 */
+    public DashboardOverviewResponse overview(DashboardUserPrincipal principal, String period, String start, String end,
+                                              String source, String captureId, String clientIp) {
+        IncidentQueueService.Condition cond = incidentQueueService.resolveCondition(
+                principal, period, start, end, source, captureId, clientIp);
         UserRole role = roleOf(principal);
         OffsetDateTime anchor = cond.anchor();
         OffsetDateTime after = cond.after();
-        OffsetDateTime until = after == null ? null : anchor;
+        OffsetDateTime until = cond.until();
 
         List<IncidentPoint> points = cond.captureIds().isEmpty()
                 ? List.of() : zeekadReadMapper.findUnifiedQueuePoints(cond.criteria());
-        Trend trend = buildTrend(cond.period(), anchor, points);
+        Trend trend = buildTrend(cond.period(), anchor, after, until, points);
 
         SourceStatus status = sourceStatus(cond.allowed(), anchor, after, until, role);
         Map<String, long[]> counts = new HashMap<>();
@@ -141,7 +148,7 @@ public class DashboardOverviewService {
 
         Alerting alerting = alerting(cond.captureIds(), after, until);
         return new DashboardOverviewResponse(anchor, timeContextService.mode(), timeContextService.isSnapshot(),
-                cond.period(), DISPLAY_TIME_ZONE, timeContextService.staleAfter().toSeconds(),
+                cond.period(), after, until, DISPLAY_TIME_ZONE, timeContextService.staleAfter().toSeconds(),
                 timeContextService.downAfter().toSeconds(), trend, sensors, captures, alerting,
                 maskingService.shouldMask(role));
     }
@@ -154,13 +161,25 @@ public class DashboardOverviewService {
      */
     public OperationsApiResponse operations(DashboardUserPrincipal principal, String period, String source,
                                             String captureId, String clientIp) {
+        return operations(principal, period, null, null, source, captureId, clientIp);
+    }
+
+    /**
+     * T34: 지정 기간(period=custom, start·end)까지 받는다. period가 없으면 "all"로 바꿔 넘기기 전에
+     * start·end가 왔는지 검사해 조용히 무시되지 않게 한다(400).
+     */
+    public OperationsApiResponse operations(DashboardUserPrincipal principal, String period, String start, String end,
+                                            String source, String captureId, String clientIp) {
         boolean periodGiven = period != null && !period.isBlank();
+        if (!periodGiven) {
+            IncidentQueueService.resolveCustomRange(null, start, end);
+        }
         IncidentQueueService.Condition cond = incidentQueueService.resolveCondition(
-                principal, periodGiven ? period : "all", source, captureId, clientIp);
+                principal, periodGiven ? period : "all", start, end, source, captureId, clientIp);
         UserRole role = roleOf(principal);
         List<String> caps = cond.captureIds();
         OffsetDateTime after = cond.after();
-        OffsetDateTime until = after == null ? null : cond.anchor();
+        OffsetDateTime until = cond.until();
         String cleanCaptureId = captureId == null || captureId.isBlank() ? null : captureId.trim();
 
         List<ScoringJob> jobs;
@@ -214,7 +233,7 @@ public class DashboardOverviewService {
 
         HandlingMetricsService.Result handling = handlingMetricsService.compute(cond, periodGiven);
         return new OperationsApiResponse(maskingService.shouldMask(role), cond.allowed(), cleanCaptureId, jobs, bundles,
-                feedback, slack, periodGiven ? cond.period() : null,
+                feedback, slack, periodGiven ? cond.period() : null, after, until,
                 source == null || source.isBlank() ? null : source.trim().toLowerCase(Locale.ROOT),
                 cond.anchor(), truncated, jobsTotal, latestJobs,
                 cond.allowed().stream()
@@ -465,6 +484,27 @@ public class DashboardOverviewService {
      * all: 탐지 시각 없음·기준 시각 뒤 행은 unbucketed로 따로 센다. 첫 탐지 날부터 기준 시각 날까지 일 단위가 92개를 넘으면 주 단위다.
      */
     static Trend buildTrend(String period, OffsetDateTime anchor, List<IncidentPoint> points) {
+        Duration length = IncidentQueueService.periodLength(period);
+        return buildTrend(period, anchor, length == null ? null : anchor.minus(length), length == null ? null : anchor,
+                points);
+    }
+
+    /** T34 지정 기간 구간 폭: 6시간 이하 5분, 3일 이하 1시간, 14일 이하 6시간, 92일 이하 1일, 그 위 1주 */
+    static BucketUnit unitForLength(Duration length) {
+        if (length.compareTo(Duration.ofHours(6)) <= 0) return BucketUnit.MIN5;
+        if (length.compareTo(Duration.ofDays(3)) <= 0) return BucketUnit.HOUR1;
+        if (length.compareTo(Duration.ofDays(14)) <= 0) return BucketUnit.HOUR6;
+        if (length.compareTo(Duration.ofDays(92)) <= 0) return BucketUnit.DAY1;
+        return BucketUnit.WEEK1;
+    }
+
+    /**
+     * 기간 경계(start, end]를 받는 탐지 추이. 프리셋은 (기준 시각 − P, 기준 시각]이고 결과는 위 함수와 같다.
+     * T34 지정 기간(custom): 폭은 길이로 정하고(unitForLength), 첫 구간 끝은 프리셋과 같은 식, 마지막 구간은 min(끝, 기준 시각)을
+     * 담는 구간이다. 시작이 기준 시각 이후면 구간이 없다. 끝이 기준 시각 뒤면 (기준 시각, 끝]의 행은 unbucketed.afterAnchor다.
+     */
+    static Trend buildTrend(String period, OffsetDateTime anchor, OffsetDateTime start, OffsetDateTime end,
+                            List<IncidentPoint> points) {
         long noDetected = 0;
         long afterAnchor = 0;
         Instant anchorI = anchor.toInstant();
@@ -495,12 +535,21 @@ public class DashboardOverviewService {
             }
             firstEnd = unit.endFor(min);
             periodStart = null;
+        } else if (IncidentQueueService.PERIOD_CUSTOM.equals(period)) {
+            periodStart = start.toInstant();
+            unit = unitForLength(Duration.between(start, end));
+            if (!periodStart.isBefore(anchorI)) {
+                return new Trend(unit.name, List.of(), unbucketed);
+            }
+            firstEnd = unit.next(unit.floor(periodStart));
         } else {
             unit = unitFor(period);
-            periodStart = anchorI.minus(IncidentQueueService.periodLength(period));
+            periodStart = start.toInstant();
             firstEnd = unit.next(unit.floor(periodStart)); // periodStart보다 큰 가장 작은 경계
         }
-        ZonedDateTime lastEnd = unit.endFor(anchorI);
+        // 그려지는 마지막 시각: 기간 끝과 기준 시각 중 앞선 것(프리셋·전체는 기준 시각)
+        Instant drawEnd = end != null && end.toInstant().isBefore(anchorI) ? end.toInstant() : anchorI;
+        ZonedDateTime lastEnd = unit.endFor(drawEnd);
 
         List<ZonedDateTime> ends = new ArrayList<>();
         for (ZonedDateTime e = firstEnd; !e.isAfter(lastEnd); e = unit.next(e)) {
@@ -524,12 +573,12 @@ public class DashboardOverviewService {
         }
         List<Bucket> buckets = new ArrayList<>(ends.size());
         for (int i = 0; i < ends.size(); i++) {
-            ZonedDateTime end = ends.get(i);
-            ZonedDateTime start = unit.prev(end);
-            boolean partial = end.toInstant().isAfter(anchorI)
-                    || (periodStart != null && start.toInstant().isBefore(periodStart));
+            ZonedDateTime bEnd = ends.get(i);
+            ZonedDateTime bStart = unit.prev(bEnd);
+            boolean partial = bEnd.toInstant().isAfter(drawEnd)
+                    || (periodStart != null && bStart.toInstant().isBefore(periodStart));
             long[] c = counts[i];
-            buckets.add(new Bucket(utc(start), utc(end), partial, c[0], c[1], c[2], c[3], c[0] + c[1] + c[2] + c[3]));
+            buckets.add(new Bucket(utc(bStart), utc(bEnd), partial, c[0], c[1], c[2], c[3], c[0] + c[1] + c[2] + c[3]));
         }
         return new Trend(unit.name, buckets, unbucketed);
     }

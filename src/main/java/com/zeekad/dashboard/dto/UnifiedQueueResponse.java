@@ -10,6 +10,8 @@ import java.util.Map;
  * T29: outsidePeriod는 지금 조건(띠 축 포함)에서 기간만 전체로 넓히면 더 보이는 수(기간 전체 total − total)다.
  * 탐지 시각 없음·기준 시각 뒤 행도 들어간다. 기간이 전체면 0, 자산 검색 상한을 넘어 알 수 없으면 null이다.
  * newestOutsidePeriod는 기간 시작 이하에 탐지된 행(같은 조건)의 가장 늦은 탐지 시각이다(결과가 있어도 준다).
+ * T34: periodStart·periodEnd는 실제 기간 경계(UTC, (시작, 끝])다. 프리셋은 기준 시각 − P·기준 시각, 전체는 null,
+ * 지정 기간(period=custom)은 받은 값이다. 지정 기간이면 outsidePeriod는 앞뒤를 합친 수이고 newestOutsidePeriod는 null이다.
  */
 public record UnifiedQueueResponse(
         List<UnifiedQueueRow> items,
@@ -22,6 +24,8 @@ public record UnifiedQueueResponse(
         String anchorMode,
         boolean snapshot,
         String period,
+        OffsetDateTime periodStart,
+        OffsetDateTime periodEnd,
         OffsetDateTime latestDetectedAt,
         OffsetDateTime newestOutsidePeriod,
         Long outsidePeriod,

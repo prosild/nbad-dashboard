@@ -28,12 +28,14 @@ public class DashboardApiController {
     @GetMapping("/api/dashboard/overview")
     public ResponseEntity<DashboardOverviewResponse> overview(
             @RequestParam(name = "period", required = false) String period,
+            @RequestParam(name = "start", required = false) String start,
+            @RequestParam(name = "end", required = false) String end,
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "captureId", required = false) String captureId,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
-        return ResponseEntity.ok(dashboardOverviewService.overview(principal, period, source, captureId,
+        return ResponseEntity.ok(dashboardOverviewService.overview(principal, period, start, end, source, captureId,
                 clientIpResolver.resolve(request)));
     }
 }

@@ -50,13 +50,15 @@ public class OperationsAndReviewApiController {
     public ResponseEntity<OperationsApiResponse> operations(
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "period", required = false) String period,
+            @RequestParam(name = "start", required = false) String start,
+            @RequestParam(name = "end", required = false) String end,
             @RequestParam(name = "source", required = false) String source,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         String clientIp = clientIpResolver.resolve(request);
         // T24: period·source를 더했다. period가 없으면 지금처럼 전체다(호환).
-        return ResponseEntity.ok(dashboardOverviewService.operations(principal, period, source, captureId, clientIp));
+        return ResponseEntity.ok(dashboardOverviewService.operations(principal, period, start, end, source, captureId, clientIp));
     }
 
     @GetMapping("/reviews")
