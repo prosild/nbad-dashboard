@@ -4,7 +4,7 @@
 
 고려한 안과 트레이드오프는 상당수 AI 코딩 에이전트가 정리해 냈다. 그 안을 고르거나 되묻고 바꾼 것, 그리고 결과를 받아들일지 정한 것은 저장소 주인인 내가 했다. 문제를 내가 먼저 찾은 사례는 그렇다고 적었다.
 
-## 1. 공개 데모는 읽기 전용 계정 하나만 연다 (2026-11-20)
+## 1. 공개 데모의 쓰기 권한 (2026-11-20, 2026-11-22에 바꿈)
 
 **문제.** 채용 담당자가 직접 눌러 볼 수 있어야 하지만 공개 인터넷에 쓰기 권한을 열면 누구나 인시던트 상태와 판정을 바꿀 수 있다.
 
@@ -17,9 +17,16 @@
 
 **고른 것.** 조회자 계정 `demo` 하나만 활성으로 두었다. 방문자가 데이터를 바꿀 수 없으니 초기화나 운영 부담이 없고 조회자에게 적용되는 개인정보 마스킹을 그대로 보여 줄 수 있다. 분석가·관리자 화면은 같은 데이터를 복원한 로컬 스택에서 찍어 README에 넣었다.
 
+**바꾼 것 (2026-11-22, `T33`).** 처음 고려한 안의 첫째(분석가 계정을 공개하고 주기적으로 초기화)로 바꿔 체험용 분석가 계정 `trial-analyst`를 더 열었다. 처음 판단의 근거는 "방문자가 데이터를 바꿀 수 없으니 초기화나 운영 부담이 없다"였다. 그런데 방문자는 이 콘솔의 중심인 분류·조사·종결과 에스컬레이션 결정을 그림으로만 볼 수 있었다. 되돌리기를 정확하게 할 근거도 생겼다. 대시보드의 쓰기 계정은 zeek_AD가 준 DB 함수 두 개만 실행하므로 파이프라인 DB에서 바뀌는 표가 셋(상태, 상태 이력, 검토 요청)뿐이다. 이 셋을 스냅샷 직후 기준선과 기본키로 맞추고 앱 DB의 담당은 해제 이력을 덧붙여 푼다. 초기화는 앱 밖 운영 서비스가 매시 정각에 하고 그 서비스의 DB 계정은 초기화 함수 둘만 실행할 수 있다. 그래서 앱에는 데모 모드나 체험 계정 이름을 아는 코드가 없다.
+
+열람 범위와 주기는 내가 정했다. 이 계정은 분석가라 IP를 가리지 않는데도 실습망 캡처까지 열었다. 공개 데이터셋만 열면 미결정 에스컬레이션이 실습망에만 있어 결정을 체험할 수 없다. 이 계정에만 마스킹을 거는 안은 앱을 바꿔야 하고 실제 관제와도 다르다. 공개 전에는 실습망 인시던트 52건에서 화면이 받는 응답을 두 계정으로 비교했다. 더 드러나는 값은 실습망 사설 주소, 외부 공인 주소, 그 주소가 든 리포트·Slack 문장이었다. 집 LAN 주소와 집 공인 주소는 없었다. 초기화 주기는 매일 새벽, 30분과 견주어 매시 정각으로 골랐다. zeek_AD 실습망에 표적 VM을 더해 새 캡처를 만들 계획이어서 그것도 고려하라는 조건을 붙였다. 그래서 새 캡처를 공개할 때 거칠 순서(노출 확인, 기준선 다시 만들기)를 배포 문서에 함께 정했다. 체험 계정 이름은 처음에 `demo-analyst`로 정했다가 공개 스냅샷의 zeek_AD 기록이 이미 그 이름을 행위자로 쓰는 것이 구현 중에 드러나 `trial-analyst`로 바꿨다.
+
+**바꾼 뒤 잃는 것.** 모든 방문자가 한 계정과 같은 데이터를 쓴다. 다른 방문자가 바꾼 상태와 적은 사유가 최대 1시간 보이고 판정 통계가 그동안 흔들린다. 추가만 하는 감사 로그는 방문자 글로 계속 커진다. 그래서 쓰기 경로에 IP당 속도 제한과 사유 500자 상한을 두고 공개 주소 확인 때 크기를 본다. 파이프라인 DB와 앱 DB는 따로 초기화되므로 그 사이 밀리초에 들어온 쓰기는 다음 정각까지 어긋날 수 있다.
+
 **결과·근거.**
-- 계정 시드가 `demo`만 활성으로 두고 나머지 계정은 비활성으로 만든다: `docker/portfolio/seed/seed_demo.py`.
-- `demo`의 열람 범위는 공개해도 되는 캡처(`cic17-*`, `syn1-*`, `lab-20261119`)뿐이고 시험 캡처를 직접 조회하면 `403`이다: [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트, `scripts/portfolio-verify.ps1`.
+- 계정 시드가 `demo`와 `trial-analyst`만 활성으로 두고 나머지 계정은 비활성으로 만든다: `docker/portfolio/seed/seed_demo.py`.
+- 두 공개 계정의 열람 범위는 공개해도 되는 캡처(`cic17-*`, `syn1-*`, `lab-20261119`)뿐이고 시험 캡처를 직접 조회하면 `403`이다: [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트, `scripts/portfolio-verify.ps1`.
+- 초기화: `docker/portfolio/sandbox/sandbox-setup.sh`(기준선·함수·전용 역할), `docker/portfolio/sandbox/sandbox-reset.sh`(매시 정각), 리허설 `[T33]`(되돌림·권한 거부·잠금 대기·옛 기준선 거부·속도 제한).
 
 ## 2. 비밀번호를 공개한 계정의 잠금 문제 (2026-11-20, 2026-11-21에 바꿈)
 
@@ -33,9 +40,11 @@
 
 **바꾼 뒤 잃는 것.** 공개 스택의 분석가·관리자 계정은 남의 시도로 15분 잠길 수 있다. 지금은 비활성이라 영향이 작아서 이것은 받아들였다.
 
+**다시 바꾼 것 (2026-11-22, `T33`).** 체험용 분석가 계정도 비밀번호를 공개하므로 같은 문제가 생긴다. 잠금 예외를 받을 수 있는 역할을 조회자와 분석가로 넓혔다. 관리자는 설정에 적어도 늘 잠근다. 설정에는 비밀번호를 공개한 공유 계정만 넣는다. 실제 분석가 이름을 넣으면 그 계정도 잠기지 않아 막을 것이 IP당 속도 제한뿐이다.
+
 **결과·근거.**
-- 판정 코드: `src/main/java/com/zeekad/dashboard/security/DashboardAuthenticationProvider.java`(조회자만 제외), 시험 `T29LockoutExemptIntegrationTest`.
-- 공개 스택 설정: `compose.portfolio.yml`의 `DASHBOARD_MAX_FAILED_ATTEMPTS: "5"`, `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES`(기본 `demo`), `.env.portfolio.example`의 `PORTFOLIO_LOGIN_RATE=10r/m`·`PORTFOLIO_LOGIN_BURST=5`.
+- 판정 코드: `src/main/java/com/zeekad/dashboard/security/DashboardAuthenticationProvider.java`(조회자·분석가만 제외, 관리자는 늘 잠금), 시험 `T29LockoutExemptIntegrationTest`.
+- 공개 스택 설정: `compose.portfolio.yml`의 `DASHBOARD_MAX_FAILED_ATTEMPTS: "5"`, `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES`(기본 `demo,trial-analyst`), `.env.portfolio.example`의 `PORTFOLIO_LOGIN_RATE=10r/m`·`PORTFOLIO_LOGIN_BURST=5`.
 
 ## 3. ZAP "Low 0" 기준과 SPA CSRF 쿠키의 충돌 (2026-11-20)
 

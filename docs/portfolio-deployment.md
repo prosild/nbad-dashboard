@@ -557,6 +557,8 @@ export PATH=/usr/local/bin:$PATH
 ID=<작업 ID 소문자, 예: t22>
 cd /volume1/docker/zeekad-portfolio || exit 1
 C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+# 0) 체험 계정 초기화 서비스를 먼저 멈춘다(T33)
+$C stop sandbox-reset < /dev/null || exit 1
 # 1) 기록: 다른 프로젝트의 컨테이너·네트워크·볼륨, 앱 이미지 ID(3.1·3.6 방식)
 mkdir -p ~/zeekad-portfolio-check
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | grep -v 'zeekad-portfolio' | sort > ~/zeekad-portfolio-check/$ID-containers-before.txt
@@ -564,8 +566,6 @@ for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{rang
 docker volume ls --format '{{.Name}}' | grep -v '^zeekad-portfolio_' | sort > ~/zeekad-portfolio-check/$ID-volumes-before.txt
 docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local > ~/zeekad-portfolio-check/$ID-app-image-before.txt
 # 2) 보존: 스냅샷 세 파일과 바뀌는 배포 파일을 *.pre-$ID로(이미 있으면 덮지 않는다)
-# 0) 체험 계정 초기화 서비스를 먼저 멈춘다(T33)
-$C stop sandbox-reset < /dev/null || exit 1
 for f in snapshot/zeekad.dump snapshot/zeekad.dump.sha256 snapshot/manifest.json docker/portfolio/seed/seed_demo.py compose.portfolio.yml; do
   [ -e "$f.pre-$ID" ] || cp -p "$f" "$f.pre-$ID" || exit 2
 done
@@ -723,6 +723,6 @@ API로 할 수 없어 `zeekad_dashboard`에 직접 SQL을 쓰는 단계는 셋�
 | 근거 칸이 "근거를 불러올 수 없음" | `exec dashboard-app wget -qO- http://api:8000/health`가 `{"status":"ok"}`인지, `logs api` |
 | 로그인 후 바로 로그아웃되거나 CSRF 오류 | DSM이 HTTPS로 서비스하는지(쿠키가 `Secure`), 시스템 시간이 맞는지 |
 | 모든 방문자가 `429`를 같이 받음 | 4.3: nginx가 실제 방문자 IP를 못 받고 있다(DSM `X-Forwarded-For` 확인) |
-| `sandbox-reset` 로그에 `does not match the current snapshot` | 새 스냅샷인데 기준선이 옛것이다. `stop sandbox-reset` 뒤 `sandbox-setup --rebuild-baseline`(3.10의 4) |
+| `sandbox-reset` 로그에 `does not match the current snapshot` | 새 스냅샷인데 기준선이 옛것이다. 그동안 담당 해제는 계속되고 상태·결정은 되돌지 않는다. `stop sandbox-reset` 뒤 `sandbox-setup --rebuild-baseline`(3.10의 4) |
 | `sandbox-reset` 로그에 `lock timeout` | 그 정각에 쓰기가 5초 넘게 잠금을 잡았다. 아무것도 바뀌지 않았고 다음 정각에 다시 한다 |
 | `302 Location`에 `http://`나 내부 포트가 붙음 | DSM이 `X-Forwarded-Proto: https`를 보내는지 확인(4.2 사용자 지정 헤더) |
