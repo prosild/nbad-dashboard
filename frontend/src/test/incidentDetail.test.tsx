@@ -1283,14 +1283,14 @@ describe('T29 상세 머리 경과 한 줄', () => {
 });
 
 describe('T28 상세 머리 둘째 줄 겹침 없음', () => {
-  it('둘째 줄은 어느 폭에서도 줄을 바꾸고 항목은 줄어들지 않는다(줄어든 항목끼리 덮지 않게)', async () => {
+  it('둘째 줄은 어느 폭에서도 줄을 바꾼다(줄바꿈을 막으면 줄어든 항목끼리 덮인다)', async () => {
     renderDetail('/incidents/42/rank/1', {
       meta: { ...DEFAULT_META, sourceType: 'live', detectedAt: '2026-11-15T13:00:00Z', anchor: '2026-11-21T00:12:00Z', ackOverdue: true },
     });
     await screen.findByRole('tab', { name: '요약', selected: true });
     const row = header().querySelector('[data-detail-head-row="2"]') as HTMLElement;
     const classes = row.className.split(/\s+/);
-    expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-wrap', '[&>*]:shrink-0']));
+    expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-wrap']));
     // 넓은 화면에서 줄바꿈을 막던 클래스가 다시 들어오면 1440~1600px에서 항목이 서로 덮인다
     expect(classes.some((c) => /(^|:)flex-nowrap$/.test(c))).toBe(false);
     // 관제 판단에 쓰는 값은 그대로 보인다

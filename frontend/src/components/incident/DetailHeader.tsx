@@ -127,9 +127,10 @@ export function DetailHeader({
           )}
         </Field>
       </div>
-      {/* T28: 둘째 줄은 어느 폭에서도 줄을 바꿀 수 있고 항목은 줄어들지 않는다. 줄바꿈을 막으면 1440~1600px에서
-          min-w-0 항목이 내용보다 좁아져 서로 덮였다(착수 지연·캡처 내 순위, 경보·AI 리포트, 검증·링크 복사). */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 [&>*]:shrink-0" data-detail-head-row="2">
+      {/* T28: 둘째 줄은 어느 폭에서도 줄을 바꾼다. 넓은 화면에서 줄바꿈을 막으면(xl:flex-nowrap) 1440~1600px에서
+          min-w-0 항목이 내용보다 좁아져 서로 덮였다(착수 지연·캡처 내 순위, 경보·AI 리포트, 검증·링크 복사).
+          줄바꿈이 되면 항목은 한 줄에 혼자일 때만 줄어들어 수집원 이름이 말줄임된다(휴대폰 폭). */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-detail-head-row="2">
         <Field label="수집원">
           <SourceTypeBadge type={meta?.sourceType} />
           <CaptureName id={incident.captureId} className="max-w-[14rem] truncate text-slate-200" />
