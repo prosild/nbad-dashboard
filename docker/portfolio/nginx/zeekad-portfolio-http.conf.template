@@ -43,3 +43,14 @@ limit_req_zone $zeekad_login_limit_key zone=zeekad_login:10m rate=${ZEEKAD_LOGIN
 limit_req zone=zeekad_login burst=${ZEEKAD_LOGIN_BURST} nodelay;
 limit_req_status 429;
 limit_req_log_level warn;
+
+# T33 쓰기 속도 제한: 분석가 쓰기 네 경로(상태 변경·담당 지정·인시던트 검토 결정, 검토 목록 결정)의 POST만, 클라이언트 IP당.
+# 로그인 제한과 다른 영역이다. $uri는 nginx가 정규화한 경로(%XX 해독·// 합침·./.. 처리)라 경로 변형으로 비켜 가지 못하고,
+# 뒤 / 등 앱이 받지 않는 모양도 정규식으로 함께 센다. 키가 빈 요청(GET 등)은 세지 않는다.
+map "$request_method:$uri" $zeekad_write_limit_key {
+    default "";
+    "~^POST:/api/incidents/[^/]+/rank/[^/]+/(transition|assignment|review-decision)/?$" $binary_remote_addr;
+    "~^POST:/api/reviews/decide/?$" $binary_remote_addr;
+}
+limit_req_zone $zeekad_write_limit_key zone=zeekad_write:10m rate=${ZEEKAD_WRITE_RATE};
+limit_req zone=zeekad_write burst=${ZEEKAD_WRITE_BURST} nodelay;

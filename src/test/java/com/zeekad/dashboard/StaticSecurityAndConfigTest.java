@@ -272,8 +272,9 @@ class StaticSecurityAndConfigTest {
                 .isEqualTo(1);
         assertThat(compose).contains("DASHBOARD_COOKIE_SECURE: \"true\"", "NGINX_ALWAYS_TLS_REDIRECT: \"off\"",
                 "ZEEKAD_PROXY_X_FORWARDED_FOR: \"$$remote_addr\"", "REAL_IP_HEADER: \"X-Forwarded-For\"",
-                // T29: 잠금은 5회 고정(.env 변수 없음), 공개 비밀번호 demo만 잠금 제외
-                "DASHBOARD_MAX_FAILED_ATTEMPTS: \"5\"", "DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo}",
+                // T29·T33: 잠금은 5회 고정(.env 변수 없음), 비밀번호를 공개한 공유 계정 demo·trial-analyst만 잠금 제외
+                "DASHBOARD_MAX_FAILED_ATTEMPTS: \"5\"",
+                "DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo,trial-analyst}",
                 "cap_drop: [ALL]", "no-new-privileges:true", "subnet: ${PORTFOLIO_SUBNET:-10.203.48.0/24}");
         assertThat(compose).doesNotContain("PORTFOLIO_MAX_FAILED_ATTEMPTS:-");
         assertThat(compose).doesNotContainPattern("(?i)DetectionOnly|MODSEC_RULE_ENGINE:\\s*\"?off");
@@ -446,6 +447,82 @@ class StaticSecurityAndConfigTest {
         String appYml = Files.readString(Path.of("src/main/resources/application.yml"), StandardCharsets.UTF_8);
         assertThat(appYml).contains("forward-headers-strategy: native", "trusted-proxies: ${DASHBOARD_TRUSTED_PROXIES:}")
                 .doesNotContain("framework").doesNotContainPattern("(?m)^\\s*remoteip:");
+    }
+
+    @Test
+    void t33SandboxResetServiceAndWriteRateLimitInPortfolioStack() throws IOException {
+        String compose = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+
+        // 초기화 서비스: 포트 없음, 모든 capability 제거, 권한 상승 금지, 읽기 전용 루트, 메모리 상한, 같은 postgres 이미지(새 이미지 없음)
+        String reset = serviceBlock(compose, "sandbox-reset");
+        assertThat(reset).as("sandbox-reset 서비스").isNotBlank()
+                .contains("image: ${PORTFOLIO_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17}",
+                        "entrypoint: [\"bash\", \"/sandbox/sandbox-reset.sh\"]", "cap_drop: [ALL]",
+                        "security_opt: [\"no-new-privileges:true\"]", "read_only: true", "mem_limit:",
+                        "SANDBOX_RESET_INTERVAL_MINUTES: ${SANDBOX_RESET_INTERVAL_MINUTES:-60}",
+                        "SANDBOX_RESET_DB_PASSWORD: ${SANDBOX_RESET_DB_PASSWORD:-}", "./docker/portfolio/sandbox:/sandbox:ro")
+                .doesNotContain("ports:", "expose:", "profiles:", "POSTGRES_SUPERUSER_PASSWORD", "PGUSER: postgres");
+        // 설정 도구: profile seed의 일회용(슈퍼유저), 같은 이미지
+        String setup = serviceBlock(compose, "sandbox-setup");
+        assertThat(setup).contains("profiles: [\"seed\"]", "image: ${PORTFOLIO_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17}",
+                "entrypoint: [\"bash\", \"/sandbox/sandbox-setup.sh\"]", "cap_drop: [ALL]", "read_only: true",
+                "SANDBOX_TRIAL_USERNAME: trial-analyst").doesNotContain("ports:", "restart:");
+        assertThat(serviceBlock(compose, "demo-seed")).contains("TRIAL_ANALYST_PASSWORD: ${TRIAL_ANALYST_PASSWORD:-}");
+
+        // 초기화 SQL: SECURITY DEFINER 함수는 search_path 고정(pg_temp 마지막)·PUBLIC 회수, 전용 역할에만 EXECUTE.
+        // 기존 쓰기 계정 권한·추가만 하는 기록·트리거·Flyway 표는 건드리지 않고, 캡처 ID를 적지 않는다.
+        String setupSql = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-setup.sh"), StandardCharsets.UTF_8);
+        String resetSh = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-reset.sh"), StandardCharsets.UTF_8);
+        assertThat(setupSql).contains("CREATE OR REPLACE FUNCTION sandbox.reset_pipeline()",
+                "CREATE OR REPLACE FUNCTION sandbox.reset_assignments()",
+                "REVOKE ALL ON FUNCTION sandbox.reset_pipeline() FROM PUBLIC;",
+                "REVOKE ALL ON FUNCTION sandbox.reset_assignments() FROM PUBLIC;",
+                "GRANT EXECUTE ON FUNCTION sandbox.reset_pipeline() TO zeekad_sandbox_reset;",
+                "GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;",
+                "LOCK TABLE zeekad.incident_status, zeekad.incident_status_history, zeekad.analyst_review IN SHARE ROW EXCLUSIVE MODE;",
+                "SET lock_timeout = '5s'", "ALTER FUNCTION sandbox.reset_pipeline() OWNER TO zeekad_owner;",
+                "ALTER FUNCTION sandbox.reset_assignments() OWNER TO dashboard_app;", "--rebuild-baseline");
+        assertThat(setupSql.split("LANGUAGE plpgsql SECURITY DEFINER", -1)).hasSize(3);
+        assertThat(setupSql.split(Pattern.quote("SET search_path = pg_catalog, pg_temp"), -1)).hasSize(4);
+        assertThat(setupSql.toLowerCase(java.util.Locale.ROOT)).doesNotContain("dashboard_rw", "disable trigger",
+                "drop trigger", "delete from public.audit_logs", "delete from public.incident_assignment_history",
+                "truncate", "grant select", "grant update", "grant insert", "grant delete", "grant create", "grant all");
+        for (String text : List.of(setupSql, resetSh)) {
+            assertThat(text).doesNotContainPattern("lab-\\d|cic17-|syn1-");
+        }
+        assertThat(resetSh).contains("PGUSER=zeekad_sandbox_reset", "NOT_CONFIGURED", "--once")
+                .doesNotContain("PGPASSWORD=\"${POSTGRES");
+
+        // 쓰기 속도 제한: 네 쓰기 경로의 POST만 정규화된 $uri로, 로그인 제한과 다른 영역
+        assertThat(serviceBlock(compose, "nginx-waf")).contains("ZEEKAD_WRITE_RATE: ${PORTFOLIO_WRITE_RATE:-10r/m}",
+                "ZEEKAD_WRITE_BURST: ${PORTFOLIO_WRITE_BURST:-5}");
+        String template = Files.readString(
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"), StandardCharsets.UTF_8);
+        assertThat(template).contains("map \"$request_method:$uri\" $zeekad_write_limit_key {",
+                "limit_req_zone $zeekad_write_limit_key zone=zeekad_write:10m rate=${ZEEKAD_WRITE_RATE};",
+                "limit_req zone=zeekad_write burst=${ZEEKAD_WRITE_BURST} nodelay;",
+                "limit_req zone=zeekad_login burst=${ZEEKAD_LOGIN_BURST} nodelay;");
+        List<Pattern> writeKeys = template.lines().map(String::trim)
+                .filter(line -> line.startsWith("\"~^POST:") && line.endsWith("$binary_remote_addr;"))
+                .map(line -> Pattern.compile(line.substring(2, line.indexOf("\" $binary_remote_addr;"))))
+                .toList();
+        assertThat(writeKeys).hasSize(2);
+        java.util.function.Predicate<String> limited = key -> writeKeys.stream().anyMatch(p -> p.matcher(key).find());
+        for (String key : List.of("POST:/api/incidents/42/rank/1/transition", "POST:/api/incidents/42/rank/1/assignment",
+                "POST:/api/incidents/42/rank/1/review-decision", "POST:/api/reviews/decide",
+                "POST:/api/incidents/42/rank/1/transition/", "POST:/api/reviews/decide/")) {
+            assertThat(limited.test(key)).as("쓰기 제한 대상 %s", key).isTrue();
+        }
+        for (String key : List.of("GET:/api/incidents/42/rank/1/transition", "GET:/api/reviews/decide",
+                "POST:/api/auth/login", "GET:/api/incidents/42/rank/1/assignees", "POST:/api/admin/users",
+                "POST:/api/incidents/42/rank/1/transition/x")) {
+            assertThat(limited.test(key)).as("쓰기 제한 밖 %s", key).isFalse();
+        }
+
+        String envExample = Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8);
+        assertThat(envExample).containsPattern("(?m)^TRIAL_ANALYST_PASSWORD=\r?$")
+                .containsPattern("(?m)^SANDBOX_RESET_DB_PASSWORD=\r?$");
+        assertThat(envExample).contains("PORTFOLIO_WRITE_RATE=10r/m", "PORTFOLIO_WRITE_BURST=5", "SANDBOX_RESET_INTERVAL_MINUTES=60");
     }
 
     private static boolean inCidr(String ip, String cidr) {

@@ -1,6 +1,12 @@
-"""포트폴리오 스택 계정 시드: 공개 데모 계정 demo(VIEWER)만 활성으로 두고 나머지 계정은 비활성으로 만든다.
+"""포트폴리오 스택 계정 시드: 공개 계정만 활성으로 두고 나머지 계정은 비활성으로 만든다.
 
-demo의 허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119
+공개 계정은 둘이다.
+- demo(VIEWER, 읽기 전용, 비밀번호 DEMO_PASSWORD 필수).
+- trial-analyst(ANALYST, 체험용 분석가, T33. 비밀번호 TRIAL_ANALYST_PASSWORD). 비어 있으면 만들지 않고 알리며,
+  이미 있으면 다른 계정처럼 비활성으로 둔다(T33 이전 공개 스택과 같다). 이 계정이 바꾼 것은 sandbox-reset이 매시 정각에 되돌린다.
+두 계정의 허용 캡처는 같다.
+
+허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119
 (Kali 실습망 캡처 lab-20261119만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 같은 나머지 실습망
 캡처는 시연 화면에서 숨긴다, 2026-11-21 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
 
@@ -31,6 +37,9 @@ import psycopg
 
 DEMO_USERNAME = "demo"
 DEMO_ROLE = "VIEWER"
+ANALYST_USERNAME = "trial-analyst"
+ANALYST_ROLE = "ANALYST"
+DEFAULT_ANALYST_DISPLAY_NAME = "포트폴리오 방문자 (분석가 체험)"
 DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119"
 ADMIN_USERNAME = "admin"
 SEED_ACTOR = "portfolio-seed"
@@ -171,22 +180,41 @@ def totp_code(secret, at=None):
     return f"{binary % 1000000:06d}"
 
 
-def demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db):
-    """demo 계정이 목표 상태와 다른 점. 값(비밀번호·해시)은 담지 않는다."""
-    demo = users.get(DEMO_USERNAME)
+class Target:
+    """활성으로 둘 공개 계정의 목표 상태(비밀번호는 출력하지 않는다)."""
+
+    def __init__(self, username, role, password, display_name, patterns):
+        self.username = username
+        self.role = role
+        self.password = password
+        self.display_name = display_name
+        self.patterns = patterns
+
+
+def account_problems(users, target, db):
+    """공개 계정이 목표 상태와 다른 점. 값(비밀번호·해시)은 담지 않는다."""
+    demo = users.get(target.username)
     if demo is None:
         return ["missing"]
     problems = []
-    if (demo["role"] != DEMO_ROLE or sorted(demo["patterns"]) != demo_capture_patterns
-            or demo["display_name"] != demo_display_name):
+    if (demo["role"] != target.role or sorted(demo["patterns"]) != target.patterns
+            or demo["display_name"] != target.display_name):
         problems.append("access")
     if not demo["enabled"]:
         problems.append("disabled")
     if demo["locked"]:
         problems.append("locked")
-    if not db.password_matches(demo_password, demo["password_hash"]):
+    if not db.password_matches(target.password, demo["password_hash"]):
         problems.append("password")
     return problems
+
+
+def all_problems(users, targets, db):
+    return {t.username: account_problems(users, t, db) for t in targets}
+
+
+def has_problems(problems):
+    return any(problems.values())
 
 
 def describe(users):
@@ -195,9 +223,17 @@ def describe(users):
 
 
 def main():
-    demo_password = env("DEMO_PASSWORD")
-    demo_display_name = env("DEMO_DISPLAY_NAME", default="포트폴리오 방문자 (읽기 전용)")
     demo_capture_patterns = demo_patterns()
+    targets = [Target(DEMO_USERNAME, DEMO_ROLE, env("DEMO_PASSWORD"),
+                      env("DEMO_DISPLAY_NAME", default="포트폴리오 방문자 (읽기 전용)"), demo_capture_patterns)]
+    analyst_password = os.environ.get("TRIAL_ANALYST_PASSWORD", "")
+    if analyst_password:
+        targets.append(Target(ANALYST_USERNAME, ANALYST_ROLE, analyst_password,
+                              os.environ.get("TRIAL_ANALYST_DISPLAY_NAME", "").strip() or DEFAULT_ANALYST_DISPLAY_NAME,
+                              demo_capture_patterns))
+    else:
+        log(f"TRIAL_ANALYST_PASSWORD is empty: {ANALYST_USERNAME} is not created and stays disabled if it exists")
+    public_names = {t.username for t in targets}
     admin_password = env("BOOTSTRAP_ADMIN_PASSWORD")
     admin_totp_secret = env("BOOTSTRAP_ADMIN_TOTP_SECRET")
     for name in ("BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD"):
@@ -208,32 +244,34 @@ def main():
     users = db.read_users()
     audit_before = db.audit_count()
     log(f"current users: {describe(users)}")
-    log(f"demo capture patterns target: {demo_capture_patterns}")
+    log(f"public accounts target: {sorted(public_names)}, capture patterns: {demo_capture_patterns}")
     if ADMIN_USERNAME not in users:
         sys.exit("seed: bootstrap account admin is missing (BOOTSTRAP_ADMIN_PASSWORD must be set before the first app start)")
 
-    problems = demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db)
-    others_enabled = [name for name, u in users.items() if name not in (DEMO_USERNAME, ADMIN_USERNAME) and u["enabled"]]
+    problems = all_problems(users, targets, db)
+    others_enabled = [name for name, u in users.items()
+                      if name not in public_names and name != ADMIN_USERNAME and u["enabled"]]
     admin_enabled = users[ADMIN_USERNAME]["enabled"]
-    log(f"plan: demo={problems or 'ok'}, enabled non-demo accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
+    plan = ", ".join(f"{name}={p or 'ok'}" for name, p in problems.items())
+    log(f"plan: {plan}, enabled non-public accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
 
-    if not problems and not others_enabled and not admin_enabled:
+    if not has_problems(problems) and not others_enabled and not admin_enabled:
         log(f"RESULT: NO_CHANGES (audit_logs rows={audit_before})")
         return
 
-    # 1) API가 없는 비밀번호 변경은 SQL로(이미 있는 demo만. 새 demo는 createUser API가 비밀번호를 정한다).
-    if "password" in problems and "missing" not in problems:
-        db.sql_change("SET_PASSWORD", DEMO_USERNAME, "no password-change API; createUser rejects existing username",
-                      "UPDATE users SET password_hash = %s, failed_attempts = 0, locked_until = NULL, updated_at = now()"
-                      " WHERE username = %s", (db.bcrypt_hash(demo_password), DEMO_USERNAME))
+    # 1) API가 없는 비밀번호 변경은 SQL로(이미 있는 계정만. 새 계정은 createUser API가 비밀번호를 정한다).
+    for t in targets:
+        if "password" in problems[t.username] and "missing" not in problems[t.username]:
+            db.sql_change("SET_PASSWORD", t.username, "no password-change API; createUser rejects existing username",
+                          "UPDATE users SET password_hash = %s, failed_attempts = 0, locked_until = NULL, updated_at = now()"
+                          " WHERE username = %s", (db.bcrypt_hash(t.password), t.username))
 
-    # 2) 관리자 API 단계: demo 생성·수정·활성화·잠금 해제, 다른 계정 비활성화.
+    # 2) 관리자 API 단계: 공개 계정 생성·수정·활성화·잠금 해제, 다른 계정 비활성화.
     #    API 단계가 실패해도 3)의 admin 비활성화는 반드시 실행한다(finally).
-    api_needed = bool(set(problems) - {"password"}) or bool(others_enabled)
+    api_needed = any(set(p) - {"password"} for p in problems.values()) or bool(others_enabled)
     try:
         if api_needed:
-            run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret,
-                          demo_password, demo_display_name, demo_capture_patterns, problems)
+            run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems)
     finally:
         # 3) admin 비활성화는 API가 막으므로(자기 계정) SQL로.
         if db.read_users()[ADMIN_USERNAME]["enabled"]:
@@ -241,43 +279,45 @@ def main():
                           "UPDATE users SET enabled = FALSE, updated_at = now() WHERE username = %s", (ADMIN_USERNAME,))
 
     users = db.read_users()
-    remaining = demo_problems(users, demo_password, demo_display_name, demo_capture_patterns, db)
-    still_enabled = [name for name, u in users.items() if name != DEMO_USERNAME and u["enabled"]]
+    remaining = {name: p for name, p in all_problems(users, targets, db).items() if p}
+    still_enabled = [name for name, u in users.items() if name not in public_names and u["enabled"]]
     log(f"final users: {describe(users)}")
     if remaining or still_enabled:
-        sys.exit(f"seed: target state not reached (demo={remaining}, enabled={still_enabled})")
+        sys.exit(f"seed: target state not reached (public accounts={remaining}, enabled={still_enabled})")
     log(f"RESULT: CHANGED (audit_logs rows {audit_before} -> {db.audit_count()})")
 
 
-def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret,
-                  demo_password, demo_display_name, demo_capture_patterns, problems):
+def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems):
     if not admin_enabled:
         db.sql_change("TEMP_ENABLE", ADMIN_USERNAME, "admin API session for seeding; disabled again right after",
                       "UPDATE users SET enabled = TRUE, failed_attempts = 0, locked_until = NULL, updated_at = now()"
                       " WHERE username = %s", (ADMIN_USERNAME,))
     api = Api(api_base)
-    api = Api(api_base)
     api.login_admin(admin_password, admin_totp_secret)
-    demo = api.users().get(DEMO_USERNAME)
-    if demo is None:
-        api.call("POST", "/api/admin/users", {"username": DEMO_USERNAME, "displayName": demo_display_name,
-                                              "password": demo_password, "role": DEMO_ROLE,
-                                              "capturePatterns": demo_capture_patterns}, csrf=True, expect=201)
-        log("API CREATE_USER demo")
-    else:
-        if "access" in problems:
-            api.call("PUT", f"/api/admin/users/{demo['id']}", {"displayName": demo_display_name, "role": DEMO_ROLE,
-                                                                "capturePatterns": demo_capture_patterns}, csrf=True)
-            log("API UPDATE_USER demo")
-        if not demo["enabled"]:
-            api.call("POST", f"/api/admin/users/{demo['id']}/toggle-enabled", csrf=True)
-            log("API TOGGLE_ENABLED demo -> enabled")
-        if "locked" in problems:
-            api.call("POST", f"/api/admin/users/{demo['id']}/unlock", csrf=True)
-            log("API UNLOCK_ACCOUNT demo")
+    current = api.users()
+    for t in targets:
+        account = current.get(t.username)
+        wrong = problems[t.username]
+        if account is None:
+            api.call("POST", "/api/admin/users", {"username": t.username, "displayName": t.display_name,
+                                                  "password": t.password, "role": t.role,
+                                                  "capturePatterns": t.patterns}, csrf=True, expect=201)
+            log(f"API CREATE_USER {t.username}")
+            continue
+        if "access" in wrong:
+            api.call("PUT", f"/api/admin/users/{account['id']}", {"displayName": t.display_name, "role": t.role,
+                                                                   "capturePatterns": t.patterns}, csrf=True)
+            log(f"API UPDATE_USER {t.username}")
+        if not account["enabled"]:
+            api.call("POST", f"/api/admin/users/{account['id']}/toggle-enabled", csrf=True)
+            log(f"API TOGGLE_ENABLED {t.username} -> enabled")
+        if "locked" in wrong:
+            api.call("POST", f"/api/admin/users/{account['id']}/unlock", csrf=True)
+            log(f"API UNLOCK_ACCOUNT {t.username}")
     # toggle-enabled는 상태를 뒤집으므로 방금 읽은 상태가 활성일 때만 부른다.
+    public_names = {t.username for t in targets}
     for name, user in api.users().items():
-        if name not in (DEMO_USERNAME, ADMIN_USERNAME) and user["enabled"]:
+        if name not in public_names and name != ADMIN_USERNAME and user["enabled"]:
             api.call("POST", f"/api/admin/users/{user['id']}/toggle-enabled", csrf=True)
             log(f"API TOGGLE_ENABLED {name} -> disabled")
     api.logout()
