@@ -683,7 +683,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
 - [ ] `trial-analyst` / 공개 비밀번호로 로그인되고 역할이 `ANALYST`, 허용 캡처가 `demo`와 같으며 숨긴 캡처 직접 조회가 `403`이다. 공개 데모에서는 쓰기(상태 변경·결정·담당)와 로그인 실패를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T33]`). (리허설 [T33a])
 - [ ] 다음 정각 뒤 `logs --since 2h sandbox-reset`에 `OK` 줄이 있고 `ERROR`가 없다. (3.5, 리허설 [T33f])
-- [ ] 추가만 하는 기록의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5라, IP 하나가 하루에 늘릴 수 있는 감사 로그는 약 14,400행(행당 1KB 남짓, 약 15MB)이다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다.
+- [ ] 추가만 하는 기록의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5라, IP 하나가 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(쓰기 한도 분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 그래서 하루 약 30MB 안팎이다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다.
 - [ ] `viewer1`·`analyst1`·`analyst2`·`admin`은 로그인되지 않는다(비활성). (리허설 [5])
 - [ ] `demo`에 틀린 비밀번호를 여러 번 넣어도 잠기지 않는다. 짧은 시간에 로그인을 많이 시도하면 `429`가 난다. (리허설 [6]·[7])
 - [ ] 감사 로그의 로그인 IP가 실제 접속 IP다(4.3). (리허설 [7])
