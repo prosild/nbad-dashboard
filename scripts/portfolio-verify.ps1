@@ -1437,10 +1437,10 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $apiIp32 = Get-NetIp "api"
     $gw32 = (Invoke-NativeCapture "docker" @("network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", $networkName)).Output.Trim()
     $appTrusted32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_TRUSTED_PROXIES-<unset>}"')) -IgnoreExitCode).Output.Trim()
-    $wafRealIp32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "sh", "-c", 'printf "%s|%s" "${SET_REAL_IP_FROM-<unset>}" "${ZEEKAD_GATEWAY_IP-<unset>}"')) -IgnoreExitCode).Output.Trim()
-    $e2eLogs.Add("[T32a] nginx-waf=$wafIp32 api=$apiIp32 network gateway=$gw32; app DASHBOARD_TRUSTED_PROXIES=$appTrusted32; nginx-waf SET_REAL_IP_FROM|ZEEKAD_GATEWAY_IP=$wafRealIp32")
+    $wafRealIp32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "sh", "-c", 'echo ${SET_REAL_IP_FROM:-unset}+${ZEEKAD_GATEWAY_IP:-unset}')) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[T32a] nginx-waf=$wafIp32 api=$apiIp32 network gateway=$gw32; app DASHBOARD_TRUSTED_PROXIES=$appTrusted32; nginx-waf SET_REAL_IP_FROM+ZEEKAD_GATEWAY_IP=$wafRealIp32")
     Assert-True ($wafIp32 -eq "10.203.48.250" -and $appTrusted32 -eq $wafIp32) "[T32a] nginx-waf 고정 주소 = 앱 신뢰 목록 = 10.203.48.250"
-    Assert-True ($wafRealIp32 -eq "127.0.0.1,10.203.48.1|10.203.48.1" -and $gw32 -eq "10.203.48.1") "[T32a] WAF 신뢰 범위 = 127.0.0.1 + 게이트웨이 10.203.48.1"
+    Assert-True ($wafRealIp32 -eq "127.0.0.1,10.203.48.1+10.203.48.1" -and $gw32 -eq "10.203.48.1") "[T32a] WAF 신뢰 범위 = 127.0.0.1 + 게이트웨이 10.203.48.1"
 
     function Get-WafAccessLine([string]$Probe) {
         for ($i = 0; $i -lt 10; $i++) {
