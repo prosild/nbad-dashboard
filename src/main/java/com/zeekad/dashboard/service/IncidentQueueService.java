@@ -51,7 +51,7 @@ public class IncidentQueueService {
     public static final List<Integer> PAGE_SIZES = List.of(25, 50, 100);
     public static final int DEFAULT_PAGE_SIZE = 50;
     public static final String DEFAULT_PERIOD = "24h";
-    /** T34 사용자 지정 기간: period=custom, start·end(오프셋 있는 ISO-8601), 범위 (start, end] */
+    /** T34 사용자 지정 기간: period=custom, start·end(ISO_OFFSET_DATE_TIME 형식, parseRangeTime 참고), 범위 (start, end] */
     public static final String PERIOD_CUSTOM = "custom";
     /** 지정 기간 길이 상한 */
     public static final Duration CUSTOM_MAX_LENGTH = Duration.ofDays(366);
@@ -652,7 +652,7 @@ public class IncidentQueueService {
     }
 
     /**
-     * T34 지정 기간 검사. custom이 아니면 start·end가 오면 안 된다(400). custom이면 둘 다 오프셋 있는 ISO-8601이고
+     * T34 지정 기간 검사. custom이 아니면 start·end가 오면 안 된다(400). custom이면 둘 다 ISO_OFFSET_DATE_TIME 형식이고(parseRangeTime)
      * 시작 &lt; 끝, 길이 366일 이하, 시작이 2000-01-01T00:00+09:00 이후다. 끝이 기준 시각 뒤인 것은 받는다.
      * 오류 문장에 입력 값을 넣지 않는다. 결과는 UTC {시작, 끝}, custom이 아니면 null.
      */
@@ -682,7 +682,11 @@ public class IncidentQueueService {
         return new OffsetDateTime[]{s.withOffsetSameInstant(ZoneOffset.UTC), e.withOffsetSameInstant(ZoneOffset.UTC)};
     }
 
-    /** 오프셋(Z 또는 ±hh:mm)이 반드시 있는 ISO-8601. 초·소수 초는 있어도 없어도 된다 */
+    /**
+     * DateTimeFormatter.ISO_OFFSET_DATE_TIME이 받는 값: 날짜 'T' 시각(분까지 필수, 초·소수 초 1~9자리는 선택) + 오프셋.
+     * 오프셋은 Z 또는 ±hh:mm, 초까지 붙은 ±hh:mm:ss도 받는다. 대소문자를 가리지 않아 t·z도 받는다.
+     * 화면(periodRange.ts)은 이 중 대문자 T·Z와 ±hh:mm만 받는 좁은 부분이다(그 밖의 URL은 화면이 기본 기간으로 읽는다).
+     */
     private static OffsetDateTime parseRangeTime(String raw, String label) {
         try {
             return OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME);

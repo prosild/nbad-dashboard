@@ -92,7 +92,7 @@ export function PeriodButtons({
           type="button"
           aria-pressed={custom}
           aria-expanded={open}
-          aria-controls="period-range-dialog"
+          aria-controls={open ? 'period-range-dialog' : undefined}
           aria-haspopup="dialog"
           onClick={() => setOpen((v) => !v)}
           title={custom && range ? `기간 지정: ${formatRangeLong(range)}` : '시작·끝 시각을 KST로 지정합니다'}

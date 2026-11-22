@@ -381,6 +381,21 @@ describe('인시던트 큐 기간 지정(T34)', () => {
     expect(screen.getByTestId('period-custom')).toHaveFocus();
   });
 
+  it('T35: aria-controls는 창이 열려 있을 때만 있고, 가리키는 id가 DOM에 있다', async () => {
+    const user = userEvent.setup();
+    renderAt('/incidents');
+    await screen.findAllByText('10.0.1.1');
+    const toggle = screen.getByTestId('period-custom');
+    expect(toggle).not.toHaveAttribute('aria-controls');
+    expect(document.getElementById('period-range-dialog')).toBeNull();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-controls', 'period-range-dialog');
+    expect(document.getElementById('period-range-dialog')).toBe(screen.getByRole('dialog', { name: '기간 지정' }));
+    await user.keyboard('{Escape}');
+    expect(screen.getByTestId('period-custom')).not.toHaveAttribute('aria-controls');
+    expect(document.getElementById('period-range-dialog')).toBeNull();
+  });
+
   it('지정 기간이면 new-count를 한 번도 부르지 않고 꺼졌다는 글을 보인다', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { calls } = renderAt(`/incidents?${CUSTOM_QS}`);

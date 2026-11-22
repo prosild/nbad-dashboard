@@ -2,7 +2,8 @@
  * T34 사용자 지정 기간: 시작·끝 절대 범위(탐지 시각 기준, (시작, 끝]).
  * URL과 API는 UTC `Z` 형식(`2026-11-19T00:00:00Z`)을 쓴다. 쿼리 문자열에서 `+`가 공백으로 읽히는 문제를 피하려는 것이다.
  * 화면 입력은 브라우저 시간대와 상관없이 KST(UTC+9, 일광 절약 없음)로 읽고 쓴다. 이 파일은 `Date`의 지역 시간 메서드를 쓰지 않는다.
- * 검사 규칙은 서버(IncidentQueueService.resolveCustomRange)와 같다.
+ * 범위 검사(시작 < 끝, 366일, 2000년 하한)는 서버(IncidentQueueService.resolveCustomRange)와 같다.
+ * 시각 형식은 서버가 받는 것(ISO_OFFSET_DATE_TIME: 소문자 t·z, ±hh:mm:ss 오프셋도 받음)보다 좁아서 대문자 T·Z와 ±hh:mm만 받는다.
  */
 import { formatCompactDateTime, formatDateTime } from './format';
 
