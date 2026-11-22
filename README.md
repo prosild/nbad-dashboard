@@ -84,6 +84,7 @@ flowchart LR
 | 대시보드가 뚫려도 파이프라인 데이터는 바뀌면 안 된다 | 같은 PostgreSQL 안의 별도 DB와 계정 셋(앱·읽기·쓰기 함수 전용) | 데이터 소스가 셋이고 새 쓰기는 zeek_AD 함수가 먼저 있어야 한다 |
 | 상세 화면에 리포트 생성 정보·토큰·원본 페이로드까지 다 보였다 | 관제 판단·조치에 쓰는 정보만 남기고 용어를 관제 표준 용어로 | 파이프라인 디버깅 정보는 화면에서 바로 못 본다 |
 | 다시 빌드해도 안 고쳐지는 WAF 취약점, 로그인 전 XML 본문으로 닿음 | 기반 이미지를 digest로 고정하고 `libxml2`만 하한으로 올림 | 기반 판은 직접 올리고, 상류가 고치면 그 줄을 지워야 한다 |
+| 같은 Docker 네트워크의 컨테이너가 전달 헤더로 감사 로그 IP를 꾸밀 수 있었다 | WAF 주소를 고정하고, 앱은 그 주소에서 온 전달 헤더만, WAF는 DSM 경로에서 온 것만 믿음 | 서브넷을 바꾸면 고정 주소도 같이 바꿔야 하고, `NET_RAW`로 출처를 꾸미는 공격은 못 막는다 |
 
 ## 보안 설계
 
@@ -143,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 문서
 
 - [주요 판단 기록](docs/design-decisions.md)
-- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T31`)
+- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T32`)
 - [배포 및 운영 가이드](docs/deployment-guide.md): VMware 실습 환경
 - [포트폴리오 공개 배포 안내서](docs/portfolio-deployment.md): 공개 데모(Synology NAS)
 - [보안 검증 보고서](docs/security-verification-report.md)

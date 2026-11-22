@@ -157,3 +157,20 @@
 **고른 것.** 기반 이미지를 태그와 digest로 고정하고 `libxml2`만 올렸다. 고친 판이 이미 있고 공개 주소에서 닿는 경로라 상류를 기다리지 않았다. 앱은 JSON 본문만 받으므로 XML 거부도 맞는 방어다. 그래도 WAF 정책을 바꾸면 검증 범위가 커져서 이번에는 하지 않았다. 전체 패키지를 올리지 않은 것은 ModSecurity nginx 모듈이 상류가 맞춰 빌드한 nginx 판과 어긋날 수 있어서다. `libxml2`는 하한(`>=2.13.9-r3`)만 걸었다. 정확한 판으로 묶으면 Alpine이 옛 판을 저장소에서 지웠을 때 빌드가 깨진다. 하한을 채우는 판이 없으면 빌드가 실패해 취약한 판이 조용히 남지 않는다.
 
 **결과·근거.** `docker/nginx-waf/Dockerfile`, 정적 시험 `StaticSecurityAndConfigTest`, 기반 올리기 절차 [`docs/deployment-guide.md`](deployment-guide.md) 4.1. 새 이미지와 고정 기반의 패키지 차이는 `libxml2` 한 줄이고 nginx·모듈은 같다. 다시 돌린 Trivy에서 WAF 이미지의 `libxml2` 항목이 사라졌다. 깨진 XML 본문은 WAF가 `400`으로 막고 잘 짜인 XML은 앱까지 간다(E2E `[15]`). 결과는 [`docs/security-verification-report.md`](security-verification-report.md) "최근 검증"에 있다.
+
+## 11. 같은 Docker 네트워크의 컨테이너가 꾸미는 감사 로그 IP (2026-11-22)
+
+**문제.** 앱은 전달 헤더(`X-Forwarded-For`·`X-Forwarded-Proto`)를 연결 출처와 상관없이 믿었다(Spring `forward-headers-strategy: framework`). 그래서 앱 `8080`에 직접 붙는 컨테이너는 `X-Forwarded-For` 하나로 감사 로그 IP를 정할 수 있었다. 공개 스택은 WAF도 같은 구멍이 있었다. DSM 역방향 프록시의 연결이 컨테이너 안에서 Docker 게이트웨이 주소로 보여 WAF가 스택 서브넷 전체를 믿게 해 두었다. 그 결과 `api` 같은 다른 컨테이너가 `nginx-waf:8080`에 `X-Forwarded-For`·`X-Forwarded-Proto: https`를 붙이면 WAF가 그 값을 그대로 앱에 넘겼다. 앱만 고쳐서는 이 길이 남았다.
+
+**이전 판단.** `T14`에서는 앱에 Tomcat `RemoteIpValve` 신뢰 목록을 두는 안을 "Docker가 컨테이너 IP를 실행마다 바꿔 고정할 수 없다"는 이유로 기각했다. 대신 앱 포트를 WAF 밖으로 열지 않는다는 전제를 정적 시험으로 지키고, 같은 네트워크의 다른 컨테이너가 앱에 직접 붙는 경로를 남은 위험으로 적었다.
+
+**고려한 안.**
+- WAF 주소를 고정하고 앱은 그 주소에서 온 연결의 전달 헤더만 믿는다. 공개 스택 WAF는 `127.0.0.1`과 게이트웨이만 믿는다.
+- WAF와 앱이 공유 비밀 헤더를 주고받고 앱은 그 헤더가 있는 요청의 전달 헤더만 믿는다. 새 비밀값을 NAS `.env`에 넣고 교체·유출을 관리해야 한다.
+- 둘 다 한다. 설정과 검증이 두 배가 된다.
+
+**잃는 것.** 고정 주소를 관리해야 한다. 서브넷을 바꾸면 WAF 주소와 게이트웨이 주소도 같이 바꿔야 한다. 같은 bridge에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격은 이 방식으로 막지 못한다. 공개 스택은 게이트웨이를 믿으므로 NAS 호스트의 로컬 프로세스는 `127.0.0.1:18480`으로 전달 헤더를 꾸밀 수 있다. 이것은 원래 전제(이 포트에는 DSM만 붙는다)와 같다.
+
+**고른 것.** 첫째 안(WAF 주소 고정 + 신뢰 목록)을 골랐다. Compose의 고정 서브넷과 `ipv4_address`로 WAF 주소를 고정하면 `T14`의 기각 이유가 사라진다. 새 비밀값도, NAS `.env` 변경도 없다. 앱은 `native`(Tomcat `RemoteIpValve`)로 바꾸고 Spring Boot가 붙이는 valve 하나의 `internalProxies`를 신뢰 목록의 정확 일치 패턴으로 바꿨다. Boot 기본값은 사설망 전체를 믿으므로 valve를 하나 더 붙이면 기본 valve가 먼저 돌아 구멍이 남는다. 신뢰 목록은 주소 그대로만 받고 대역·호스트 이름이면 시작을 막는다. 목록이 비면 아무도 믿지 않는다. 공개 스택 WAF는 `set_real_ip_from`과 `X-Forwarded-Proto`·`Port` 판단을 모두 같은 출처(`127.0.0.1`, 게이트웨이)에 묶었다. 게이트웨이 주소는 반영 전에 NAS에서 표식 요청 하나로 확인했다(`10.203.48.1`).
+
+**결과·근거.** `security/TrustedProxies.java`, `config/TrustedProxyValveCustomizer.java`, 내장 Tomcat 시험(`t32` 패키지), 정적 시험 `StaticSecurityAndConfigTest`. VMware 보안 스캔 E2E `[16]`에서 WAF가 아닌 컨테이너가 앱에 직접 보낸 `X-Forwarded-For`·`X-Forwarded-Proto: https`가 무시됐다(감사 로그 IP는 그 컨테이너 주소, HSTS 없음). WAF를 거친 요청의 감사 로그 IP·`Location`은 바뀌지 않았다. 공개 스택 리허설 `[T32]`에서 `api` 컨테이너가 WAF나 앱에 보낸 전달 헤더도 무시됐고, DSM 흉내 요청은 지금처럼 클라이언트 IP와 `https`가 반영됐다. 공개 데모에 반영한 뒤 공개 주소 확인에서 DSM 경로 요청의 클라이언트 IP가 스택 주소가 아니었고, `api` 컨테이너가 `nginx-waf`에 붙인 `X-Forwarded-For`는 ModSecurity 기록에도 반영되지 않았다. 설정은 [`docs/deployment-guide.md`](deployment-guide.md) 1.2와 [`docs/portfolio-deployment.md`](portfolio-deployment.md) 1.1에 있다.
