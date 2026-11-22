@@ -1146,6 +1146,8 @@ try {
             "SELECT '$_' || ':' || (SELECT count(*) FROM zeekad.$_) || '/' || (SELECT count(*) FROM sandbox_baseline.$_) || ':diff=' || " +
             "((SELECT count(*) FROM (SELECT * FROM zeekad.$_ EXCEPT SELECT * FROM sandbox_baseline.$_) a) + (SELECT count(*) FROM (SELECT * FROM sandbox_baseline.$_ EXCEPT SELECT * FROM zeekad.$_) b))"
         }) -join " UNION ALL "
+    # UNION ALL은 병렬 실행 때 행 순서가 바뀔 수 있어 정렬한다(문자열로 비교한다).
+    $diffSql = "SELECT * FROM ($diffSql) d ORDER BY 1"
     $baselineDiff = { (Invoke-Psql "zeekad" $diffSql).Output.Trim() -replace "`r?`n", '; ' }
     $isBaseline = { param($text) @([regex]::Matches($text, 'diff=(\d+)') | Where-Object { $_.Groups[1].Value -ne '0' }).Count -eq 0 -and @([regex]::Matches($text, ':(\d+)/(\d+):') | Where-Object { $_.Groups[1].Value -ne $_.Groups[2].Value }).Count -eq 0 }
     # 세 표 밖 zeekad 표 전부(기준선 스키마 제외): 행 수와 내용 해시(행마다 md5 → 정렬해 md5)
@@ -1153,6 +1155,7 @@ try {
         "AND table_schema NOT IN ('pg_catalog', 'information_schema', 'sandbox', 'sandbox_baseline') " +
         "AND NOT (table_schema = 'zeekad' AND table_name IN ('incident_status', 'incident_status_history', 'analyst_review')) ORDER BY 1")).Output -split "`r?`n" | Where-Object { $_ })
     $otherSql = ($otherTables | ForEach-Object { "SELECT '$_' || '=' || count(*) || ':' || md5(COALESCE(string_agg(md5(t::text), '' ORDER BY md5(t::text)), '')) FROM $_ t" }) -join " UNION ALL "
+    $otherSql = "SELECT * FROM ($otherSql) o ORDER BY 1"
     $otherHash = { (Invoke-Psql "zeekad" $otherSql).Output.Trim() }
     $rwPrivSql = "SELECT 'table:' || table_schema || '.' || table_name || ':' || privilege_type FROM information_schema.role_table_grants WHERE grantee = 'dashboard_rw' " +
         "UNION ALL SELECT 'routine:' || routine_schema || '.' || routine_name || ':' || privilege_type FROM information_schema.role_routine_grants WHERE grantee = 'dashboard_rw' " +
