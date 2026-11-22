@@ -17,6 +17,7 @@
 - `demo`는 조회자(`VIEWER`)입니다. IP는 뒤 두 옥텟이 가려지고(`10.10.*.*`), 상태 변경·담당 지정·에스컬레이션 결정은 할 수 없습니다. 볼 수 있는 캡처는 CIC-IDS2017(`cic17-*`), 합성 APT를 끼운 CIC 데이터(`syn1-*`), Kali 실습망 캡처(`lab-20261119`)입니다.
 - `trial-analyst`는 분석가(`ANALYST`)입니다. 볼 수 있는 캡처는 `demo`와 같고 IP가 가려지지 않습니다. 모든 방문자가 같은 계정을 쓰므로 다른 방문자가 바꾼 상태나 적은 사유가 다음 정각까지 보일 수 있습니다. 정각 직후에는 화면을 새로 고쳐 주세요.
 - 기본 기간(24시간)에는 실습망 인시던트 52건만 보입니다. 기간을 **전체**로 넓히면 가져온 데이터까지 2,180건이 보입니다.
+- 기간 버튼 끝의 **기간 지정**에서 시작·끝 시각(KST, 분 단위)을 정하면 그 구간에 탐지된 인시던트만 봅니다. 범위는 주소에 남아 링크로 나눌 수 있습니다. 현황판 탐지 추이에서 막대를 누르면 그 구간의 큐로 갑니다.
 
 처음 보실 때 권하는 순서:
 1. **현황판**: 기간을 "전체"로 바꾸면 탐지 추이와 수집원 상태가 보입니다.
@@ -147,7 +148,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 문서
 
 - [주요 판단 기록](docs/design-decisions.md)
-- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T33`)
+- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T34`)
 - [배포 및 운영 가이드](docs/deployment-guide.md): VMware 실습 환경
 - [포트폴리오 공개 배포 안내서](docs/portfolio-deployment.md): 공개 데모(Synology NAS)
 - [보안 검증 보고서](docs/security-verification-report.md)
@@ -158,7 +159,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 - 공개 데모의 인시던트 큐 응답이 0.8초대입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다.
 - 앱은 WAF 고정 주소에서 온 전달 헤더만 믿지만, 같은 Docker 네트워크에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격까지는 막지 못합니다.
 - Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.
-- 그 밖의 후보: 사용자 지정 기간, 큐에서 이웃 인시던트로 이동할 때 전체 집합을 읽는 문제.
+- 그 밖의 후보: 큐에서 이웃 인시던트로 이동할 때 전체 집합을 읽는 문제.
 
 ## 데이터 출처
 

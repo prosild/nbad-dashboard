@@ -104,16 +104,8 @@ export function PeriodButtons({
           }`}
         >
           <CalendarRange className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span className="truncate">
-            {custom && range ? (
-              <>
-                <span className="sr-only">기간 지정 </span>
-                {formatRangeShort(range, current?.anchor)}
-              </>
-            ) : (
-              '기간 지정'
-            )}
-          </span>
+          {custom && range && <span className="sr-only">기간 지정 </span>}
+          <span className="truncate">{custom && range ? formatRangeShort(range, current?.anchor) : '기간 지정'}</span>
         </button>
       )}
       {open && onApplyRange && (

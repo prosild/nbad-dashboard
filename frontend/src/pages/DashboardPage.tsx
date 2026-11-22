@@ -198,7 +198,7 @@ export function DashboardPage() {
             />
             <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
               <AnchorText overview={overview} />
-              {custom && (
+              {custom && !snapshot && (
                 <span data-testid="auto-refresh-off" title="기간을 지정하면 목록이 움직이지 않게 60초 자동 갱신을 멈춥니다">
                   자동 갱신 꺼짐(기간 지정)
                 </span>

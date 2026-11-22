@@ -1647,6 +1647,58 @@ FROM v GROUP BY m ORDER BY m
                 $e2eLogs.Add("[17] after 500-char requests: $after17; audit rows $auditAfter17; stored reason length=$($reason17.Output.Trim())")
                 Assert-True ($after17 -match '^1\|[1-9]\d*\|confirm$' -and [int]$auditAfter17 -eq [int]$auditBefore17 + 2 -and $reason17.Output.Trim() -eq '500') "[17] 500자는 저장(앞뒤 공백 뺀 500자)"
 
+                # [18] 사용자 지정 기간(T34): period=custom&start&end(UTC Z)를 WAF를 거쳐 VIEWER로 부른다. 큐·현황판·운영 현황이 200이고
+                #      periodStart·periodEnd가 보낸 값이다. 큐 total은 같은 범위 독립 SQL(viewer1 허용 캡처의 최신 큐, 탐지 시각 = 그 인시던트가 처음
+                #      나온 성공 작업 완료 시각, (시작, 끝])과 같다. 잘못된 값은 WAF에 막히지 않고 앱의 400 JSON(INVALID_REQUEST)으로 온다.
+                $q18 = Join-Path $tmpDir "q18-viewer.cookies"
+                Assert-Status (Login-Api "viewer1" $q18) 200 "[18] viewer1 로그인"
+                $now18 = [DateTime]::UtcNow
+                $now18 = $now18.AddSeconds(-$now18.Second).AddMilliseconds(-$now18.Millisecond)
+                $start18 = $now18.AddDays(-1).ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture)
+                $end18 = $now18.AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture)   # 끝이 기준 시각(지금) 뒤여도 받는다
+                $range18 = "period=custom&start=$([uri]::EscapeDataString($start18))&end=$([uri]::EscapeDataString($end18))"
+                foreach ($p18 in @("/api/incidents/queue", "/api/dashboard/overview", "/api/operations")) {
+                    $r18 = Invoke-Http -Url "$baseHttps$($p18)?$range18" -CookieJar $q18
+                    $ps18 = if ($r18.Json) { [DateTimeOffset]::Parse([string]$r18.Json.periodStart).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture) } else { "" }
+                    $pe18 = if ($r18.Json) { [DateTimeOffset]::Parse([string]$r18.Json.periodEnd).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", [Globalization.CultureInfo]::InvariantCulture) } else { "" }
+                    $e2eLogs.Add("[18] viewer1 GET $($p18)?$range18 -> HTTP $($r18.Status) period=$($r18.Json.period) periodStart=$ps18 periodEnd=$pe18$(if ($p18 -eq '/api/incidents/queue') { " total=$($r18.Json.total) outsidePeriod=$($r18.Json.outsidePeriod) newestOutsidePeriod=$($r18.Json.newestOutsidePeriod)" })$(if ($p18 -eq '/api/dashboard/overview') { " trend.bucket=$($r18.Json.trend.bucket) buckets=$(@($r18.Json.trend.buckets).Count) afterAnchor=$($r18.Json.trend.unbucketed.afterAnchor)" })")
+                    Assert-Status $r18 200 "[18] viewer1 $p18 지정 기간"
+                    Assert-True ($r18.Json.period -eq "custom" -and $ps18 -eq $start18 -and $pe18 -eq $end18) "[18] $p18 periodStart·periodEnd = 보낸 값" $r18
+                    if ($p18 -eq "/api/incidents/queue") { $queue18 = $r18 }
+                    if ($p18 -eq "/api/dashboard/overview") { $ov18 = $r18 }
+                }
+                Assert-True ($null -eq $queue18.Json.newestOutsidePeriod) "[18] 지정 기간 newestOutsidePeriod = null" $queue18
+                Assert-True ($ov18.Json.trend.bucket -eq "1h") "[18] 24시간 30분 지정 기간 추이 구간 1시간" $ov18
+                $patterns18 = @((Invoke-AuditSelect "SELECT a.capture_pattern FROM user_capture_access a JOIN users u ON u.id = a.user_id WHERE u.username = 'viewer1' ORDER BY 1") -split "`r?`n" | Where-Object { $_ })
+                $like18 = ($patterns18 | ForEach-Object { "lq.capture_id LIKE '$(($_ -replace "'", "''") -replace '\*', '%')'" }) -join " OR "
+                if (-not $like18) { $like18 = "FALSE" }
+                $sql18 = "SELECT count(*) FROM dashboard.latest_incident_queue lq JOIN (SELECT q.incident_id, MIN(j.finished_at) d FROM dashboard.incident_queue q JOIN dashboard.scoring_jobs j ON j.job_id = q.job_id AND j.status = 'succeeded' AND j.finished_at IS NOT NULL GROUP BY q.incident_id) fs ON fs.incident_id = lq.incident_id " +
+                    "WHERE ($like18) AND fs.d > TIMESTAMPTZ '$start18' AND fs.d <= TIMESTAMPTZ '$end18'"
+                $ind18 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-At", "-c", $sql18)) -IgnoreExitCode
+                $e2eLogs.Add("[18] viewer1 patterns=[$($patterns18 -join ', ')] independent SQL count (detected in ($start18, $end18]) = $($ind18.Output.Trim()) (exit=$($ind18.ExitCode)); queue total = $($queue18.Json.total)")
+                Assert-True ($ind18.ExitCode -eq 0 -and [long]$ind18.Output.Trim() -eq [long]$queue18.Json.total) "[18] 큐 total = 독립 SQL"
+                $bad18 = @(
+                    @{ Q = "period=custom"; What = "start·end 없음" },
+                    @{ Q = "period=custom&start=$([uri]::EscapeDataString($start18))"; What = "end 없음" },
+                    @{ Q = "period=custom&start=2026-11-19T00:00:00&end=2026-11-20T00:00:00"; What = "오프셋 없음" },
+                    @{ Q = "period=custom&start=2026-11-19T09:00:00+09:00&end=2026-11-20T09:00:00+09:00"; What = "인코딩 안 된 + (공백으로 읽힘)" },
+                    @{ Q = "period=custom&start=$([uri]::EscapeDataString($end18))&end=$([uri]::EscapeDataString($start18))"; What = "시작 > 끝" },
+                    @{ Q = "period=custom&start=2025-11-19T00:00:00Z&end=2026-11-20T00:00:01Z"; What = "366일 + 1초" },
+                    @{ Q = "period=custom&start=1999-12-31T14:59:59Z&end=2000-01-02T00:00:00Z"; What = "2000-01-01 KST 앞" },
+                    @{ Q = "period=24h&start=$([uri]::EscapeDataString($start18))&end=$([uri]::EscapeDataString($end18))"; What = "프리셋에 start·end" }
+                )
+                foreach ($b18 in $bad18) {
+                    foreach ($p18 in @("/api/incidents/queue", "/api/dashboard/overview", "/api/operations")) {
+                        $r18 = Invoke-Http -Url "$baseHttps$($p18)?$($b18.Q)" -CookieJar $q18
+                        $e2eLogs.Add("[18] viewer1 $($b18.What): $(Format-Resp $r18 200)")
+                        Assert-ApiError $r18 400 "INVALID_REQUEST" "[18] $p18 $($b18.What)"
+                        Assert-True ($r18.Json.message -match '[가-힣]') "[18] $p18 $($b18.What) 한국어 문장" $r18
+                    }
+                }
+                $ok18 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=custom&start=2026-11-19T09:00:00%2B09:00&end=2026-11-20T09:00:00%2B09:00" -CookieJar $q18
+                $e2eLogs.Add("[18] viewer1 percent-encoded +09:00 offset: $(Format-Resp $ok18 160)")
+                Assert-Status $ok18 200 "[18] %2B 오프셋은 통과"
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
