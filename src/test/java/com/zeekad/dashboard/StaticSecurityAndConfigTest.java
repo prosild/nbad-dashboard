@@ -409,6 +409,25 @@ class StaticSecurityAndConfigTest {
     }
 
     @Test
+    void wafDockerfilePinsBaseByDigestAndUpgradesOnlyLibxml2() throws IOException {
+        // T31: 기반은 태그+digest로 고정하고, libxml2만 고친 판의 하한으로 올린다(전체 apk upgrade 없음).
+        String waf = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8);
+        List<String> lines = waf.lines().map(String::trim)
+                .filter(line -> !line.isEmpty() && !line.startsWith("#")).toList();
+        List<String> froms = lines.stream().filter(line -> line.startsWith("FROM ")).toList();
+        assertThat(froms).hasSize(1);
+        assertThat(froms.get(0)).as("WAF 기반은 태그와 digest를 함께 쓴다")
+                .matches("^FROM owasp/modsecurity-crs:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$");
+        List<String> users = lines.stream().filter(line -> line.startsWith("USER ")).toList();
+        assertThat(users).as("마지막 USER는 nginx").last().isEqualTo("USER nginx");
+        assertThat(lines).anyMatch(line -> line.startsWith("RUN ")
+                && line.contains("apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'"));
+        assertThat(lines).as("WAF 이미지에서 전체 apk upgrade 금지")
+                .noneMatch(line -> line.matches(".*\\bapk\\s+upgrade\\b.*"));
+        assertThat(waf).contains("HEALTHCHECK", "RESOLVER_CONFIG=\"valid=10s ipv6=off\"");
+    }
+
+    @Test
     void gitignoreExcludesSecretsKeysAndSecurityReports() throws IOException {
         String gitignore = Files.readString(Path.of(".gitignore"), StandardCharsets.UTF_8);
         assertThat(gitignore).contains(

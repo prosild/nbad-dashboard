@@ -1,4 +1,16 @@
-FROM owasp/modsecurity-crs:nginx-alpine
+# 기반 이미지는 태그와 digest로 고정한다. 움직이는 태그(nginx-alpine)를 쓰면 빌드할 때마다 nginx·ModSecurity·CRS 규칙이
+# 바뀌어, 검증한 조합과 배포한 조합이 달라질 수 있다. 기반을 올릴 때는 태그와 digest를 함께 바꾸고 다시 검증한다.
+FROM owasp/modsecurity-crs:4.30.0-nginx-alpine-202611190211@sha256:f7b4ec036553aa65e65fe792394099f597d6130465e63ff58d84f087617f5412
+
+# libxml2만 고친 판으로 올린다(CVE-2026-86144). 이 기반에는 취약한 2.13.9-r2가 들어 있고, libmodsecurity가 링크해
+# XML Content-Type 요청 본문을 로그인 전에 파싱한다.
+# - 전체 apk upgrade는 하지 않는다. ModSecurity nginx 모듈은 상류가 특정 nginx 버전에 맞춰 빌드한 것이라 nginx 패키지가
+#   함께 올라가면 모듈과 어긋날 수 있다.
+# - 하한만 건다(>=). 정확한 판으로 묶으면 Alpine이 옛 -r 판을 저장소에서 지웠을 때 빌드가 깨진다. 하한을 채우는 판이 없으면
+#   apk가 실패해 빌드도 실패한다(apk upgrade libxml2는 올릴 판이 없어도 성공으로 끝나 쓰지 않는다).
+# - 기반을 올렸는데 그 기반에 이미 2.13.9-r3 이상이 들어 있으면 이 RUN 줄을 지운다.
+USER root
+RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
 
 COPY --chown=root:root templates/ /etc/nginx/templates/
 
