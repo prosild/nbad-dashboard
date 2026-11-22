@@ -525,6 +525,59 @@ class StaticSecurityAndConfigTest {
         assertThat(envExample).contains("PORTFOLIO_WRITE_RATE=10r/m", "PORTFOLIO_WRITE_BURST=5", "SANDBOX_RESET_INTERVAL_MINUTES=60");
     }
 
+    @Test
+    void t36SandboxTmpfsReadRateLimitOnPublicPathAndSingleHsts() throws IOException {
+        String compose = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+        // 익명 볼륨: 이미지 VOLUME 경로를 작은 tmpfs로 덮고 다른 보안 설정은 그대로
+        for (String service : List.of("sandbox-setup", "sandbox-reset")) {
+            assertThat(serviceBlock(compose, service)).as(service)
+                    .contains("tmpfs: [\"/tmp\", \"/var/lib/postgresql/data:size=1m\"]", "read_only: true",
+                            "cap_drop: [ALL]", "security_opt: [\"no-new-privileges:true\"]", "user: postgres")
+                    .doesNotContain("pgdata");
+        }
+        // 조회 한도 값은 compose 변수(기본값은 빠른 사람 사용 측정의 3배·2배 이상), 로그인·쓰기 값은 그대로
+        assertThat(serviceBlock(compose, "nginx-waf")).contains("ZEEKAD_READ_RATE: ${PORTFOLIO_READ_RATE:-200r/m}",
+                "ZEEKAD_READ_BURST: ${PORTFOLIO_READ_BURST:-30}", "ZEEKAD_LOGIN_RATE: ${PORTFOLIO_LOGIN_RATE:-10r/m}",
+                "ZEEKAD_WRITE_RATE: ${PORTFOLIO_WRITE_RATE:-10r/m}");
+        String envExample = Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8);
+        assertThat(envExample).contains("PORTFOLIO_READ_RATE=200r/m", "PORTFOLIO_READ_BURST=30");
+
+        String template = Files.readString(
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"), StandardCharsets.UTF_8);
+        assertThat(template).contains("map \"$zeekad_from_proxy:$request_method:$uri\" $zeekad_read_limit_key {",
+                "limit_req_zone $zeekad_read_limit_key zone=zeekad_read:10m rate=${ZEEKAD_READ_RATE};",
+                "limit_req zone=zeekad_read burst=${ZEEKAD_READ_BURST} nodelay;",
+                "proxy_hide_header Strict-Transport-Security;");
+        List<Pattern> readKeys = template.lines().map(String::trim)
+                .filter(line -> line.startsWith("\"~^1:") && line.endsWith("$binary_remote_addr;"))
+                .map(line -> Pattern.compile(line.substring(2, line.indexOf("\" $binary_remote_addr;"))))
+                .toList();
+        assertThat(readKeys).hasSize(1);
+        java.util.function.Predicate<String> counted = key -> readKeys.get(0).matcher(key).find();
+        for (String key : List.of("1:GET:/api/incidents/queue", "1:HEAD:/api/dashboard/overview",
+                "1:GET:/api/incidents/42/rank/1", "1:GET:/api/operations")) {
+            assertThat(counted.test(key)).as("조회 한도 대상 %s", key).isTrue();
+        }
+        // 다른 출처(8443 리스너·스택 안 컨테이너), 쓰기, /api/auth/(설계자 답 1), 정적 파일·SPA 경로는 세지 않는다
+        for (String key : List.of("0:GET:/api/incidents/queue", "1:POST:/api/incidents/42/rank/1/transition",
+                "1:GET:/api/auth/me", "1:GET:/api/auth/csrf", "1:GET:/api/auth/login-notice", "1:GET:/assets/index.js",
+                "1:GET:/incidents/42", "1:GET:/", "1:GET:/api")) {
+            assertThat(counted.test(key)).as("조회 한도 밖 %s", key).isFalse();
+        }
+
+        // HSTS 숨김 상속이 끊기지 않게 하위 문맥에는 proxy_hide_header가 없고, 8443 리스너는 자기 HSTS를 그대로 붙인다
+        for (Path p : List.of(Path.of("docker/nginx-waf/templates/conf.d/default.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/proxy_backend.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/location_common.conf.template"),
+                Path.of("docker/nginx-waf/templates/includes/cors.conf.template"))) {
+            assertThat(Files.readString(p, StandardCharsets.UTF_8)).as(p.toString()).doesNotContain("proxy_hide_header");
+        }
+        assertThat(Files.readString(Path.of("docker/nginx-waf/templates/conf.d/default.conf.template"), StandardCharsets.UTF_8))
+                .contains("more_set_headers 'Strict-Transport-Security: max-age=31536000; includeSubDomains';");
+        assertThat(Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8))
+                .doesNotContain("zeekad-portfolio-http", "ZEEKAD_READ_RATE");
+    }
+
     private static boolean inCidr(String ip, String cidr) {
         String[] parts = cidr.split("/");
         int bits = Integer.parseInt(parts[1]);

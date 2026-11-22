@@ -164,6 +164,10 @@ services:
       # T33: 분석가 쓰기 네 경로(상태 변경·담당 지정·검토 결정 둘)의 POST만 클라이언트 IP당 제한한다(로그인 제한과 따로). 초과 시 429.
       ZEEKAD_WRITE_RATE: ${PORTFOLIO_WRITE_RATE:-10r/m}
       ZEEKAD_WRITE_BURST: ${PORTFOLIO_WRITE_BURST:-5}
+      # T36: 공개 경로(DSM에서 온 요청)의 /api/ 조회(GET·HEAD)만 클라이언트 IP당 제한한다(허용 밖 조회 거부 감사가 쌓이는 속도를 묶음).
+      # 스택 안 8443 리스너는 세지 않는다. 초과 시 429. 기본값 근거(빠른 사람 사용 측정)는 docs/portfolio-deployment.md.
+      ZEEKAD_READ_RATE: ${PORTFOLIO_READ_RATE:-200r/m}
+      ZEEKAD_READ_BURST: ${PORTFOLIO_READ_BURST:-30}
       MODSEC_RULE_ENGINE: "on"
       # compose.yml과 같다: CRS 기본 허용 메서드에 PUT만 더한다.
       ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"
@@ -241,7 +245,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
-    tmpfs: ["/tmp"]
+    # T36: 이미지가 VOLUME으로 선언한 데이터 경로를 작은 tmpfs로 덮어 익명 볼륨이 생기지 않게 한다(이 컨테이너는 psql만 쓴다).
+    tmpfs: ["/tmp", "/var/lib/postgresql/data:size=1m"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -269,7 +274,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
-    tmpfs: ["/tmp"]
+    # T36: 이미지가 VOLUME으로 선언한 데이터 경로를 작은 tmpfs로 덮어 익명 볼륨이 생기지 않게 한다(이 컨테이너는 psql만 쓴다).
+    tmpfs: ["/tmp", "/var/lib/postgresql/data:size=1m"]
     depends_on:
       postgres:
         condition: service_healthy

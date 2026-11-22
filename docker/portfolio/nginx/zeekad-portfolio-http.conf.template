@@ -54,3 +54,21 @@ map "$request_method:$uri" $zeekad_write_limit_key {
 }
 limit_req_zone $zeekad_write_limit_key zone=zeekad_write:10m rate=${ZEEKAD_WRITE_RATE};
 limit_req zone=zeekad_write burst=${ZEEKAD_WRITE_BURST} nodelay;
+
+# T36 조회 속도 제한: 공개 경로(DSM에서 온 요청, $zeekad_from_proxy = 1)의 /api/ GET·HEAD만, 클라이언트 IP당.
+# 허용 밖 조회 거부 감사(ACCESS_DENIED_IDOR)가 한 IP에서 쌓이는 속도를 묶는다. 정적 파일·SPA 경로는 세지 않는다.
+# /api/auth/(me·login-notice·csrf 등)는 조회 거부 감사를 만들지 않으므로 뺀다. 한도 중에도 새로고침이 로그인 화면으로 바뀌지
+# 않고 로그인 흐름이 막히지 않는다(로그인 POST는 위 로그인 한도가 묶는다).
+# 이 파일은 http 문맥이라 스택 안 8443 리스너(ZAP 대상)에도 상속되므로 출처 표시를 키에 넣는다. 다른 출처는 빈 키(세지 않음)다.
+map "$zeekad_from_proxy:$request_method:$uri" $zeekad_read_limit_key {
+    default "";
+    "~^1:(GET|HEAD):/api/(?!auth/)" $binary_remote_addr;
+}
+limit_req_zone $zeekad_read_limit_key zone=zeekad_read:10m rate=${ZEEKAD_READ_RATE};
+limit_req zone=zeekad_read burst=${ZEEKAD_READ_BURST} nodelay;
+
+# T36 HSTS: 공개 경로의 TLS 끝은 DSM이고 DSM이 HSTS를 붙인다. 앱이 보낸 Strict-Transport-Security는 내보내지 않아
+# 공개 응답에 HSTS가 하나(DSM 값)만 남게 한다. default.conf와 includes의 server·location에는 proxy_hide_header가 없어
+# 이 값이 그대로 상속된다(하위 문맥에 proxy_hide_header를 하나라도 두면 상속이 끊기므로 그때는 거기에도 적는다).
+# 8443 리스너는 자기 more_set_headers로 HSTS를 붙이므로(default.conf.template) 그 응답의 HSTS는 그대로 하나다.
+proxy_hide_header Strict-Transport-Security;
