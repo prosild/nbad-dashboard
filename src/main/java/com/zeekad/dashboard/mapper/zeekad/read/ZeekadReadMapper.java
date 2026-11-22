@@ -99,6 +99,16 @@ public interface ZeekadReadMapper {
 
     long countUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
 
+    /**
+     * T35 이전·다음: 목록과 같은 조건·정렬로 DB가 순번을 매겨 지금 행(jobId·queueRank)과 앞뒤 행(최대 3행)을 돌려준다.
+     * 각 행에 순번(queuePos)과 조건에 맞는 전체 수(queueTotal)가 붙는다. 지금 행이 조건 밖이면 빈 목록.
+     * c.incidentId·limit·offset은 비워 넘긴다.
+     */
+    List<com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord> findUnifiedQueueNeighbors(
+            @Param("c") UnifiedQueueCriteria criteria,
+            @Param("jobId") long jobId,
+            @Param("queueRank") int queueRank);
+
     UnifiedQueueSummaryRow summarizeUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
 
     OffsetDateTime findMaxUnifiedDetectedAt(@Param("c") UnifiedQueueCriteria criteria);

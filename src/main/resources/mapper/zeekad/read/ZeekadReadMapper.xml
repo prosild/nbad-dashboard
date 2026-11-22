@@ -755,6 +755,35 @@
         </if>
     </select>
 
+    <!-- T35 이전·다음: 목록(findUnifiedQueue)과 같은 기반·거르기에 같은 정렬(unifiedQueueOrder 그대로)로 순번을 매긴다.
+         정렬 끝이 capture_id·queue_rank라 순번은 목록 순서와 하나로 같다. 지금 행(job_id·queue_rank, 최신 큐 안에서 유일)의
+         순번 −1·0·+1 행만 앱으로 보낸다. w를 두 번 쓰므로 PostgreSQL은 한 번 계산해 둔다(기반 질의의 최적화 경계도 그대로). -->
+    <resultMap id="unifiedQueueNeighborMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord" extends="unifiedQueueMap">
+        <result property="queuePos" column="queue_pos" javaType="java.lang.Long"/>
+        <result property="queueTotal" column="queue_total" javaType="java.lang.Long"/>
+    </resultMap>
+
+    <select id="findUnifiedQueueNeighbors" resultMap="unifiedQueueNeighborMap">
+        WITH w AS (
+            SELECT b.*,
+                   ROW_NUMBER() OVER (<include refid="unifiedQueueOrder"/>) AS queue_pos,
+                   COUNT(*) OVER () AS queue_total
+            FROM (<include refid="unifiedQueueBase"/>) b
+            <where>
+                <include refid="unifiedQueueFilters"/>
+            </where>
+        )
+        SELECT w.*
+        FROM w
+        JOIN (
+            SELECT cw.queue_pos AS cur_pos
+            FROM w cw
+            WHERE cw.job_id = #{jobId}
+              AND cw.queue_rank = #{queueRank}
+        ) cur ON w.queue_pos BETWEEN cur.cur_pos - 1 AND cur.cur_pos + 1
+        ORDER BY w.queue_pos
+    </select>
+
     <select id="countUnifiedQueue" resultType="long">
         SELECT COUNT(*)
         FROM (<include refid="unifiedQueueBase"/>) b

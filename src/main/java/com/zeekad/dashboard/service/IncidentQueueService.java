@@ -13,6 +13,7 @@ import com.zeekad.dashboard.model.zeekad.CaptureLastDetected;
 import com.zeekad.dashboard.model.zeekad.CaptureQueueStat;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueuePeriodSplit;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow;
@@ -342,25 +343,56 @@ public class IncidentQueueService {
             return new QueueNeighborsResponse(current, null, 0, null, null);
         }
 
-        List<UnifiedQueueRecord> ordered;
+        Integer position = null;
+        long total;
+        UnifiedQueueRecord prevRow = null;
+        UnifiedQueueRecord nextRow = null;
         if (scope.asset() == null) {
-            ordered = zeekadReadMapper.findUnifiedQueue(scope.criteria());
-        } else {
-            ordered = applyStripFilters(assetFiltered(scope.criteria(), scope.asset(), scope.role()), scope.criteria())
-                    .stream().map(Masked::record).toList();
-        }
-        int index = -1;
-        if (latest != null) {
-            for (int i = 0; i < ordered.size(); i++) {
-                UnifiedQueueRecord r = ordered.get(i);
-                if (Objects.equals(r.getJobId(), latest.getJobId()) && Objects.equals(r.getQueueRank(), latest.getQueueRank())) {
-                    index = i;
-                    break;
+            // T35: DB가 목록과 같은 조건·정렬로 순번을 매겨 지금·이전·다음 세 행과 전체 수만 돌려준다
+            UnifiedQueueCriteria c = scope.criteria().copy();
+            c.setIncidentId(null);
+            c.setLimit(null);
+            c.setOffset(null);
+            List<UnifiedQueueNeighborRecord> window = latest == null ? List.of()
+                    : zeekadReadMapper.findUnifiedQueueNeighbors(c, latest.getJobId(), latest.getQueueRank());
+            UnifiedQueueNeighborRecord cur = window.stream()
+                    .filter(r -> sameRow(r, latest))
+                    .findFirst().orElse(null);
+            if (cur == null) {
+                total = zeekadReadMapper.countUnifiedQueue(c);
+            } else {
+                long pos = cur.getQueuePos();
+                position = Math.toIntExact(pos);
+                total = cur.getQueueTotal();
+                for (UnifiedQueueNeighborRecord r : window) {
+                    if (r.getQueuePos() == pos - 1) {
+                        prevRow = r;
+                    } else if (r.getQueuePos() == pos + 1) {
+                        nextRow = r;
+                    }
                 }
             }
+        } else {
+            // 자산 검색은 마스킹 뒤 값으로 거르므로 지금처럼 Java에서 찾는다(상한 ASSET_SEARCH_CAP)
+            List<UnifiedQueueRecord> ordered = applyStripFilters(
+                    assetFiltered(scope.criteria(), scope.asset(), scope.role()), scope.criteria())
+                    .stream().map(Masked::record).toList();
+            int index = -1;
+            if (latest != null) {
+                for (int i = 0; i < ordered.size(); i++) {
+                    if (sameRow(ordered.get(i), latest)) {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            total = ordered.size();
+            if (index >= 0) {
+                position = index + 1;
+                prevRow = index > 0 ? ordered.get(index - 1) : null;
+                nextRow = index < ordered.size() - 1 ? ordered.get(index + 1) : null;
+            }
         }
-        UnifiedQueueRecord prevRow = index > 0 ? ordered.get(index - 1) : null;
-        UnifiedQueueRecord nextRow = index >= 0 && index < ordered.size() - 1 ? ordered.get(index + 1) : null;
         // T27 인시던트 번호: 지금·이전·다음을 한 번에 읽는다
         List<String> keyIds = new ArrayList<>();
         for (UnifiedQueueRecord r : new UnifiedQueueRecord[]{latest, prevRow, nextRow}) {
@@ -370,12 +402,16 @@ public class IncidentQueueService {
         }
         Map<String, Long> numbers = incidentRefService.numbersFor(keyIds);
         QueueNeighborsResponse.Key current = latest == null ? null : key(latest, scope.role(), numbers);
-        if (index < 0) {
-            return new QueueNeighborsResponse(current, null, ordered.size(), null, null);
+        if (position == null) {
+            return new QueueNeighborsResponse(current, null, total, null, null);
         }
         QueueNeighborsResponse.Key prev = prevRow == null ? null : key(prevRow, scope.role(), numbers);
         QueueNeighborsResponse.Key next = nextRow == null ? null : key(nextRow, scope.role(), numbers);
-        return new QueueNeighborsResponse(current, index + 1, ordered.size(), prev, next);
+        return new QueueNeighborsResponse(current, position, total, prev, next);
+    }
+
+    private static boolean sameRow(UnifiedQueueRecord a, UnifiedQueueRecord b) {
+        return Objects.equals(a.getJobId(), b.getJobId()) && Objects.equals(a.getQueueRank(), b.getQueueRank());
     }
 
     /* ───────────────────────── 기준 시각·상세 메타데이터 ───────────────────────── */
