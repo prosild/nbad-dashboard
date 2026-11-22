@@ -211,7 +211,9 @@ if (-not $SkipE2E -or -not $SkipZap) {
                         [string]$RawCookie = "",
                         [string]$ProbeId = "",
                         [switch]$PathAsIs,
-                        [string[]]$ExtraHeaders = @()
+                        [string[]]$ExtraHeaders = @(),
+                        [string]$RawBody = $null,
+                        [string]$RawContentType = ""
                     )
                     $script:httpSeq++
                     $hdrFile = Join-Path $tmpDir "resp-$($script:httpSeq).hdr"
@@ -231,7 +233,12 @@ if (-not $SkipE2E -or -not $SkipZap) {
                         if (-not $token) { throw "쿠키 파일에 XSRF-TOKEN이 없습니다: $Url" }
                         $curlArgs += @("-H", "X-XSRF-TOKEN: $token")
                     }
-                    if ($null -ne $JsonBody) {
+                    if ($RawBody) {
+                        # JSON이 아닌 본문(T31 [15] XML). 파일로 넘겨 셸 인용에 영향받지 않게 한다.
+                        $reqFile = Join-Path $tmpDir "req-$($script:httpSeq).raw"
+                        [IO.File]::WriteAllText($reqFile, $RawBody, $utf8NoBom)
+                        $curlArgs += @("-H", "Content-Type: $RawContentType", "--data-binary", "@$reqFile")
+                    } elseif ($null -ne $JsonBody) {
                         $reqFile = Join-Path $tmpDir "req-$($script:httpSeq).json"
                         $jsonText = if ($JsonBody -is [string]) { $JsonBody } else { $JsonBody | ConvertTo-Json -Depth 6 -Compress }
                         [IO.File]::WriteAllText($reqFile, $jsonText, $utf8NoBom)
@@ -1467,6 +1474,44 @@ FROM v GROUP BY m ORDER BY m
                 Assert-True (($lockCodes14 -join ',') -eq '401,401,401,401,423') "[14e] 기본 설정 5번째 실패에 423 잠금"
                 Assert-ApiError $okRes14 423 "ACCOUNT_LOCKED" "[14e] 잠긴 뒤 맞는 비밀번호도 423"
                 Assert-True ($audit14 -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[14e] ACCOUNT_LOCKED 감사 1건"
+
+                # [15] XML 본문 경로(T31). 기반 규칙 200000이 XML Content-Type 본문을 libxml2로 파싱하고, 200002가 파싱 오류를 400으로 막는다.
+                #      로그인 경로가 아닌 POST /api/...에 인증 없이 보낸다(로그인 실패·잠금 계수가 생기지 않게). 외부 엔터티·서비스 거부 페이로드는 보내지 않는다.
+                $xmlPath15 = "/api/incidents/101/rank/2/assignment"
+                $auditBase15 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                # [15a] 깨진 XML -> 400, WAF 로그에 그 요청의 규칙 200002·http_code 400·"XML parsing error"
+                $probe15a = "e2e-t31-xml-bad-$(New-RandomToken 8)"
+                $bad15 = Invoke-Http -Url "$baseHttps$xmlPath15" -Method POST -ProbeId $probe15a -RawBody "<a><b></a>" -RawContentType "application/xml"
+                $line15a = $null
+                for ($i = 0; $i -lt 10 -and -not $line15a; $i++) {
+                    $wafLogs15 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                    $line15a = $wafLogs15 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($probe15a) } | Select-Object -Last 1
+                    if (-not $line15a) { Start-Sleep -Seconds 1 }
+                }
+                $rules15a = @([regex]::Matches([string]$line15a, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+                $code15a = [regex]::Match([string]$line15a, '"http_code":(\d+)').Groups[1].Value
+                $data15a = [regex]::Match([string]$line15a, '"data":"(XML parsing error[^"]*)"').Groups[1].Value
+                $msg15a = [regex]::Match([string]$line15a, '"message":"(Failed to parse request body[^"]*)"').Groups[1].Value
+                $e2eLogs.Add("[15a] unauthenticated POST $xmlPath15 Content-Type: application/xml body '<a><b></a>': $(Format-Resp $bad15 120)`n      WAF log: http_code=$code15a ruleIds=[$($rules15a -join ', ')] message='$msg15a' data='$data15a'")
+                Assert-Status $bad15 400 "[15a] 깨진 XML 본문"
+                Assert-True ([bool]$line15a) "[15a] nginx-waf 감사 로그에 probe=$probe15a 기록"
+                Assert-True ($rules15a -contains "200002" -and $code15a -eq "400" -and $data15a.StartsWith("XML parsing error")) "[15a] WAF 로그 규칙 200002·http_code 400·XML parsing error"
+                # [15b] 잘 짜인 XML -> WAF를 지나 앱이 답한다(5xx 아님, WAF 차단 기록 없음)
+                $probe15b = "e2e-t31-xml-ok-$(New-RandomToken 8)"
+                $ok15 = Invoke-Http -Url "$baseHttps$xmlPath15" -Method POST -ProbeId $probe15b -RawBody "<a><b>1</b></a>" -RawContentType "application/xml"
+                Start-Sleep -Seconds 1
+                $wafLogs15b = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                $lines15b = @($wafLogs15b -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($probe15b) })
+                $interrupted15b = @($lines15b | Where-Object { $_ -match '"is_interrupted":true' })
+                $rules15b = @($lines15b | ForEach-Object { [regex]::Matches($_, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } } | Select-Object -Unique)
+                $logins15 = Invoke-AuditSelect "SELECT COUNT(*) FROM audit_logs WHERE id > $auditBase15 AND action_type IN ('LOGIN_FAILURE','ACCOUNT_LOCKED')"
+                $health15 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.Health.Status}}", "$projectName-nginx-waf-1") -IgnoreExitCode).Output.Trim()
+                $e2eLogs.Add("[15b] unauthenticated POST $xmlPath15 Content-Type: application/xml body '<a><b>1</b></a>': $(Format-Resp $ok15 200)`n      WAF audit lines for probe=$($lines15b.Count) interrupted=$($interrupted15b.Count) ruleIds=[$($rules15b -join ', ')]`n      LOGIN_FAILURE/ACCOUNT_LOCKED audit rows since [15] = $logins15`n      nginx-waf health after [15] = $health15")
+                Assert-True ($ok15.Status -ge 400 -and $ok15.Status -lt 500) "[15b] 잘 짜인 XML 본문은 앱 4xx(5xx 아님)" $ok15
+                Assert-True ($null -ne $ok15.Json -and $null -ne $ok15.Json.code) "[15b] 응답이 앱 ApiErrorResponse JSON(WAF가 막지 않음)" $ok15
+                Assert-True ($interrupted15b.Count -eq 0) "[15b] nginx-waf 차단 기록 없음"
+                Assert-True ([int]$logins15 -eq 0) "[15] 로그인 실패·잠금 감사 0"
+                Assert-True ($health15 -eq "healthy") "[15] nginx-waf healthy ($health15)"
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
