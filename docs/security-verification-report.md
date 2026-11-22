@@ -4,23 +4,23 @@
 
 ## 최근 검증
 
-주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 실행은 `T29`(2026-11-22, commit `36a04eb`)입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
+주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 실행은 `T31`(2026-11-22, commit `4d8674a`)입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
 
 | 검증 | 다시 돌리는 방법 | 결과 |
 |---|---|---|
 | 프론트엔드 타입 검사·Vitest·빌드, Gradle `check`(단위·통합·정적 보안 시험) | `npm --prefix frontend run typecheck`, `run test`, `run build`, `.\gradlew.bat check --rerun-tasks --no-daemon` | 통과 |
-| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1 -SkipTrivy` (이 실행은 의존성·Dockerfile이 바뀌지 않아 Trivy를 건너뜀) | 종료 코드 `0`, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
-| 공개 스택 리허설(스냅샷 복원, 시드 두 번, E2E `[0]`~`[8]`·`[T25]`·`[T27]`·`[T29]`, ZAP) | `scripts/portfolio-verify.ps1` | 통과, ZAP High `0`·Medium `0`·Low `0`·Informational `4` |
+| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1` (WAF Dockerfile이 바뀌어 Trivy 포함) | 종료 코드 `0`, XML 본문 경로 `[15]` 포함, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
+| 공개 스택 리허설(스냅샷 복원, 시드, E2E `[0]`~`[8]`·`[T25]`·`[T27]`·`[T29]`, ZAP) | `scripts/portfolio-verify.ps1` | 통과, ZAP High `0`·Medium `0`·Low `0`·Informational `4` |
 | 공개 주소 확인(`demo` 로그인·마스킹·허용 캡처·숨김 캡처 `403`·속도 제한 등) | [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트 | PASS `124`, FAIL `0` |
 
-Trivy는 의존성이나 Dockerfile이 바뀔 때만 돌립니다. 마지막 실행은 `T25`(2026-11-21)입니다.
+Trivy는 의존성이나 Dockerfile이 바뀔 때만 돌립니다. 마지막 실행은 `T31`(2026-11-22)입니다.
 
 | 스캔 대상 | CRITICAL | HIGH | MEDIUM | 내용 |
 |---|---:|---:|---:|---|
 | SBOM(`bom.json`) | 2 | 0 | 0 | `spring-webmvc` 2건(아래 4.3의 1) |
 | `frontend/package-lock.json`, Dockerfile 2개 | 0 | 0 | 0 | 오설정 0건 |
 | 앱 이미지 OS / `app.jar` | 0 / 2 | 0 / 0 | 0 / 1 | `spring-webmvc` 2건, `ognl` 1건(4.3의 1·2) |
-| WAF 이미지 | 0 | 1 | 0 | 기반 이미지의 `libxml2` `CVE-2026-86144`(`2.13.9-r3`에서 수정). WAF 이미지를 `--pull`로 다시 빌드하면 해소되는 항목이며, 다시 빌드한 이미지의 Trivy 결과는 아직 없습니다 |
+| WAF 이미지 | 0 | 0 | 0 | 0건. 직전 실행(`T25`)의 `libxml2` `CVE-2026-86144` HIGH 1건은 고정 기반 위에서 `libxml2`만 `2.13.9-r3`으로 올려 해소했습니다. 상류 최신 기반 이미지에도 취약한 `2.13.9-r2`가 들어 있어 다시 빌드만으로는 해소되지 않았습니다([`docs/deployment-guide.md`](deployment-guide.md) 4.1) |
 
 ## 처음 정리한 검증 (`T10`, 2026-11-20)
 

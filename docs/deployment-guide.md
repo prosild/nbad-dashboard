@@ -159,7 +159,7 @@ WAF 이미지에서는 전체 `apk upgrade`를 하지 않습니다. 기반의 Mo
 4. `docker compose -f compose.yml -f docker/verify/compose.verify.yml build --pull --no-cache`로 다시 빌드하고 Trivy로 WAF 이미지를 스캔합니다.
 5. `scripts/security-scan.ps1`(E2E·ZAP)과 배포 전 리허설을 다시 돌립니다.
 
-CRS 판이 바뀌면 `compose.yml`의 CRS 변수(`ALLOWED_METHODS`, `PARANOIA`·`BLOCKING_PARANOIA`, `ANOMALY_INBOUND`)가 그대로 적용되는지 확인하고, E2E의 WAF 차단 판정과 ZAP 결과를 다시 봅니다. 지금은 WAF 오탐 예외 규칙이 없습니다.
+CRS 판이 바뀌면 `compose.yml`의 CRS 변수(`ALLOWED_METHODS`, `PARANOIA`·`BLOCKING_PARANOIA`, `ANOMALY_INBOUND`)가 그대로 적용되는지 확인합니다. 그리고 E2E의 WAF 차단 판정과 ZAP 결과를 다시 봅니다. 지금은 WAF 오탐 예외 규칙이 없습니다.
 
 ### 4.2 `zeek_AD`와 통합 기동 방법 (2가지 중 선택)
 

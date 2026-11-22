@@ -154,6 +154,6 @@
 
 **잃는 것.** 상류가 시험한 조합과 패키지 하나가 달라진다. 기반 이미지를 고정했으므로 새 판은 직접 확인하고 올려야 한다. 상류가 고친 기반을 내면 `libxml2` 올리기 줄을 지워야 한다.
 
-**고른 것.** 기반 이미지를 태그와 digest로 고정하고 `libxml2`만 올렸다. 고친 판이 이미 있고 공개 주소에서 닿는 경로라 상류를 기다리지 않았다. 앱은 JSON 본문만 받으므로 XML 거부도 맞는 방어지만, WAF 정책을 바꾸면 검증 범위가 커져서 이번에는 하지 않았다. 전체 패키지를 올리지 않은 것은 ModSecurity nginx 모듈이 상류가 맞춰 빌드한 nginx 판과 어긋날 수 있어서다. `libxml2`는 하한(`>=2.13.9-r3`)만 걸었다. 정확한 판으로 묶으면 Alpine이 옛 판을 저장소에서 지웠을 때 빌드가 깨지고, 하한을 채우는 판이 없으면 빌드가 실패해 취약한 판이 조용히 남지 않는다.
+**고른 것.** 기반 이미지를 태그와 digest로 고정하고 `libxml2`만 올렸다. 고친 판이 이미 있고 공개 주소에서 닿는 경로라 상류를 기다리지 않았다. 앱은 JSON 본문만 받으므로 XML 거부도 맞는 방어다. 그래도 WAF 정책을 바꾸면 검증 범위가 커져서 이번에는 하지 않았다. 전체 패키지를 올리지 않은 것은 ModSecurity nginx 모듈이 상류가 맞춰 빌드한 nginx 판과 어긋날 수 있어서다. `libxml2`는 하한(`>=2.13.9-r3`)만 걸었다. 정확한 판으로 묶으면 Alpine이 옛 판을 저장소에서 지웠을 때 빌드가 깨진다. 하한을 채우는 판이 없으면 빌드가 실패해 취약한 판이 조용히 남지 않는다.
 
 **결과·근거.** `docker/nginx-waf/Dockerfile`, 정적 시험 `StaticSecurityAndConfigTest`, 기반 올리기 절차 [`docs/deployment-guide.md`](deployment-guide.md) 4.1. 새 이미지와 고정 기반의 패키지 차이는 `libxml2` 한 줄이고 nginx·모듈은 같다. 다시 돌린 Trivy에서 WAF 이미지의 `libxml2` 항목이 사라졌다. 깨진 XML 본문은 WAF가 `400`으로 막고 잘 짜인 XML은 앱까지 간다(E2E `[15]`). 결과는 [`docs/security-verification-report.md`](security-verification-report.md) "최근 검증"에 있다.
