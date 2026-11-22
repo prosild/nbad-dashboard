@@ -7,6 +7,8 @@
     [string]$ReportDir = "build/portfolio-verify",
     # T33 노출 확인 결과(exposure.md·exposure-values.txt)를 쓸 폴더. 주면 [T33x]를 돌린다. 실제 값이 들어가므로 커밋하지 않는 곳으로 준다.
     [string]$ExposureDir = "",
+    # T36 빠른 사람 사용 흉내·429 회복 확인 도구(handoff/T36/tools/read-usage.js, playwright-core). 주면 [T36d]를 돌린다.
+    [string]$UsageScript = "",
     [switch]$SkipZap
 )
 
@@ -114,6 +116,11 @@ $env:PORTFOLIO_HTTP_PORT = "$WafHttpPort"
 $env:PORTFOLIO_SERVER_NAME = $PublicHost
 # T33: 리허설은 초기화 주기를 1분으로 줄인다.
 $env:SANDBOX_RESET_INTERVAL_MINUTES = "1"
+# T36: 기존 항목은 호스트 한 IP(같은 X-Forwarded-For)로 /api/ 조회를 많이 보내므로 조회 한도를 크게 덮어 돌린다.
+# [T36]에서 이 두 값을 지우고 nginx-waf를 기본값(compose 기본 200r/m·30)으로 다시 만든 뒤 [T36b]·[T36d]를 돌린다.
+$readOverride = @{ Rate = "6000r/m"; Burst = "3000" }
+$env:PORTFOLIO_READ_RATE = $readOverride.Rate
+$env:PORTFOLIO_READ_BURST = $readOverride.Burst
 
 $composeArgs = @("compose", "-p", $ProjectName, "-f", "compose.portfolio.yml", "--env-file", ".env.portfolio.example")
 $networkName = "${ProjectName}_portfolio-net"
@@ -325,9 +332,20 @@ function Get-ValueShape([string]$V) {
     $m = [regex]::Match($V, '^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$')
     if ($m.Success) {
         $a = [int]$m.Groups[1].Value; $b = [int]$m.Groups[2].Value
+        $c = [int]([regex]::Match($V, '^\d{1,3}\.\d{1,3}\.(\d{1,3})\.').Groups[1].Value)
+        if ($a -gt 255 -or $b -gt 255 -or $c -gt 255) { return 'IPv4 모양(범위 밖 옥텟)' }
+        # T36: 사설 셋 밖의 특수 대역은 "공인"과 따로 센다(RFC 6890 등). 그 밖만 공인이다.
         if ($a -eq 10) { return 'IPv4 사설 10.x' }
         if ($a -eq 192 -and $b -eq 168) { return 'IPv4 사설 192.168.x' }
         if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return 'IPv4 사설 172.16-31.x' }
+        if ($a -eq 0) { return 'IPv4 0.0.0.0/8' }
+        if ($a -eq 127) { return 'IPv4 루프백 127.0.0.0/8' }
+        if ($a -eq 169 -and $b -eq 254) { return 'IPv4 링크 로컬 169.254.0.0/16' }
+        if ($a -eq 100 -and $b -ge 64 -and $b -le 127) { return 'IPv4 CGNAT 100.64.0.0/10' }
+        if ($a -ge 224 -and $a -le 239) { return 'IPv4 멀티캐스트 224.0.0.0/4' }
+        if ($a -ge 240) { return 'IPv4 예약·브로드캐스트 240.0.0.0/4' }
+        if (($a -eq 192 -and $b -eq 0 -and $c -eq 2) -or ($a -eq 198 -and $b -eq 51 -and $c -eq 100) -or ($a -eq 203 -and $b -eq 0 -and $c -eq 113)) { return 'IPv4 문서용(TEST-NET)' }
+        if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19)) { return 'IPv4 성능 시험용 198.18.0.0/15' }
         return 'IPv4 공인'
     }
     if ($V -match '^[0-9a-fA-F:]+:[0-9a-fA-F:]*$' -and $V.Contains('::') -or $V -match '^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$') { return 'IPv6' }
@@ -474,6 +492,10 @@ try {
     $e2eLogs.Add("[0a] sandbox-reset: running=$($ri.State.Running) user=$($ri.Config.User) CapDrop=$($ri.HostConfig.CapDrop -join ',') ReadonlyRootfs=$($ri.HostConfig.ReadonlyRootfs) SecurityOpt=$($ri.HostConfig.SecurityOpt -join ',') Memory=$($ri.HostConfig.Memory) ExposedPorts=$(@($ri.Config.ExposedPorts.PSObject.Properties.Name) -join ',') env interval=$(@($ri.Config.Env | Where-Object { $_ -like 'SANDBOX_RESET_INTERVAL_MINUTES=*' }) -join '')")
     Assert-True ((@($ri.HostConfig.CapDrop) -contains 'ALL') -and $ri.HostConfig.ReadonlyRootfs -and (@($ri.HostConfig.SecurityOpt) -contains 'no-new-privileges:true') -and $ri.HostConfig.Memory -gt 0) "sandbox-reset cap_drop ALL·읽기 전용 루트·no-new-privileges·메모리 상한"
     Assert-True ($states.Count -eq 5) "실행 중인 컨테이너 5개(demo-seed·sandbox-setup은 실행 후 제거)"
+    # T36: 이 프로젝트 컨테이너에 붙은 볼륨은 postgres의 pgdata 하나(sandbox-*의 이미지 VOLUME 경로는 tmpfs라 익명 볼륨 없음)
+    $volMounts = @($inspected | ForEach-Object { $svc = $_.Config.Labels.'com.docker.compose.service'; @($_.Mounts | Where-Object { $_.Type -eq 'volume' } | ForEach-Object { "$svc|$($_.Name)|$($_.Destination)" }) })
+    $e2eLogs.Add("[0a] volume mounts (service|volume|destination): $($volMounts -join ', '); sandbox-reset tmpfs=$(@($ri.HostConfig.Tmpfs.PSObject.Properties | ForEach-Object { "$($_.Name):$($_.Value)" }) -join ',')")
+    Assert-True ($volMounts.Count -eq 1 -and $volMounts[0] -eq "postgres|${ProjectName}_pgdata|/var/lib/postgresql/data") "[0a] 이 프로젝트 볼륨은 postgres의 pgdata 하나 ($($volMounts -join ', '))"
     $bindings = @()
     foreach ($info in $inspected) {
         $portsJson = $info.NetworkSettings.Ports
@@ -1183,8 +1205,13 @@ try {
     $e2eLogs.Add("[T33b] sandbox-reset log before setup (last 2): $(($preLogs | Select-Object -Last 2) -join ' / ')")
     Assert-True ($preLogs.Count -ge 1 -and @($preLogs | Where-Object { $_ -match ' ERROR ' }).Count -eq 0 -and @($preLogs | Where-Object { $_ -match 'NOT_CONFIGURED' }).Count -ge 1) "[T33b] 설정 전 sandbox-reset은 NOT_CONFIGURED만 남김"
     $rwBefore = (Invoke-Psql "zeekad" $rwPrivSql).Output.Trim()
+    $volsBeforeSetup = @((Invoke-NativeCapture "docker" @("volume", "ls", "-q")).Output -split "`r?`n" | Where-Object { $_ })
     $setup1 = & $runSetup @()
     $setup2 = & $runSetup @()
+    $volsAfterSetup = @((Invoke-NativeCapture "docker" @("volume", "ls", "-q")).Output -split "`r?`n" | Where-Object { $_ })
+    $newVolsSetup = @($volsAfterSetup | Where-Object { $volsBeforeSetup -notcontains $_ })
+    $e2eLogs.Add("[0a] (T36) docker volumes before sandbox-setup x2=$($volsBeforeSetup.Count) after=$($volsAfterSetup.Count) new=[$($newVolsSetup -join ', ')]")
+    Assert-True ($newVolsSetup.Count -eq 0) "[0a] sandbox-setup 실행 뒤 새 볼륨 없음 ($($newVolsSetup -join ', '))"
     Save-Evidence "t33-sandbox-setup.txt" "run1 exit=$($setup1.ExitCode)`n$($setup1.Output)`n--- run2 ---`nexit=$($setup2.ExitCode)`n$($setup2.Output)"
     $e2eLogs.Add("[T33b] sandbox-setup run1 exit=$($setup1.ExitCode): $((@($setup1.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|privileges|RESULT)' })) -join ' / ')`n       run2 exit=$($setup2.ExitCode): $((@($setup2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|RESULT)' })) -join ' / ')")
     Assert-True ($setup1.ExitCode -eq 0 -and $setup1.Output -match 'baseline created' -and $setup1.Output -match 'RESULT: OK') "[T33b] sandbox-setup 1차(기준선 생성)`n$($setup1.Output)"
@@ -1860,7 +1887,8 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $e2eLogs.Add("[T32b] host (DSM imitation) GET /login?probe -> HTTP $($hostAccess32.Status); WAF access log connection address=$hostConn32`n       login (unknown user, X-Forwarded-For: 203.0.113.132, X-Forwarded-Proto: https) -> HTTP $($hostLogin32.Status); audit client_ip=$hostIp32; csrf Strict-Transport-Security=$hostHsts32; GET /nope Location=$(Get-HeaderValue $hostNope32 'Location')")
     Assert-True ($hostConn32 -eq $gw32) "[T32b] 호스트 경로 연결이 게이트웨이($gw32)에서 옴 (실제 $hostConn32)"
     Assert-True ($hostLogin32.Status -eq 401 -and $hostIp32 -eq "203.0.113.132") "[T32b] 호스트(DSM 흉내) 경로는 X-Forwarded-For가 감사 로그 IP (client_ip=$hostIp32)"
-    Assert-True ([bool]$hostHsts32) "[T32b] 호스트(DSM 흉내) X-Forwarded-Proto: https는 https 판정(HSTS)" $hostCsrf32
+    # T36: 공개 경로에서는 DSM이 HSTS를 붙이므로 WAF 응답에는 HSTS가 없다(앱의 HSTS를 WAF가 숨김). 앱의 https 판정은 아래 Location으로 본다.
+    Assert-True (-not $hostHsts32) "[T32b] 호스트(DSM 흉내) WAF 응답에 HSTS 없음(공개에서는 DSM이 붙임)" $hostCsrf32
     Assert-True ((Get-HeaderValue $hostNope32 "Location") -eq "https://$PublicHost/login") "[T32b] 호스트 경로 Location https://$PublicHost/login (T31과 같음)" $hostNope32
 
     # [T32c] api 컨테이너 -> nginx-waf:8080, [T32d] api 컨테이너 -> dashboard-app:8080 직접. 파이썬 스크립트는 base64로 넘긴다.
@@ -1916,9 +1944,149 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($direct32 -match '(?m)^csrf 200 hsts=False') "[T32d] api -> 앱 직접 X-Forwarded-Proto: https는 https 판정 아님"
     Assert-True ($direct32 -match 'location=http://dashboard-app:8080/login') "[T32d] api -> 앱 직접 Location은 연결 값"
 
+    # ───────── [T36] 운영 정리: 익명 볼륨·조회 한도·HSTS ─────────
+    Write-Host "=== [T36] 익명 볼륨 재현·조회 한도·HSTS ==="
+    # [T36a] NAS 재현: tmpfs 없는 판(옛 compose)으로 sandbox-reset을 띄워 익명 볼륨을 만든 뒤, 지금 판으로
+    # up -d --no-deps --renew-anon-volumes sandbox-reset으로 다시 만든다. 새 컨테이너에 볼륨이 없고 옛 볼륨은 매달린(dangling) 채 남는다.
+    # 옛 볼륨이 비었는지는 읽기 전용으로 붙인 일회용 컨테이너(네트워크 없음)로 세고, 비었을 때만 그 이름 하나를 지운다(NAS 절차와 같다).
+    $oldCompose36 = Join-Path $tmpDir "compose.portfolio.pre-t36.yml"
+    $curCompose36 = [IO.File]::ReadAllText((Join-Path $RepoRoot "compose.portfolio.yml"), $utf8NoBom)
+    $oldText36 = $curCompose36.Replace('tmpfs: ["/tmp", "/var/lib/postgresql/data:size=1m"]', 'tmpfs: ["/tmp"]')
+    Assert-True ($oldText36 -ne $curCompose36 -and $oldText36 -notmatch 'postgresql/data:size') "[T36a] tmpfs 없는 옛 판 compose 만들기"
+    [IO.File]::WriteAllText($oldCompose36, $oldText36, $utf8NoBom)
+    $oldArgs36 = @("compose", "-p", $ProjectName, "-f", $oldCompose36, "--project-directory", $RepoRoot, "--env-file", ".env.portfolio.example")
+    $volMountsOf = {
+        param([string]$Cid)
+        $i = @((Invoke-NativeCapture "docker" @("inspect", $Cid)).Output | ConvertFrom-Json)[0]
+        return @($i.Mounts | Where-Object { $_.Type -eq 'volume' } | ForEach-Object { "$($_.Name)|$($_.Destination)" })
+    }
+    $oldUp36 = Invoke-NativeCapture "docker" ($oldArgs36 + @("up", "-d", "--no-deps", "sandbox-reset")) -IgnoreExitCode
+    $oldCid36 = Get-ServiceContainer "sandbox-reset"
+    $oldVols36 = @(& $volMountsOf $oldCid36)
+    $anonVol36 = if ($oldVols36.Count -eq 1) { ($oldVols36[0] -split '\|')[0] } else { "" }
+    $newUp36 = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--no-deps", "--renew-anon-volumes", "sandbox-reset")) -IgnoreExitCode
+    $newCid36 = Get-ServiceContainer "sandbox-reset"
+    $newVols36 = @(& $volMountsOf $newCid36)
+    $newRun36 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.Running}} {{json .HostConfig.Tmpfs}}", $newCid36)).Output.Trim()
+    $dangling36 = @((Invoke-NativeCapture "docker" @("volume", "ls", "-q", "--filter", "dangling=true")).Output -split "`r?`n" | Where-Object { $_ })
+    $entries36 = if ($anonVol36) { (Invoke-NativeCapture "docker" @("run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "-v", "${anonVol36}:/v:ro", "--entrypoint", "sh", "pgvector/pgvector:0.8.1-pg17", "-c", "find /v -mindepth 1 | wc -l") -IgnoreExitCode).Output.Trim() } else { "" }
+    $users36 = if ($anonVol36) { (Invoke-NativeCapture "docker" @("ps", "-aq", "--filter", "volume=$anonVol36")).Output.Trim() } else { "" }
+    $rm36 = if ($anonVol36 -and $entries36 -eq "0" -and -not $users36 -and $dangling36 -contains $anonVol36) { Invoke-NativeCapture "docker" @("volume", "rm", $anonVol36) -IgnoreExitCode } else { $null }
+    $stillThere36 = if ($anonVol36) { (Invoke-NativeCapture "docker" @("volume", "ls", "-q", "--filter", "name=^${anonVol36}$")).Output.Trim() } else { "" }
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("stop", "sandbox-reset")) -IgnoreExitCode)
+    $e2eLogs.Add("[T36a] reproduce NAS: old compose (tmpfs /tmp only) up -d --no-deps sandbox-reset exit=$($oldUp36.ExitCode) -> volume mounts=[$($oldVols36 -join ', ')]`n       new compose up -d --no-deps --renew-anon-volumes sandbox-reset exit=$($newUp36.ExitCode) -> volume mounts=[$($newVols36 -join ', ')] running+tmpfs=$newRun36`n       old anonymous volume $anonVol36 dangling=$($dangling36 -contains $anonVol36) used by containers=[$users36] entries (read-only one-off container, --network none)=$entries36; docker volume rm exit=$(if ($rm36) { $rm36.ExitCode } else { 'not run' }) still listed=[$stillThere36]`n       (sandbox-reset stopped again, as after [T33])")
+    Assert-True ($oldUp36.ExitCode -eq 0 -and $anonVol36 -and ($oldVols36[0] -like '*|/var/lib/postgresql/data')) "[T36a] 옛 판 sandbox-reset에는 익명 볼륨이 붙는다(재현) ($($oldVols36 -join ', '))"
+    Assert-True ($newUp36.ExitCode -eq 0 -and $newVols36.Count -eq 0 -and $newRun36 -like 'true *postgresql/data*') "[T36a] --renew-anon-volumes로 다시 만든 새 컨테이너는 볼륨 없이 tmpfs로 실행 ($newRun36)`n$($newUp36.Output)"
+    Assert-True ($dangling36 -contains $anonVol36 -and $entries36 -eq "0" -and -not $users36) "[T36a] 옛 익명 볼륨은 매달린 채 비어 있음 (entries=$entries36)"
+    Assert-True ($rm36 -and $rm36.ExitCode -eq 0 -and -not $stillThere36) "[T36a] 빈 옛 익명 볼륨 하나만 지움"
+    $projVols36 = @((Invoke-NativeCapture "docker" @("volume", "ls", "-q", "--filter", "label=com.docker.compose.project=$ProjectName")).Output -split "`r?`n" | Where-Object { $_ })
+    $e2eLogs.Add("[T36a] project-labelled volumes after: [$($projVols36 -join ', ')]")
+    Assert-True ($projVols36.Count -eq 1 -and $projVols36[0] -eq "${ProjectName}_pgdata") "[T36a] 이 프로젝트 볼륨은 pgdata 하나"
+
+    # 조회 거부 감사 행 크기: 덮은 한도에서 demo가 허용 밖 캡처 큐를 300번 조회(모두 403 + ACCESS_DENIED_IDOR 1행씩)
+    $hidden36 = $demoHiddenCaptures[0]
+    $d36 = New-Client "198.51.100.63"
+    Assert-Status (Login-Api $d36 "demo" $env:DEMO_PASSWORD) 200 "[T36b] demo 로그인(감사 행 크기 측정)"
+    $sizeSql36 = "SELECT pg_total_relation_size('audit_logs') || '|' || pg_relation_size('audit_logs') || '|' || (SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR')"
+    $before36 = (Invoke-Psql "zeekad_dashboard" $sizeSql36).Output.Trim() -split '\|'
+    $idorCodes36 = @{}
+    for ($k = 0; $k -lt 300; $k++) {
+        $r = Invoke-Http -Path "/api/incidents/queue?period=all&captureId=$hidden36" -Client $d36
+        $idorCodes36[[string]$r.Status] = 1 + [int]$idorCodes36[[string]$r.Status]
+    }
+    $after36 = (Invoke-Psql "zeekad_dashboard" $sizeSql36).Output.Trim() -split '\|'
+    $rowSize36 = (Invoke-Psql "zeekad_dashboard" "SELECT round(avg(pg_column_size(a.*))) || '|' || max(pg_column_size(a.*)) FROM (SELECT * FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' ORDER BY id DESC LIMIT 300) a").Output.Trim()
+    $idorDelta36 = [long]$after36[2] - [long]$before36[2]
+    $perRow36 = [Math]::Round(([long]$after36[0] - [long]$before36[0]) / [Math]::Max(1, $idorDelta36))
+    $e2eLogs.Add("[T36b] demo GET queue?captureId=$hidden36 x300 (read limit overridden $($readOverride.Rate)/$($readOverride.Burst)) -> codes $(($idorCodes36.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' '); ACCESS_DENIED_IDOR rows +$idorDelta36; audit_logs total size $($before36[0]) -> $($after36[0]) bytes (heap $($before36[1]) -> $($after36[1])) = ~$perRow36 bytes per row incl. indexes; row pg_column_size avg|max=$rowSize36")
+    Assert-True ([int]$idorCodes36['403'] -eq 300 -and $idorDelta36 -eq 300) "[T36b] 허용 밖 조회 1번에 ACCESS_DENIED_IDOR 1행 (403=$($idorCodes36['403']), +$idorDelta36)"
+
+    # 기본값으로 nginx-waf 다시 만들기(덮은 값 지움)
+    Remove-Item env:PORTFOLIO_READ_RATE, env:PORTFOLIO_READ_BURST -ErrorAction SilentlyContinue
+    $wafUp36 = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--no-deps", "--wait", "nginx-waf")) -IgnoreExitCode
+    $wafEnv36 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "sh", "-c", 'echo read=$ZEEKAD_READ_RATE/$ZEEKAD_READ_BURST login=$ZEEKAD_LOGIN_RATE/$ZEEKAD_LOGIN_BURST write=$ZEEKAD_WRITE_RATE/$ZEEKAD_WRITE_BURST')) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[T36b] nginx-waf recreated with compose defaults (override removed): exit=$($wafUp36.ExitCode) $wafEnv36")
+    Assert-True ($wafUp36.ExitCode -eq 0 -and $wafEnv36 -eq "read=200r/m/30 login=10r/m/5 write=10r/m/5") "[T36b] 기본값 조회 200r/m·30, 로그인·쓰기 10r/m·5 그대로 ($wafEnv36)"
+    $readRate36 = 200; $readBurst36 = 30
+    $readPath36 = "/api/dashboard/overview?period=24h"
+
+    # [T36b] DSM 흉내 경로 한 IP가 rate+burst를 넘기면 429, 그 전에는 인증 없는 401. 인증 없는 GET은 감사 행을 만들지 않는다.
+    $auditCnt36 = { (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs").Output.Trim() }
+    $a0 = & $auditCnt36
+    $limIp36 = "198.51.100.61"
+    $st36 = @()
+    for ($k = 1; $k -le ($readRate36 + $readBurst36 + 10); $k++) {
+        $st36 += (Invoke-Http -Path $readPath36 -Xff $limIp36).Status
+        if (@($st36 | Where-Object { $_ -eq 429 }).Count -ge 3) { break }
+    }
+    $first429 = [Array]::IndexOf([int[]]$st36, 429) + 1
+    $a1 = & $auditCnt36
+    $authSame36 = Invoke-Http -Path "/api/auth/csrf" -Xff $limIp36
+    $meSame36 = Invoke-Http -Path "/api/auth/me" -Xff $limIp36
+    $spaSame36 = Invoke-Http -Path "/incidents" -Xff $limIp36
+    $other36 = Invoke-Http -Path $readPath36 -Xff "198.51.100.62"
+    $sameAgain36 = Invoke-Http -Path $readPath36 -Xff $limIp36
+    $before429 = @($st36 | Select-Object -First ([Math]::Max(0, $first429 - 1)))
+    $e2eLogs.Add("[T36b] DSM path, same client $limIp36, unauthenticated GET $readPath36 x$($st36.Count) -> first 429 at #$first429 (burst $readBurst36); statuses before it=[$(($before429 | Select-Object -Unique) -join ',')]; audit_logs rows $a0 -> $a1`n       same client right after: /api/auth/csrf -> $($authSame36.Status), /api/auth/me -> $($meSame36.Status), SPA /incidents -> $($spaSame36.Status), $readPath36 -> $($sameAgain36.Status); other client 198.51.100.62 -> $($other36.Status)")
+    Assert-True ($first429 -ge $readBurst36 + 1 -and $first429 -le $readBurst36 + 20 -and @($before429 | Where-Object { $_ -ne 401 }).Count -eq 0) "[T36b] 한 IP가 burst를 넘기면 429 (첫 429 #$first429)"
+    Assert-True ($a0 -eq $a1) "[T36b] 인증 없는 GET은 감사 행을 만들지 않음 ($a0 -> $a1)"
+    Assert-True ($authSame36.Status -eq 200 -and $meSame36.Status -eq 200 -and $spaSame36.Status -eq 200) "[T36b] 한도 중에도 /api/auth/·SPA 경로는 열림(조회는 요청 사이에 다시 채워질 수 있어 기록만)"
+    Assert-True ($other36.Status -eq 401) "[T36b] 다른 IP(X-Forwarded-For)는 영향 없음"
+
+    # [T36b]/[T36c] 스택 안(DSM 경로 아님): api 컨테이너 -> nginx-waf:8443(ZAP 대상), nginx-waf:8080. 한도 없음, 8443 HSTS 하나.
+    $py36 = @(
+        'import sys, ssl, urllib.request, urllib.error',
+        'base, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])',
+        'ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE',
+        'codes = {}; hsts = []',
+        'for i in range(n):',
+        '    r = urllib.request.Request(base + path, headers={"X-Forwarded-For": "198.51.100.64", "X-Forwarded-Proto": "https"})',
+        '    try:',
+        '        resp = urllib.request.urlopen(r, timeout=20, context=ctx); s = resp.status; h = resp.headers',
+        '    except urllib.error.HTTPError as e:',
+        '        s = e.code; h = e.headers',
+        '    codes[s] = codes.get(s, 0) + 1',
+        '    if i == 0: hsts = h.get_all("Strict-Transport-Security") or []',
+        'print("codes", " ".join("%s=%s" % kv for kv in sorted(codes.items())), "hsts_count=%d" % len(hsts), "hsts=%s" % " | ".join(hsts))'
+    ) -join "`n"
+    $py36b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py36))
+    $inner36 = { param($b, $pth, $n) (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "api", "python", "-c", "import base64;exec(base64.b64decode('$py36b64'))", $b, $pth, "$n")) -IgnoreExitCode).Output.Trim() }
+    $n36 = $readRate36 + $readBurst36 + 10
+    $tls36 = & $inner36 "https://nginx-waf:8443" $readPath36 $n36
+    $tlsCsrf36 = & $inner36 "https://nginx-waf:8443" "/api/auth/csrf" 1
+    $tlsRoot36 = & $inner36 "https://nginx-waf:8443" "/" 1
+    $int36 = & $inner36 "http://nginx-waf:8080" $readPath36 $n36
+    $e2eLogs.Add("[T36b] api container -> https://nginx-waf:8443$readPath36 x$n36 : $tls36`n       api container -> http://nginx-waf:8080$readPath36 x$n36 (not DSM path): $int36")
+    Assert-True ($tls36 -match '^codes 401=\d+ hsts_count=1' -and $tls36 -notmatch '429') "[T36b] 8443 리스너에는 조회 한도 없음 ($tls36)"
+    Assert-True ($int36 -match '^codes 401=\d+' -and $int36 -notmatch '429') "[T36b] 스택 안 8080(다른 출처)에도 조회 한도 없음 ($int36)"
+
+    # [T36c] HSTS: DSM 흉내 경로 WAF 응답에는 없음(공개에서는 DSM이 붙임), 8443 응답에는 하나
+    $hc36 = @("/api/auth/csrf", "/", "/login", "/api/auth/login-notice") | ForEach-Object { $r = Invoke-Http -Path $_ -Xff "198.51.100.65"; "$_=$($r.Status):$(@([regex]::Matches($r.Headers, '(?im)^Strict-Transport-Security:')).Count)" }
+    $e2eLogs.Add("[T36c] DSM path (path=status:HSTS header count): $($hc36 -join ', ')`n       8443 /api/auth/csrf: $tlsCsrf36`n       8443 /: $tlsRoot36")
+    Assert-True (@($hc36 | Where-Object { $_ -notmatch ':0$' }).Count -eq 0) "[T36c] DSM 흉내 경로 WAF 응답에 HSTS 없음 ($($hc36 -join ', '))"
+    Assert-True ($tlsCsrf36 -match 'hsts_count=1 hsts=max-age=31536000; includeSubDomains$' -and $tlsRoot36 -match 'hsts_count=1 hsts=max-age=31536000; includeSubDomains$') "[T36c] 8443 응답 HSTS 하나 ($tlsCsrf36 / $tlsRoot36)"
+
+    # [T36d] 빠른 사람 사용 흉내(5분, 기본 한도)와 일부러 낸 429 뒤 회복(실제 SPA, Chrome). 도구가 없으면 건너뛴다.
+    if ($UsageScript) {
+        Write-Host "=== [T36d] 빠른 사람 사용 흉내(5분)·429 회복 ==="
+        $usageDir36 = if ($EvidenceFullDir) { Join-Path $EvidenceFullDir "t36d" } else { Join-Path $tmpDir "t36d" }
+        $env:T36_DEMO_PASSWORD = $env:DEMO_PASSWORD
+        try {
+            $meas36 = Invoke-NativeCapture "node" @((Resolve-RepoPath $UsageScript), "measure", $baseUrl, $usageDir36, "203.0.113.36") -IgnoreExitCode
+            $rec36 = Invoke-NativeCapture "node" @((Resolve-RepoPath $UsageScript), "recover", $baseUrl, $usageDir36, "203.0.113.37", "$readRate36", "$readBurst36") -IgnoreExitCode
+        } finally { Remove-Item env:T36_DEMO_PASSWORD -ErrorAction SilentlyContinue }
+        $measLine36 = [regex]::Match($meas36.Output, 'MEASURE_RESULT[^\r\n]*').Value
+        $recLine36 = [regex]::Match($rec36.Output, 'RECOVER_RESULT[^\r\n]*').Value
+        $e2eLogs.Add("[T36d] measure (5 min, default limit $readRate36 r/m burst $readBurst36, client 203.0.113.36) exit=$($meas36.ExitCode): $measLine36`n       recover (client 203.0.113.37) exit=$($rec36.ExitCode): $recLine36`n       details and screenshots: t36d/measure.txt, t36d/recover.txt, t36d/0*.png")
+        Assert-True ($meas36.ExitCode -eq 0 -and $measLine36 -match 'n429=0 ') "[T36d] 빠른 사람 사용 흉내가 429 없이 끝남 ($measLine36)"
+        Assert-True ($rec36.ExitCode -eq 0 -and $recLine36 -match '^RECOVER_RESULT PASS') "[T36d] 429 뒤 오류 안내, 한도 중 새로고침도 현황판, 한도가 풀린 뒤 한 번으로 회복 ($recLine36)"
+    } else {
+        $e2eLogs.Add("[T36d] skipped (no -UsageScript)")
+    }
+
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T29]·[T32] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T29]·[T32]·[T36] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="
@@ -1975,7 +2143,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Write-Host "=== 리허설 스택 정리 (down -v) ==="
     [void](Invoke-NativeCapture "docker" ($composeArgs + @("down", "-v")) -IgnoreExitCode)
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmpDir
-    foreach ($name in $secretNames + @("BOOTSTRAP_ADMIN_TOTP_SECRET", "SANDBOX_RESET_INTERVAL_MINUTES")) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+    foreach ($name in $secretNames + @("BOOTSTRAP_ADMIN_TOTP_SECRET", "SANDBOX_RESET_INTERVAL_MINUTES", "PORTFOLIO_READ_RATE", "PORTFOLIO_READ_BURST", "T36_DEMO_PASSWORD")) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
 }
 
 if ($failed) { exit 1 }
