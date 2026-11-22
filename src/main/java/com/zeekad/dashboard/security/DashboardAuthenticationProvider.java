@@ -5,7 +5,6 @@ import com.zeekad.dashboard.config.DashboardProperties;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.AuditActionType;
 import com.zeekad.dashboard.model.DashboardUser;
-import com.zeekad.dashboard.model.UserRole;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -74,7 +73,7 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
             throw new DisabledException("비활성화된 계정입니다.");
         }
 
-        // T29 공유 조회 계정 잠금 제외: 잠금 검사 앞에서 DB 저장 이름과 지금 DB 역할로 판정한다(VIEWER만).
+        // T29·T33 공유 계정 잠금 제외: 잠금 검사 앞에서 DB 저장 이름과 지금 DB 역할로 판정한다(VIEWER·ANALYST만, ADMIN은 늘 잠금).
         // 제외 계정은 남아 있는 locked_until에 막히지 않고, 틀려도 실패 수·잠금을 바꾸지 않는다(실패 감사는 남긴다).
         if (isLockoutExempt(user)) {
             if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
@@ -126,9 +125,9 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
         return new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
     }
 
-    /** 잠금 제외: 설정 목록에 저장 이름이 있고(대소문자 무시) 지금 DB 역할이 VIEWER인 계정만 */
+    /** 잠금 제외: 설정 목록에 저장 이름이 있고(대소문자 무시) 지금 DB 역할이 잠금 제외 허용 역할(VIEWER·ANALYST)인 계정만 */
     private boolean isLockoutExempt(DashboardUser user) {
-        return user.getRole() == UserRole.VIEWER
+        return DashboardProperties.Security.isLockoutExemptRole(user.getRole())
                 && properties.getSecurity().isLockoutExemptName(user.getUsername());
     }
 

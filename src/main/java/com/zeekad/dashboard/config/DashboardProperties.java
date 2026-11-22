@@ -1,5 +1,6 @@
 package com.zeekad.dashboard.config;
 
+import com.zeekad.dashboard.model.UserRole;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
@@ -244,8 +245,9 @@ public class DashboardProperties {
         private long absoluteTimeoutMinutes = 480;
         private String totpIssuer = "zeek_AD Dashboard";
         /**
-         * T29 잠금 제외 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 공유 조회(VIEWER) 계정만 넣는다.
-         * 역할 판정은 로그인 때 DB 역할로 하며 VIEWER가 아니면 목록에 있어도 잠긴다(DashboardAuthenticationProvider).
+         * T29·T33 잠금 제외 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 공유 계정(VIEWER 또는 ANALYST)만 넣는다.
+         * 역할 판정은 로그인 때 DB 역할로 하며 VIEWER·ANALYST가 아니면(ADMIN) 목록에 있어도 잠긴다(DashboardAuthenticationProvider).
+         * 실제 분석가 이름을 넣으면 그 계정도 잠기지 않으므로 여러 IP 대입을 IP당 속도 제한만 막게 된다.
          */
         private List<String> lockoutExemptUsernames = new ArrayList<>();
         /**
@@ -326,6 +328,11 @@ public class DashboardProperties {
                     .map(v -> v.trim().toLowerCase(Locale.ROOT))
                     .filter(v -> !v.isEmpty())
                     .collect(Collectors.toUnmodifiableSet());
+        }
+
+        /** 잠금 제외를 허용하는 역할(T33: VIEWER·ANALYST). ADMIN은 목록에 있어도 늘 잠근다. */
+        public static boolean isLockoutExemptRole(UserRole role) {
+            return role == UserRole.VIEWER || role == UserRole.ANALYST;
         }
 
         /** 저장 이름(DB users.username)이 잠금 제외 목록에 있는가(대소문자 무시). 역할은 따로 본다. */

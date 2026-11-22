@@ -34,11 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * T29 공유 조회 계정 잠금 제외: 목록(대소문자·공백 무시, 빈 항목 버림)에 있고 DB 역할이 VIEWER인 계정만 잠금에서 빠진다.
- * 목록의 ANALYST, 목록 밖 VIEWER는 지금처럼 잠긴다. 제외 계정도 실패 감사는 남고 비활성이면 거부된다.
+ * T29·T33 공유 계정 잠금 제외: 목록(대소문자·공백 무시, 빈 항목 버림)에 있고 DB 역할이 VIEWER 또는 ANALYST인 계정만 잠금에서 빠진다.
+ * 목록의 ADMIN, 목록 밖 VIEWER·ANALYST는 지금처럼 잠긴다. 제외 계정도 실패 감사는 남고 비활성이면 거부된다.
  */
 @SpringBootTest(properties = "dashboard.security.lockout-exempt-usernames= T29_Demo_V , ,t29_demo_analyst,"
-        + "t29_DEMO_locked , t29_demo_disabled,t29_missing_user")
+        + "t29_DEMO_locked , t29_demo_disabled,t29_missing_user,t33_demo_admin")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @ExtendWith(OutputCaptureExtension.class)
@@ -89,15 +89,45 @@ class T29LockoutExemptIntegrationTest {
     }
 
     @Test
-    void listedAnalystIsStillLocked() throws Exception {
+    void listedAnalystIsExemptSinceT33() throws Exception {
+        // T33: 체험용 분석가 공유 계정처럼 목록의 ANALYST도 잠금에서 빠진다(실패 감사는 남는다)
         create("t29_demo_analyst", UserRole.ANALYST);
-        for (int i = 1; i <= 4; i++) {
-            login("t29_demo_analyst", "WrongPass").andExpect(status().isUnauthorized());
+        for (int i = 1; i <= 6; i++) {
+            login("t29_demo_analyst", "WrongPass").andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
         }
-        login("t29_demo_analyst", "WrongPass").andExpect(status().isLocked())
+        DashboardUser after = userMapper.findByUsername("t29_demo_analyst");
+        assertThat(after.getFailedAttempts()).isZero();
+        assertThat(after.getLockedUntil()).isNull();
+        login("t29_demo_analyst", PASS).andExpect(status().isOk());
+        List<AuditLog> fails = auditLogMapper.findFiltered(AuditActionType.LOGIN_FAILURE.name(), "t29_demo_analyst", 20);
+        assertThat(fails).hasSize(6).allSatisfy(l -> assertThat(l.getDetailJson()).contains("\"lockoutExempt\":true"));
+        assertThat(auditLogMapper.findFiltered(AuditActionType.ACCOUNT_LOCKED.name(), "t29_demo_analyst", 20)).isEmpty();
+    }
+
+    @Test
+    void listedAdminIsAlwaysLocked() throws Exception {
+        // T33: ADMIN은 목록에 있어도 늘 잠긴다
+        create("t33_demo_admin", UserRole.ADMIN);
+        for (int i = 1; i <= 4; i++) {
+            login("t33_demo_admin", "WrongPass").andExpect(status().isUnauthorized());
+        }
+        login("t33_demo_admin", "WrongPass").andExpect(status().isLocked())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_LOCKED"));
-        login("t29_demo_analyst", PASS).andExpect(status().isLocked());
-        assertThat(auditLogMapper.findFiltered(AuditActionType.ACCOUNT_LOCKED.name(), "t29_demo_analyst", 20)).hasSize(1);
+        login("t33_demo_admin", PASS).andExpect(status().isLocked());
+        assertThat(userMapper.findByUsername("t33_demo_admin").getLockedUntil()).isNotNull();
+        assertThat(auditLogMapper.findFiltered(AuditActionType.ACCOUNT_LOCKED.name(), "t33_demo_admin", 20)).hasSize(1);
+    }
+
+    @Test
+    void unlistedAnalystIsStillLocked() throws Exception {
+        create("t33_other_analyst", UserRole.ANALYST);
+        for (int i = 1; i <= 4; i++) {
+            login("t33_other_analyst", "WrongPass").andExpect(status().isUnauthorized());
+        }
+        login("t33_other_analyst", "WrongPass").andExpect(status().isLocked());
+        login("t33_other_analyst", PASS).andExpect(status().isLocked());
+        assertThat(auditLogMapper.findFiltered(AuditActionType.ACCOUNT_LOCKED.name(), "t33_other_analyst", 20)).hasSize(1);
     }
 
     @Test
@@ -143,15 +173,16 @@ class T29LockoutExemptIntegrationTest {
     }
 
     @Test
-    void startupCheckWarnsForMissingOrNonViewerNamesOnly(CapturedOutput output) {
+    void startupCheckWarnsForMissingOrNonExemptRoleNamesOnly(CapturedOutput output) {
         create("t29_demo_analyst", UserRole.ANALYST);
         create("t29_demo_v", UserRole.VIEWER);
+        create("t33_demo_admin", UserRole.ADMIN);
         List<String> warned = startupCheck.check();
-        // 없는 계정과 ANALYST는 경고, 목록의 VIEWER는 경고 없음, 빈 항목은 버린다(정규화한 이름)
-        assertThat(warned).contains("t29_missing_user", "t29_demo_analyst")
-                .doesNotContain("t29_demo_v", "");
+        // 없는 계정과 ADMIN은 경고, 목록의 VIEWER·ANALYST는 경고 없음, 빈 항목은 버린다(정규화한 이름)
+        assertThat(warned).contains("t29_missing_user", "t33_demo_admin")
+                .doesNotContain("t29_demo_v", "t29_demo_analyst", "");
         String log = output.getOut() + output.getErr();
-        assertThat(log).contains("t29_missing_user").contains("t29_demo_analyst").contains("VIEWER가 아니라");
+        assertThat(log).contains("t29_missing_user").contains("t33_demo_admin").contains("VIEWER·ANALYST가 아니라");
         // 비밀값은 로그에 없다
         assertThat(log).doesNotContain(PASS);
     }

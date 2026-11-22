@@ -3,7 +3,6 @@ package com.zeekad.dashboard.security;
 import com.zeekad.dashboard.config.DashboardProperties;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.DashboardUser;
-import com.zeekad.dashboard.model.UserRole;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -16,8 +15,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * T29 잠금 제외 목록 시작 점검. 목록의 계정이 없거나 VIEWER가 아니면 경고 로그만 남긴다(이름만, 시작은 막지 않는다).
- * VIEWER가 아닌 계정은 목록에 있어도 로그인 때 잠금이 그대로 적용된다(DashboardAuthenticationProvider).
+ * T29·T33 잠금 제외 목록 시작 점검. 목록의 계정이 없거나 허용 역할(VIEWER·ANALYST)이 아니면 경고 로그만 남긴다(이름만, 시작은 막지 않는다).
+ * 허용 역할이 아닌 계정(ADMIN)은 목록에 있어도 로그인 때 잠금이 그대로 적용된다(DashboardAuthenticationProvider).
  */
 @Component
 public class LockoutExemptionStartupCheck {
@@ -54,16 +53,16 @@ public class LockoutExemptionStartupCheck {
                 continue;
             }
             if (user == null) {
-                log.warn("잠금 제외 목록의 계정 '{}'이 없습니다. 만들어지면 VIEWER일 때만 잠금에서 빠집니다.", name);
+                log.warn("잠금 제외 목록의 계정 '{}'이 없습니다. 만들어지면 VIEWER·ANALYST일 때만 잠금에서 빠집니다.", name);
                 warned.add(name);
-            } else if (user.getRole() != UserRole.VIEWER) {
-                log.warn("잠금 제외 목록의 계정 '{}'은 VIEWER가 아니라({}) 잠금이 그대로 적용됩니다. 목록에는 비밀번호를 공개한 공유 조회 계정만 넣으세요.",
+            } else if (!DashboardProperties.Security.isLockoutExemptRole(user.getRole())) {
+                log.warn("잠금 제외 목록의 계정 '{}'은 VIEWER·ANALYST가 아니라({}) 잠금이 그대로 적용됩니다. 목록에는 비밀번호를 공개한 공유 계정만 넣으세요.",
                         name, user.getRole().name());
                 warned.add(name);
             }
         }
         if (warned.size() < names.size()) {
-            log.info("계정 잠금 제외(공유 조회 계정) {}개 적용", names.size() - warned.size());
+            log.info("계정 잠금 제외(공유 계정) {}개 적용", names.size() - warned.size());
         }
         return warned;
     }

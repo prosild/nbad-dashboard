@@ -77,7 +77,8 @@ dashboard:
     bcrypt-strength: 12
     max-failed-attempts: ${DASHBOARD_MAX_FAILED_ATTEMPTS:5}
     lockout-minutes: ${DASHBOARD_LOCKOUT_MINUTES:15}
-    # T29: 잠금 제외 공유 조회 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 VIEWER 계정만 넣는다.
+    # T29·T33: 잠금 제외 공유 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 공유 계정만 넣는다.
+    #   지금 역할이 VIEWER·ANALYST일 때만 빠지고 ADMIN은 목록에 있어도 잠긴다. 실제 분석가 이름을 넣으면 그 계정도 잠기지 않는다.
     lockout-exempt-usernames: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:}
     # T32: X-Forwarded-*를 믿을 프록시(WAF) 주소(쉼표 목록, IPv4·IPv6 주소 그대로만. 대역·호스트 이름이면 시작 실패).
     #   기본 비어 있음 = 아무도 믿지 않음(감사 로그 IP가 WAF 주소가 된다. 시작 때 경고 로그).
