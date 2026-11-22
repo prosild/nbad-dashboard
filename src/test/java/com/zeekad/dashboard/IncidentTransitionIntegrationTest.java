@@ -458,6 +458,35 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(jsonPath("$.code").value("CONFLICT"));
     }
 
+    @Test
+    void t33ReasonOver500CodePointsIsRejectedWithoutTransitionOrAudit() throws Exception {
+        String analyst = "trans_len_analyst";
+        userAdminService.createUser(analyst, "길이분석", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(analyst, "Pass1234!");
+        // 코드 포인트 기준(보조 평면 문자 501개), 앞뒤 공백은 세지 않는다
+        String over = " " + "😀".repeat(501) + " ";
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/2/transition", TEST_JOB_ID).session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new IncidentTransitionRequest("investigating", null, over))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.succeeded").value(false))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("상태 변경 사유는 500자까지 입력할 수 있습니다."));
+        // DB 함수가 불리지 않았다(상태 행 없음)·감사 없음
+        assertThat(zeekadReadMapper.findIncidentStatus(INC_2)).isNull();
+        assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_STATUS_TRANSITION.name(), analyst, 20)).isEmpty();
+
+        String limit = " " + "가".repeat(499) + "😀" + " ";
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/2/transition", TEST_JOB_ID).session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new IncidentTransitionRequest("investigating", null, limit))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
+        assertThat(zeekadReadMapper.findIncidentStatus(INC_2).getZeekadStatus()).isEqualTo("investigating");
+        assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_STATUS_TRANSITION.name(), analyst, 20)).hasSize(1);
+    }
+
     private RequestPostProcessor xsrf() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
         Cookie csrfCookie = res.getResponse().getCookie("XSRF-TOKEN");

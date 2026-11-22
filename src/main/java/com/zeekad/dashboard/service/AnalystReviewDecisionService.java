@@ -105,6 +105,10 @@ public class AnalystReviewDecisionService {
         }
 
         String cleanNote = (note == null || note.trim().isEmpty()) ? null : note.trim();
+        if (FreeTextLimits.exceeds(cleanNote)) {
+            return DecisionResult.failure(400, "INVALID_REQUEST",
+                    "검토 메모는 " + FreeTextLimits.MAX_CODE_POINTS + "자까지 입력할 수 있습니다.");
+        }
         String analystUsername = principal.getUsername();
 
         try {

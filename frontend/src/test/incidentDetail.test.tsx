@@ -513,6 +513,39 @@ describe('인시던트 상세 화면(T19)', () => {
     }
   });
 
+  it('T33 사유·메모 칸은 500자까지 받고 글자 수(앞뒤 공백 제외)를 보인다', async () => {
+    const user = userEvent.setup();
+    renderDetail('/incidents/42/rank/1');
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const a = actions();
+    const reason = within(a).getByLabelText('변경 사유 (필수)');
+    const note = within(a).getByLabelText('검토 메모 (오탐 종결 때 필수)');
+    for (const field of [reason, note]) expect(field).toHaveAttribute('maxLength', '500');
+    expect(reason).toHaveAccessibleDescription('0/500자');
+    await user.type(reason, '  정탐 확인  ');
+    expect(reason).toHaveAccessibleDescription('5/500자');
+    expect(note).toHaveAccessibleDescription('0/500자');
+  });
+
+  it('T33 사유는 일반 텍스트로만 그린다(HTML 해석·링크 변환 없음)', async () => {
+    const user = userEvent.setup();
+    const raw = `<b>굵게</b> https://evil.example/x ${XSS}`;
+    const { container } = renderDetail('/incidents/42/rank/1', {
+      detail: (d) => ({
+        ...d,
+        statusHistory: d.statusHistory.map((h, i) => (i === 1 ? { ...h, reason: raw } : h)),
+      }),
+    });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const recent = within(actions()).getByRole('list', { name: '최근 이력' });
+    expect(within(recent).getAllByRole('listitem')[0]).toHaveTextContent(raw);
+    await user.click(screen.getByRole('tab', { name: '이력' }));
+    expect(within(panel()).getByText(raw)).toBeInTheDocument();
+    expect(container.querySelectorAll('b, script, img')).toHaveLength(0);
+    expect(container.querySelector('a[href*="evil.example"]')).toBeNull();
+    expect((window as unknown as { __xss?: number }).__xss).toBeUndefined();
+  });
+
   it('오탐 종결은 메모가 있어야 하고 확인 단계를 한 번 더 거친다', async () => {
     const user = userEvent.setup();
     const { fetchMock } = renderDetail('/incidents/42/rank/1');

@@ -26,6 +26,8 @@ import {
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
 import { AssignmentSection } from './AssignmentSection';
+import { FREE_TEXT_MAX } from '../../utils/freeText';
+import { FreeTextCounter } from './FreeTextCounter';
 import { buildTimeline, HistoryTimeline } from './HistoryTimeline';
 import { ReviewDecisionButtons } from './ReviewDecisionButtons';
 
@@ -263,11 +265,14 @@ export function ActionPanel({
               id="transition-reason"
               rows={2}
               required
+              maxLength={FREE_TEXT_MAX}
+              aria-describedby="transition-reason-count"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="분석 내용과 상태 변경 사유를 입력하세요."
               className="soc-input text-xs"
             />
+            <FreeTextCounter id="transition-reason-count" value={reason} />
           </div>
 
           <button type="submit" disabled={transitioning || !reason.trim()} className="soc-btn-primary w-full py-2 text-xs">
@@ -367,11 +372,14 @@ export function ActionPanel({
                   <textarea
                     id="detail-review-note"
                     rows={2}
+                    maxLength={FREE_TEXT_MAX}
+                    aria-describedby="detail-review-note-count"
                     value={reviewNote}
                     onChange={(e) => setReviewNote(e.target.value)}
                     placeholder="결정 근거를 적어 두세요."
                     className="soc-input text-xs"
                   />
+                  <FreeTextCounter id="detail-review-note-count" value={reviewNote} />
                 </div>
                 <ReviewDecisionButtons
                   note={reviewNote}

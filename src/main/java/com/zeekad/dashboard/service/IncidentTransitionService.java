@@ -69,6 +69,10 @@ public class IncidentTransitionService {
         if (cleanReason.isEmpty()) {
             return TransitionResult.failure(400, "INVALID_REQUEST", "상태 변경 사유를 입력해 주세요.");
         }
+        if (FreeTextLimits.exceeds(cleanReason)) {
+            return TransitionResult.failure(400, "INVALID_REQUEST",
+                    "상태 변경 사유는 " + FreeTextLimits.MAX_CODE_POINTS + "자까지 입력할 수 있습니다.");
+        }
 
         String effectiveResolution = null;
         if ("closed".equals(normalizedTarget)) {

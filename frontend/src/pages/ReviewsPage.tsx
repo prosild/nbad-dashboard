@@ -11,6 +11,7 @@ import { useToast } from '../components/ToastContext';
 import type { AnalystReviewItem, ReviewsApiResponse } from '../types/api';
 import { incidentPath } from '../utils/incidentLink';
 import { formatDateTime } from '../utils/format';
+import { FREE_TEXT_MAX } from '../utils/freeText';
 import { captureInfo, reviewReasonText } from '../utils/labels';
 import {
   RESUME_DELAYED_LABEL,
@@ -56,6 +57,7 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
         id={noteId}
         type="text"
         aria-label={`${item.incidentId} 검토 메모`}
+        maxLength={FREE_TEXT_MAX}
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="검토 메모 (오탐 종결 때 필수)"

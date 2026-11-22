@@ -498,6 +498,51 @@ class AnalystReviewDecisionIntegrationTest {
                 });
     }
 
+    @Test
+    void t33NoteOver500CodePointsIsRejectedOnBothPathsWithoutDecisionOrAudit() throws Exception {
+        String analyst = "rev_len_analyst";
+        userAdminService.createUser(analyst, "길이검토", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MockHttpSession session = loginAs(analyst, "Pass1234!");
+        // 코드 포인트 기준: 보조 평면 문자(😀, UTF-16 두 단위) 501개 = 501자. 앞뒤 공백은 세지 않는다.
+        String over = "  " + "😀".repeat(501) + "  ";
+        String limit = "  " + "😀".repeat(500) + "  ";
+
+        mockMvc.perform(post("/api/reviews/decide").session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewDecideRequest(JOB_LATEST, INC_2, "confirm", over))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.succeeded").value(false))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("검토 메모는 500자까지 입력할 수 있습니다."));
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/review-decision", JOB_LATEST).session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new IncidentReviewDecisionRequest("dismiss", over))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
+                .andExpect(jsonPath("$.message").value("검토 메모는 500자까지 입력할 수 있습니다."));
+
+        // DB 함수가 불리지 않았다(결정 칸 그대로)·감사 없음
+        assertThat(zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_2).getZeekadReviewAction()).isNull();
+        assertThat(zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_1).getZeekadReviewAction()).isNull();
+        assertThat(auditLogMapper.findFiltered(AuditActionType.ANALYST_REVIEW_DECISION.name(), analyst, 20)).isEmpty();
+
+        // 500자는 두 경로 모두 통과
+        mockMvc.perform(post("/api/reviews/decide").session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewDecideRequest(JOB_LATEST, INC_2, "confirm", limit))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/review-decision", JOB_LATEST).session(session).with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new IncidentReviewDecisionRequest("dismiss", limit))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
+        assertThat(zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_2).getZeekadReviewAction()).isEqualTo("confirm");
+        assertThat(zeekadReadMapper.findAnalystReviewByJobAndIncident(JOB_LATEST, INC_1).getZeekadReviewAction()).isEqualTo("dismiss");
+        assertThat(auditLogMapper.findFiltered(AuditActionType.ANALYST_REVIEW_DECISION.name(), analyst, 20)).hasSize(2);
+    }
+
     private RequestPostProcessor xsrf() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
         Cookie csrfCookie = res.getResponse().getCookie("XSRF-TOKEN");
