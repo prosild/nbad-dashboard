@@ -87,7 +87,7 @@ class TrustedProxiesParsingTest {
         assertThat(src).doesNotContain("getByName(", "getAllByName(", "InetSocketAddress", "getCanonicalHostName",
                 "getHostName(");
         assertThat(src).contains("InetAddress.getByAddress(bytes)");
-        // 이 PC에서 해석되는 이름도 주소로 받지 않는다.
+        // 시험 환경에서 해석되는 이름(localhost)도 주소로 받지 않는다.
         assertThat(TrustedProxies.canonicalize("localhost")).isNull();
     }
 

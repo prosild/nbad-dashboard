@@ -1424,9 +1424,108 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($audit29e -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[T29e] ACCOUNT_LOCKED 감사 1건"
     Assert-True ($restored29e -eq 'f|0|t') "[T29e] viewer1 비활성·잠금 해제로 되돌림"
 
+    # ───────── [T32] 전달 헤더 신뢰: WAF 고정 주소·게이트웨이만 믿기 ─────────
+    # 호스트(DSM 흉내) 경로는 게이트웨이에서 온 연결이라 X-Forwarded-For·Proto를 믿고, 같은 네트워크의 api 컨테이너가
+    # nginx-waf:8080이나 dashboard-app:8080에 직접 보낸 전달 헤더는 믿지 않는다. 로그인 시도는 없는 계정이라 잠금에 영향이 없다.
+    Write-Host "=== [T32] 전달 헤더 신뢰(WAF 고정 주소·게이트웨이) ==="
+    function Get-NetIp([string]$Service) {
+        $cid = Get-ServiceContainer $Service
+        # 이 스택 컨테이너는 네트워크가 하나뿐이다. Windows PowerShell 5.1은 네이티브 인자 안 큰따옴표를 지우므로 index "이름"을 쓰지 않는다.
+        return (Invoke-NativeCapture "docker" @("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", $cid)).Output.Trim()
+    }
+    $wafIp32 = Get-NetIp "nginx-waf"
+    $apiIp32 = Get-NetIp "api"
+    $gw32 = (Invoke-NativeCapture "docker" @("network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", $networkName)).Output.Trim()
+    $appTrusted32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_TRUSTED_PROXIES-<unset>}"')) -IgnoreExitCode).Output.Trim()
+    $wafRealIp32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "sh", "-c", 'printf "%s|%s" "${SET_REAL_IP_FROM-<unset>}" "${ZEEKAD_GATEWAY_IP-<unset>}"')) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[T32a] nginx-waf=$wafIp32 api=$apiIp32 network gateway=$gw32; app DASHBOARD_TRUSTED_PROXIES=$appTrusted32; nginx-waf SET_REAL_IP_FROM|ZEEKAD_GATEWAY_IP=$wafRealIp32")
+    Assert-True ($wafIp32 -eq "10.203.48.250" -and $appTrusted32 -eq $wafIp32) "[T32a] nginx-waf 고정 주소 = 앱 신뢰 목록 = 10.203.48.250"
+    Assert-True ($wafRealIp32 -eq "127.0.0.1,10.203.48.1|10.203.48.1" -and $gw32 -eq "10.203.48.1") "[T32a] WAF 신뢰 범위 = 127.0.0.1 + 게이트웨이 10.203.48.1"
+
+    function Get-WafAccessLine([string]$Probe) {
+        for ($i = 0; $i -lt 10; $i++) {
+            $logs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+            $line = $logs -split "`r?`n" | Where-Object { -not $_.StartsWith('{') -and $_.Contains("probe=$Probe") } | Select-Object -Last 1
+            if ($line) { return $line }
+            Start-Sleep -Seconds 1
+        }
+        return ""
+    }
+
+    # [T32b] 호스트(DSM 흉내): 게이트웨이에서 온 연결이라 X-Forwarded-For가 감사 로그 IP, X-Forwarded-Proto: https가 https 판정
+    $probeHost32 = "t32host$(New-RandomToken 8)"
+    $hostAccess32 = Invoke-Http -Path "/login?probe=$probeHost32"
+    $hostLine32 = Get-WafAccessLine $probeHost32
+    $hostConn32 = ($hostLine32 -split ' ')[0]
+    $hostUser32 = "t32_host_$(New-RandomToken 6)"
+    $hc32 = New-Client "203.0.113.132"
+    $hostCsrf32 = Invoke-Http -Path "/api/auth/csrf" -Client $hc32
+    $hostLogin32 = Invoke-Http -Path "/api/auth/login" -Method POST -Client $hc32 -Csrf -JsonBody @{ username = $hostUser32; password = "wrong-t32" }
+    $hostIp32 = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$hostUser32' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1").Output.Trim()
+    $hostHsts32 = Get-HeaderValue $hostCsrf32 "Strict-Transport-Security"
+    $hostNope32 = Invoke-Http -Path "/nope"
+    $e2eLogs.Add("[T32b] host (DSM imitation) GET /login?probe -> HTTP $($hostAccess32.Status); WAF access log connection address=$hostConn32`n       login (unknown user, X-Forwarded-For: 203.0.113.132, X-Forwarded-Proto: https) -> HTTP $($hostLogin32.Status); audit client_ip=$hostIp32; csrf Strict-Transport-Security=$hostHsts32; GET /nope Location=$(Get-HeaderValue $hostNope32 'Location')")
+    Assert-True ($hostConn32 -eq $gw32) "[T32b] 호스트 경로 연결이 게이트웨이($gw32)에서 옴 (실제 $hostConn32)"
+    Assert-True ($hostLogin32.Status -eq 401 -and $hostIp32 -eq "203.0.113.132") "[T32b] 호스트(DSM 흉내) 경로는 X-Forwarded-For가 감사 로그 IP (client_ip=$hostIp32)"
+    Assert-True ([bool]$hostHsts32) "[T32b] 호스트(DSM 흉내) X-Forwarded-Proto: https는 https 판정(HSTS)" $hostCsrf32
+    Assert-True ((Get-HeaderValue $hostNope32 "Location") -eq "https://$PublicHost/login") "[T32b] 호스트 경로 Location https://$PublicHost/login (T31과 같음)" $hostNope32
+
+    # [T32c] api 컨테이너 -> nginx-waf:8080, [T32d] api 컨테이너 -> dashboard-app:8080 직접. 파이썬 스크립트는 base64로 넘긴다.
+    $py32 = @(
+        'import sys, json, re, urllib.request, urllib.error',
+        'base, user, xff, probe = sys.argv[1:5]',
+        'class NoRedirect(urllib.request.HTTPRedirectHandler):',
+        '    def redirect_request(self, *args, **kwargs):',
+        '        return None',
+        'opener = urllib.request.build_opener(NoRedirect)',
+        'H = {"X-Forwarded-For": xff, "X-Forwarded-Proto": "https", "X-Forwarded-Port": "443"}',
+        'def req(path, method="GET", extra=None, data=None):',
+        '    h = dict(H); h.update(extra or {})',
+        '    r = urllib.request.Request(base + path, data=data, headers=h, method=method)',
+        '    try:',
+        '        resp = opener.open(r, timeout=20); return resp.status, resp.headers',
+        '    except urllib.error.HTTPError as e:',
+        '        return e.code, e.headers',
+        's, h = req("/api/auth/csrf?probe=" + probe)',
+        'tok = ""',
+        'for c in h.get_all("Set-Cookie") or []:',
+        '    m = re.match(r"XSRF-TOKEN=([^;]*)", c)',
+        '    if m: tok = m.group(1)',
+        'print("csrf", s, "hsts=%s" % (h.get("Strict-Transport-Security") is not None), "xsrf=%s" % bool(tok))',
+        's2, h2 = req("/api/auth/login", "POST", {"Cookie": "XSRF-TOKEN=" + tok, "X-XSRF-TOKEN": tok, "Content-Type": "application/json"}, json.dumps({"username": user, "password": "wrong-t32"}).encode())',
+        'print("login", s2)',
+        's3, h3 = req("/nope?probe=" + probe)',
+        'print("nope", s3, "location=%s" % h3.get("Location"))'
+    ) -join "`n"
+    $py32b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py32))
+    function Invoke-ApiProbe([string]$Base, [string]$User, [string]$Xff, [string]$Probe) {
+        return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "api", "python", "-c", "import base64;exec(base64.b64decode('$py32b64'))", $Base, $User, $Xff, $Probe)) -IgnoreExitCode).Output.Trim()
+    }
+
+    $viaWafUser32 = "t32_api_waf_$(New-RandomToken 6)"
+    $probeWaf32 = "t32apiwaf$(New-RandomToken 8)"
+    $viaWaf32 = Invoke-ApiProbe "http://nginx-waf:8080" $viaWafUser32 "198.51.100.32" $probeWaf32
+    $viaWafLine32 = Get-WafAccessLine $probeWaf32
+    $viaWafConn32 = ($viaWafLine32 -split ' ')[0]
+    $viaWafIp32 = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$viaWafUser32' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1").Output.Trim()
+    $e2eLogs.Add("[T32c] api container ($apiIp32) -> nginx-waf:8080 with X-Forwarded-For: 198.51.100.32, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($viaWaf32 -replace "`r?`n", ' | ')`n       WAF access log connection address=$viaWafConn32; audit LOGIN_FAILURE client_ip=$viaWafIp32")
+    Assert-True ($viaWafConn32 -eq $apiIp32) "[T32c] WAF 로그 접속 주소 = api 컨테이너"
+    Assert-True ($viaWaf32 -match '(?m)^login 401' -and $viaWafIp32 -eq $apiIp32) "[T32c] api -> WAF 감사 로그 IP = api 주소, 198.51.100.32 아님 (client_ip=$viaWafIp32)"
+    Assert-True ($viaWaf32 -match '(?m)^csrf 200 hsts=False') "[T32c] api -> WAF X-Forwarded-Proto: https는 https 판정 아님(HSTS 없음)"
+    $loc32c = [regex]::Match($viaWaf32, 'location=(\S+)').Groups[1].Value
+    Assert-True ($viaWaf32 -match '(?m)^nope 302' -and $loc32c -notmatch '^https://' -and $loc32c -notmatch ':443') "[T32c] api -> WAF 리다이렉트가 https/443이 아님 ($loc32c)"
+
+    $directUser32 = "t32_api_app_$(New-RandomToken 6)"
+    $direct32 = Invoke-ApiProbe "http://dashboard-app:8080" $directUser32 "198.51.100.33" "t32direct$(New-RandomToken 8)"
+    $directIp32 = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$directUser32' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1").Output.Trim()
+    $e2eLogs.Add("[T32d] api container ($apiIp32) -> dashboard-app:8080 directly with X-Forwarded-For: 198.51.100.33, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($direct32 -replace "`r?`n", ' | ')`n       audit LOGIN_FAILURE client_ip=$directIp32")
+    Assert-True ($direct32 -match '(?m)^login 401' -and $directIp32 -eq $apiIp32) "[T32d] api -> 앱 직접 감사 로그 IP = api 주소 (client_ip=$directIp32)"
+    Assert-True ($direct32 -match '(?m)^csrf 200 hsts=False') "[T32d] api -> 앱 직접 X-Forwarded-Proto: https는 https 판정 아님"
+    Assert-True ($direct32 -match 'location=http://dashboard-app:8080/login') "[T32d] api -> 앱 직접 Location은 연결 값"
+
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27]·[T29] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27]·[T29]·[T32] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="

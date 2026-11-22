@@ -1581,10 +1581,10 @@ FROM v GROUP BY m ORDER BY m
                 $sh16 = @(
                     'B=http://dashboard-app:8080',
                     'F1="X-Forwarded-For: 203.0.113.17"; F2="X-Forwarded-Proto: https"; F3="X-Forwarded-Port: 443"',
-                    'H1=$(wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" "$B/api/auth/csrf" 2>&1)',
+                    'HDR=$(wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" "$B/api/auth/csrf" 2>&1)',
                     'echo "== csrf"',
-                    'echo "$H1" | grep -i -E "HTTP/|strict-transport|set-cookie" | sed -E "s/(XSRF-TOKEN=)[^;]*/\1<redacted>/"',
-                    'T=$(echo "$H1" | sed -n "s/.*[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p" | head -n1)',
+                    'echo "$HDR" | grep -i -E "HTTP/|strict-transport|set-cookie" | sed -E "s/(XSRF-TOKEN=)[^;]*/\1<redacted>/"',
+                    'T=$(echo "$HDR" | sed -n "s/.*[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p" | head -n1)',
                     'echo "== login"',
                     'wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" --header "Cookie: XSRF-TOKEN=$T" --header "X-XSRF-TOKEN: $T" --header "Content-Type: application/json" --post-data "{\"username\":\"__USER__\",\"password\":\"wrong-t32\"}" "$B/api/auth/login" 2>&1 | grep -E "HTTP/|wget:"',
                     'echo "== nope"',

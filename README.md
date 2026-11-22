@@ -97,7 +97,7 @@ flowchart LR
 | 세션·CSRF | 서버 세션(유휴 30분·절대 8시간), 쿠키 `Secure; HttpOnly; SameSite=Lax`, SPA 이중 제출 CSRF | `security/SessionTimeoutFilter.java`, `security/SpaCsrfTokenRequestHandler.java`, 시험 `SecurityAuthSessionTest` |
 | 응답 헤더 | CSP `script-src 'self'; style-src 'self'`(인라인 금지), `frame-ancestors 'none'`, `nosniff`, COOP·COEP·CORP | `config/SecurityConfig.java`, 시험 `SecurityHeadersAndErrorTest` |
 | WAF | Nginx + ModSecurity OWASP CRS(Paranoia 1, 차단 모드). SQLi·XSS·경로 탐색 요청을 앱 앞에서 `403` | `docker/nginx-waf/`, [보안 검증 보고서](docs/security-verification-report.md) 3절 |
-| 클라이언트 IP 위조 방지 | 신뢰하는 프록시 밖의 전달 헤더를 버리고 앱에는 WAF가 정한 값만 넘김 | `docker/nginx-waf/templates/includes/proxy_backend.conf.template`, E2E `[9]` |
+| 클라이언트 IP 위조 방지 | 신뢰하는 프록시 밖의 전달 헤더를 버리고 앱에는 WAF가 정한 값만 넘김. 앱은 WAF 고정 주소에서 온 전달 헤더만 믿음 | `docker/nginx-waf/templates/includes/proxy_backend.conf.template`, `security/TrustedProxies.java`, E2E `[9]`·`[16]` |
 | 감사 로그 | 로그인·원문 열람·상태 변경·권한 변경·IDOR 시도를 기록. DB 트리거가 수정·삭제를 막음 | `V1__init_dashboard_auth_audit.sql`, 시험 `AuditLogImmutabilityTest` |
 | SQL 주입 방지 | MyBatis 매퍼는 `#{}` 바인딩만 쓰고 `${}`는 시험이 금지 | 시험 `StaticSecurityAndConfigTest` |
 | DB 계정 분리 | 읽기 계정은 계약 뷰 `SELECT`만, 쓰기 계정은 함수 두 개 `EXECUTE`만 | [`docs/deployment-guide.md`](docs/deployment-guide.md) 2.1 |
@@ -152,7 +152,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 아쉬운 점과 다음에 할 것
 
 - 공개 데모의 인시던트 큐 응답이 0.8초대입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다.
-- 앱은 받은 전달 헤더를 그대로 믿습니다. WAF만 앱에 닿게 해서 지키지만 같은 Docker 네트워크의 다른 컨테이너가 탈취되면 감사 로그 IP를 꾸밀 수 있습니다. 앱이 WAF에서 온 헤더만 믿게 하는 것이 다음 과제입니다.
+- 앱은 WAF 고정 주소에서 온 전달 헤더만 믿지만, 같은 Docker 네트워크에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격까지는 막지 못합니다.
 - Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.
 - 그 밖의 후보: 정기 초기화하는 체험용 분석가 계정, 사용자 지정 기간, 큐에서 이웃 인시던트로 이동할 때 전체 집합을 읽는 문제.
 

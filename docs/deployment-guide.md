@@ -26,9 +26,16 @@
   - **업스트림 이름 재해석**: `proxy_pass`가 변수(`$zeekad_backend`)라 nginx가 `dashboard-app` 이름을 요청 때 Docker 내장 DNS(`127.0.0.11`, 이미지 `nginx.conf`의 `resolver`, `RESOLVER_CONFIG="valid=10s ipv6=off"`)로 다시 해석합니다. 앱 컨테이너를 다시 만들어 IP가 바뀌어도 `nginx-waf`를 재시작할 필요가 없습니다. 앱이 멈춘 동안에는 `502`(`/50x.html`)를 냅니다.
 - **`dashboard-app` (`Dockerfile`)**: `eclipse-temurin:17-jre-alpine` 기반 비루트(`appuser`) Spring Boot + MyBatis JSON REST API 서버입니다. 같은 jar 안의 React SPA 정적 번들(`BOOT-INF/classes/static/index.html`, `static/assets/*`)도 함께 서빙합니다. 최종 이미지에는 Node.js·npm·`node_modules`가 없습니다(Node는 빌드 단계에서만 사용).
   - `expose: ["8080"]`만 있어 Docker 내부 네트워크(`dashboard-net`)에서만 닿고 호스트 포트는 열지 않습니다.
-  - `server.forward-headers-strategy: framework`로 앞단 WAF가 보낸 전달 헤더(`Forwarded`가 있으면 그것, 없으면 `X-Forwarded-Proto`·`X-Forwarded-Host`·`X-Forwarded-Port`·`X-Forwarded-Prefix`)를 요청 주소·리다이렉트 URL에 반영합니다. 클라이언트 IP는 `X-Forwarded-For`의 **맨 왼쪽** 값을 씁니다(감사 로그 `client_ip`). `X-Real-IP`는 앱이 쓰지 않습니다.
-  - 앱은 받은 전달 헤더를 그대로 믿습니다. 이 값이 안전하려면 앱에 `nginx-waf`만 닿아야 합니다. 그래서 `dashboard-app` 포트(`8080`)를 호스트나 WAF 밖으로 열면(`ports:`) 안 됩니다. 정적 테스트가 세 compose 파일의 `dashboard-app`에 `ports:`가 없는지 확인합니다.
-  - 이 전제의 한계: 같은 Docker 네트워크의 다른 컨테이너(`zeek_AD`의 `api`·파이프라인·PostgreSQL 등)는 `dashboard-app:8080`에 직접 붙어 전달 헤더를 꾸밀 수 있습니다. 그 컨테이너가 탈취되면 감사 로그 IP를 바꿀 수 있습니다. 근본 대책(앱이 WAF에서 온 전달 헤더만 믿게 하기, WAF↔앱 전용 내부 네트워크 등)은 후속 과제입니다.
+  - **전달 헤더 신뢰(`T32`)**: `server.forward-headers-strategy: native`(Tomcat `RemoteIpValve`)로 `X-Forwarded-For`·`X-Forwarded-Proto`·`X-Forwarded-Port`·`X-Forwarded-Host`를 처리합니다. 연결한 주소(TCP 상대)가 `dashboard.security.trusted-proxies`(환경 변수 `DASHBOARD_TRUSTED_PROXIES`, 쉼표 목록)에 있을 때만 이 헤더를 적용하고 목록 밖에서 온 연결은 모두 무시합니다. 그때 클라이언트 IP(감사 로그 `client_ip`)는 연결 주소이고 scheme·port는 실제 연결 값입니다. `Forwarded`·`X-Forwarded-Prefix`는 앱이 쓰지 않습니다(WAF가 지웁니다).
+    - 목록에는 IPv4·IPv6 주소를 그대로만 씁니다. 대역(CIDR)·호스트 이름·정규식이 있으면 앱이 시작하지 않습니다. 호스트 이름을 DNS로 찾아보지 않습니다. 앞뒤 공백은 지우고 빈 항목은 버립니다. IPv6는 Tomcat 표기(예: `0:0:0:0:0:0:0:1`)로 바꿔 넣고 시작 로그에 남깁니다.
+    - 목록이 비면(앱 기본값) 아무 연결도 믿지 않습니다. 이때 감사 로그 IP는 WAF 주소가 되고 시작할 때 경고 로그를 남깁니다.
+    - Spring Boot 기본 `internal-proxies`는 사설망 전체(`127/8` 포함)라 앱이 그것을 신뢰 목록의 정확 일치 패턴으로 바꿉니다(`TrustedProxyValveCustomizer`). 실제 Tomcat 엔진의 `RemoteIpValve`가 하나가 아니거나 패턴이 목록과 다르면 앱이 시작하지 않습니다. Tomcat `server.tomcat.remoteip.trusted-proxies`는 쓰지 않습니다.
+  - **WAF 고정 주소**: `compose.yml`은 `dashboard-net`에 고정 서브넷 `${DASHBOARD_SUBNET:-10.203.49.0/24}`과 동적 배정 범위 `${DASHBOARD_IP_RANGE:-10.203.49.0/25}`를 주고 `nginx-waf`를 그 범위 밖 `${DASHBOARD_WAF_IP:-10.203.49.250}`에 고정합니다. 앱 `DASHBOARD_TRUSTED_PROXIES`도 같은 변수입니다. 그래서 같은 네트워크의 다른 컨테이너(`zeek_AD`의 `api`·파이프라인·PostgreSQL 등)가 `dashboard-app:8080`에 직접 붙어 전달 헤더를 꾸며도 감사 로그 IP는 그 컨테이너 주소입니다(보안 스캔 E2E `[16]`).
+    - 서브넷을 바꾸면 `DASHBOARD_WAF_IP`도 그 서브넷 안, `DASHBOARD_IP_RANGE` 밖으로 바꿉니다. 포트폴리오 스택(`10.203.48.0/24`)과 겹치지 않아 한 PC에 같이 떠도 됩니다.
+    - `T32` 전에 띄운 스택은 네트워크를 한 번 다시 만들어야 합니다(`docker compose down` 뒤 `up -d`, 볼륨은 그대로).
+    - `zeek_AD` 외부 네트워크로 바꿔 쓸 때(4.2 방법 B)는 그 네트워크 서브넷 안의 빈 주소를 `DASHBOARD_WAF_IP`로 줍니다. 서브넷을 정할 수 없으면 `nginx-waf`의 `ipv4_address`를 지우고 `DASHBOARD_TRUSTED_PROXIES`를 비웁니다. 그러면 감사 로그 IP가 WAF 주소가 되지만 다른 컨테이너가 꾸밀 수는 없습니다.
+  - `dashboard-app` 포트(`8080`)는 호스트나 WAF 밖으로 열지(`ports:`) 않습니다. 정적 테스트가 세 compose 파일의 `dashboard-app`에 `ports:`가 없는지 확인합니다. 신뢰 목록과 겹쳐 지키는 장치입니다.
+  - 남은 위험: 같은 bridge 네트워크에서 `NET_RAW` 권한으로 패킷 출처 주소를 꾸미는 공격은 이 방식으로 막지 못합니다.
   - 프로덕션 `bootJar`에는 H2 드라이버와 `application-test.yml`이 들어가지 않습니다.
 
 ### 1.3 SPA 라우팅과 `/api/**` 경계
@@ -121,6 +128,8 @@ cp .env.example .env
 | `DASHBOARD_BOOTSTRAP_PASSWORD` | `users` 테이블이 비어 있을 때 4계정 시드용 공통 비밀번호 | 초기 기동 후 비움 권장 | 초기 기동 후 비움 권장 |
 | `BOOTSTRAP_VIEWER1_PASSWORD` ~ `BOOTSTRAP_ADMIN_PASSWORD` | 계정별 개별 부트스트랩 비밀번호(선택) | 선택 | 선택 |
 | `BOOTSTRAP_ADMIN_TOTP_SECRET` | `admin` TOTP Base32 시크릿(비우면 `/login/totp/setup`에서 등록) | 선택 | 선택 |
+| `DASHBOARD_TRUSTED_PROXIES` | 전달 헤더(`X-Forwarded-*`)를 믿을 프록시 주소(T32, 1.2). 쉼표 목록, IPv4·IPv6 주소 그대로만(대역·호스트 이름이면 시작 실패). 비면 아무도 믿지 않는다. `compose.yml`은 `DASHBOARD_WAF_IP`를 넘긴다 | 비움(앱) | `compose.yml`이 `${DASHBOARD_WAF_IP:-10.203.49.250}` |
+| `DASHBOARD_SUBNET`, `DASHBOARD_IP_RANGE`, `DASHBOARD_WAF_IP` | `dashboard-net` 고정 서브넷·동적 배정 범위·`nginx-waf` 고정 주소(T32, 1.2). WAF 주소는 서브넷 안, 범위 밖 | `10.203.49.0/24`, `10.203.49.0/25`, `10.203.49.250` | 겹치는 네트워크가 있을 때만 바꾼다 |
 | `WAF_HTTP_PORT`, `WAF_HTTPS_PORT` | 호스트에 노출할 WAF HTTP/HTTPS 포트 | `80`, `443` | `18080`, `18443` (충돌 회피 시) |
 | `SSL_REDIRECT_PORT` | HTTP → HTTPS `301` 리다이렉트 대상 포트 | `443` (`${WAF_HTTPS_PORT}`) | `18443` |
 | `WAF_SERVER_NAME`, `SERVER_NAME` | Nginx `server_name` | 배포 VM IP 또는 도메인 | `localhost` |
@@ -241,5 +250,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 - E2E는 JSON API로 진행합니다: `GET /api/auth/csrf`로 `XSRF-TOKEN`을 받고 `X-XSRF-TOKEN` 헤더 + JSON 본문으로 `POST /api/auth/login`, 관리자는 `POST /api/auth/totp/verify`. 응답은 JSON 필드로 판정하고 WAF 차단은 `403` + 앱 JSON 오류가 아님 + `nginx-waf` ModSecurity 감사 로그의 규칙 ID로 판정합니다. 결과는 `waf-e2e-verification.txt`에 남습니다.
 - ZAP은 정보성 경고만 있어도 종료 코드 `2`이므로 `zap-baseline.json`의 위험 등급별 경고 수로 판정합니다. High·Medium·Low가 하나라도 있으면 실패입니다. 허용하는 예외는 모든 인스턴스가 `XSRF-TOKEN`인 Low `10010`(Cookie No HttpOnly Flag) 하나입니다(이중 제출 CSRF라 JS가 읽어야 하는 쿠키).
 - E2E `[9]`(`T14`)는 클라이언트 IP·전달 헤더 위조를 봅니다: 전달 헤더 없이 로그인한 `viewer1`의 감사 로그 `client_ip`를 기준 B로 잡습니다. 그다음 `X-Real-IP`·`X-Forwarded-For`·`Forwarded: for=`를 하나씩(그리고 `X-Forwarded-Host`·`X-Forwarded-Prefix`까지 모두) 붙인 로그인 성공·실패와 조합 헤더를 붙인 WAF 차단 요청의 ModSecurity `client_ip`가 모두 B인지 확인합니다. `X-Forwarded-Host`·`Forwarded: host=`·`X-Forwarded-Prefix`를 붙인 비인증 리다이렉트 `Location`이 헤더 없을 때와 같은지도 확인합니다. 감사 로그는 `verify-postgres`에서 읽기 전용 `SELECT`로 읽습니다.
+- E2E `[16]`(`T32`)는 전달 헤더 신뢰를 봅니다. `nginx-waf` 주소가 `10.203.49.250`이고 앱 신뢰 목록이 같은 값인지 확인합니다. WAF를 거친 요청은 위조 `X-Forwarded-For`를 붙여도 감사 로그 IP가 B이고 `Location`(HTTP→HTTPS, `/nope`, 스택 안 `https://nginx-waf:8443/nope`)이 `T31`까지와 같습니다. WAF가 아닌 컨테이너(`verify-postgres` 안 busybox `wget`)가 `dashboard-app:8080`에 `X-Forwarded-For`·`X-Forwarded-Proto: https`를 붙여 보내면 감사 로그 IP는 그 컨테이너 주소이고 HSTS가 없으며 `Location`은 `http://dashboard-app:8080/login`입니다.
+- 검증 스택의 `dashboard-net`은 고정 서브넷(`10.203.49.0/24`)이라 같은 서브넷 네트워크가 남아 있으면 기동이 실패합니다. 스크립트는 기동 전에 그 서브넷을 쓰는 네트워크를 찾아 `zeekad-verify-*` 프로젝트면 내리고(`down -v`) 다른 네트워크면 이름을 알리고 멈춥니다. 스크립트는 성공·실패와 상관없이 끝날 때 자기 스택을 내립니다.
 - E2E는 `127.0.0.1`로 접속하므로 모든 요청에 CRS `920350`(숫자 IP Host, 3점)이 붙습니다. 실제 배포에서는 `WAF_SERVER_NAME`의 호스트명으로 접속하는 것을 권장합니다.
 - 실행할 때만 난수 비밀번호를 만들어 `docker/verify/compose.verify.yml`을 띄웁니다. 검증이 끝나면 `docker compose down -v`로 임시 컨테이너와 볼륨을 지웁니다.

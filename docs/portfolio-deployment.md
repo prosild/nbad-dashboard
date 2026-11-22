@@ -17,6 +17,7 @@
                         127.0.0.1:18480 (NAS 루프백에만 묶임)
                                    │
   ┌────────────── Compose 프로젝트 zeekad-portfolio (네트워크 10.203.48.0/24 고정) ──────────────┐
+  │ nginx-waf 주소 10.203.48.250 고정(T32), DSM 연결은 게이트웨이 10.203.48.1로 들어온다        │
   │ nginx-waf (ModSecurity CRS, 로그인 속도 제한) ─> dashboard-app ─> postgres (zeekad 스냅샷,     │
   │                                                     │              zeekad_dashboard)         │
   │                                                     └──────> api (zeek_AD 근거 API) ─┘        │
@@ -36,8 +37,11 @@
 ### 1.1 보안 전제와 설정 요약
 
 - **바깥에 여는 포트는 `nginx-waf` HTTP 하나뿐이고 NAS `127.0.0.1`에만 묶는다.** 그래서 이 포트에 접근할 수 있는 것은 같은 NAS의 DSM 역방향 프록시뿐이다. 아래 전달 헤더(`X-Forwarded-For`, `X-Forwarded-Proto`)를 믿는 근거가 이 전제다. 포트를 `0.0.0.0`이나 LAN 주소에 묶으면 이 전제가 깨진다.
-- **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, 스택 서브넷 `PORTFOLIO_SUBNET`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`, 포트폴리오 전용 http 문맥 설정). 앱에 넘기는 헤더는 `T14`부터 모든 스택이 같은 공유 규칙(WAF 이미지 템플릿 `includes/proxy_backend.conf.template`)을 쓴다: `X-Forwarded-For`는 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다. VMware 스택(`compose.yml`)은 `127.0.0.1`만 신뢰한다(`docs/deployment-guide.md` 1.2).
-- **절대 URL**: 들어온 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
+- **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, Docker 게이트웨이 `PORTFOLIO_GATEWAY_IP`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`, 포트폴리오 전용 http 문맥 설정). 앱에 넘기는 헤더는 `T14`부터 모든 스택이 같은 공유 규칙(WAF 이미지 템플릿 `includes/proxy_backend.conf.template`)을 쓴다: `X-Forwarded-For`는 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다. VMware 스택(`compose.yml`)은 `127.0.0.1`만 신뢰한다(`docs/deployment-guide.md` 1.2).
+- **전달 헤더를 믿는 출처(`T32`)**: DSM이 `127.0.0.1:18480`으로 붙은 연결은 컨테이너 안에서 Docker 게이트웨이 주소(`PORTFOLIO_GATEWAY_IP`, 기본 `10.203.48.1`)에서 온 것으로 보인다. `nginx-waf`는 `127.0.0.1`과 이 주소에서 온 연결의 `X-Forwarded-For`·`X-Forwarded-Proto`만 믿는다(`set_real_ip_from`과 `X-Forwarded-Proto`·`Port` map의 출처 표시 `geo $realip_remote_addr`). `T31`까지는 스택 서브넷 전체를 믿어서 같은 네트워크의 다른 컨테이너(예: `api`)가 `nginx-waf:8080`에 `X-Forwarded-For`를 붙이면 그 값이 감사 로그 IP가 됐다. 앱은 `nginx-waf` 고정 주소(`PORTFOLIO_WAF_IP`, 기본 `10.203.48.250`)에서 온 연결의 전달 헤더만 믿는다(`DASHBOARD_TRUSTED_PROXIES`, 같은 변수). 그래서 다른 컨테이너가 `nginx-waf:8080`이나 `dashboard-app:8080`에 전달 헤더를 붙여 보내도 감사 로그 IP는 그 컨테이너 주소이고 `https`로 판정되지 않는다(리허설 `[T32]`).
+  - `PORTFOLIO_SUBNET`을 바꾸면 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 서브넷 안으로 바꾼다. 게이트웨이 주소는 반영 전에 NAS에서 확인한다(3.8 `T32`).
+  - 남은 위험: 같은 bridge에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격은 막지 못한다. 또 게이트웨이를 믿으므로 NAS 호스트의 로컬 프로세스와 host 네트워크 컨테이너는 `127.0.0.1:18480`으로 전달 헤더를 꾸밀 수 있다. 이것은 원래 전제(이 포트에는 DSM만 붙는다)와 같다.
+- **절대 URL**: 신뢰 출처(DSM)가 보낸 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
 - **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)만 활성. 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보인다. 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, 2026-11-21 결정). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **계정 잠금과 로그인 속도 제한(`T29`에서 바꿈)**: 모든 계정은 앱 기본대로 틀린 비밀번호 5번에 15분 잠긴다(`compose.portfolio.yml`이 `DASHBOARD_MAX_FAILED_ATTEMPTS="5"`로 고정하고 `.env`를 쓰지 않는다. `T12`~`T27`은 `PORTFOLIO_MAX_FAILED_ATTEMPTS=1000000`으로 모든 계정의 잠금을 사실상 껐었다. NAS `.env`에 그 줄이 남아 있어도 이제 쓰이지 않는다). 비밀번호를 공개한 `demo`만 아래 잠금 제외로 빠진다. 공개 ANALYST·ADMIN 계정이 남의 시도로 15분 잠길 수 있는 것은 받아들인다(방문자 화면은 `demo`). nginx는 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
 - **공유 조회 계정 잠금 제외(`T29`)**: `compose.portfolio.yml`이 `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo`(기본, `.env`의 같은 이름으로 바꿀 수 있음)를 넘긴다. 비밀번호를 공개한 `demo`를 누군가 틀린 비밀번호로 잠가 다른 방문자를 막지 못하게 하려는 것이다. 앱은 로그인 때 DB 역할이 VIEWER인 목록 계정만 잠금에서 빼고(실패 수·잠금을 바꾸지 않음), 실패 감사(`LOGIN_FAILURE`, `lockoutExempt: true`)는 그대로 남긴다. ANALYST·ADMIN은 목록에 있어도 잠긴다. 무작위 대입은 위 IP당 로그인 속도 제한이 막는다(값은 바꾸지 않았다). **운영 규칙: 목록에는 비밀번호를 공개한 공유 조회 계정만 넣는다.** 비공개 비밀번호 계정을 넣으면 여러 IP에서 대입할 때 막을 것이 IP당 속도 제한뿐이다. 목록의 계정이 없거나 VIEWER가 아니면 앱이 시작할 때 경고 로그를 남긴다(이름만). 공개 데모에서는 로그인 실패를 일부러 만들어 시험하지 않는다(실패하면 방문자가 막힐 수 있다). 리허설 `[T29]`가 대신 확인한다.
@@ -186,7 +190,7 @@ free -m; df -h /volume1
 curl.exe -s -o NUL -w "%{http_code}" --resolve <DDNS 이름>.synology.me:443:<NAS 주소> https://<DDNS 이름>.synology.me/
 ```
 
-- **서브넷 겹침 확인**: `networks-before.txt`에 `10.203.48.0/24`와 겹치는 대역이 있으면 `.env`의 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.49.0/24`)으로 바꾼다. 이 값 하나가 Compose 네트워크와 nginx 신뢰 범위를 함께 바꾼다.
+- **서브넷 겹침 확인**: `networks-before.txt`에 `10.203.48.0/24`와 겹치는 대역이 있으면 `.env`의 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.50.0/24`. `10.203.49.0/24`는 VMware 스택 `compose.yml`의 기본값이다)으로 바꾼다. 그때 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 대역 안으로 바꾼다(`T32`, 1.1).
 - DS920+ DSM 7.3.2(Container Manager)에서는 `docker compose`(v2.20.1)가 동작한다(`T13` 확인). `docker-compose`로 바꿀 필요 없다.
 - 이 절부터의 NAS 블록(`sh`)은 **NAS 셸 안에서** 실행한다(`ssh <NAS 사용자>@<NAS 주소>`로 들어가서 붙여 넣거나, 로컬 PC의 Git Bash에서 `ssh ... 'bash -s' <<'EOF' ... EOF`). 로컬 PC의 Windows PowerShell 5.1에서 `ssh <NAS> '<여러 명령>'`처럼 한 줄 인자로 넘기면 인자 안의 큰따옴표가 지워져(`printf "\n"` → `printf n`) 결과가 달라진다(`T13`에서 확인).
 
@@ -492,6 +496,16 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 - 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(예: T20 `demo` 허용 캡처 `*` → `cic17-*,syn1-*`. 데이터도 함께 바꾸는 T22 `cic17-*,syn1-*,lab-20261119`는 3.9)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
 - 스크립트로 실행할 때는 위 1·2단계를 스크립트 파일(`nas-step1.sh`·`nas-step2.sh`)로 저장한다. 스크립트를 표준 입력으로 bash에 넘기면(`echo <base64> | base64 -d | bash`, `ssh ... 'bash -s' < 파일`) `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버려 뒤 단계가 실행되지 않은 채 exit 0으로 끝날 수 있다(T22에서 확인). 그래서 NAS의 확인 폴더에 파일로 풀고 표준 입력을 닫아 실행한다: `ssh ... "echo <base64> | base64 -d > ~/zeekad-portfolio-check/<ID>-step1.sh && bash ~/zeekad-portfolio-check/<ID>-step1.sh < /dev/null"`. 출력은 `build/portfolio-evidence/<작업 ID>/nas-update.txt`처럼 Git 제외 경로에 남긴다.
 
+#### 앱 이미지와 compose·WAF 템플릿을 함께 바꾸는 갱신(`T32`)
+
+`T32`는 앱 이미지 하나와 파일 둘(`compose.portfolio.yml`, `docker/portfolio/nginx/zeekad-portfolio-http.conf.template`)을 바꾼다. WAF 이미지는 그대로지만 `nginx-waf`도 고정 주소·신뢰 범위가 바뀌어 다시 만들어진다. 위 서비스 하나 절차에서 다음만 다르다.
+
+- **반영 전 게이트웨이 확인**: NAS에서 `curl http://127.0.0.1:18480/?probe=<고유 표식>` 하나를 보내고 `docker logs --since 2m zeekad-portfolio-nginx-waf-1 2>&1 | grep -F <고유 표식>`으로 그 줄만 찾는다. 줄 맨 앞(접속 주소, `$realip_remote_addr`)이 `PORTFOLIO_GATEWAY_IP`(기본 `10.203.48.1`)여야 한다. 다르면 반영하지 않고 멈춘다. 같은 때 `docker network inspect zeekad-portfolio_portfolio-net`으로 `PORTFOLIO_WAF_IP`(기본 `10.203.48.250`)를 쓰는 컨테이너가 없는지 본다. 방문자 줄은 읽지 않는다.
+- **1단계**: `SVC=dashboard-app`, `IMG=zeek-ad-dashboard-app`, `FILES="compose.portfolio.yml docker/portfolio/nginx/zeekad-portfolio-http.conf.template"`. 롤백용으로 `nginx-waf`가 쓰는 이미지 ID도 기록한다(바뀌지 않아야 한다). `.env`는 바꾸지 않는다(두 주소의 기본값이 NAS 서브넷과 맞다).
+- **2단계**: `up -d --wait --no-deps dashboard-app nginx-waf`로 두 서비스를 함께 다시 만든다. 다른 컨테이너 비교에서 `-dashboard-app-`·`-nginx-waf-` 두 줄을 뺀다. 이어서 `nginx-waf` 주소가 `PORTFOLIO_WAF_IP`이고 앱 환경의 `DASHBOARD_TRUSTED_PROXIES`가 같은 값인지, `nginx-waf` 이미지 ID가 그대로인지 `docker inspect`로 본다.
+- **롤백**: 두 파일을 `*.pre-t32`로 되돌리고 `zeek-ad-dashboard-app:pre-t32`를 `:local`로 다시 태그한 뒤 같은 두 서비스를 `up`한다. 옛 compose로 돌아가면 `nginx-waf` 주소는 다시 동적이 된다.
+- 반영한 날의 실제 명령과 출력은 `T32` 작업 기록(저장소 밖)에 있다.
+
 ### 3.9 스냅샷(공개 데이터) 교체
 
 스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다(받아들인다). 이 백업은 되돌리기용이다. 공개 데모 데이터는 읽기 전용이라 주기적 리셋은 두지 않는다.
@@ -619,6 +633,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] 감사 로그의 로그인 IP가 실제 접속 IP다(4.3). (리허설 [7])
 - [ ] `https://soc.<DDNS 이름>.synology.me/api/incidents?asset=%27%20OR%201%3D1--`가 `403`(WAF)이다. XSS(`?asset=%3Cscript%3E`)·경로 탐색(`?asset=../../etc/passwd`)도 `403`. (리허설 [8])
 - [ ] 로그인 경로가 아닌 `POST /api/...`(예: `/api/incidents/101/rank/2/assignment`)에 인증 없이 `Content-Type: application/xml`로 깨진 XML 본문(`<a><b></a>`)을 보내면 `400`(WAF)이다. 이 요청은 로그인 실패를 만들지 않는다. 예: `curl.exe -s -o NUL -w "%{http_code}" -X POST -H "Content-Type: application/xml" --data-binary "<a><b></a>" "https://soc.<DDNS 이름>.synology.me/api/incidents/101/rank/2/assignment?probe=<고유 표식>"`. NAS에서 `docker logs --since 10m zeekad-portfolio-nginx-waf-1 2>&1 | grep -F <고유 표식>`으로 그 요청의 기록만 찾아 규칙 `200002`를 확인한다(방문자 IP가 든 다른 줄은 보지 않는다). ([T31])
+- [ ] 전달 헤더 신뢰(`T32`): `docker inspect`로 `nginx-waf` 주소가 `PORTFOLIO_WAF_IP`(`10.203.48.250`)이고 `dashboard-app` 환경의 `DASHBOARD_TRUSTED_PROXIES`가 같은 값이다. 공개 HTTPS 주소로 보낸 표식 요청(`curl.exe --resolve …:443:<NAS 주소> "https://soc.<DDNS 이름>.synology.me/login?probe=<고유 표식>"`)의 WAF 로그 줄에서 클라이언트 IP(줄 끝 `X-Forwarded-For` 필드의 신뢰 범위 밖 가장 오른쪽 주소)가 스택 서브넷 주소가 아니다(주소는 적지 않고 "서브넷 안인가"만 적는다. NAS의 `127.0.0.1:18480`으로 바로 보내면 접속 주소가 게이트웨이라 이 확인이 되지 않는다). `demo` 로그인 뒤 반영 시각 이후 `LOGIN_SUCCESS` 행이 1 이상이고 그중 스택 서브넷 주소 행이 0이다(개수만 센다). NAS 안 `api` 컨테이너에서 `nginx-waf:8080/?probe=<고유 표식>`에 `X-Forwarded-For: 198.51.100.x`를 붙인 `GET`의 WAF 로그 접속 주소가 `api` 컨테이너 주소다(감사가 남지 않는 요청). (리허설 [T32])
 - [ ] 응답 헤더에 `Strict-Transport-Security`(DSM HSTS), `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server`에 버전이 없다(DSM 앞단이 `Server: nginx`를 붙인다. 4.2). 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1], HSTS는 공개 주소에서만)
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
 - [ ] 로그아웃 상태에서 `https://soc.<DDNS 이름>.synology.me/`에 접속하면 `https://soc.<DDNS 이름>.synology.me/login`으로 간다(주소에 `:8080`·`:18480`·`http://`가 없다). (리허설 [1])
