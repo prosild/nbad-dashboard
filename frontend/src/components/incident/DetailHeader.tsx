@@ -88,7 +88,8 @@ export function DetailHeader({
 
   return (
     <section aria-label="인시던트 요약" className="space-y-1.5 text-xs">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 xl:flex-nowrap" data-detail-head-row="1">
+      {/* T28: 첫 줄도 줄바꿈을 막지 않는다. 막으면 긴 호스트 이름(최악 값)에서 1280px "방향"과 "탐지 모델"이 겹쳤다. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-detail-head-row="1">
         {incidentNo !== null && (
           <span
             className="shrink-0 font-mono text-sm font-bold tabular-nums text-cyan-200"

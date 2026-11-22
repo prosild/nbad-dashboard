@@ -1288,11 +1288,13 @@ describe('T28 상세 머리 둘째 줄 겹침 없음', () => {
       meta: { ...DEFAULT_META, sourceType: 'live', detectedAt: '2026-11-15T13:00:00Z', anchor: '2026-11-21T00:12:00Z', ackOverdue: true },
     });
     await screen.findByRole('tab', { name: '요약', selected: true });
+    // 넓은 화면에서 줄바꿈을 막던 클래스가 다시 들어오면 항목이 서로 덮인다(둘째 줄 1440~1600px, 첫 줄 긴 호스트 이름 1280px)
+    for (const n of ['1', '2']) {
+      const classes = (header().querySelector(`[data-detail-head-row="${n}"]`) as HTMLElement).className.split(/\s+/);
+      expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-wrap']));
+      expect(classes.some((c) => /(^|:)flex-nowrap$/.test(c))).toBe(false);
+    }
     const row = header().querySelector('[data-detail-head-row="2"]') as HTMLElement;
-    const classes = row.className.split(/\s+/);
-    expect(classes).toEqual(expect.arrayContaining(['flex', 'flex-wrap']));
-    // 넓은 화면에서 줄바꿈을 막던 클래스가 다시 들어오면 1440~1600px에서 항목이 서로 덮인다
-    expect(classes.some((c) => /(^|:)flex-nowrap$/.test(c))).toBe(false);
     // 관제 판단에 쓰는 값은 그대로 보인다
     expect(within(row).getByText('착수 지연')).toBeInTheDocument();
     expect(within(row).getByText('경보')).toBeInTheDocument();
