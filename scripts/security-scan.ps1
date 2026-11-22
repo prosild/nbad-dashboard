@@ -180,6 +180,24 @@ if (-not $SkipE2E -or -not $SkipZap) {
     $env:WAF_SERVER_NAME = "localhost"
 
     try {
+        # T32: compose.yml의 dashboard-net은 고정 서브넷(DASHBOARD_SUBNET, 기본 10.203.49.0/24)이라 같은 서브넷 네트워크가 남아 있으면
+        # 기동이 "Pool overlaps"로 실패한다. 앞선 검증 실행(zeekad-verify-*)의 것이면 그 프로젝트를 내리고, 다른 네트워크면 이름을 알리고 멈춘다.
+        $verifySubnet = if ($env:DASHBOARD_SUBNET) { $env:DASHBOARD_SUBNET } else { "10.203.49.0/24" }
+        $netIds = @((Invoke-NativeCapture "docker" @("network", "ls", "-q")).Output -split "`r?`n" | Where-Object { $_.Trim() })
+        foreach ($netId in $netIds) {
+            $netInfo = (Invoke-NativeCapture "docker" @("network", "inspect", "--format", '{{.Name}}|{{index .Labels "com.docker.compose.project"}}|{{range .IPAM.Config}}{{.Subnet}} {{end}}', $netId.Trim()) -IgnoreExitCode).Output.Trim()
+            $parts = $netInfo -split '\|', 3
+            if ($parts.Count -lt 3 -or -not (@($parts[2] -split '\s+') -contains $verifySubnet)) { continue }
+            if ($parts[1] -like "zeekad-verify-*") {
+                Write-Host "-> 앞선 검증 스택 $($parts[1])이 서브넷 $verifySubnet 을 쓰고 있어 내립니다 (down -v)"
+                [void](Invoke-NativeCapture "docker" @("compose", "-p", $parts[1], "-f", "compose.yml", "-f", "docker/verify/compose.verify.yml", "down", "-v") -IgnoreExitCode)
+                $left = (Invoke-NativeCapture "docker" @("network", "inspect", $netId.Trim()) -IgnoreExitCode).ExitCode
+                if ($left -eq 0) { throw "앞선 검증 스택 네트워크 $($parts[0])이 남아 있습니다. 수동으로 확인하세요." }
+            } else {
+                throw "서브넷 $verifySubnet 을 다른 네트워크 $($parts[0]) (프로젝트 '$($parts[1])')가 쓰고 있습니다. 그 네트워크는 지우지 않습니다. 내리거나 DASHBOARD_SUBNET·DASHBOARD_IP_RANGE·DASHBOARD_WAF_IP를 바꾸세요."
+            }
+        }
+
         Write-Host "=== [4/5] 검증용 Docker Compose 스택 기동 ($projectName) ==="
         $upRes = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait")) -IgnoreExitCode
         if ($upRes.ExitCode -ne 0) {
@@ -1512,6 +1530,78 @@ FROM v GROUP BY m ORDER BY m
                 Assert-True ($interrupted15b.Count -eq 0) "[15b] nginx-waf 차단 기록 없음"
                 Assert-True ([int]$logins15 -eq 0) "[15] 로그인 실패·잠금 감사 0"
                 Assert-True ($health15 -eq "healthy") "[15] nginx-waf healthy ($health15)"
+
+                # [16] 전달 헤더 신뢰(T32). 앱은 nginx-waf 고정 주소에서 온 연결의 X-Forwarded-*만 믿는다.
+                #      (a) WAF 경유: 클라이언트가 붙인 X-Forwarded-For는 여전히 무시되고 https 판정(HSTS)·쿠키 속성은 그대로다.
+                #      (b) 리다이렉트 Location이 T31까지(framework 전략)와 같다: HTTP->HTTPS, 화면 아닌 경로 /login, 스택 안 8443 경로, T27 화면 경로 셸.
+                #      (c) 앱 직접: WAF가 아닌 컨테이너(verify-postgres, busybox wget)가 dashboard-app:8080에 전달 헤더를 붙여도
+                #          감사 로그 IP는 그 컨테이너 주소이고 https로 판정하지 않으며 Location도 연결 값 그대로다. 새 이미지를 받지 않는다.
+                #      로그인 시도는 없는 계정이라 잠금 계수에 영향이 없다.
+                $wafIp16 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "$projectName-nginx-waf-1")).Output.Trim()
+                $appTrusted16 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_TRUSTED_PROXIES-<unset>}"')) -IgnoreExitCode).Output.Trim()
+                $pgIp16 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "$projectName-verify-postgres-1")).Output.Trim()
+                $e2eLogs.Add("[16] nginx-waf address=$wafIp16, dashboard-app DASHBOARD_TRUSTED_PROXIES=$appTrusted16, verify-postgres address=$pgIp16")
+                Assert-True ($wafIp16 -eq "10.203.49.250" -and $appTrusted16 -eq $wafIp16) "[16] nginx-waf 고정 주소 = 앱 신뢰 목록 = 10.203.49.250"
+
+                # (a) WAF 경유
+                $user16a = "t32_waf_$(New-RandomToken 6)"
+                $jar16 = Join-Path $tmpDir "t32-a.cookies"
+                $csrf16a = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $jar16 -SaveCookies
+                $login16a = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $jar16 -SaveCookies -Csrf `
+                    -JsonBody @{ username = $user16a; password = "wrong-t32" } -ExtraHeaders @("X-Forwarded-For: 203.0.113.16", "X-Forwarded-Proto: http", "X-Forwarded-Port: 80")
+                $ip16a = Invoke-AuditSelect "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$user16a' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1"
+                $hsts16a = Get-HeaderValue $csrf16a "Strict-Transport-Security"
+                $e2eLogs.Add("[16a] via WAF: GET /api/auth/csrf -> HTTP $($csrf16a.Status) Strict-Transport-Security=$hsts16a; POST /api/auth/login (unknown user, X-Forwarded-For: 203.0.113.16, X-Forwarded-Proto: http, X-Forwarded-Port: 80) -> HTTP $($login16a.Status); audit LOGIN_FAILURE client_ip=$ip16a (B=$ipB)")
+                Assert-True ($login16a.Status -eq 401 -and $ip16a -eq $ipB) "[16a] WAF 경유 감사 로그 IP = B, 위조 X-Forwarded-For 무시 (client_ip=$ip16a, B=$ipB)"
+                Assert-True ([bool]$hsts16a) "[16a] WAF 경유 https 요청은 https 판정(HSTS 있음)" $csrf16a
+                $xsrfCookie16 = [regex]::Match($csrf16a.Headers, '(?im)^Set-Cookie:\s*XSRF-TOKEN=[^\r\n]*').Value
+                $e2eLogs.Add("[16a] XSRF-TOKEN Set-Cookie: $(Redact-Cookies $xsrfCookie16)")
+                Assert-True ($xsrfCookie16 -match '(?i);\s*Secure' -and $xsrfCookie16 -match '(?i)SameSite=Lax') "[16a] XSRF-TOKEN 쿠키 Secure·SameSite=Lax"
+
+                # (b) Location
+                $redir16 = [ordered]@{}
+                $r16 = Invoke-Http -Url "$baseHttp/login"; $redir16["http /login"] = "$($r16.Status) $(Get-HeaderValue $r16 'Location')"
+                $r16 = Invoke-Http -Url "$baseHttps/nope"; $redir16["https /nope"] = "$($r16.Status) $(Get-HeaderValue $r16 'Location')"
+                $r16 = Invoke-Http -Url "$baseHttps/nope" -ExtraHeaders @("X-Forwarded-Proto: http", "X-Forwarded-Port: 80", "X-Forwarded-Host: evil.example")
+                $redir16["https /nope + forged proto/port/host"] = "$($r16.Status) $(Get-HeaderValue $r16 'Location')"
+                $r16 = Invoke-Http -Url "$baseHttps/incidents/1"; $redir16["https /incidents/1 (T27 shell)"] = "$($r16.Status) shell=$(Test-SpaShell $r16) location=$(Get-HeaderValue $r16 'Location')"
+                $in8443 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "curl", "-sk", "-o", "/dev/null", "-D", "-", "https://nginx-waf:8443/nope")) -IgnoreExitCode).Output
+                $loc8443 = [regex]::Match($in8443, '(?im)^Location:\s*(\S+)').Groups[1].Value
+                $status8443 = [regex]::Match($in8443, '(?im)^HTTP/\S+\s+(\d+)').Groups[1].Value
+                $redir16["in-network https://nginx-waf:8443/nope"] = "$status8443 $loc8443"
+                foreach ($k in $redir16.Keys) { $e2eLogs.Add("[16b] $k -> $($redir16[$k])") }
+                Assert-True ($redir16["http /login"] -eq "301 https://127.0.0.1:$WafHttpsPort/login") "[16b] HTTP->HTTPS Location ($($redir16['http /login']))"
+                Assert-True ($redir16["https /nope"] -eq "302 https://127.0.0.1:$WafHttpsPort/login") "[16b] /nope Location이 T31과 같음 ($($redir16['https /nope']))"
+                Assert-True ($redir16["https /nope + forged proto/port/host"] -eq "302 https://127.0.0.1:$WafHttpsPort/login") "[16b] 위조 전달 헤더를 붙여도 Location 같음 ($($redir16['https /nope + forged proto/port/host']))"
+                Assert-True ($redir16["https /incidents/1 (T27 shell)"] -eq "200 shell=True location=") "[16b] T27 화면 경로는 셸 200(Location 없음)"
+                Assert-True ($redir16["in-network https://nginx-waf:8443/nope"] -eq "302 https://nginx-waf:8443/login") "[16b] 스택 안 8443 경로 Location(T12) ($($redir16['in-network https://nginx-waf:8443/nope']))"
+
+                # (c) 앱 직접(verify-postgres 안 busybox wget). 스크립트는 base64로 넘겨 인용 문제를 피한다.
+                $user16c = "t32_direct_$(New-RandomToken 6)"
+                $sh16 = @(
+                    'B=http://dashboard-app:8080',
+                    'F1="X-Forwarded-For: 203.0.113.17"; F2="X-Forwarded-Proto: https"; F3="X-Forwarded-Port: 443"',
+                    'H1=$(wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" "$B/api/auth/csrf" 2>&1)',
+                    'echo "== csrf"',
+                    'echo "$H1" | grep -i -E "HTTP/|strict-transport|set-cookie" | sed -E "s/(XSRF-TOKEN=)[^;]*/\1<redacted>/"',
+                    'T=$(echo "$H1" | sed -n "s/.*[Ss]et-[Cc]ookie: XSRF-TOKEN=\([^;]*\).*/\1/p" | head -n1)',
+                    'echo "== login"',
+                    'wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" --header "Cookie: XSRF-TOKEN=$T" --header "X-XSRF-TOKEN: $T" --header "Content-Type: application/json" --post-data "{\"username\":\"__USER__\",\"password\":\"wrong-t32\"}" "$B/api/auth/login" 2>&1 | grep -E "HTTP/|wget:"',
+                    'echo "== nope"',
+                    'wget -S -q -O /dev/null --header "$F1" --header "$F2" --header "$F3" "$B/nope" 2>&1 | grep -i -E "HTTP/|location:" | head -n2'
+                ) -join "`n"
+                $sh16 = $sh16.Replace("__USER__", $user16c)
+                $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh16))
+                $direct16 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "sh", "-c", "echo $b64 | base64 -d | sh")) -IgnoreExitCode).Output
+                $ip16c = Invoke-AuditSelect "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$user16c' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1"
+                $csrfPart16 = ($direct16 -split "== login")[0]
+                $loginPart16 = (($direct16 -split "== login")[1] -split "== nope")[0]
+                $nopeLoc16 = [regex]::Match($direct16, '(?im)^\s*Location:\s*(\S+)').Groups[1].Value
+                $e2eLogs.Add("[16c] direct from verify-postgres ($pgIp16) to dashboard-app:8080 with X-Forwarded-For: 203.0.113.17, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n$($direct16.Trim())`n      audit LOGIN_FAILURE ($user16c) client_ip=$ip16c")
+                Assert-True ($csrfPart16 -match 'HTTP/1\.1 200' -and $csrfPart16 -notmatch '(?i)strict-transport-security') "[16c] 앱 직접 + X-Forwarded-Proto: https -> https 판정 아님(HSTS 없음)"
+                Assert-True ($loginPart16 -match '401') "[16c] 앱 직접 로그인(없는 계정) 401"
+                Assert-True ($ip16c -eq $pgIp16 -and $ip16c -ne "203.0.113.17") "[16c] 앱 직접 감사 로그 IP = verify-postgres 주소 (client_ip=$ip16c, 기대 $pgIp16)"
+                Assert-True ($nopeLoc16 -eq "http://dashboard-app:8080/login") "[16c] 앱 직접 Location은 연결 값(http, 8080) ($nopeLoc16)"
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")

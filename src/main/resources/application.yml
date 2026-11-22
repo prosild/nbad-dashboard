@@ -9,7 +9,10 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
-  forward-headers-strategy: framework
+  # T32: 전달 헤더(X-Forwarded-For·Proto·Port·Host)는 Tomcat RemoteIpValve가 처리하고, 연결 주소가
+  # dashboard.security.trusted-proxies에 정확히 있을 때만 적용한다(TrustedProxyValveCustomizer).
+  # Boot 기본 internal-proxies(사설망 전체)는 그 커스터마이저가 덮어쓴다. tomcat.remoteip.trusted-proxies는 쓰지 않는다.
+  forward-headers-strategy: native
   servlet:
     session:
       timeout: ${DASHBOARD_SESSION_IDLE_TIMEOUT:30m}
@@ -76,6 +79,9 @@ dashboard:
     lockout-minutes: ${DASHBOARD_LOCKOUT_MINUTES:15}
     # T29: 잠금 제외 공유 조회 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 VIEWER 계정만 넣는다.
     lockout-exempt-usernames: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:}
+    # T32: X-Forwarded-*를 믿을 프록시(WAF) 주소(쉼표 목록, IPv4·IPv6 주소 그대로만. 대역·호스트 이름이면 시작 실패).
+    #   기본 비어 있음 = 아무도 믿지 않음(감사 로그 IP가 WAF 주소가 된다. 시작 때 경고 로그).
+    trusted-proxies: ${DASHBOARD_TRUSTED_PROXIES:}
     idle-timeout-minutes: ${DASHBOARD_IDLE_TIMEOUT_MINUTES:30}
     absolute-timeout-minutes: ${DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES:480}
     totp-issuer: "zeek_AD Dashboard"

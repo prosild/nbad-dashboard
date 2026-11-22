@@ -303,7 +303,8 @@ class StaticSecurityAndConfigTest {
                 "POSTGRES_SUPERUSER_PASSWORD", "ZEEKAD_API_PASSWORD", "DASHBOARD_RO_PASSWORD",
                 "DASHBOARD_RW_PASSWORD", "DASHBOARD_APP_PASSWORD", "DEMO_PASSWORD",
                 "BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD",
-                "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET", "PORTFOLIO_HTTP_PORT", "PORTFOLIO_SUBNET")) {
+                "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET", "PORTFOLIO_HTTP_PORT", "PORTFOLIO_SUBNET",
+                "PORTFOLIO_WAF_IP", "PORTFOLIO_GATEWAY_IP")) {
             assertThat(envExample).contains(requiredVar + "=");
         }
 
@@ -372,7 +373,8 @@ class StaticSecurityAndConfigTest {
         assertThat(wafDockerfile).contains("RESOLVER_CONFIG=\"valid=10s ipv6=off\"")
                 .doesNotContainPattern("(?m)^\\s*(ENV\\s+)?RESOLVERS=");
 
-        // (e) 앱의 전달 헤더 신뢰는 "앱에는 WAF만 닿는다"에 기댄다: 어느 스택도 dashboard-app 포트를 호스트에 열지 않는다.
+        // (e) 어느 스택도 dashboard-app 포트를 호스트에 열지 않는다. T32부터 앱은 WAF 고정 주소에서 온 전달 헤더만 믿으므로
+        //     이 단언은 유일한 방어가 아니라 겹 방어다(같은 네트워크 컨테이너의 직접 접속은 T32 시험이 덮는다).
         for (Path composeFile : List.of(Path.of("compose.yml"), Path.of("compose.portfolio.yml"),
                 Path.of("docker/verify/compose.verify.yml"))) {
             String text = Files.readString(composeFile, StandardCharsets.UTF_8);
@@ -387,6 +389,78 @@ class StaticSecurityAndConfigTest {
         assertThat(Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8)).doesNotContain("proxy_backend_extra");
         assertThat(proxyBackend).doesNotContain("proxy_backend_extra");
         assertThat(wafDockerfile).doesNotContain("proxy_backend_extra");
+    }
+
+    @Test
+    void t32WafAddressIsFixedAndIsTheOnlyTrustedProxy() throws IOException {
+        record Stack(Path compose, String wafVar, String wafDefault, String subnet, String ipRange) {
+        }
+        for (Stack stack : List.of(
+                new Stack(Path.of("compose.yml"), "DASHBOARD_WAF_IP", "10.203.49.250", "10.203.49.0/24", "10.203.49.0/25"),
+                new Stack(Path.of("compose.portfolio.yml"), "PORTFOLIO_WAF_IP", "10.203.48.250", "10.203.48.0/24", null))) {
+            String text = Files.readString(stack.compose(), StandardCharsets.UTF_8);
+            String ref = "${" + stack.wafVar() + ":-" + stack.wafDefault() + "}";
+            assertThat(serviceBlock(text, "nginx-waf")).as("%s nginx-waf 고정 주소", stack.compose())
+                    .contains("ipv4_address: " + ref);
+            assertThat(serviceBlock(text, "dashboard-app")).as("%s 앱 신뢰 목록은 WAF 주소와 같은 변수·기본값", stack.compose())
+                    .contains("DASHBOARD_TRUSTED_PROXIES: " + ref);
+            assertThat(text.split(java.util.regex.Pattern.quote("DASHBOARD_TRUSTED_PROXIES:"), -1)).hasSize(2);
+            assertThat(inCidr(stack.wafDefault(), stack.subnet())).as("기본 WAF 주소는 기본 서브넷 안").isTrue();
+            assertThat(text).contains("subnet: ${" + (stack.ipRange() == null ? "PORTFOLIO_SUBNET" : "DASHBOARD_SUBNET")
+                    + ":-" + stack.subnet() + "}");
+            if (stack.ipRange() != null) {
+                assertThat(text).contains("ip_range: ${DASHBOARD_IP_RANGE:-" + stack.ipRange() + "}");
+                assertThat(inCidr(stack.wafDefault(), stack.ipRange())).as("WAF 주소는 동적 배정 범위 밖").isFalse();
+                assertThat(inCidr("10.203.49.1", stack.ipRange())).isTrue();
+            }
+        }
+
+        // 공개 스택 WAF는 127.0.0.1과 게이트웨이만 믿는다(서브넷 변수 없음).
+        String portfolio = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+        String waf = serviceBlock(portfolio, "nginx-waf");
+        java.util.regex.Matcher setRealIp = Pattern.compile("(?m)^\\s*SET_REAL_IP_FROM:\\s*\"([^\"]*)\"").matcher(waf);
+        assertThat(setRealIp.find()).isTrue();
+        assertThat(setRealIp.group(1)).isEqualTo("127.0.0.1,${PORTFOLIO_GATEWAY_IP:-10.203.48.1}");
+        assertThat(setRealIp.find()).as("SET_REAL_IP_FROM은 한 번만").isFalse();
+        assertThat(waf).contains("ZEEKAD_GATEWAY_IP: ${PORTFOLIO_GATEWAY_IP:-10.203.48.1}");
+        assertThat(inCidr("10.203.48.1", "10.203.48.0/24")).isTrue();
+        String template = Files.readString(
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"), StandardCharsets.UTF_8);
+        for (String text : List.of(portfolio, template)) {
+            assertThat(text).doesNotContain("ZEEKAD_TRUSTED_SUBNET");
+        }
+        List<String> realIpFrom = template.lines().map(String::trim)
+                .filter(line -> line.startsWith("set_real_ip_from")).toList();
+        assertThat(realIpFrom).containsExactly("set_real_ip_from 127.0.0.1;", "set_real_ip_from ${ZEEKAD_GATEWAY_IP};");
+
+        // X-Forwarded-Proto·Port는 연결 출처(realip 적용 전 주소)가 127.0.0.1·게이트웨이일 때만 들어온 값을 쓴다.
+        assertThat(template.replace("\r", "").replaceAll("[ \\t]+", " ")).contains(
+                "geo $realip_remote_addr $zeekad_from_proxy {\n default 0;\n 127.0.0.1 1;\n ${ZEEKAD_GATEWAY_IP} 1;\n}",
+                "map \"$zeekad_from_proxy:$http_x_forwarded_proto\" $zeekad_forwarded_proto {\n default $scheme;\n"
+                        + " \"1:https\" https;\n}",
+                "map \"$zeekad_from_proxy:$http_x_forwarded_proto\" $zeekad_forwarded_port {\n \"1:https\" 443;\n"
+                        + " default $forwarded_port;\n}");
+        assertThat(template).doesNotContain("map $http_x_forwarded_proto");
+
+        // 앱은 Tomcat RemoteIpValve(native)로 처리하고 Spring framework 전략·Tomcat trusted-proxies 설정을 쓰지 않는다.
+        String appYml = Files.readString(Path.of("src/main/resources/application.yml"), StandardCharsets.UTF_8);
+        assertThat(appYml).contains("forward-headers-strategy: native", "trusted-proxies: ${DASHBOARD_TRUSTED_PROXIES:}")
+                .doesNotContain("framework").doesNotContainPattern("(?m)^\\s*remoteip:");
+    }
+
+    private static boolean inCidr(String ip, String cidr) {
+        String[] parts = cidr.split("/");
+        int bits = Integer.parseInt(parts[1]);
+        long mask = bits == 0 ? 0 : (0xFFFFFFFFL << (32 - bits)) & 0xFFFFFFFFL;
+        return (ipv4ToLong(ip) & mask) == (ipv4ToLong(parts[0]) & mask);
+    }
+
+    private static long ipv4ToLong(String ip) {
+        long v = 0;
+        for (String octet : ip.split("\\.")) {
+            v = (v << 8) | Integer.parseInt(octet);
+        }
+        return v;
     }
 
     private static String serviceBlock(String compose, String service) {

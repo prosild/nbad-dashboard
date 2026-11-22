@@ -248,6 +248,20 @@ public class DashboardProperties {
          * 역할 판정은 로그인 때 DB 역할로 하며 VIEWER가 아니면 목록에 있어도 잠긴다(DashboardAuthenticationProvider).
          */
         private List<String> lockoutExemptUsernames = new ArrayList<>();
+        /**
+         * T32 전달 헤더를 믿을 프록시 주소(쉼표 목록, 환경 변수 DASHBOARD_TRUSTED_PROXIES, 기본 비어 있음).
+         * IPv4·IPv6 주소 그대로만 받는다(대역·호스트 이름·정규식은 시작 실패). 비어 있으면 아무 연결의 X-Forwarded-*도 믿지 않는다.
+         * 해석·적용은 TrustedProxies·TrustedProxyValveCustomizer가 한다.
+         */
+        private List<String> trustedProxies = new ArrayList<>();
+
+        public List<String> getTrustedProxies() {
+            return trustedProxies;
+        }
+
+        public void setTrustedProxies(List<String> trustedProxies) {
+            this.trustedProxies = trustedProxies == null ? new ArrayList<>() : trustedProxies;
+        }
 
         public int getBcryptStrength() {
             return bcryptStrength;

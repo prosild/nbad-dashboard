@@ -1,28 +1,37 @@
 # 포트폴리오 스택 전용 http 문맥 설정(compose.portfolio.yml이 /etc/nginx/templates/conf.d/에 붙인다).
 # 기존 VMware 스택(compose.yml)에는 붙이지 않는다.
 #
-# 전제: HTTP 리스너는 NAS 127.0.0.1에만 묶여 DSM 역방향 프록시만 접근한다. 그래서 아래 신뢰 범위
-# (127.0.0.1, 이 스택의 고정 Docker 서브넷)에서 온 X-Forwarded-For·X-Forwarded-Proto만 믿는다.
+# 전제: HTTP 리스너는 NAS 127.0.0.1에만 묶여 DSM 역방향 프록시만 접근한다. DSM 연결은 컨테이너 안에서 Docker 게이트웨이
+# 주소(ZEEKAD_GATEWAY_IP)에서 온 것으로 보인다. 그래서 127.0.0.1과 게이트웨이에서 온 X-Forwarded-For·Proto만 믿는다(T32).
+# 같은 Docker 네트워크의 다른 컨테이너(서브넷의 다른 주소)가 보낸 전달 헤더는 믿지 않는다.
 
 # 클라이언트 IP: 신뢰 범위 밖의 가장 오른쪽 X-Forwarded-For 주소(DSM이 덧붙인 실제 접속 주소)를 $remote_addr로 쓴다.
 # http 문맥에 두어 요청을 읽은 직후(post-read 단계) 적용되므로 아래 속도 제한 키와 ModSecurity·앱 전달 값이 모두 이 주소다.
 set_real_ip_from 127.0.0.1;
-set_real_ip_from ${ZEEKAD_TRUSTED_SUBNET};
+set_real_ip_from ${ZEEKAD_GATEWAY_IP};
 real_ip_header X-Forwarded-For;
 real_ip_recursive on;
 
-# 앱에 넘기는 X-Forwarded-Proto: 들어온 값이 https(DSM이 TLS를 끝냄)면 https, 아니면 이 리스너의 $scheme.
-map $http_x_forwarded_proto $zeekad_forwarded_proto {
-    default $scheme;
-    https   https;
+# 연결 출처 표시(T32): realip 적용 전 접속 주소($realip_remote_addr)가 127.0.0.1 또는 게이트웨이(DSM 경로)면 1.
+# 아래 두 map은 이 표시가 1일 때만 들어온 X-Forwarded-Proto를 쓴다. 다른 출처는 들어온 값과 상관없이 default 규칙이다.
+geo $realip_remote_addr $zeekad_from_proxy {
+    default 0;
+    127.0.0.1 1;
+    ${ZEEKAD_GATEWAY_IP} 1;
 }
 
-# 앱에 넘기는 X-Forwarded-Port: 들어온 X-Forwarded-Proto가 https(DSM 경로)면 443(절대 URL에 내부 포트 8080이 붙지 않게),
-# 아니면 기존 규칙(Host의 포트, 없으면 리스너 포트). 8443 리스너(스택 내부 ZAP 대상, DSM 헤더 없음)는 https + 8443이 되어
-# 리다이렉트가 실제로 열려 있는 https://nginx-waf:8443/...을 가리킨다(443은 이 스택에 없다).
-map $http_x_forwarded_proto $zeekad_forwarded_port {
-    https   443;
-    default $forwarded_port;
+# 앱에 넘기는 X-Forwarded-Proto: 신뢰 출처가 보낸 값이 https(DSM이 TLS를 끝냄)면 https, 아니면 이 리스너의 $scheme.
+map "$zeekad_from_proxy:$http_x_forwarded_proto" $zeekad_forwarded_proto {
+    default   $scheme;
+    "1:https" https;
+}
+
+# 앱에 넘기는 X-Forwarded-Port: 신뢰 출처가 보낸 X-Forwarded-Proto가 https(DSM 경로)면 443(절대 URL에 내부 포트 8080이
+# 붙지 않게), 아니면 기존 규칙(Host의 포트, 없으면 리스너 포트). 8443 리스너(스택 내부 ZAP 대상, DSM 헤더 없음)는
+# https + 8443이 되어 리다이렉트가 실제로 열려 있는 https://nginx-waf:8443/...을 가리킨다(443은 이 스택에 없다).
+map "$zeekad_from_proxy:$http_x_forwarded_proto" $zeekad_forwarded_port {
+    "1:https" 443;
+    default   $forwarded_port;
 }
 
 # 로그인 속도 제한: POST /api/auth/login만, 클라이언트 IP당. 키가 빈 요청은 세지 않으므로 다른 요청은 영향이 없다.
