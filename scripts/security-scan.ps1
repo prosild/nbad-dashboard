@@ -1603,6 +1603,50 @@ FROM v GROUP BY m ORDER BY m
                 Assert-True ($ip16c -eq $pgIp16 -and $ip16c -ne "203.0.113.17") "[16c] 앱 직접 감사 로그 IP = verify-postgres 주소 (client_ip=$ip16c, 기대 $pgIp16)"
                 Assert-True ($nopeLoc16 -eq "http://dashboard-app:8080/login") "[16c] 앱 직접 Location은 연결 값(http, 8080) ($nopeLoc16)"
 
+                # [17] 사유·메모 길이 상한(T33): 앞뒤 공백을 뺀 500자(코드 포인트)까지. 501자면 400 JSON·한국어 문장이고 DB 함수를 부르지 않으며
+                #      감사도 남지 않는다(세 쓰기 경로). 500자는 성공. 검증 DB에 이 단계 전용 작업·인시던트·보고서·검토 요청을 넣는다(cic17-wed, analyst1 허용).
+                $job17 = 9300
+                $inc17 = "cic17-wed|192.168.10.77|originator|1763600000"
+                $ins17 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-c",
+                    ("INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count) VALUES ($job17, 'cic17-wed', 'zeekad-fusion/1', 'succeeded', now() - interval '21 minutes', now() - interval '20 minutes', NULL, 1); " +
+                     "INSERT INTO dashboard.raw_incident_queue (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role, event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name) VALUES ($job17, 'cic17-wed', 'zeekad-fusion/1', 1, '$inc17', '192.168.10.77', 'originator', now() - interval '40 minutes', now() - interval '21 minutes', 'iforest', NULL, 10, NULL); " +
+                     "INSERT INTO dashboard.raw_incident_reports (job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version, zeekad_report, zeekad_verification_passed, zeekad_verification_reason, zeekad_verification_problems, zeekad_attack_candidates, zeekad_source_run, created_at, zeekad_facts, zeekad_pseudonyms) VALUES ($job17, '$inc17', 'template', 'template.v1', 'evidence.v1', jsonb_build_object('observation_summary', 'T33 E2E'), TRUE, 'ok', '[]', '[]', 'run-9300', now() - interval '20 minutes', '[]', '{}'); " +
+                     "INSERT INTO dashboard.raw_analyst_review_queue (job_id, incident_id, queue_rank, host_ip, zeekad_role, zeekad_review_reason, requested_at) VALUES ($job17, '$inc17', 1, '192.168.10.77', 'originator', 'T33 길이 상한 E2E', now() - interval '20 minutes')"))) -IgnoreExitCode
+                $e2eLogs.Add("[17] inserted job $job17 (cic17-wed, 1 incident, report, pending review) into verify zeekad DB: exit=$($ins17.ExitCode) $($ins17.Output.Trim() -replace "`r?`n", ' ')")
+                Assert-True ($ins17.ExitCode -eq 0) "[17] 검증 DB에 길이 상한 시험 데이터 넣기"
+                $q17 = Join-Path $tmpDir "q17-analyst.cookies"
+                Assert-Status (Login-Api "analyst1" $q17) 200 "[17] analyst1 로그인"
+                $over17 = "  " + ("가" * 501) + "  "
+                $limit17 = "  " + ("가" * 500) + "  "
+                $state17 = { (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-AtF", "|", "-c",
+                    "SELECT (SELECT count(*) FROM dashboard.raw_incident_status WHERE incident_id = '$inc17') || '|' || (SELECT count(*) FROM dashboard.raw_incident_status_history WHERE incident_id = '$inc17') || '|' || COALESCE((SELECT zeekad_review_action FROM dashboard.raw_analyst_review_queue WHERE job_id = $job17 AND incident_id = '$inc17'), 'null')"))).Output.Trim() }
+                $audit17 = { Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE target_incident_id = '$inc17' AND action_type IN ('INCIDENT_STATUS_TRANSITION', 'ANALYST_REVIEW_DECISION')" }
+                $paths17 = @(
+                    @{ Label = "transition"; Url = "$baseHttps/api/incidents/$job17/rank/1/transition"; Over = @{ toStatus = "investigating"; reason = $over17 }; Ok = @{ toStatus = "investigating"; reason = $limit17 }; Msg = "상태 변경 사유는 500자까지 입력할 수 있습니다." },
+                    @{ Label = "review-decision"; Url = "$baseHttps/api/incidents/$job17/rank/1/review-decision"; Over = @{ action = "dismiss"; note = $over17 }; Ok = $null; Msg = "검토 메모는 500자까지 입력할 수 있습니다." },
+                    @{ Label = "reviews/decide"; Url = "$baseHttps/api/reviews/decide"; Over = @{ jobId = $job17; incidentId = $inc17; action = "confirm"; note = $over17 }; Ok = @{ jobId = $job17; incidentId = $inc17; action = "confirm"; note = $limit17 }; Msg = "검토 메모는 500자까지 입력할 수 있습니다." }
+                )
+                $before17 = & $state17; $auditBefore17 = & $audit17
+                foreach ($p in $paths17) {
+                    $r = Invoke-Http -Url $p.Url -Method POST -CookieJar $q17 -SaveCookies -Csrf -JsonBody $p.Over
+                    $e2eLogs.Add("[17] analyst1 POST $($p.Label) with 501 chars (+ surrounding spaces): HTTP $($r.Status) code=$($r.Json.code) message=$($r.Json.message)")
+                    Assert-ApiError $r 400 "INVALID_REQUEST" "[17] $($p.Label) 501자"
+                    Assert-True ($r.Json.message -eq $p.Msg) "[17] $($p.Label) 501자 한국어 문장" $r
+                }
+                $mid17 = & $state17; $auditMid17 = & $audit17
+                $e2eLogs.Add("[17] after 501-char requests: status rows|history rows|review action = $before17 -> $mid17; transition/review audit rows $auditBefore17 -> $auditMid17")
+                Assert-True ($before17 -eq '0|0|null' -and $mid17 -eq $before17 -and $auditMid17 -eq $auditBefore17) "[17] 501자: DB 함수 호출 없음(상태·이력·검토 그대로), 감사 없음"
+                foreach ($p in @($paths17 | Where-Object { $_.Ok })) {
+                    $r = Invoke-Http -Url $p.Url -Method POST -CookieJar $q17 -SaveCookies -Csrf -JsonBody $p.Ok
+                    $e2eLogs.Add("[17] analyst1 POST $($p.Label) with exactly 500 chars: $(Format-Resp $r 160)")
+                    Assert-Status $r 200 "[17] $($p.Label) 500자"
+                }
+                $after17 = & $state17; $auditAfter17 = & $audit17
+                $reason17 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-At", "-c",
+                    "SELECT char_length(reason) FROM dashboard.raw_incident_status_history WHERE incident_id = '$inc17' ORDER BY changed_at DESC LIMIT 1"))
+                $e2eLogs.Add("[17] after 500-char requests: $after17; audit rows $auditAfter17; stored reason length=$($reason17.Output.Trim())")
+                Assert-True ($after17 -match '^1\|[1-9]\d*\|confirm$' -and [int]$auditAfter17 -eq [int]$auditBefore17 + 2 -and $reason17.Output.Trim() -eq '500') "[17] 500자는 저장(앞뒤 공백 뺀 500자)"
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"

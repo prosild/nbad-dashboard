@@ -5,6 +5,8 @@
     [int]$WafHttpPort = 18480,
     [string]$PublicHost = "soc.example.synology.me",
     [string]$ReportDir = "build/portfolio-verify",
+    # T33 노출 확인 결과(exposure.md·exposure-values.txt)를 쓸 폴더. 주면 [T33x]를 돌린다. 실제 값이 들어가므로 커밋하지 않는 곳으로 준다.
+    [string]$ExposureDir = "",
     [switch]$SkipZap
 )
 
@@ -36,6 +38,7 @@ if ($EvidenceDir) {
 $ReportFullDir = Resolve-RepoPath $ReportDir
 New-Item -ItemType Directory -Force -Path $ReportFullDir | Out-Null
 $SnapshotFullDir = Resolve-RepoPath $SnapshotDir
+$ExposureFullDir = if ($ExposureDir) { Resolve-RepoPath $ExposureDir } else { "" }
 
 function Save-Evidence([string]$FileName, [string]$Content) {
     if ($EvidenceFullDir) {
@@ -101,7 +104,7 @@ foreach ($img in @("zeek-ad-dashboard-app:local", "zeek-ad-dashboard-waf:local",
 # --- 리허설 비밀값(실행마다 무작위, 이 프로세스 환경 변수로만 전달. Compose는 셸 환경 변수가 --env-file 값보다 우선한다) ---
 $secretNames = @("POSTGRES_SUPERUSER_PASSWORD", "ZEEKAD_API_PASSWORD", "DASHBOARD_RO_PASSWORD", "DASHBOARD_RW_PASSWORD",
     "DASHBOARD_APP_PASSWORD", "DEMO_PASSWORD", "BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD",
-    "BOOTSTRAP_ANALYST2_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD")
+    "BOOTSTRAP_ANALYST2_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD", "TRIAL_ANALYST_PASSWORD", "SANDBOX_RESET_DB_PASSWORD")
 foreach ($name in $secretNames) { Set-Item -Path "env:$name" -Value (New-RandomToken 24) }
 # demo 허용 캡처는 시드 기본값을 쓴다(셸에 남은 값이 Compose 보간을 덮지 않게 지운다).
 Remove-Item -Path "env:DEMO_CAPTURE_PATTERNS" -ErrorAction SilentlyContinue
@@ -109,6 +112,8 @@ $env:BOOTSTRAP_ADMIN_TOTP_SECRET = New-RandomBase32 32
 $env:PORTFOLIO_SNAPSHOT_DIR = $SnapshotFullDir
 $env:PORTFOLIO_HTTP_PORT = "$WafHttpPort"
 $env:PORTFOLIO_SERVER_NAME = $PublicHost
+# T33: 리허설은 초기화 주기를 1분으로 줄인다.
+$env:SANDBOX_RESET_INTERVAL_MINUTES = "1"
 
 $composeArgs = @("compose", "-p", $ProjectName, "-f", "compose.portfolio.yml", "--env-file", ".env.portfolio.example")
 $networkName = "${ProjectName}_portfolio-net"
@@ -293,6 +298,118 @@ function Find-UnmaskedIpv4($Node, [string]$Path, [System.Collections.Generic.Lis
     }
 }
 
+# T33 노출 확인(-ExposureDir를 줄 때만): 공개 실습망 캡처의 모든 인시던트에 대해 화면이 부르는 API 응답(큐·목록·상세(근거·증거·보고서·Slack·검토 포함)·
+# 담당 후보·에스컬레이션·운영 현황·현황판)을 demo(VIEWER, 마스킹)와 체험 분석가(마스킹 없음)로 받아 JSON 경로 단위로 비교한다.
+# demo에서 가려지거나 없고 분석가에서 보이는 값을 모두 모은다. exposure.md에는 필드별 개수와 값 형태만, exposure-values.txt에는 실제 값을 쓴다.
+# 두 파일은 공개 저장소에 넣지 않는다(-ExposureDir는 저장소 밖이나 커밋하지 않는 폴더로 준다).
+function Get-JsonLeaves($Node, [string]$Path, $Out) {
+    if ($null -eq $Node) { $Out[$Path] = '<null>'; return }
+    if ($Node -is [string] -or $Node -is [ValueType]) { $Out[$Path] = [string]$Node; return }
+    if ($Node -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in $Node.PSObject.Properties) { Get-JsonLeaves $p.Value "$Path.$($p.Name)" $Out }
+        return
+    }
+    if ($Node -is [System.Collections.IEnumerable]) {
+        $i = 0
+        foreach ($item in $Node) { Get-JsonLeaves $item "$Path[$i]" $Out; $i++ }
+        return
+    }
+    $Out[$Path] = [string]$Node
+}
+
+function Get-ValueShape([string]$V) {
+    if ($V -eq '<null>') { return 'null' }
+    if ($V -ceq 'True' -or $V -ceq 'False') { return '참·거짓' }
+    if ($V -match '^-?\d+(\.\d+)?([eE][-+]?\d+)?$') { return '숫자' }
+    if ($V -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}') { return '시각' }
+    $m = [regex]::Match($V, '^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$')
+    if ($m.Success) {
+        $a = [int]$m.Groups[1].Value; $b = [int]$m.Groups[2].Value
+        if ($a -eq 10) { return 'IPv4 사설 10.x' }
+        if ($a -eq 192 -and $b -eq 168) { return 'IPv4 사설 192.168.x' }
+        if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return 'IPv4 사설 172.16-31.x' }
+        return 'IPv4 공인'
+    }
+    if ($V -match '^[0-9a-fA-F:]+:[0-9a-fA-F:]*$' -and $V.Contains('::') -or $V -match '^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$') { return 'IPv6' }
+    if ($V -match '^\d{1,3}\.\d{1,3}\.\*\.\*$') { return '가려진 IPv4(앞 두 옥텟)' }
+    if ($V -match '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])') { return 'IPv4가 든 문자열' }
+    if ($V -match '(?<![\d.])\d{1,3}\.\d{1,3}\.\*\.\*') { return '가려진 IPv4가 든 문자열' }
+    if ($V -match '^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$') { return '이메일' }
+    if ($V -match '^[a-z][a-z0-9+.-]*://') { return 'URL' }
+    if ($V -match '^/\S*$') { return 'URI 경로' }
+    if ($V -match '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$') { return 'MAC' }
+    if ($V -match '^(?=.*[A-Za-z])[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\.?$') { return '호스트·도메인 이름' }
+    if ($V -match '^[A-Za-z0-9._-]{1,40}$') { return "짧은 식별자(공백 없음)" }
+    return "텍스트($([Math]::Min(9, [int][Math]::Floor($V.Length / 50)) * 50)자대)"
+}
+
+function Invoke-T33Exposure($TrialClient) {
+    Write-Host "=== [T33x] 노출 확인(demo vs $trialUser, $demoLabCapture) ==="
+    New-Item -ItemType Directory -Force -Path $ExposureFullDir | Out-Null
+    $dc = New-Client "198.51.100.240"
+    Assert-Status (Login-Api $dc "demo" $env:DEMO_PASSWORD) 200 "[T33x] demo 로그인"
+    $q = Invoke-Http -Path "/api/incidents/queue?period=all&captureId=$demoLabCapture&size=100" -Client $TrialClient
+    Assert-Status $q 200 "[T33x] $trialUser 실습망 큐"
+    $items = @($q.Json.items)
+    Assert-True ($items.Count -eq [int]$q.Json.total) "[T33x] 실습망 큐 한 쪽에 전부(total=$($q.Json.total))"
+    $reqs = [System.Collections.Generic.List[object]]::new()
+    $reqs.Add(@("queue", "/api/incidents/queue?period=all&captureId=$demoLabCapture&size=100"))
+    $reqs.Add(@("list", "/api/incidents?captureId=$demoLabCapture"))
+    $reqs.Add(@("reviews", "/api/reviews?captureId=$demoLabCapture"))
+    $reqs.Add(@("operations", "/api/operations?period=all&captureId=$demoLabCapture"))
+    $reqs.Add(@("overview", "/api/dashboard/overview?period=all&captureId=$demoLabCapture"))
+    foreach ($it in $items) {
+        $reqs.Add(@("detail", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)"))
+        $reqs.Add(@("assignees", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)/assignees"))
+    }
+    $fields = @{}   # "kind path" -> @{ Values = HashSet; Count = n; Demo = HashSet(shapes) }
+    $statusLines = [System.Collections.Generic.List[string]]::new()
+    $leafTotal = 0
+    foreach ($r in $reqs) {
+        $tRes = Invoke-Http -Path $r[1] -Client $TrialClient
+        $dRes = Invoke-Http -Path $r[1] -Client $dc
+        if ($r[0] -ne 'detail' -and $r[0] -ne 'assignees') { $statusLines.Add("$($r[0]) $($r[1]): $trialUser HTTP $($tRes.Status), demo HTTP $($dRes.Status)") }
+        Assert-Status $tRes 200 "[T33x] $trialUser $($r[1])"
+        $tLeaves = [ordered]@{}; Get-JsonLeaves $tRes.Json "" $tLeaves
+        $dLeaves = @{}
+        if ($dRes.Status -eq 200) { Get-JsonLeaves $dRes.Json "" $dLeaves }
+        $leafTotal += $tLeaves.Count
+        foreach ($k in $tLeaves.Keys) {
+            $v = $tLeaves[$k]
+            $dv = if ($dLeaves.ContainsKey($k)) { $dLeaves[$k] } else { $null }
+            if ($null -ne $dv -and $dv -ceq $v) { continue }
+            $key = "$($r[0]) $($k -replace '\[\d+\]', '[]')"
+            if (-not $fields.ContainsKey($key)) { $fields[$key] = @{ Values = [System.Collections.Generic.HashSet[string]]::new(); Count = 0; Demo = [System.Collections.Generic.HashSet[string]]::new() } }
+            [void]$fields[$key].Values.Add($v)
+            $fields[$key].Count++
+            [void]$fields[$key].Demo.Add($(if ($dRes.Status -ne 200) { "demo HTTP $($dRes.Status)" } elseif ($null -eq $dv) { '(없음)' } else { Get-ValueShape $dv }))
+        }
+    }
+    $detailStatus = "detail·assignees: $($items.Count)건씩(모두 $trialUser 200), demo assignees HTTP $((Invoke-Http -Path "/api/incidents/$($items[0].jobId)/rank/$($items[0].queueRank)/assignees" -Client $dc).Status)"
+    $md = [System.Collections.Generic.List[string]]::new()
+    $md.Add("# T33 노출 확인: $demoLabCapture, demo(VIEWER) vs $trialUser(ANALYST)")
+    $md.Add("")
+    $md.Add("리허설 스택(스냅샷 $((Get-Content (Join-Path $SnapshotFullDir 'zeekad.dump.sha256') -Raw).Substring(0, 12))…), 인시던트 $($items.Count)건, 요청 $($reqs.Count)개(두 계정 각각), $trialUser 응답 값 $($leafTotal)개.")
+    $md.Add("demo에서 가려지거나 없거나 다른 값만 센다. 값은 적지 않는다(실제 값은 exposure-values.txt, 커밋하지 않음).")
+    $md.Add("")
+    $md.Add("- 응답 상태: $($statusLines -join '; '); $detailStatus")
+    $md.Add("")
+    $md.Add("| 응답 | 필드 경로 | 다른 값 수 | 나온 횟수 | 분석가 값 형태(개수) | demo 쪽 |")
+    $md.Add("|---|---|---|---|---|---|")
+    $vals = [System.Collections.Generic.List[string]]::new()
+    foreach ($key in ($fields.Keys | Sort-Object)) {
+        $f = $fields[$key]
+        $shapes = ($f.Values | Group-Object { Get-ValueShape $_ } | Sort-Object Count -Descending | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '
+        $kind, $path = $key -split ' ', 2
+        $md.Add("| $kind | ``$path`` | $($f.Values.Count) | $($f.Count) | $shapes | $((@($f.Demo) | Sort-Object) -join ', ') |")
+        $vals.Add("## $key (distinct $($f.Values.Count))")
+        foreach ($v in ($f.Values | Sort-Object)) { $vals.Add("  $v") }
+    }
+    [IO.File]::WriteAllText((Join-Path $ExposureFullDir "exposure.md"), (($md -join "`n") + "`n"), $utf8NoBom)
+    [IO.File]::WriteAllText((Join-Path $ExposureFullDir "exposure-values.txt"), (($vals -join "`n") + "`n"), $utf8NoBom)
+    $e2eLogs.Add("[T33x] exposure check: $($items.Count) incidents, $($reqs.Count) requests per account, exposed fields=$($fields.Count) -> $ExposureFullDir (exposure.md, exposure-values.txt; values not logged)")
+}
+
 try {
     Write-Host "=== 리허설 스택 기동 ($ProjectName, http://127.0.0.1:$WafHttpPort) ==="
     [void](Invoke-NativeCapture "docker" ($composeArgs + @("down", "-v")) -IgnoreExitCode)
@@ -305,10 +422,13 @@ try {
     # 복원 로그: 오류 0건이어야 한다. 경고는 그대로 남긴다.
     $pgLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "postgres")) -IgnoreExitCode).Output
     $restoreLines = @($pgLogs -split "`r?`n" | Where-Object { $_ -match 'portfolio-(init|restore)|pg_restore|ERROR|WARNING|FATAL|init process complete' })
+    # T33: sandbox-setup 전 sandbox-reset 주기 실행의 로그인 실패(역할 없음 = 미설정)는 복원 오류가 아니다. 따로 센다.
+    $resetLoginFails = @($restoreLines | Where-Object { $_ -match 'FATAL:\s+password authentication failed for user "zeekad_sandbox_reset"' })
+    $restoreLines = @($restoreLines | Where-Object { $_ -notmatch 'FATAL:\s+password authentication failed for user "zeekad_sandbox_reset"' })
     $restoreErrors = @($restoreLines | Where-Object { $_ -match '(?i)pg_restore: error|ERROR:|FATAL:' })
     $restoreWarnings = @($restoreLines | Where-Object { $_ -match '(?i)warning' })
     Save-Evidence "restore-log.txt" ("errors=$($restoreErrors.Count) warnings=$($restoreWarnings.Count)`n" + ($restoreLines -join "`n") + "`n")
-    $e2eLogs.Add("[restore] postgres init log: errors=$($restoreErrors.Count) warnings=$($restoreWarnings.Count) done=$([bool]($restoreLines -match 'portfolio-restore: done'))$(if ($restoreWarnings.Count) { "`n    " + ($restoreWarnings -join "`n    ") })")
+    $e2eLogs.Add("[restore] postgres init log: sandbox-reset login failures before sandbox-setup (expected, not counted)=$($resetLoginFails.Count); errors=$($restoreErrors.Count) warnings=$($restoreWarnings.Count) done=$([bool]($restoreLines -match 'portfolio-restore: done'))$(if ($restoreWarnings.Count) { "`n    " + ($restoreWarnings -join "`n    ") })")
     Assert-True ($restoreErrors.Count -eq 0) "스냅샷 복원 로그 오류 0건"
     Assert-True ([bool]($restoreLines -match 'portfolio-restore: done')) "스냅샷 복원 완료 표지"
 
@@ -347,7 +467,13 @@ try {
     foreach ($svc in @("postgres", "api", "dashboard-app", "nginx-waf")) {
         Assert-True (@($states | Where-Object { $_ -eq "$svc|healthy" }).Count -eq 1) "$svc healthy"
     }
-    Assert-True ($states.Count -eq 4) "실행 중인 컨테이너 4개(demo-seed는 실행 후 제거)"
+    # T33: 초기화 서비스(헬스체크 없음)가 상주한다. 포트 없음·모든 capability 제거·권한 상승 금지·읽기 전용 루트.
+    $resetInfo = @($inspected | Where-Object { $_.Config.Labels.'com.docker.compose.service' -eq 'sandbox-reset' })
+    Assert-True ($resetInfo.Count -eq 1 -and $resetInfo[0].State.Running) "sandbox-reset 실행 중"
+    $ri = $resetInfo[0]
+    $e2eLogs.Add("[0a] sandbox-reset: running=$($ri.State.Running) user=$($ri.Config.User) CapDrop=$($ri.HostConfig.CapDrop -join ',') ReadonlyRootfs=$($ri.HostConfig.ReadonlyRootfs) SecurityOpt=$($ri.HostConfig.SecurityOpt -join ',') Memory=$($ri.HostConfig.Memory) ExposedPorts=$(@($ri.Config.ExposedPorts.PSObject.Properties.Name) -join ',') env interval=$(@($ri.Config.Env | Where-Object { $_ -like 'SANDBOX_RESET_INTERVAL_MINUTES=*' }) -join '')")
+    Assert-True ((@($ri.HostConfig.CapDrop) -contains 'ALL') -and $ri.HostConfig.ReadonlyRootfs -and (@($ri.HostConfig.SecurityOpt) -contains 'no-new-privileges:true') -and $ri.HostConfig.Memory -gt 0) "sandbox-reset cap_drop ALL·읽기 전용 루트·no-new-privileges·메모리 상한"
+    Assert-True ($states.Count -eq 5) "실행 중인 컨테이너 5개(demo-seed·sandbox-setup은 실행 후 제거)"
     $bindings = @()
     foreach ($info in $inspected) {
         $portsJson = $info.NetworkSettings.Ports
@@ -417,7 +543,8 @@ try {
     $noticeRes = Invoke-Http -Path "/api/auth/login-notice"
     $noticeText = if ($null -ne $noticeRes.Json) { [string]$noticeRes.Json.notice } else { "" }
     $noticeKeys = if ($null -ne $noticeRes.Json) { @($noticeRes.Json.PSObject.Properties.Name) } else { @() }
-    $pwShaped = [regex]::Matches($noticeText, '[A-Za-z0-9!@#$%^&*_+=-]{12,}') | ForEach-Object { $_.Value }
+    # T33: 공개 계정 이름 trial-analyst(13자)는 비밀번호 형태 검사에서 뺀다(이름 자체는 안내 문구에 있어야 한다).
+    $pwShaped = [regex]::Matches($noticeText, '[A-Za-z0-9!@#$%^&*_+=-]{12,}') | ForEach-Object { $_.Value } | Where-Object { $_ -cne 'trial-analyst' }
     $e2eLogs.Add("[1d] unauthenticated GET /api/auth/login-notice -> HTTP $($noticeRes.Status) keys=[$($noticeKeys -join ',')] notice=$noticeText password-shaped tokens=$(@($pwShaped).Count)")
     Assert-Status $noticeRes 200 "비인증 GET /api/auth/login-notice"
     Assert-True (($noticeKeys -join ',') -eq 'notice') "로그인 안내 응답은 notice 하나뿐" $noticeRes
@@ -1004,6 +1131,269 @@ try {
     Assert-ApiError $oldLogin 401 "INVALID_CREDENTIALS" "이전 demo 비밀번호 거부"
     Assert-ApiError $v1Login 403 "ACCOUNT_DISABLED" "재시드 뒤 viewer1 비활성"
 
+    # ───────── [T33] 체험용 분석가 trial-analyst·매 주기 초기화(리허설 주기 1분) ─────────
+    # 순서: 시드 확인 → 설정 전 미설정 로그 → sandbox-setup 두 번(멱등) → 권한 거부 시도 → 쓰기 흐름 → 다음 주기 초기화 확인(세 표 = 기준선,
+    #       담당 해제 이력, 감사 로그 줄지 않음, 세 표 밖 zeekad 표 그대로·2분 뒤에도) → 서비스 멈춤 → 옛 기준선 거부 → 잠금 대기·시간 초과
+    #       → 기준선 다시 만들기 거부·성공 → 잠금 없음 → 쓰기 속도 제한 → (선택) 노출 확인 → 리허설 일회용 DB의 담당 행 정리.
+    Write-Host "=== [T33] 체험용 분석가 trial-analyst·매 주기 초기화 ==="
+    $trialUser = "trial-analyst"
+    $threeTables = @("incident_status", "incident_status_history", "analyst_review")
+    $runSetup = { param([string[]]$Extra) Invoke-NativeCapture "docker" ($composeArgs + @("--profile", "seed", "run", "--rm", "sandbox-setup") + $Extra) -IgnoreExitCode }
+    $runResetOnce = { Invoke-NativeCapture "docker" ($composeArgs + @("run", "--rm", "sandbox-reset", "--once")) -IgnoreExitCode }
+    $resetLogs = { @((Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "sandbox-reset")) -IgnoreExitCode).Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset: ' }) }
+    # 세 표와 기준선 비교(기본키 기준 전체 칸 = 행 전체 EXCEPT 양방향, 행 수)
+    $diffSql = ($threeTables | ForEach-Object {
+            "SELECT '$_' || ':' || (SELECT count(*) FROM zeekad.$_) || '/' || (SELECT count(*) FROM sandbox_baseline.$_) || ':diff=' || " +
+            "((SELECT count(*) FROM (SELECT * FROM zeekad.$_ EXCEPT SELECT * FROM sandbox_baseline.$_) a) + (SELECT count(*) FROM (SELECT * FROM sandbox_baseline.$_ EXCEPT SELECT * FROM zeekad.$_) b))"
+        }) -join " UNION ALL "
+    $baselineDiff = { (Invoke-Psql "zeekad" $diffSql).Output.Trim() -replace "`r?`n", '; ' }
+    $isBaseline = { param($text) @([regex]::Matches($text, 'diff=(\d+)') | Where-Object { $_.Groups[1].Value -ne '0' }).Count -eq 0 -and @([regex]::Matches($text, ':(\d+)/(\d+):') | Where-Object { $_.Groups[1].Value -ne $_.Groups[2].Value }).Count -eq 0 }
+    # 세 표 밖 zeekad 표 전부(기준선 스키마 제외): 행 수와 내용 해시(행마다 md5 → 정렬해 md5)
+    $otherTables = @((Invoke-Psql "zeekad" ("SELECT table_schema || '.' || table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' " +
+        "AND table_schema NOT IN ('pg_catalog', 'information_schema', 'sandbox', 'sandbox_baseline') " +
+        "AND NOT (table_schema = 'zeekad' AND table_name IN ('incident_status', 'incident_status_history', 'analyst_review')) ORDER BY 1")).Output -split "`r?`n" | Where-Object { $_ })
+    $otherSql = ($otherTables | ForEach-Object { "SELECT '$_' || '=' || count(*) || ':' || md5(COALESCE(string_agg(md5(t::text), '' ORDER BY md5(t::text)), '')) FROM $_ t" }) -join " UNION ALL "
+    $otherHash = { (Invoke-Psql "zeekad" $otherSql).Output.Trim() }
+    $rwPrivSql = "SELECT 'table:' || table_schema || '.' || table_name || ':' || privilege_type FROM information_schema.role_table_grants WHERE grantee = 'dashboard_rw' " +
+        "UNION ALL SELECT 'routine:' || routine_schema || '.' || routine_name || ':' || privilege_type FROM information_schema.role_routine_grants WHERE grantee = 'dashboard_rw' " +
+        "UNION ALL SELECT 'schema:' || nspname || ':usage=' || has_schema_privilege('dashboard_rw', oid, 'USAGE') || ',create=' || has_schema_privilege('dashboard_rw', oid, 'CREATE') FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema' AND (has_schema_privilege('dashboard_rw', oid, 'USAGE') OR has_schema_privilege('dashboard_rw', oid, 'CREATE')) " +
+        "UNION ALL SELECT 'database:' || datname || ':connect=' || has_database_privilege('dashboard_rw', datname, 'CONNECT') || ',create=' || has_database_privilege('dashboard_rw', datname, 'CREATE') || ',temp=' || has_database_privilege('dashboard_rw', datname, 'TEMP') FROM pg_database WHERE datname IN ('zeekad', 'zeekad_dashboard') ORDER BY 1"
+
+    # [T33a] 시드: trial-analyst 활성 ANALYST, 허용 캡처 = demo와 같음. 숨긴 캡처 403.
+    $acct33 = (Invoke-Psql "zeekad_dashboard" "SELECT u.username, u.role, u.enabled, string_agg(a.capture_pattern, ',' ORDER BY a.capture_pattern) FROM users u LEFT JOIN user_capture_access a ON a.user_id = u.id WHERE u.username IN ('demo', '$trialUser') GROUP BY u.id ORDER BY u.username").Output.Trim()
+    $rows33 = @($acct33 -split "`r?`n")
+    $e2eLogs.Add("[T33a] public accounts (username|role|enabled|patterns): $($rows33 -join '; ')")
+    $demoPat33 = ($rows33 | Where-Object { $_ -like 'demo|*' }) -replace '^demo\|VIEWER\|t\|', ''
+    Assert-True ($rows33 -contains "$trialUser|ANALYST|t|$demoPat33" -and $demoPat33 -eq (($demoPatterns | Sort-Object) -join ',')) "[T33a] $trialUser 활성 ANALYST, 허용 캡처 = demo"
+    $tc = New-Client "198.51.100.200"
+    Assert-Status (Login-Api $tc $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T33a] $trialUser 로그인"
+    $me33 = Invoke-Http -Path "/api/auth/me" -Client $tc
+    Assert-True ($me33.Json.user.role -eq 'ANALYST' -and $me33.Json.user.maskedView -eq $false) "[T33a] $trialUser me: ANALYST·마스킹 없음" $me33
+    foreach ($h in $demoHiddenCaptures) {
+        $hq = Invoke-Http -Path "/api/incidents/queue?period=all&captureId=$h" -Client $tc
+        $e2eLogs.Add("[T33a] $trialUser hidden capture $h queue -> HTTP $($hq.Status)")
+        Assert-Status $hq 403 "[T33a] $trialUser 숨긴 캡처 $h"
+    }
+
+    # [T33b] 설정 전: sandbox-reset은 미설정 한 줄만(오류 아님). 설정 두 번(두 번째는 기준선 유지). 권한 점검.
+    $preLogs = & $resetLogs
+    $e2eLogs.Add("[T33b] sandbox-reset log before setup (last 2): $(($preLogs | Select-Object -Last 2) -join ' / ')")
+    Assert-True ($preLogs.Count -ge 1 -and @($preLogs | Where-Object { $_ -match ' ERROR ' }).Count -eq 0 -and @($preLogs | Where-Object { $_ -match 'NOT_CONFIGURED' }).Count -ge 1) "[T33b] 설정 전 sandbox-reset은 NOT_CONFIGURED만 남김"
+    $rwBefore = (Invoke-Psql "zeekad" $rwPrivSql).Output.Trim()
+    $setup1 = & $runSetup @()
+    $setup2 = & $runSetup @()
+    Save-Evidence "t33-sandbox-setup.txt" "run1 exit=$($setup1.ExitCode)`n$($setup1.Output)`n--- run2 ---`nexit=$($setup2.ExitCode)`n$($setup2.Output)"
+    $e2eLogs.Add("[T33b] sandbox-setup run1 exit=$($setup1.ExitCode): $((@($setup1.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|privileges|RESULT)' })) -join ' / ')`n       run2 exit=$($setup2.ExitCode): $((@($setup2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|RESULT)' })) -join ' / ')")
+    Assert-True ($setup1.ExitCode -eq 0 -and $setup1.Output -match 'baseline created' -and $setup1.Output -match 'RESULT: OK') "[T33b] sandbox-setup 1차(기준선 생성)`n$($setup1.Output)"
+    Assert-True ($setup2.ExitCode -eq 0 -and $setup2.Output -match 'baseline kept' -and $setup2.Output -match 'RESULT: OK') "[T33b] sandbox-setup 2차(기준선 유지, 멱등)`n$($setup2.Output)"
+    $rwAfter = (Invoke-Psql "zeekad" $rwPrivSql).Output.Trim()
+    $fnPriv = (Invoke-Psql "zeekad" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_pipeline()', 'EXECUTE') || ' dashboard_rw_exec=' || has_function_privilege('dashboard_rw', 'sandbox.reset_pipeline()', 'EXECUTE') || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_pipeline()'::regprocedure AND x.grantee = 0) || ' secdef=' || (SELECT prosecdef FROM pg_proc WHERE oid = 'sandbox.reset_pipeline()'::regprocedure) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'sandbox.reset_pipeline()'::regprocedure)").Output.Trim()
+    $fnPrivD = (Invoke-Psql "zeekad_dashboard" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_assignments()', 'EXECUTE') || ' app_owner=' || (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'sandbox.reset_assignments()'::regprocedure) || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_assignments()'::regprocedure AND x.grantee = 0) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'sandbox.reset_assignments()'::regprocedure)").Output.Trim()
+    Save-Evidence "t33-privileges.txt" "# dashboard_rw privileges before sandbox-setup`n$rwBefore`n`n# after`n$rwAfter`n`n# functions`nzeekad: $fnPriv`nzeekad_dashboard: $fnPrivD`n"
+    $e2eLogs.Add("[T33b] dashboard_rw privileges unchanged=$($rwBefore -eq $rwAfter) (rows=$(@($rwAfter -split "`r?`n").Count)); zeekad: $fnPriv; zeekad_dashboard: $fnPrivD")
+    Assert-True ($rwBefore -eq $rwAfter -and $rwBefore.Length -gt 0) "[T33b] dashboard_rw 권한 목록이 설정 전과 같다"
+    Assert-True ($fnPriv -match 'reset_role_exec=true dashboard_rw_exec=false public_exec=false secdef=true config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_pipeline: 전용 역할만 EXECUTE, SECURITY DEFINER, search_path 고정 ($fnPriv)"
+    Assert-True ($fnPrivD -match 'reset_role_exec=true app_owner=dashboard_app public_exec=false config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_assignments: 전용 역할만 EXECUTE ($fnPrivD)"
+
+    # [T33c] 초기화 전용 계정으로 실제 시도: 세 표 SELECT, 기준선 UPDATE, sandbox·public CREATE, 앱 DB 담당 표 SELECT는 모두 거부
+    $denyProbes = @(
+        @("zeekad", "SELECT count(*) FROM zeekad.incident_status"),
+        @("zeekad", "SELECT count(*) FROM zeekad.incident_status_history"),
+        @("zeekad", "SELECT count(*) FROM zeekad.analyst_review"),
+        @("zeekad", "UPDATE sandbox_baseline.incident_status SET status = status"),
+        @("zeekad", "UPDATE sandbox_baseline.marker SET fingerprint = 'x'"),
+        @("zeekad", "CREATE TABLE sandbox.t33_probe (id int)"),
+        @("zeekad", "CREATE TABLE public.t33_probe (id int)"),
+        @("zeekad", "CREATE TABLE sandbox_baseline.t33_probe (id int)"),
+        @("zeekad", "SELECT dashboard.transition_incident(1, 'x', 'investigating', 'x', 'x')"),
+        @("zeekad_dashboard", "SELECT count(*) FROM public.incident_assignments"),
+        @("zeekad_dashboard", "SELECT count(*) FROM public.audit_logs"),
+        @("zeekad_dashboard", "CREATE TABLE public.t33_probe (id int)"),
+        @("zeekad_dashboard", "CREATE TABLE sandbox.t33_probe (id int)")
+    )
+    $denyLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in $denyProbes) {
+        $r = Invoke-Psql $p[0] $p[1] -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
+        $err = [regex]::Match($r.Output, 'ERROR:[^\r\n]*').Value.Trim()
+        $denyLines.Add("$($p[0]): $($p[1]) -> exit=$($r.ExitCode) $err")
+        Assert-True ($r.ExitCode -ne 0 -and $err -match 'permission denied') "[T33c] zeekad_sandbox_reset 거부: $($p[0]) $($p[1]) ($err)"
+    }
+    $okCall = Invoke-Psql "zeekad" "SELECT count(*) FROM sandbox.reset_pipeline()" -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
+    $denyLines.Add("(대조) zeekad: SELECT count(*) FROM sandbox.reset_pipeline() -> exit=$($okCall.ExitCode) $($okCall.Output.Trim())")
+    Assert-True ($okCall.ExitCode -eq 0) "[T33c] zeekad_sandbox_reset은 초기화 함수는 부른다"
+    Save-Evidence "t33-deny-probes.txt" (($denyLines -join "`n") + "`n")
+    $e2eLogs.Add("[T33c] zeekad_sandbox_reset attempts:`n       $($denyLines -join "`n       ")")
+
+    # [T33d] 쓰기 전 기록
+    $other0 = & $otherHash
+    $other0b = & $otherHash
+    Assert-True ($other0 -eq $other0b) "[T33d] 세 표 밖 zeekad 표 해시를 두 번 재면 같다(측정이 안정적)"
+    $audit0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs").Output.Trim()
+    $ahist0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignment_history").Output.Trim()
+    Assert-True (& $isBaseline (& $baselineDiff)) "[T33d] 쓰기 전 세 표 = 기준선"
+    $open33 = @((Invoke-Psql "zeekad" "SELECT lq.job_id || '|' || lq.queue_rank || '|' || lq.incident_id FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = '$demoLabCapture' AND NOT EXISTS (SELECT 1 FROM zeekad.incident_status s WHERE s.incident_id = lq.incident_id) ORDER BY lq.job_id, lq.queue_rank LIMIT 6").Output -split "`r?`n" | Where-Object { $_ })
+    $pend33 = @((Invoke-Psql "zeekad" "SELECT r.job_id || '|' || r.incident_id FROM zeekad.analyst_review r WHERE r.action IS NULL AND split_part(r.incident_id, '|', 1) = '$demoLabCapture' ORDER BY r.job_id, r.incident_id LIMIT 2").Output -split "`r?`n" | Where-Object { $_ })
+    Assert-True ($open33.Count -ge 6 -and $pend33.Count -ge 2) "[T33d] 실습망 공개 캡처에 신규 인시던트 6건·미결정 검토 2건 (open=$($open33.Count), pending=$($pend33.Count))"
+    $inc = @($open33 | ForEach-Object { $p = $_ -split '\|', 3; [pscustomobject]@{ Job = $p[0]; Rank = $p[1]; Id = $p[2] } })
+    $rev = @($pend33 | ForEach-Object { $p = $_ -split '\|', 2; [pscustomobject]@{ Job = [long]$p[0]; Id = $p[1] } })
+
+    # [T33e] trial-analyst 쓰기 흐름: open → investigating(담당 자동 지정) → closed, 검토 결정 하나, 담당 지정 하나
+    #        쓰기와 바로 뒤 확인이 주기(매분 0초) 초기화와 겹치지 않게 분의 3~15초에 시작한다.
+    while ((Get-Date).ToUniversalTime().Second -notin 3..15) { Start-Sleep -Milliseconds 500 }
+    $w1 = Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition" -Method POST -Client $tc -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 조사 시작" }
+    $w2 = Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition" -Method POST -Client $tc -Csrf -JsonBody @{ toStatus = "closed"; resolution = "benign"; reason = "T33 리허설: 정상으로 종결" }
+    $w3 = Invoke-Http -Path "/api/reviews/decide" -Method POST -Client $tc -Csrf -JsonBody @{ jobId = $rev[0].Job; incidentId = $rev[0].Id; action = "confirm"; note = "T33 리허설: 승인" }
+    $w4 = Invoke-Http -Path "/api/incidents/$($inc[1].Job)/rank/$($inc[1].Rank)/assignment" -Method POST -Client $tc -Csrf -JsonBody @{ assignee = $trialUser; expected = $null }
+    foreach ($w in @(@($w1, "open -> investigating"), @($w2, "investigating -> closed"), @($w3, "review decide confirm"), @($w4, "assignment"))) {
+        $e2eLogs.Add("[T33e] $trialUser $($w[1]): $(Format-Resp $w[0] 200)")
+        Assert-Status $w[0] 200 "[T33e] $trialUser $($w[1])"
+    }
+    $writeAt = Get-Date
+    $after33 = & $baselineDiff
+    $assigned33 = (Invoke-Psql "zeekad_dashboard" "SELECT a.incident_id IN ('$($inc[0].Id)', '$($inc[1].Id)') || ':' || u.username || ':' || h.reason FROM incident_assignments a JOIN users u ON u.id = a.assignee_user_id JOIN LATERAL (SELECT reason FROM incident_assignment_history x WHERE x.incident_id = a.incident_id ORDER BY id DESC LIMIT 1) h ON TRUE ORDER BY 1").Output.Trim() -replace "`r?`n", '; '
+    $other1 = & $otherHash
+    $e2eLogs.Add("[T33e] after writes: three tables vs baseline: $after33; current assignments (target|assignee|last reason): $assigned33; other zeekad tables unchanged=$($other0 -eq $other1) (tables=$($otherTables.Count))")
+    Assert-True (-not (& $isBaseline $after33)) "[T33e] 쓰기 뒤 세 표가 기준선과 다르다"
+    Assert-True ($assigned33 -eq "true:${trialUser}:auto_on_start; true:${trialUser}:manual") "[T33e] 조사 시작 자동 담당·직접 담당 ($assigned33)"
+    $otherChanged = { param($a, $b) @(Compare-Object @($a -split "`r?`n") @($b -split "`r?`n") | ForEach-Object { "$($_.SideIndicator) $($_.InputObject)" }) -join '; ' }
+    if ($other0 -ne $other1) { $e2eLogs.Add("[T33e] other zeekad tables changed: $(& $otherChanged $other0 $other1)") }
+    Assert-True ($other0 -eq $other1) "[T33e] 쓰기 직후 세 표 밖 zeekad 표(행 수·내용 해시) 그대로"
+
+    # [T33f] 다음 주기(1분) 초기화 뒤: 세 표 = 기준선, 담당 해제 + 이력 sandbox-reset, 감사 로그 줄지 않음. 검토 결정 2분 뒤 세 표 밖 표 그대로.
+    $deadline = $writeAt.AddSeconds(150)
+    while ((Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+    $logs33 = & $resetLogs
+    $okLines = @($logs33 | Where-Object { $_ -match ' sandbox-reset: OK ' })
+    $changedLine = @($okLines | Where-Object { $_ -match '\(-[1-9]|\+[1-9]|~[1-9]|released=[1-9]' }) | Select-Object -Last 1
+    $final33 = & $baselineDiff
+    $other2 = & $otherHash
+    $audit1 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs").Output.Trim()
+    $assignNow = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FILTER (WHERE assignee_user_id IS NOT NULL) || '/' || count(*) FROM incident_assignments").Output.Trim()
+    $resetHist = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || count(*) FILTER (WHERE to_user_id IS NULL AND reason = 'manual') FROM incident_assignment_history WHERE actor_username = 'sandbox-reset'").Output.Trim()
+    $ahist1 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignment_history").Output.Trim()
+    $e2eLogs.Add("[T33f] reset log line with changes: $changedLine`n       ERROR lines=$(@($logs33 | Where-Object { $_ -match ' ERROR ' }).Count); OK lines=$($okLines.Count)`n       three tables vs baseline after reset: $final33`n       assignments (with assignee/all rows)=$assignNow; sandbox-reset history rows (all:released)=$resetHist; assignment history $ahist0 -> $ahist1; audit_logs $audit0 -> $audit1`n       other zeekad tables unchanged 150 s after the review decision=$($other0 -eq $other2)")
+    Save-Evidence "t33-other-tables.txt" "# 세 표 밖 zeekad 표(행 수:내용 해시). before writes / right after / 150 s after`n$other0`n`n$(if ($other1 -eq $other0) { '(same)' } else { $other1 })`n`n$(if ($other2 -eq $other0) { '(same)' } else { $other2 })`n"
+    Assert-True ([bool]$changedLine -and @($logs33 | Where-Object { $_ -match ' ERROR ' }).Count -eq 0) "[T33f] sandbox-reset 로그에 바뀐 행 수가 있는 OK 줄, ERROR 없음"
+    Assert-True (& $isBaseline $final33) "[T33f] 초기화 뒤 세 표 = 기준선 ($final33)"
+    Assert-True ($assignNow -match '^0/') "[T33f] 담당 해제 ($assignNow)"
+    Assert-True ($resetHist -eq '2:2' -and $ahist1 -eq $ahist0 + 4) "[T33f] 담당 이력에 sandbox-reset 해제 2행(자동·직접 지정 2행 + 해제 2행) ($resetHist, $ahist0 -> $ahist1)"
+    Assert-True ($audit1 -ge $audit0 + 4) "[T33f] 감사 로그는 줄지 않음($audit0 -> $audit1)"
+    if ($other0 -ne $other2) { $e2eLogs.Add("[T33f] other zeekad tables changed: $(& $otherChanged $other0 $other2)") }
+    Assert-True ($other0 -eq $other2) "[T33f] 검토 결정 뒤 2분 넘게 세 표 밖 zeekad 표 그대로(후속 쓰기 없음)"
+
+    # 이후 단계는 주기 실행과 겹치지 않게 상주 서비스를 멈추고 한 번 실행(run --rm sandbox-reset --once)으로 확인한다.
+    [void](Invoke-NativeCapture "docker" ($composeArgs + @("stop", "sandbox-reset")) -IgnoreExitCode)
+
+    # [T33g] 옛 기준선(표지 어긋남)이면 아무것도 바꾸지 않고 오류
+    [void](Invoke-Psql "zeekad" "UPDATE sandbox_baseline.marker SET fingerprint = fingerprint || '-t33-tampered'")
+    $tg = New-Client "198.51.100.201"
+    Assert-Status (Login-Api $tg $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T33g] $trialUser 로그인"
+    $g1 = Invoke-Http -Path "/api/incidents/$($inc[2].Job)/rank/$($inc[2].Rank)/transition" -Method POST -Client $tg -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 옛 기준선" }
+    Assert-Status $g1 200 "[T33g] $trialUser 상태 변경"
+    $gBefore = & $baselineDiff
+    $gRun = & $runResetOnce
+    $gAfter = & $baselineDiff
+    [void](Invoke-Psql "zeekad" "UPDATE sandbox_baseline.marker SET fingerprint = replace(fingerprint, '-t33-tampered', '')")
+    $gRun2 = & $runResetOnce
+    $gFinal = & $baselineDiff
+    $e2eLogs.Add("[T33g] tampered marker: reset --once exit=$($gRun.ExitCode) $(($gRun.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')`n       three tables before=$gBefore after=$gAfter`n       restored marker: exit=$($gRun2.ExitCode) $(($gRun2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' '); now $gFinal")
+    Assert-True ($gRun.ExitCode -ne 0 -and $gRun.Output -match 'ERROR pipeline\[ERROR\].*does not match the current snapshot' -and $gBefore -eq $gAfter -and -not (& $isBaseline $gAfter)) "[T33g] 옛 기준선이면 초기화 거부·아무것도 안 바뀜"
+    Assert-True ($gRun2.ExitCode -eq 0 -and (& $isBaseline $gFinal)) "[T33g] 표지를 되돌리면 초기화되어 기준선과 일치"
+
+    # [T33h] 초기화 중 쓰기: 다른 연결이 세 표 중 하나를 잡고 있으면 기다렸다가 끝내고(4초 잡음), 잠금 시간(5초)을 넘기면(15초 잡음) 아무것도 바꾸지 않고 오류
+    $pgC = Get-ServiceContainer "postgres"
+    $holdJob = { param($cid, $secs) & docker exec $cid psql -U postgres -d zeekad -v ON_ERROR_STOP=1 -c "BEGIN; LOCK TABLE zeekad.analyst_review IN ROW EXCLUSIVE MODE; SELECT pg_sleep($secs); COMMIT;" 2>&1 | Out-String }
+    $waitHeld = {
+        for ($k = 0; $k -lt 60; $k++) {
+            $n = (Invoke-Psql "zeekad" "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'analyst_review' AND l.mode = 'RowExclusiveLock' AND l.granted AND l.pid <> pg_backend_pid()").Output.Trim()
+            if ($n -ne '0') { return $true }
+            Start-Sleep -Milliseconds 250
+        }
+        return $false
+    }
+    $h1 = Invoke-Http -Path "/api/incidents/$($inc[3].Job)/rank/$($inc[3].Rank)/transition" -Method POST -Client $tg -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 잠금 대기" }
+    Assert-Status $h1 200 "[T33h] $trialUser 상태 변경(대기 시험)"
+    $job1 = Start-Job -ScriptBlock $holdJob -ArgumentList $pgC, 4
+    Assert-True (& $waitHeld) "[T33h] 다른 연결이 analyst_review 잠금을 잡음(4초)"
+    $sw = [Diagnostics.Stopwatch]::StartNew(); $hRun1 = & $runResetOnce; $sw.Stop()
+    $waitMs = $sw.ElapsedMilliseconds
+    [void](Wait-Job $job1 -Timeout 30); Remove-Job $job1 -Force
+    $hAfter1 = & $baselineDiff
+    $h2 = Invoke-Http -Path "/api/incidents/$($inc[4].Job)/rank/$($inc[4].Rank)/transition" -Method POST -Client $tg -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 잠금 시간 초과" }
+    Assert-Status $h2 200 "[T33h] $trialUser 상태 변경(시간 초과 시험)"
+    $hBefore2 = & $baselineDiff
+    $job2 = Start-Job -ScriptBlock $holdJob -ArgumentList $pgC, 15
+    Assert-True (& $waitHeld) "[T33h] 다른 연결이 analyst_review 잠금을 잡음(15초)"
+    $hRun2 = & $runResetOnce
+    $hAfter2 = & $baselineDiff
+    [void](Wait-Job $job2 -Timeout 30); Remove-Job $job2 -Force
+    $hRun3 = & $runResetOnce
+    $hFinal = & $baselineDiff
+    $e2eLogs.Add("[T33h] other session held zeekad.analyst_review (ROW EXCLUSIVE) 4 s: reset --once waited $waitMs ms (incl. container start) exit=$($hRun1.ExitCode) $(($hRun1.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' '); after: $hAfter1`n       held 15 s: exit=$($hRun2.ExitCode) $(($hRun2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')`n       three tables before=$hBefore2 after=$hAfter2`n       next run exit=$($hRun3.ExitCode); now $hFinal")
+    Assert-True ($hRun1.ExitCode -eq 0 -and $waitMs -ge 2000 -and (& $isBaseline $hAfter1)) "[T33h] 잠금이 풀리길 기다렸다가 초기화 완료($waitMs ms)"
+    Assert-True ($hRun2.ExitCode -ne 0 -and $hRun2.Output -match 'lock timeout' -and $hBefore2 -eq $hAfter2 -and -not (& $isBaseline $hAfter2)) "[T33h] 잠금 시간 초과면 오류·아무것도 안 바뀜"
+    Assert-True ($hRun3.ExitCode -eq 0 -and (& $isBaseline $hFinal)) "[T33h] 다음 초기화에서 기준선과 일치"
+
+    # [T33i] 기준선 다시 만들기: 체험 계정 흔적이 있으면 멈춤, 없으면(초기화 뒤·서비스 정지) 다시 만든다
+    $i1 = Invoke-Http -Path "/api/incidents/$($inc[5].Job)/rank/$($inc[5].Rank)/transition" -Method POST -Client $tg -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 기준선 다시 만들기 거부" }
+    Assert-Status $i1 200 "[T33i] $trialUser 상태 변경"
+    $markerBefore = (Invoke-Psql "zeekad" "SELECT created_at FROM sandbox_baseline.marker").Output.Trim()
+    $rb1 = & $runSetup @("--rebuild-baseline")
+    $markerMid = (Invoke-Psql "zeekad" "SELECT created_at FROM sandbox_baseline.marker").Output.Trim()
+    $iReset = & $runResetOnce
+    $rb2 = & $runSetup @("--rebuild-baseline")
+    $markerAfter = (Invoke-Psql "zeekad" "SELECT created_at FROM sandbox_baseline.marker").Output.Trim()
+    $iFinal = & $baselineDiff
+    Save-Evidence "t33-rebuild.txt" "rebuild with traces exit=$($rb1.ExitCode)`n$($rb1.Output)`n--- reset ---`n$($iReset.Output)`n--- rebuild after reset exit=$($rb2.ExitCode) ---`n$($rb2.Output)"
+    $e2eLogs.Add("[T33i] rebuild with trial traces: exit=$($rb1.ExitCode) $((@($rb1.Output -split "`r?`n" | Where-Object { $_ -match 'traces|REFUSED' })) -join ' / '); marker created_at kept=$($markerBefore -eq $markerMid)`n       after reset: rebuild exit=$($rb2.ExitCode) $((@($rb2.Output -split "`r?`n" | Where-Object { $_ -match 'baseline rebuilt|RESULT' })) -join ' / '); marker changed=$($markerBefore -ne $markerAfter); now $iFinal")
+    Assert-True ($rb1.ExitCode -ne 0 -and $rb1.Output -match 'REFUSED' -and $markerBefore -eq $markerMid) "[T33i] 체험 계정 흔적이 있으면 기준선 다시 만들기 거부"
+    Assert-True ($iReset.ExitCode -eq 0 -and $rb2.ExitCode -eq 0 -and $rb2.Output -match 'baseline rebuilt' -and $markerBefore -ne $markerAfter -and (& $isBaseline $iFinal)) "[T33i] 흔적이 없으면 기준선 다시 만들기"
+
+    # [T33j] trial-analyst 잠금 없음(요청마다 다른 클라이언트 IP, 로그인 속도 제한 회피)
+    $auditBase33 = [long](Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(MAX(id),0) FROM audit_logs").Output.Trim()
+    $codes33 = @()
+    for ($k = 1; $k -le 6; $k++) { $codes33 += (Login-Api (New-Client "198.51.100.$(210 + $k)") $trialUser "wrong-password-t33-$k").Status }
+    $ok33 = Login-Api (New-Client "198.51.100.220") $trialUser $env:TRIAL_ANALYST_PASSWORD
+    $state33 = (Invoke-Psql "zeekad_dashboard" "SELECT failed_attempts, locked_until IS NULL FROM users WHERE username = '$trialUser'").Output.Trim()
+    $aud33 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*), count(*) FILTER (WHERE (detail_json::jsonb ->> 'lockoutExempt') = 'true') FROM audit_logs WHERE id > $auditBase33 AND actor_username = '$trialUser' GROUP BY action_type ORDER BY action_type").Output.Trim()
+    $e2eLogs.Add("[T33j] $trialUser wrong x6 -> [$($codes33 -join ', ')]; correct -> HTTP $($ok33.Status); failed_attempts|unlocked=$state33; audit: $($aud33 -replace "`r?`n", '; ')")
+    Assert-True (($codes33 -join ',') -eq '401,401,401,401,401,401' -and $ok33.Status -eq 200 -and $state33 -eq '0|t') "[T33j] $trialUser 6번 틀려도 잠기지 않음"
+    Assert-True ($aud33 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $aud33 -notmatch 'ACCOUNT_LOCKED') "[T33j] 실패 감사 6건(lockoutExempt), 잠금 감사 없음"
+
+    # [T33k] 쓰기 속도 제한: 네 경로 각각 새 클라이언트 IP에서 12번(DB를 바꾸지 않는 입력) → 429. GET은 제한 밖.
+    $rl = New-Client "198.51.100.230"
+    Assert-Status (Login-Api $rl $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T33k] $trialUser 로그인"
+    $rlPaths = @(
+        @{ Label = "transition"; Ip = "198.51.100.231"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition"; Body = @{ toStatus = "rate-limit-probe"; reason = "x" } },
+        @{ Label = "assignment"; Ip = "198.51.100.232"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/assignment"; Body = @{ assignee = $trialUser; expected = "rate-limit-probe-nobody" } },
+        @{ Label = "review-decision"; Ip = "198.51.100.233"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/review-decision"; Body = @{ action = "rate-limit-probe" } },
+        @{ Label = "reviews/decide"; Ip = "198.51.100.234"; Path = "/api/reviews/decide"; Body = @{ jobId = $rev[1].Job; incidentId = $rev[1].Id; action = "rate-limit-probe" } }
+    )
+    $rlBefore = & $baselineDiff
+    foreach ($p in $rlPaths) {
+        $st = @()
+        for ($k = 1; $k -le 12; $k++) { $st += (Invoke-Http -Path $p.Path -Method POST -Client $rl -Xff $p.Ip -Csrf -JsonBody $p.Body).Status }
+        $f429 = [Array]::IndexOf($st, 429) + 1
+        $e2eLogs.Add("[T33k] 12 x POST $($p.Label) from $($p.Ip) -> [$($st -join ', ')] (first 429 at #$f429)")
+        Assert-True ($f429 -ge 2 -and $f429 -le 8 -and @($st | Where-Object { $_ -notin @(400, 404, 409, 429) }).Count -eq 0) "[T33k] 쓰기 경로 $($p.Label) 한도 초과 시 429"
+    }
+    $gets = @(); for ($k = 1; $k -le 12; $k++) { $gets += (Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)" -Client $rl -Xff "198.51.100.231").Status }
+    $e2eLogs.Add("[T33k] (대조) 같은 IP 198.51.100.231 GET 상세 12번 -> [$($gets -join ', ')]; three tables unchanged by probes=$($rlBefore -eq (& $baselineDiff))")
+    Assert-True (@($gets | Where-Object { $_ -ne 200 }).Count -eq 0) "[T33k] GET은 쓰기 제한 밖"
+
+    # [T33l] 로그인 안내 문구: 두 계정과 정각 초기화 안내, 비밀번호 없음
+    $notice33 = (Invoke-Http -Path "/api/auth/login-notice").Json.notice
+    $e2eLogs.Add("[T33l] login notice: $notice33")
+    Assert-True ($notice33 -match 'demo' -and $notice33 -match [regex]::Escape($trialUser) -and $notice33 -match '매시 정각에 되돌립니다' -and -not $notice33.Contains($env:DEMO_PASSWORD) -and -not $notice33.Contains($env:TRIAL_ANALYST_PASSWORD)) "[T33l] 로그인 안내에 두 계정·정각 초기화, 비밀번호 없음"
+
+    # [T33x] (선택) 노출 확인: 공개 실습망 캡처의 모든 인시던트에 대해 화면이 부르는 API 응답을 demo와 trial-analyst로 받아 JSON 경로 단위로 비교
+    if ($ExposureFullDir) { Invoke-T33Exposure $tc }
+
+    # 리허설 일회용 DB 정리: 뒤 단계([T25c]는 모든 인시던트 담당을 ON CONFLICT DO NOTHING으로 넣는다)가 영향받지 않게 T33이 만든 담당 행(해제된 NULL 행)을 지운다.
+    # 담당 이력(추가만)은 그대로 둔다. 초기화 서비스는 멈춘 채 둔다(뒤 단계의 리허설 쓰기를 되돌리지 않게).
+    $cleanup33 = (Invoke-Psql "zeekad_dashboard" "DELETE FROM incident_assignments WHERE assignee_user_id IS NULL AND assigned_by = 'sandbox-reset'").Output.Trim()
+    $e2eLogs.Add("[T33] rehearsal cleanup: $cleanup33 (released rows removed from the disposable rehearsal DB; sandbox-reset stays stopped for later steps)")
+
     Write-Host "=== [T25] 담당·착수 지연·처리 시간(V2 적용·독립 SQL·모든 인시던트 담당 성능·T24 이미지 되돌리기) ==="
     $t25 = New-Client "198.51.100.95"
     Assert-Status (Login-Api $t25 "demo" $env:DEMO_PASSWORD) 200 "[T25] demo 로그인"
@@ -1398,7 +1788,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $state29 = (Invoke-Psql "zeekad_dashboard" "SELECT failed_attempts, locked_until IS NULL FROM users WHERE username = 'demo'").Output.Trim()
     $audit29 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type, count(*), count(*) FILTER (WHERE (detail_json::jsonb ->> 'lockoutExempt') = 'true') FROM audit_logs WHERE id > $auditBase29 AND actor_username = 'demo' GROUP BY action_type ORDER BY action_type").Output.Trim()
     $e2eLogs.Add("[T29d] app env DASHBOARD_LOCKOUT_EXEMPT_USERNAMES='$exempt29' DASHBOARD_MAX_FAILED_ATTEMPTS='$maxFail29'; same client IP $lockIp29, 7.5 s apart: [$($codes29 -join ', ')]; demo failed_attempts|locked_until IS NULL after=$state29`n       final correct password: $(Format-Resp $final29 160)`n       audit since base (action|count|lockoutExempt=true): $($audit29 -replace "`r?`n", '; ')")
-    Assert-True ($exempt29 -eq 'demo') "[T29d] 공개 스택 앱 설정 DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo"
+    Assert-True ($exempt29 -eq 'demo,trial-analyst') "[T29d] 공개 스택 앱 설정 DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo,trial-analyst"
     Assert-Status $final29 200 "[T29d] 틀린 비밀번호 6번 뒤 demo 정상 로그인"
     Assert-True ($audit29 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $audit29 -notmatch 'ACCOUNT_LOCKED') "[T29d] LOGIN_FAILURE 6건(모두 lockoutExempt), ACCOUNT_LOCKED 0건"
     Assert-True ($state29 -eq '0|t') "[T29d] demo failed_attempts 0·locked_until 없음"
@@ -1525,7 +1915,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
 
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T25]·[T27]·[T29]·[T32] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T29]·[T32] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="
@@ -1582,7 +1972,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Write-Host "=== 리허설 스택 정리 (down -v) ==="
     [void](Invoke-NativeCapture "docker" ($composeArgs + @("down", "-v")) -IgnoreExitCode)
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmpDir
-    foreach ($name in $secretNames + @("BOOTSTRAP_ADMIN_TOTP_SECRET")) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+    foreach ($name in $secretNames + @("BOOTSTRAP_ADMIN_TOTP_SECRET", "SANDBOX_RESET_INTERVAL_MINUTES")) { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
 }
 
 if ($failed) { exit 1 }
