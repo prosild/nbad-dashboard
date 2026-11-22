@@ -4,14 +4,14 @@
 
 ## 최근 검증
 
-주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 실행은 `T31`(2026-11-22, commit `4d8674a`)입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
+주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 실행은 `T32`(2026-11-22, commit `1774200`, 리허설은 스크립트만 고친 `9795ee7`)입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
 
 | 검증 | 다시 돌리는 방법 | 결과 |
 |---|---|---|
-| 프론트엔드 타입 검사·Vitest·빌드, Gradle `check`(단위·통합·정적 보안 시험) | `npm --prefix frontend run typecheck`, `run test`, `run build`, `.\gradlew.bat check --rerun-tasks --no-daemon` | 통과 |
-| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1` (WAF Dockerfile이 바뀌어 Trivy 포함) | 종료 코드 `0`, XML 본문 경로 `[15]` 포함, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
-| 공개 스택 리허설(스냅샷 복원, 시드, E2E `[0]`~`[8]`·`[T25]`·`[T27]`·`[T29]`, ZAP) | `scripts/portfolio-verify.ps1` | 통과, ZAP High `0`·Medium `0`·Low `0`·Informational `4` |
-| 공개 주소 확인(`demo` 로그인·마스킹·허용 캡처·숨김 캡처 `403`·보안 헤더·쿠키 속성 등) | [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트(WAF 차단·깨진 XML 본문 `400` 포함) | PASS `134`, FAIL `0` |
+| 프론트엔드 타입 검사·Vitest·빌드, Gradle `check`(단위·통합·정적 보안 시험) | `npm --prefix frontend run typecheck`, `run test`, `run build`, `.\gradlew.bat check --rerun-tasks --no-daemon` | Gradle `check` 통과(`T32`, 시험 177개). 프론트엔드는 바뀌지 않아 `T32`에서 다시 돌리지 않았습니다(마지막 통과 `T31`) |
+| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1 -SkipTrivy` (의존성·Dockerfile 변경 없음) | 종료 코드 `0`, 전달 헤더 신뢰 `[16]` 포함, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
+| 공개 스택 리허설(스냅샷 복원, 시드, E2E `[0]`~`[8]`·`[T25]`·`[T27]`·`[T29]`·`[T32]`, ZAP) | `scripts/portfolio-verify.ps1` | 통과, ZAP High `0`·Medium `0`·Low `0`·Informational `4` |
+| 공개 주소 확인(`demo` 로그인·마스킹·허용 캡처·숨김 캡처 `403`·보안 헤더·쿠키 속성 등) | [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트(WAF 차단·깨진 XML 본문 `400`·전달 헤더 신뢰 포함) | PASS `139`, FAIL `0` |
 
 Trivy는 의존성이나 Dockerfile이 바뀔 때만 돌립니다. 마지막 실행은 `T31`(2026-11-22)입니다.
 
