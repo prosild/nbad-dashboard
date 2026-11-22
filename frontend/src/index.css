@@ -96,3 +96,12 @@
     @apply text-xs font-semibold text-slate-300;
   }
 }
+
+/* T34 탐지 추이 막대 링크: 키보드 포커스·마우스 올림 표시(누르는 영역은 첫 투명 사각형) */
+a[data-bucket-link]:hover > rect:first-of-type {
+  fill: rgba(148, 163, 184, 0.08);
+}
+a[data-bucket-link]:focus-visible > rect:first-of-type {
+  stroke: #22d3ee;
+  stroke-width: 2;
+}

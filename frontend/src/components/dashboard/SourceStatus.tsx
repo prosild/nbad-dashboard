@@ -134,11 +134,12 @@ function jobTitle(job: JobRef | null): string | undefined {
 export function SourceStatusList({
   overview,
   shortNames,
-  period,
+  periodQuery,
 }: {
   overview: DashboardOverviewResponse;
   shortNames: Map<string, string>;
-  period: string;
+  /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
+  periodQuery: string;
 }) {
   const { sensors, captures, anchor, snapshot, staleAfterSeconds, downAfterSeconds } = overview;
   const imported = sortImportedCaptures(captures.filter((c) => c.sensorKey === null));
@@ -159,7 +160,7 @@ export function SourceStatusList({
               staleSec={staleAfterSeconds}
               downSec={downAfterSeconds}
               shortNames={shortNames}
-              period={period}
+              periodQuery={periodQuery}
             />
           ))}
         </ul>
@@ -169,7 +170,7 @@ export function SourceStatusList({
           <div className="mb-1 text-[11px] font-medium text-slate-400">가져온 데이터</div>
           <ul className="divide-y divide-slate-800/80" aria-label="가져온 데이터">
             {imported.map((c) => (
-              <ImportedItem key={c.captureId} row={c} anchor={anchor} shortNames={shortNames} period={period} />
+              <ImportedItem key={c.captureId} row={c} anchor={anchor} shortNames={shortNames} periodQuery={periodQuery} />
             ))}
           </ul>
         </div>
@@ -186,7 +187,7 @@ function SensorItem({
   staleSec,
   downSec,
   shortNames,
-  period,
+  periodQuery,
 }: {
   sensor: SensorRow;
   captures: CaptureRow[];
@@ -195,7 +196,8 @@ function SensorItem({
   staleSec: number;
   downSec: number;
   shortNames: Map<string, string>;
-  period: string;
+  /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
+  periodQuery: string;
 }) {
   // "지난 날짜"로 접는 것은 ended뿐이다. 수집 중(active)과 실패(failed)·기록 없음(none) 캡처는 펼쳐 둔다
   // (오늘 캡처가 실패하면 서버 상태는 failed라 active로만 고르면 지난 날짜에 묻혔다, T24).
@@ -204,7 +206,7 @@ function SensorItem({
   return (
     <li className="soc-panel p-2.5 text-xs" data-sensor={sensor.sensorKey}>
       <Link
-        to={`/incidents?period=${period}&source=live`}
+        to={`/incidents?${periodQuery}&source=live`}
         className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
         aria-label={`${sensor.label} 인시던트 목록`}
       >
@@ -232,7 +234,7 @@ function SensorItem({
       {(active.length > 0 || others.length > 0) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
           {active.map((c) => (
-            <CaptureChip key={c.captureId} row={c} shortNames={shortNames} period={period} />
+            <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} />
           ))}
           {others.length > 0 && (
             <details className="group" data-ended-captures="">
@@ -241,7 +243,7 @@ function SensorItem({
               </summary>
               <div className="mt-1 flex flex-wrap gap-1.5">
                 {others.map((c) => (
-                  <CaptureChip key={c.captureId} row={c} shortNames={shortNames} period={period} />
+                  <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} />
                 ))}
               </div>
             </details>
@@ -252,12 +254,12 @@ function SensorItem({
   );
 }
 
-function CaptureChip({ row, shortNames, period }: { row: CaptureRow; shortNames: Map<string, string>; period: string }) {
+function CaptureChip({ row, shortNames, periodQuery }: { row: CaptureRow; shortNames: Map<string, string>; periodQuery: string }) {
   const info = captureInfo(row.captureId);
   const flagged = row.state === 'failed' || row.state === 'none';
   return (
     <Link
-      to={`/incidents?period=${period}&captureId=${encodeURIComponent(row.captureId)}`}
+      to={`/incidents?${periodQuery}&captureId=${encodeURIComponent(row.captureId)}`}
       title={`${info.text} · 캡처 ID: ${row.captureId}\n${CAPTURE_STATE_TOOLTIP[row.state]}`}
       data-capture-chip={row.state}
       className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-slate-200 ${
@@ -282,18 +284,19 @@ function ImportedItem({
   row,
   anchor,
   shortNames,
-  period,
+  periodQuery,
 }: {
   row: CaptureRow;
   anchor: string;
   shortNames: Map<string, string>;
-  period: string;
+  /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
+  periodQuery: string;
 }) {
   const info = captureInfo(row.captureId);
   return (
     <li>
       <Link
-        to={`/incidents?period=${period}&captureId=${encodeURIComponent(row.captureId)}`}
+        to={`/incidents?${periodQuery}&captureId=${encodeURIComponent(row.captureId)}`}
         className="flex items-center gap-2 rounded px-1 py-1.5 text-xs transition hover:bg-slate-800/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
         title={`${info.text} · 캡처 ID: ${row.captureId}${row.latestJob?.error ? `\n오류: ${row.latestJob.error}` : ''}`}
         data-capture={row.captureId}

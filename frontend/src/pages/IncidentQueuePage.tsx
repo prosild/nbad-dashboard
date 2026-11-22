@@ -63,13 +63,15 @@ import {
   migrateLegacyQueueParams,
   PAGE_SIZES,
   PANEL_FILTER_KEYS,
+  customUrlChanges,
   parseQueueQuery,
-  periodLabel,
+  periodScopeText,
+  presetUrlChanges,
   PRIORITY_VALUES,
   parseAssignee,
   queueApiParams,
   STRIP_FILTER_KEYS,
-  type Period,
+  type PresetPeriod,
   type Priority,
   type SortDir,
   type SortKey,
@@ -221,7 +223,9 @@ export function IncidentQueuePage() {
   const since = data ? (data.latestDetectedAt ?? data.anchor) : null;
   /** 짧은 수집원 이름(허용 캡처 목록 안에서 겹치면 연도를 붙인다) */
   const shortNames = useMemo(() => captureShortNames((data?.sources ?? []).map((s) => s.captureId)), [data]);
-  const newCount = useNewIncidentCount(Boolean(data) && !data?.snapshot, since, pollKey);
+  // T34: 지정 기간은 지난 구간을 조사하는 화면이라 "새 인시던트" 확인(new-count)을 하지 않는다
+  const customPeriod = query.period === 'custom';
+  const newCount = useNewIncidentCount(Boolean(data) && !data?.snapshot && !customPeriod, since, pollKey);
 
   /** URL 쿼리를 바꾼다. 기본은 쪽 번호를 지운다(1쪽으로). */
   function updateParams(changes: Record<string, string | null>, opts: { keepPage?: boolean } = {}) {
@@ -243,6 +247,13 @@ export function IncidentQueuePage() {
     const next = new URLSearchParams();
     const period = searchParams.get('period');
     if (period) next.set('period', period);
+    // T34: 지정 기간은 시작·끝도 남긴다
+    if (period === 'custom') {
+      for (const key of ['start', 'end']) {
+        const v = searchParams.get(key);
+        if (v) next.set(key, v);
+      }
+    }
     const size = searchParams.get('size');
     if (size) next.set('size', size);
     setAssetDraft('');
@@ -259,8 +270,8 @@ export function IncidentQueuePage() {
     updateParams({ sort: key, dir });
   }
 
-  function handlePeriod(value: Period) {
-    updateParams({ period: value === DEFAULT_PERIOD ? null : value });
+  function handlePeriod(value: PresetPeriod) {
+    updateParams(presetUrlChanges(value, DEFAULT_PERIOD));
   }
 
   /** 수집원 선택: '' = 전체, 'src:live|imported' = 종류 전체, 'cap:<id>' = 캡처 하나 */
@@ -352,7 +363,13 @@ export function IncidentQueuePage() {
 
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <PeriodButtons value={query.period} onChange={handlePeriod} />
+            <PeriodButtons
+              value={query.period}
+              range={query.range}
+              onChange={handlePeriod}
+              onApplyRange={(r) => updateParams(customUrlChanges(r))}
+              current={data ? { periodStart: data.periodStart, periodEnd: data.periodEnd, anchor: data.anchor } : null}
+            />
 
             <SourceField
               sources={data?.sources ?? []}
@@ -546,6 +563,12 @@ export function IncidentQueuePage() {
           )}
         </section>
 
+        {customPeriod && data && !data.snapshot && (
+          <p className="text-[11px] text-slate-400" data-testid="new-count-off">
+            기간을 지정하면 새 인시던트 알림을 멈춥니다(지난 구간을 보는 동안 목록이 움직이지 않게).
+          </p>
+        )}
+
         {newCount > 0 && (
           <div
             role="status"
@@ -654,9 +677,11 @@ function EmptyState({
   }
   return (
     <p className="px-4 py-12 text-center text-sm text-slate-400" data-empty="none">
-      {data && data.period !== 'all'
-        ? `최근 ${periodLabel(data.period as Parameters<typeof periodLabel>[0])} 동안 탐지된 인시던트가 없습니다.`
-        : '표시할 인시던트가 없습니다.'}
+      {data && data.period === 'custom' && data.periodStart && data.periodEnd
+        ? `${periodScopeText({ period: 'custom', range: { start: data.periodStart, end: data.periodEnd } }, data.anchor)} 동안 탐지된 인시던트가 없습니다.`
+        : data && data.period !== 'all' && data.period !== 'custom'
+          ? `${periodScopeText({ period: data.period as PresetPeriod, range: null })} 동안 탐지된 인시던트가 없습니다.`
+          : '표시할 인시던트가 없습니다.'}
     </p>
   );
 }

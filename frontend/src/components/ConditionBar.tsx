@@ -2,9 +2,18 @@
  * 공통 조건 줄(T24): 기간 버튼과 수집원 선택. 인시던트 큐·현황판·운영 현황이 같이 쓴다.
  * URL 쿼리(period·source·captureId)가 상태의 원본이며, 화면마다 기본 기간이 다르다(큐·현황판 24시간, 운영 현황 7일).
  */
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarRange } from 'lucide-react';
 import type { SourceType } from '../types/api';
 import { captureInfo } from '../utils/labels';
-import { PERIODS, type Period } from '../utils/triage';
+import {
+  formatRangeLong,
+  formatRangeShort,
+  initialRangeInputs,
+  rangeFromInputs,
+  type PeriodRange,
+} from '../utils/periodRange';
+import { PERIODS, type Period, type PresetPeriod } from '../utils/triage';
 import { lastDetectedText, maxIso } from './OutsidePeriodNotice';
 import { SOURCE_TYPE_LABEL } from './StatusBadge';
 
@@ -30,9 +39,31 @@ export function sourceSelectChanges(value: string): { source: string | null; cap
   return { source: null, captureId: null };
 }
 
-export function PeriodButtons({ value, onChange }: { value: Period; onChange: (value: Period) => void }) {
+/**
+ * 기간 버튼(프리셋)과 T34 "기간 지정"(시작·끝, KST 분 단위). 지정 중에는 "기간 지정" 버튼이 눌린 상태로 범위를 짧게 보인다.
+ * 창 처음 값은 지금 보이는 기간(current: 응답의 periodStart·periodEnd), 전체면 기준 시각 − 24시간 ~ 기준 시각이다.
+ */
+export function PeriodButtons({
+  value,
+  onChange,
+  range = null,
+  onApplyRange,
+  current = null,
+}: {
+  value: Period;
+  onChange: (value: PresetPeriod) => void;
+  /** 지정 중인 범위(value가 custom일 때) */
+  range?: PeriodRange | null;
+  /** 없으면 "기간 지정" 버튼을 보이지 않는다 */
+  onApplyRange?: (range: PeriodRange) => void;
+  /** 창 처음 값을 정할 지금 기간 경계와 기준 시각 */
+  current?: { periodStart?: string | null; periodEnd?: string | null; anchor?: string | null } | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const custom = value === 'custom' && range !== null;
   return (
-    <div className="flex items-center gap-2" role="group" aria-label="기간">
+    <div className="relative flex flex-wrap items-center gap-x-2 gap-y-1.5" role="group" aria-label="기간">
       <span className="shrink-0 text-xs font-medium text-slate-400" aria-hidden="true">
         기간
       </span>
@@ -55,6 +86,152 @@ export function PeriodButtons({ value, onChange }: { value: Period; onChange: (v
           );
         })}
       </div>
+      {onApplyRange && (
+        <button
+          ref={toggleRef}
+          type="button"
+          aria-pressed={custom}
+          aria-expanded={open}
+          aria-controls="period-range-dialog"
+          aria-haspopup="dialog"
+          onClick={() => setOpen((v) => !v)}
+          title={custom && range ? `기간 지정: ${formatRangeLong(range)}` : '시작·끝 시각을 KST로 지정합니다'}
+          data-testid="period-custom"
+          className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs tabular-nums ${
+            custom
+              ? 'border-cyan-500/60 bg-cyan-500/15 font-semibold text-cyan-200'
+              : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+          }`}
+        >
+          <CalendarRange className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {custom && range ? (
+              <>
+                <span className="sr-only">기간 지정 </span>
+                {formatRangeShort(range, current?.anchor)}
+              </>
+            ) : (
+              '기간 지정'
+            )}
+          </span>
+        </button>
+      )}
+      {open && onApplyRange && (
+        <RangeDialog
+          range={custom ? range : null}
+          current={current}
+          onCancel={() => {
+            setOpen(false);
+            toggleRef.current?.focus();
+          }}
+          onApply={(r) => {
+            setOpen(false);
+            onApplyRange(r);
+            toggleRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 기간 지정 창: 시작·끝(KST, 분 단위), 적용·취소. Esc로 닫고 포커스는 "기간 지정" 버튼으로 돌아간다 */
+function RangeDialog({
+  range,
+  current,
+  onCancel,
+  onApply,
+}: {
+  range: PeriodRange | null;
+  current: { periodStart?: string | null; periodEnd?: string | null; anchor?: string | null } | null;
+  onCancel: () => void;
+  onApply: (range: PeriodRange) => void;
+}) {
+  const initial = useMemo(
+    () =>
+      range
+        ? initialRangeInputs(range.start, range.end, current?.anchor)
+        : initialRangeInputs(current?.periodStart, current?.periodEnd, current?.anchor),
+    // 창을 열 때 한 번만 정한다(창은 열 때마다 새로 만든다)
+    [],
+  );
+  const [start, setStart] = useState(initial.start);
+  const [end, setEnd] = useState(initial.end);
+  const [error, setError] = useState<string | null>(null);
+  const startRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    startRef.current?.focus();
+  }, []);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const result = rangeFromInputs(start, end);
+    if ('error' in result) {
+      setError(result.error);
+      return;
+    }
+    onApply(result.range);
+  }
+
+  return (
+    <div
+      id="period-range-dialog"
+      role="dialog"
+      aria-label="기간 지정"
+      className="absolute left-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-700 bg-slate-900 p-3 shadow-xl"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
+      <form onSubmit={submit} className="space-y-2" noValidate>
+        <p className="text-[11px] text-slate-400">탐지 시각 기준, 시작 초과 ~ 끝 이하 (KST)</p>
+        <label className="block text-xs text-slate-300" htmlFor="period-range-start">
+          시작 <span className="text-slate-500">KST</span>
+        </label>
+        <input
+          ref={startRef}
+          id="period-range-start"
+          type="datetime-local"
+          step={60}
+          value={start}
+          onChange={(e) => setStart(e.target.value)}
+          aria-label="시작 시각(KST)"
+          aria-invalid={error !== null}
+          aria-describedby={error ? 'period-range-error' : undefined}
+          className="soc-input w-full py-1 text-xs tabular-nums"
+        />
+        <label className="block text-xs text-slate-300" htmlFor="period-range-end">
+          끝 <span className="text-slate-500">KST</span>
+        </label>
+        <input
+          id="period-range-end"
+          type="datetime-local"
+          step={60}
+          value={end}
+          onChange={(e) => setEnd(e.target.value)}
+          aria-label="끝 시각(KST)"
+          aria-invalid={error !== null}
+          aria-describedby={error ? 'period-range-error' : undefined}
+          className="soc-input w-full py-1 text-xs tabular-nums"
+        />
+        {error && (
+          <p id="period-range-error" role="alert" className="text-xs text-rose-300">
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onCancel} className="soc-btn-secondary px-3 py-1 text-xs">
+            취소
+          </button>
+          <button type="submit" className="soc-btn-primary px-3 py-1 text-xs">
+            적용
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

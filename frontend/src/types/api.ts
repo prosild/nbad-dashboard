@@ -170,6 +170,9 @@ export interface UnifiedQueueResponse {
   anchorMode: string;
   snapshot: boolean;
   period: string;
+  /** T34 실제 기간 경계(UTC, (시작, 끝]). 전체면 null */
+  periodStart?: string | null;
+  periodEnd?: string | null;
   latestDetectedAt: string | null;
   /** 기간 시작 이하에 탐지된 행(같은 조건)의 가장 늦은 탐지 시각(T29부터 결과가 있어도 준다) */
   newestOutsidePeriod: string | null;
@@ -544,6 +547,9 @@ export interface OperationsApiResponse {
   /** T24: period가 있으면 기간 안(기록 시각)만 */
   slackSummaries: SlackSummary[];
   period?: string | null;
+  /** T34 실제 기간 경계(UTC). 전체·period 없음이면 null */
+  periodStart?: string | null;
+  periodEnd?: string | null;
   source?: string | null;
   anchor?: string | null;
   jobsTruncated?: boolean;
@@ -681,6 +687,9 @@ export interface DashboardOverviewResponse {
   anchorMode: string;
   snapshot: boolean;
   period: string;
+  /** T34 실제 기간 경계(UTC). 전체면 null */
+  periodStart?: string | null;
+  periodEnd?: string | null;
   timeZone: string;
   staleAfterSeconds: number;
   downAfterSeconds: number;

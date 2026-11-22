@@ -5,7 +5,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { DashboardTrend, TrendBucket, TrendBucketUnit } from '../../types/api';
-import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber } from '../../utils/format';
+import { DISPLAY_TIME_ZONE_LABEL, formatCompactDateTime, formatDateTime, formatNumber } from '../../utils/format';
+import { earlierIso, laterIso, parseOffsetIso, type PeriodRange } from '../../utils/periodRange';
 
 export const TREND_COLORS = {
   high: '#f43f5e',
@@ -70,7 +71,49 @@ function useContainerWidth<T extends HTMLElement>(): [React.RefObject<T | null>,
   return [ref, width];
 }
 
-export function TrendChart({ trend }: { trend: DashboardTrend }) {
+/**
+ * T34 막대에서 들어갈 큐 범위: 구간을 기간 경계(periodStart)와 min(기간 끝, 기준 시각)으로 자른다. 0건 막대는 null.
+ * 문자열은 받은 값을 그대로 쓴다(서버 값의 마이크로초를 잃지 않게).
+ */
+export function bucketQueueRange(
+  b: TrendBucket,
+  periodStart: string | null | undefined,
+  periodEnd: string | null | undefined,
+  anchor: string | null | undefined,
+): PeriodRange | null {
+  if (b.total <= 0) return null;
+  const start = laterIso(b.start, periodStart);
+  const end = earlierIso(earlierIso(b.end, periodEnd), anchor);
+  const s = parseOffsetIso(start);
+  const e = parseOffsetIso(end);
+  if (s === null || e === null || s >= e) return null;
+  return { start, end };
+}
+
+/** 막대 링크의 접근성 이름: "11-19 09:00–10:00 인시던트 12건 보기"(KST, 같은 날이면 끝은 시각만) */
+export function bucketLinkLabel(range: PeriodRange, total: number, anchor?: string | null): string {
+  const s = formatCompactDateTime(range.start, anchor ?? range.end);
+  const e = formatCompactDateTime(range.end, anchor ?? range.end);
+  const sameDay = s.length === e.length && s.slice(0, -6) === e.slice(0, -6);
+  return `${s}–${sameDay ? e.slice(-5) : e} 인시던트 ${formatNumber(total)}건 보기`;
+}
+
+export function TrendChart({
+  trend,
+  bucketHref,
+  onNavigate,
+  anchor = null,
+  periodStart = null,
+  periodEnd = null,
+}: {
+  trend: DashboardTrend;
+  /** T34: 구간 범위 → 큐 주소. 없으면 막대를 누를 수 없다 */
+  bucketHref?: (range: PeriodRange) => string;
+  onNavigate?: (href: string) => void;
+  anchor?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+}) {
   const [ref, width] = useContainerWidth<HTMLDivElement>();
   const buckets = trend.buckets;
   const n = buckets.length;
@@ -93,8 +136,8 @@ export function TrendChart({ trend }: { trend: DashboardTrend }) {
         height={HEIGHT}
         viewBox={`0 0 ${width} ${HEIGHT}`}
         className="block max-w-full"
-        role="img"
-        aria-label={`탐지 추이: 구간 ${formatNumber(n)}개, 구간 최대 ${formatNumber(max)}건`}
+        role={bucketHref ? 'group' : 'img'}
+        aria-label={`탐지 추이: 구간 ${formatNumber(n)}개, 구간 최대 ${formatNumber(max)}건${bucketHref ? '. 막대를 누르면 그 구간의 인시던트 목록으로 갑니다' : ''}`}
       >
         {/* 세로축: 최대값과 0 */}
         <line x1={LEFT} x2={LEFT + plotW} y1={TOP + plotH} y2={TOP + plotH} stroke="#334155" strokeWidth={1} />
@@ -108,10 +151,12 @@ export function TrendChart({ trend }: { trend: DashboardTrend }) {
         {buckets.map((b, i) => {
           const x = LEFT + i * slot + gap / 2;
           let y = TOP + plotH;
-          return (
-            <g key={b.start} data-bucket="" data-partial={b.partial ? 'true' : undefined}>
+          const range = bucketHref ? bucketQueueRange(b, periodStart, periodEnd, anchor) : null;
+          const href = range && bucketHref ? bucketHref(range) : null;
+          const bars = (
+            <>
               <title>{bucketTitle(b)}</title>
-              {/* 툴팁을 띄우기 쉬운 투명 영역 */}
+              {/* 툴팁을 띄우기 쉬운 투명 영역(링크면 누르는 영역) */}
               <rect x={r(LEFT + i * slot)} y={TOP} width={r(slot)} height={plotH} fill="transparent" />
               {SERIES.map((s) => {
                 const h = scale(b[s.key]);
@@ -130,6 +175,27 @@ export function TrendChart({ trend }: { trend: DashboardTrend }) {
                   />
                 );
               })}
+            </>
+          );
+          return (
+            <g key={b.start} data-bucket="" data-partial={b.partial ? 'true' : undefined}>
+              {href && range ? (
+                <a
+                  href={href}
+                  aria-label={bucketLinkLabel(range, b.total, anchor)}
+                  data-bucket-link=""
+                  className="cursor-pointer focus:outline-none"
+                  onClick={(e) => {
+                    if (!onNavigate || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                    e.preventDefault();
+                    onNavigate(href);
+                  }}
+                >
+                  {bars}
+                </a>
+              ) : (
+                bars
+              )}
               {i % tickEvery === 0 && (
                 <text
                   x={r(LEFT + i * slot + slot / 2)}

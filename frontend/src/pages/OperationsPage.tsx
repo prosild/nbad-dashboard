@@ -20,7 +20,15 @@ import { SvgProgressBar } from '../components/SvgProgressBar';
 import type { DashboardOverviewResponse, FeedbackSummaryRecord, OperationsApiResponse, ScoringJob } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber } from '../utils/format';
 import { captureShortNames } from '../utils/labels';
-import { parsePeriod, parseSource, periodLabel, type Period } from '../utils/triage';
+import {
+  customUrlChanges,
+  parsePeriodSelection,
+  parseSource,
+  periodApiParams,
+  periodScopeText,
+  presetUrlChanges,
+  type PresetPeriod,
+} from '../utils/triage';
 import {
   SAMPLE_MIN,
   alertPrecisionSummaryText,
@@ -69,7 +77,7 @@ function groupSummaries(rows: FeedbackSummaryRecord[]): SummaryGroup[] {
 }
 
 /** 운영 현황 기본 기간(T24) */
-export const OPERATIONS_DEFAULT_PERIOD: Period = '7d';
+export const OPERATIONS_DEFAULT_PERIOD: PresetPeriod = '7d';
 
 /** 누적 판정 표의 모델 버전 선택용: latestJobs의 최신 성공 작업(기간 무관) */
 export function latestSucceededJobs(data: OperationsApiResponse): ScoringJob[] {
@@ -101,7 +109,10 @@ export function OperationsPage() {
   const seq = useRef(0);
 
   // URL이 상태의 원본이다. 옛 captureId 링크는 수집원 선택 안의 캡처로 읽는다.
-  const period: Period = searchParams.get('period') ? parsePeriod(searchParams.get('period')) : OPERATIONS_DEFAULT_PERIOD;
+  const sel = parsePeriodSelection(searchParams, OPERATIONS_DEFAULT_PERIOD);
+  const period = sel.period;
+  const rangeStart = sel.range?.start;
+  const rangeEnd = sel.range?.end;
   const source = parseSource(searchParams.get('source'));
   const captureId = searchParams.get('captureId') || null;
 
@@ -109,7 +120,11 @@ export function OperationsPage() {
     const my = ++seq.current;
     setLoading(true);
     setErrorMsg(null);
-    const params = { period, source: captureId ? undefined : (source ?? undefined), captureId: captureId ?? undefined };
+    const params = {
+      ...periodApiParams({ period, range: rangeStart && rangeEnd ? { start: rangeStart, end: rangeEnd } : null }),
+      source: captureId ? undefined : (source ?? undefined),
+      captureId: captureId ?? undefined,
+    };
     const [ops, ov] = await Promise.allSettled([operationsApi.get(params), dashboardApi.overview(params)]);
     if (my !== seq.current) return;
     // 한쪽만 실패하면 받은 쪽은 그대로 보이고 오류를 알린다(수집원 상태는 overview, 나머지는 운영 현황 API)
@@ -120,7 +135,7 @@ export function OperationsPage() {
     setData(ops.status === 'fulfilled' ? ops.value : null);
     setOverview(ov.status === 'fulfilled' ? ov.value : null);
     setLoading(false);
-  }, [period, source, captureId]);
+  }, [period, rangeStart, rangeEnd, source, captureId]);
 
   useEffect(() => {
     void loadOperations();
@@ -142,7 +157,7 @@ export function OperationsPage() {
     const { allRows } = selectSummaryRows(data.feedbackSummaries, latestSucceededJobs(data));
     return { totalsRow: totalsAsRow(sumAllRows(allRows)) };
   }, [data]);
-  const scope = period === 'all' ? '전체 기간' : `최근 ${periodLabel(period)}`;
+  const scope = periodScopeText(sel, overview?.anchor ?? data?.anchor);
   /** 착수 지연 수(T25)를 누르면 같은 수집원 조건의 큐 착수 지연(기간 전체)로 간다 */
   const overdueLink = useMemo(() => {
     const q = new URLSearchParams({ period: 'all', overdue: 'true' });
@@ -175,7 +190,17 @@ export function OperationsPage() {
       <div className="space-y-4">
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <PeriodButtons value={period} onChange={(p) => updateParams({ period: p === OPERATIONS_DEFAULT_PERIOD ? null : p })} />
+            <PeriodButtons
+              value={period}
+              range={sel.range}
+              onChange={(p) => updateParams(presetUrlChanges(p, OPERATIONS_DEFAULT_PERIOD))}
+              onApplyRange={(r) => updateParams(customUrlChanges(r))}
+              current={{
+                periodStart: data?.periodStart ?? overview?.periodStart,
+                periodEnd: data?.periodEnd ?? overview?.periodEnd,
+                anchor: overview?.anchor ?? data?.anchor,
+              }}
+            />
             <SourceField
               id="ops-source"
               sources={data?.sources ?? []}

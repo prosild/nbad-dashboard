@@ -1,4 +1,5 @@
 import type { QueuePriority, SourceType } from '../types/api';
+import { formatRangeShort, parseRangeParams, type PeriodRange } from './periodRange';
 
 /**
  * 인시던트 큐(T23 통합 큐)의 URL 쿼리 해석과 API 파라미터 만들기.
@@ -65,9 +66,12 @@ export function parsePage(raw: string | null | undefined): number {
 
 /* ───────────── 기간·수집원 ───────────── */
 
-export type Period = '1h' | '24h' | '7d' | '30d' | 'all';
+/** 기간 프리셋(버튼) */
+export type PresetPeriod = '1h' | '24h' | '7d' | '30d' | 'all';
+/** T34: 프리셋 또는 사용자 지정 기간(custom, 시작·끝은 URL start·end) */
+export type Period = PresetPeriod | 'custom';
 
-export const PERIODS: readonly { value: Period; label: string }[] = [
+export const PERIODS: readonly { value: PresetPeriod; label: string }[] = [
   { value: '1h', label: '1시간' },
   { value: '24h', label: '24시간' },
   { value: '7d', label: '7일' },
@@ -75,14 +79,72 @@ export const PERIODS: readonly { value: Period; label: string }[] = [
   { value: 'all', label: '전체' },
 ];
 
-export const DEFAULT_PERIOD: Period = '24h';
+export const DEFAULT_PERIOD: PresetPeriod = '24h';
 
-export function parsePeriod(raw: string | null | undefined): Period {
-  return PERIODS.some((p) => p.value === raw) ? (raw as Period) : DEFAULT_PERIOD;
+/** 프리셋만 읽는다(custom·허용 밖 값은 기본 기간 24시간) */
+export function parsePeriod(raw: string | null | undefined): PresetPeriod {
+  return PERIODS.some((p) => p.value === raw) ? (raw as PresetPeriod) : DEFAULT_PERIOD;
 }
 
 export function periodLabel(period: Period): string {
+  if (period === 'custom') return '기간 지정';
   return PERIODS.find((p) => p.value === period)?.label ?? period;
+}
+
+/** T34 기간 선택: custom이면 range가 있다(그 밖에는 null) */
+export interface PeriodSelection {
+  period: Period;
+  range: PeriodRange | null;
+}
+
+/**
+ * URL의 period·start·end를 읽는다. period=custom이면 start·end를 서버와 같은 규칙으로 검사하고 틀리면 그 화면의 기본 기간이다.
+ * 프리셋·전체에 섞여 온 start·end는 버린다(API에도 보내지 않는다). period가 없으면 화면 기본 기간, 허용 밖이면 24시간(지금과 같다).
+ */
+export function parsePeriodSelection(params: URLSearchParams, screenDefault: PresetPeriod): PeriodSelection {
+  const raw = params.get('period');
+  if (!raw) return { period: screenDefault, range: null };
+  if (raw === 'custom') {
+    const range = parseRangeParams(params.get('start'), params.get('end'));
+    return range ? { period: 'custom', range } : { period: screenDefault, range: null };
+  }
+  return { period: parsePeriod(raw), range: null };
+}
+
+/** API 파라미터: period와 (custom이면) start·end */
+export function periodApiParams(sel: PeriodSelection): { period: string; start?: string; end?: string } {
+  if (sel.period === 'custom' && sel.range) return { period: 'custom', start: sel.range.start, end: sel.range.end };
+  return { period: sel.period };
+}
+
+/** URL 변경: 프리셋·전체를 고르면 start·end를 지운다. 화면 기본 기간이면 period도 지운다 */
+export function presetUrlChanges(period: PresetPeriod, screenDefault: PresetPeriod): Record<string, string | null> {
+  return { period: period === screenDefault ? null : period, start: null, end: null };
+}
+
+/** URL 변경: 지정 기간 */
+export function customUrlChanges(range: PeriodRange): Record<string, string | null> {
+  return { period: 'custom', start: range.start, end: range.end };
+}
+
+/** 링크 쿼리에 기간을 쓴다(period와 custom이면 start·end) */
+export function setPeriodParams(q: URLSearchParams, sel: PeriodSelection): URLSearchParams {
+  q.set('period', sel.period);
+  if (sel.period === 'custom' && sel.range) {
+    q.set('start', sel.range.start);
+    q.set('end', sel.range.end);
+  } else {
+    q.delete('start');
+    q.delete('end');
+  }
+  return q;
+}
+
+/** 기간 범위 글: "최근 24시간" / "전체 기간" / "11-19 09:00 – 11-19 12:00" */
+export function periodScopeText(sel: PeriodSelection, anchor?: string | null): string {
+  if (sel.period === 'custom' && sel.range) return formatRangeShort(sel.range, anchor);
+  if (sel.period === 'all') return '전체 기간';
+  return `최근 ${periodLabel(sel.period)}`;
 }
 
 export function parseSource(raw: string | null | undefined): SourceType | null {
@@ -105,6 +167,8 @@ export function parseAssignee(raw: string | null | undefined): AssigneeFilter | 
 
 export interface QueueQuery {
   period: Period;
+  /** T34 지정 기간(period=custom일 때만) */
+  range: PeriodRange | null;
   source: SourceType | null;
   captureId: string | null;
   priority: Priority | null;
@@ -133,8 +197,10 @@ export function parseQueueQuery(params: URLSearchParams): QueueQuery {
   const sortKey: SortKey = parsedKey ?? DEFAULT_SORT.key;
   const sortDir: SortDir = parseSortDir(params.get('dir')) ?? (parsedKey ? DEFAULT_SORT_DIR[sortKey] : DEFAULT_SORT.dir);
   const captureId = (params.get('captureId') ?? '').trim();
+  const sel = parsePeriodSelection(params, DEFAULT_PERIOD);
   return {
-    period: parsePeriod(params.get('period')),
+    period: sel.period,
+    range: sel.range,
     source: parseSource(params.get('source')),
     captureId: captureId === '' ? null : captureId,
     priority: PRIORITY_VALUES.includes(priorityRaw as Priority) ? (priorityRaw as Priority) : null,
@@ -161,8 +227,11 @@ export function queueApiParams(
   opts: { paging?: boolean; sort?: boolean; period?: boolean } = {},
 ): Record<string, string | undefined> {
   const { paging = true, sort = true, period = true } = opts;
+  const custom = period && q.period === 'custom' && q.range;
   const out: Record<string, string | undefined> = {
     period: period ? q.period : undefined,
+    start: custom ? q.range?.start : undefined,
+    end: custom ? q.range?.end : undefined,
     source: q.source ?? undefined,
     captureId: q.captureId ?? undefined,
     priority: q.priority ?? undefined,

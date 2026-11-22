@@ -156,6 +156,9 @@ export const reviewsApi = {
 /** T24: 기간·수집원·캡처 조건. 빈 값은 빠진다 */
 export interface ConditionParams {
   period?: string;
+  /** T34 period=custom일 때만 */
+  start?: string;
+  end?: string;
   source?: string;
   captureId?: string;
 }
@@ -163,7 +166,7 @@ export interface ConditionParams {
 export const operationsApi = {
   get: (params: ConditionParams = {}) =>
     apiRequest<OperationsApiResponse>(
-      `/api/operations${buildQuery({ period: params.period, source: params.source, captureId: params.captureId })}`,
+      `/api/operations${buildQuery({ period: params.period, start: params.start, end: params.end, source: params.source, captureId: params.captureId })}`,
     ),
 };
 
@@ -171,7 +174,7 @@ export const dashboardApi = {
   /** T24 현황판: 탐지 추이·센서·캡처 상태·경보 발송 상태(수는 같은 조건 큐 API summary를 쓴다) */
   overview: (params: ConditionParams = {}) =>
     apiRequest<DashboardOverviewResponse>(
-      `/api/dashboard/overview${buildQuery({ period: params.period, source: params.source, captureId: params.captureId })}`,
+      `/api/dashboard/overview${buildQuery({ period: params.period, start: params.start, end: params.end, source: params.source, captureId: params.captureId })}`,
     ),
 };
 

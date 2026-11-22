@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Activity, ArrowRight, Bell, List, RefreshCw, Server } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { dashboardApi, incidentsApi } from '../api/endpoints';
@@ -14,35 +14,53 @@ import type { DashboardOverviewResponse, UnifiedQueueItem, UnifiedQueueResponse 
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber, formatRelativeTo } from '../utils/format';
 import { incidentPath } from '../utils/incidentLink';
 import { captureInfo, captureShortNames, shortNameOf } from '../utils/labels';
-import { parsePeriod, parseSource, periodLabel, type Period } from '../utils/triage';
+import type { PeriodRange } from '../utils/periodRange';
+import {
+  customUrlChanges,
+  parsePeriodSelection,
+  parseSource,
+  periodScopeText as selectionScopeText,
+  presetUrlChanges,
+  setPeriodParams,
+  type Period,
+  type PeriodSelection,
+  type PresetPeriod,
+} from '../utils/triage';
 
 /** 현황판 자동 갱신 주기(T24): 60초. 화면이 숨겨지면 멈추고 다시 보이면 곧바로 한 번 부른다. 고정 스냅샷이면 끈다. */
 export const DASHBOARD_REFRESH_MS = 60_000;
 /** 현황판 기본 기간 */
-export const DASHBOARD_DEFAULT_PERIOD: Period = '24h';
+export const DASHBOARD_DEFAULT_PERIOD: PresetPeriod = '24h';
 /** 최근 인시던트 줄 수. 큐 API 쪽 크기는 25·50·100만 받으므로 25건을 받아 앞 8건을 보인다. */
 export const RECENT_ROWS = 8;
 const RECENT_PAGE_SIZE = '25';
 
 interface Condition {
   period: Period;
+  /** T34 지정 기간(period=custom일 때만) */
+  range: PeriodRange | null;
   source: string | null;
   captureId: string | null;
 }
 
-/** 조건 → 인시던트 큐 쿼리(period=P&source=S 또는 captureId) */
+/** 조건 → 인시던트 큐 쿼리(period=P[&start&end]&source=S 또는 captureId) */
 export function conditionQuery(c: Condition, extra: Record<string, string> = {}): string {
-  const q = new URLSearchParams();
-  q.set('period', c.period);
+  const q = setPeriodParams(new URLSearchParams(), { period: c.period, range: c.range });
   if (c.captureId) q.set('captureId', c.captureId);
   else if (c.source) q.set('source', c.source);
   for (const [k, v] of Object.entries(extra)) q.set(k, v);
   return q.toString();
 }
 
-/** 기간 범위 글: "최근 24시간" / "전체 기간" */
-export function periodScopeText(period: Period): string {
-  return period === 'all' ? '전체 기간' : `최근 ${periodLabel(period)}`;
+/** 기간 범위 글: "최근 24시간" / "전체 기간" / 지정 기간이면 "11-19 09:00 – 11-19 12:00" */
+export function periodScopeText(period: Period | PeriodSelection, anchor?: string | null): string {
+  const sel: PeriodSelection = typeof period === 'string' ? { period, range: null } : period;
+  return selectionScopeText(sel, anchor);
+}
+
+/** 기간 전체 조건(에스컬레이션 대기처럼 기간과 상관없는 값) */
+function allPeriod(c: Condition): Condition {
+  return { ...c, period: 'all', range: null };
 }
 
 /**
@@ -91,8 +109,11 @@ interface DashboardData {
 
 export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const sel = parsePeriodSelection(searchParams, DASHBOARD_DEFAULT_PERIOD);
   const cond: Condition = {
-    period: searchParams.get('period') ? parsePeriod(searchParams.get('period')) : DASHBOARD_DEFAULT_PERIOD,
+    period: sel.period,
+    range: sel.range,
     source: parseSource(searchParams.get('source')),
     captureId: searchParams.get('captureId') || null,
   };
@@ -106,14 +127,14 @@ export function DashboardPage() {
   const load = useCallback(async () => {
     const my = ++seq.current;
     const c = Object.fromEntries(new URLSearchParams(condKey)) as Record<string, string>;
-    const params = { period: c.period, source: c.source, captureId: c.captureId };
+    const params = { period: c.period, start: c.start, end: c.end, source: c.source, captureId: c.captureId };
     setLoading(true);
     setErrorMsg(null);
     // 현황판 호출은 셋: overview(P,S), 큐(P,S, 탐지 시각 최근순, summary 포함), 큐(전체 기간, S, 에스컬레이션 대기용)
     const [ov, queue, pendingQueue] = await Promise.allSettled([
       dashboardApi.overview(params),
       incidentsApi.queue({ ...params, sort: 'detected', dir: 'desc', size: RECENT_PAGE_SIZE }),
-      incidentsApi.queue({ ...params, period: 'all', size: RECENT_PAGE_SIZE }),
+      incidentsApi.queue({ ...params, period: 'all', start: undefined, end: undefined, size: RECENT_PAGE_SIZE }),
     ]);
     if (my !== seq.current) return;
     const failed = [ov, queue].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
@@ -135,7 +156,9 @@ export function DashboardPage() {
   }, [load]);
 
   const snapshot = Boolean(data.overview?.snapshot ?? data.queue?.snapshot);
-  useAutoRefresh(Boolean(data.overview) && !snapshot, () => void load(), DASHBOARD_REFRESH_MS);
+  // T34: 지정 기간은 지난 구간을 조사하는 화면이라 목록이 움직이지 않게 자동 갱신을 끈다(수동 새로 고침은 그대로)
+  const custom = cond.period === 'custom';
+  useAutoRefresh(Boolean(data.overview) && !snapshot && !custom, () => void load(), DASHBOARD_REFRESH_MS);
 
   function updateParams(changes: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
@@ -158,7 +181,13 @@ export function DashboardPage() {
       <div className="space-y-4">
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <PeriodButtons value={cond.period} onChange={(p) => updateParams({ period: p === DASHBOARD_DEFAULT_PERIOD ? null : p })} />
+            <PeriodButtons
+              value={cond.period}
+              range={cond.range}
+              onChange={(p) => updateParams(presetUrlChanges(p, DASHBOARD_DEFAULT_PERIOD))}
+              onApplyRange={(r) => updateParams(customUrlChanges(r))}
+              current={{ periodStart: overview?.periodStart, periodEnd: overview?.periodEnd, anchor: overview?.anchor }}
+            />
             <SourceField
               id="dashboard-source"
               sources={queue?.sources ?? []}
@@ -169,6 +198,11 @@ export function DashboardPage() {
             />
             <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
               <AnchorText overview={overview} />
+              {custom && (
+                <span data-testid="auto-refresh-off" title="기간을 지정하면 목록이 움직이지 않게 60초 자동 갱신을 멈춥니다">
+                  자동 갱신 꺼짐(기간 지정)
+                </span>
+              )}
               <span>
                 불러온 시각 <span className="tabular-nums text-slate-300">{formatDateTime(data.loadedAt)}</span>
               </span>
@@ -186,7 +220,7 @@ export function DashboardPage() {
           <LoadingPanel label="관제 현황을 불러오는 중..." />
         ) : !overview || !queue ? null : (
           <>
-            <OutsidePeriodNotice queue={queue} onAllPeriod={() => updateParams({ period: 'all' })} />
+            <OutsidePeriodNotice queue={queue} onAllPeriod={() => updateParams(presetUrlChanges('all', DASHBOARD_DEFAULT_PERIOD))} />
             <KpiRow cond={cond} queue={queue} pending={data.pending} pendingError={pendingError} />
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
@@ -195,7 +229,8 @@ export function DashboardPage() {
                 queue={queue}
                 cond={cond}
                 sourceValue={sourceSelectValue(cond.source, cond.captureId)}
-                onAllPeriod={() => updateParams({ period: 'all' })}
+                onNavigate={navigate}
+                onAllPeriod={() => updateParams(presetUrlChanges('all', DASHBOARD_DEFAULT_PERIOD))}
                 className="xl:col-span-3"
               />
               <RecentPanel cond={cond} queue={queue} shortNames={shortNames} className="xl:col-span-2" />
@@ -206,15 +241,19 @@ export function DashboardPage() {
                 <PanelHeader
                   icon={Server}
                   title="수집원 상태"
-                  note={`${periodScopeText(cond.period)} 인시던트 수${overview.snapshot ? ' · 기준 시각 기준' : ''}`}
+                  note={`${periodScopeText(cond, overview.anchor)} 인시던트 수${overview.snapshot ? ' · 기준 시각 기준' : ''}`}
                 />
-                <SourceStatusList overview={overview} shortNames={shortNames} period={cond.period} />
+                <SourceStatusList
+                  overview={overview}
+                  shortNames={shortNames}
+                  periodQuery={setPeriodParams(new URLSearchParams(), cond).toString()}
+                />
               </section>
-              <AlertingPanel overview={overview} period={cond.period} shortNames={shortNames} className="xl:col-span-2" />
+              <AlertingPanel overview={overview} cond={cond} shortNames={shortNames} className="xl:col-span-2" />
             </div>
 
             <p className="text-right text-xs text-slate-400">
-              <Link to={`/operations?${conditionQuery({ ...cond, period: cond.period })}`} className="inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200">
+              <Link to={`/operations?${conditionQuery(cond)}`} className="inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200">
                 누적 판정·탐지 모델 성능은 운영 현황
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
@@ -309,7 +348,7 @@ function KpiRow({
   pendingError: boolean;
 }) {
   const s = queue.summary;
-  const scope = periodScopeText(cond.period);
+  const scope = periodScopeText(cond, queue.anchor);
   return (
     <section aria-label="핵심 지표" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiCard
@@ -336,7 +375,7 @@ function KpiRow({
         title="상태 알림이 아닌 Slack 발송 기록이 있는 인시던트 수입니다."
       />
       <KpiCard
-        to={`/incidents?${conditionQuery({ ...cond, period: 'all' }, { reviewPending: 'true' })}`}
+        to={`/incidents?${conditionQuery(allPeriod(cond), { reviewPending: 'true' })}`}
         label="에스컬레이션 대기"
         value={pending === null ? '-' : formatNumber(pending)}
         scope="현재"
@@ -356,6 +395,7 @@ function TrendPanel({
   cond,
   sourceValue,
   onAllPeriod,
+  onNavigate,
   className = '',
 }: {
   overview: DashboardOverviewResponse;
@@ -363,6 +403,7 @@ function TrendPanel({
   cond: Condition;
   sourceValue: string;
   onAllPeriod: () => void;
+  onNavigate: (href: string) => void;
   className?: string;
 }) {
   const trend = overview.trend;
@@ -374,7 +415,7 @@ function TrendPanel({
       <PanelHeader
         icon={Activity}
         title="탐지 추이"
-        note={`${periodScopeText(cond.period)} · 구간 ${unitText[trend.bucket] ?? trend.bucket} · ${DISPLAY_TIME_ZONE_LABEL}`}
+        note={`${periodScopeText(cond, overview.anchor)} · 구간 ${unitText[trend.bucket] ?? trend.bucket} · ${DISPLAY_TIME_ZONE_LABEL}`}
       />
       {bucketed === 0 && unbucketed === 0 ? (
         hasOutsideToShow(queue) ? (
@@ -391,7 +432,17 @@ function TrendPanel({
         )
       ) : (
         <>
-          {trend.buckets.length > 0 && <TrendChart trend={trend} />}
+          {trend.buckets.length > 0 && (
+            <TrendChart
+              trend={trend}
+              anchor={overview.anchor}
+              periodStart={overview.periodStart ?? null}
+              periodEnd={overview.periodEnd ?? null}
+              // T34: 막대를 누르면 그 구간(기간 경계·기준 시각으로 자름)의 큐로 간다. 수집원 조건은 그대로다
+              bucketHref={(r) => `/incidents?${conditionQuery({ ...cond, period: 'custom', range: r })}`}
+              onNavigate={onNavigate}
+            />
+          )}
           {unbucketed > 0 && (
             <p className="text-[11px] text-slate-400" data-unbucketed="">
               추이에 넣지 않은 인시던트: 탐지 시각 없음 {formatNumber(trend.unbucketed.noDetectedAt)}건 · 기준 시각 뒤 탐지{' '}
@@ -436,7 +487,7 @@ function RecentPanel({
         </Link>
       </div>
       {rows.length === 0 ? (
-        <p className="px-2 py-6 text-center text-xs text-slate-400">{periodScopeText(cond.period)} 동안 탐지된 인시던트가 없습니다.</p>
+        <p className="px-2 py-6 text-center text-xs text-slate-400">{periodScopeText(cond, queue.anchor)} 동안 탐지된 인시던트가 없습니다.</p>
       ) : (
         <ul className="divide-y divide-slate-800/80" aria-label="최근 인시던트 목록">
           {rows.map((item) => {
@@ -478,12 +529,12 @@ function RecentPanel({
 
 function AlertingPanel({
   overview,
-  period,
+  cond,
   shortNames,
   className = '',
 }: {
   overview: DashboardOverviewResponse;
-  period: Period;
+  cond: Condition;
   shortNames: Map<string, string>;
   className?: string;
 }) {
@@ -522,7 +573,7 @@ function AlertingPanel({
             </span>
           )}
         </dd>
-        <dt className="text-slate-400">{periodScopeText(period)} 일일 요약</dt>
+        <dt className="text-slate-400">{periodScopeText(cond, overview.anchor)} 일일 요약</dt>
         <dd className="tabular-nums text-slate-100">{formatNumber(a.summariesInPeriod)}건</dd>
       </dl>
     </section>

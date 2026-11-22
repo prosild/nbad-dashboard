@@ -6,15 +6,8 @@ import { Info } from 'lucide-react';
 import type { QueueSource, UnifiedQueueResponse } from '../types/api';
 import { formatCompactDateTime, formatDateTime, formatNumber, formatRelativeTo } from '../utils/format';
 import { captureInfo } from '../utils/labels';
-import type { Period } from '../utils/triage';
+import { parseOffsetIso } from '../utils/periodRange';
 import { SOURCE_TYPE_LABEL } from './StatusBadge';
-
-const PERIOD_MS: Record<Exclude<Period, 'all'>, number> = {
-  '1h': 3_600_000,
-  '24h': 86_400_000,
-  '7d': 7 * 86_400_000,
-  '30d': 30 * 86_400_000,
-};
 
 /** 기간 밖 수(없거나 기간 전체면 0) */
 export function outsideCount(queue: Pick<UnifiedQueueResponse, 'outsidePeriod' | 'period'> | null | undefined): number {
@@ -22,13 +15,20 @@ export function outsideCount(queue: Pick<UnifiedQueueResponse, 'outsidePeriod' |
   return typeof queue.outsidePeriod === 'number' && queue.outsidePeriod > 0 ? queue.outsidePeriod : 0;
 }
 
-/** 기간 (시작, 기준 시각] 밖인가. 탐지 시각이 없으면 판단하지 않는다(false) */
-export function isOutsidePeriod(iso: string | null | undefined, anchor: string | null | undefined, period: string): boolean {
-  if (!iso || !anchor || period === 'all' || !(period in PERIOD_MS)) return false;
-  const t = new Date(iso).getTime();
-  const a = new Date(anchor).getTime();
-  if (Number.isNaN(t) || Number.isNaN(a)) return false;
-  return t <= a - PERIOD_MS[period as keyof typeof PERIOD_MS] || t > a;
+/**
+ * 기간 (periodStart, periodEnd] 밖인가(T34: 응답의 실제 경계를 쓴다. 프리셋은 (기준 시각 − P, 기준 시각], 지정 기간은 받은 범위).
+ * 탐지 시각이 없거나 경계가 없으면(전체 기간) 판단하지 않는다(false).
+ */
+export function isOutsidePeriod(
+  iso: string | null | undefined,
+  periodStart: string | null | undefined,
+  periodEnd: string | null | undefined,
+): boolean {
+  const t = parseOffsetIso(iso);
+  const s = parseOffsetIso(periodStart);
+  const e = parseOffsetIso(periodEnd);
+  if (t === null || s === null || e === null) return false;
+  return t <= s || t > e;
 }
 
 /** 고른 수집원(캡처 하나 또는 수집원 종류)의 이름과 마지막 탐지 시각. 전체 수집원이면 null */
@@ -125,7 +125,7 @@ export function OutsidePeriodNotice({
 export function EmptyPeriodText({ queue, sourceValue }: { queue: UnifiedQueueResponse; sourceValue: string }) {
   const n = outsideCount(queue);
   const src = selectedSourceLastDetected(queue.sources ?? [], sourceValue);
-  const srcOutside = src !== null && isOutsidePeriod(src.lastDetectedAt, queue.anchor, queue.period);
+  const srcOutside = src !== null && isOutsidePeriod(src.lastDetectedAt, queue.periodStart, queue.periodEnd);
   return (
     <>
       <p>

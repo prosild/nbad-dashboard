@@ -183,6 +183,8 @@ export function fakeQueue(url: string, opts: FakeQueueOptions): UnifiedQueueResp
     anchorMode: opts.snapshot ? 'latest-data' : 'now',
     snapshot: Boolean(opts.snapshot),
     period: p.get('period') ?? '24h',
+    // T34 실제 기간 경계(서버와 같다): 프리셋은 (기준 시각 − P, 기준 시각], 전체는 null, 지정 기간은 받은 값
+    ...periodBounds(p, opts.anchor ?? '2026-11-21T00:00:00Z'),
     latestDetectedAt: latest ?? null,
     newestOutsidePeriod:
       sorted.length === 0 || opts.newestOutsideAlways ? (opts.newestOutsidePeriod ?? null) : null,
@@ -234,4 +236,15 @@ export function fakeNeighbors(url: string, opts: FakeQueueOptions): QueueNeighbo
     prev: idx > 0 ? key(ordered[idx - 1]) : null,
     next: idx < ordered.length - 1 ? key(ordered[idx + 1]) : null,
   };
+}
+
+/** T34 서버와 같은 기간 경계(UTC). 프리셋은 (기준 시각 − P, 기준 시각], 전체는 null, 지정 기간은 받은 start·end */
+const PRESET_MS: Record<string, number> = { '1h': 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 };
+export function periodBounds(p: URLSearchParams, anchor: string): { periodStart: string | null; periodEnd: string | null } {
+  const period = p.get('period') ?? '24h';
+  if (period === 'custom') return { periodStart: p.get('start'), periodEnd: p.get('end') };
+  const len = PRESET_MS[period];
+  if (len === undefined) return { periodStart: null, periodEnd: null };
+  const a = new Date(anchor).getTime();
+  return { periodStart: new Date(a - len).toISOString(), periodEnd: new Date(a).toISOString() };
 }
