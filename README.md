@@ -159,7 +159,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 - 공개 데모의 인시던트 큐 응답이 0.8초대입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다.
 - 앱은 WAF 고정 주소에서 온 전달 헤더만 믿지만, 같은 Docker 네트워크에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격까지는 막지 못합니다.
 - Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.
-- 그 밖의 후보: 큐에서 이웃 인시던트로 이동할 때 전체 집합을 읽는 문제.
 
 ## 데이터 출처
 
