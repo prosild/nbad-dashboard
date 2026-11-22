@@ -65,13 +65,16 @@
 
 PowerShell에서 `<저장소 루트>`로 이동해 실행한다.
 
-### 2.1 이미지 빌드(최신 기반 이미지로)
+### 2.1 이미지 빌드
 
 ```powershell
 docker build --pull -t zeek-ad-dashboard-app:local .
 docker build --pull -t zeek-ad-dashboard-waf:local docker/nginx-waf
 docker pull pgvector/pgvector:0.8.1-pg17
 ```
+
+- 앱 이미지는 `--pull`로 최신 기반 이미지를 받고, 런타임 단계의 `apk upgrade`로 Alpine 패키지를 올린다.
+- WAF 이미지의 기반(`owasp/modsecurity-crs`)은 Dockerfile에서 태그와 digest로 고정했다. `--pull`은 그 digest를 받아 올 뿐 새 기반을 가져오지 않는다. 기반 위에서는 `libxml2`만 고친 판(`2.13.9-r3` 이상)으로 올린다. 기반을 올리는 절차는 `docs/deployment-guide.md` 4.1 "WAF 기반 이미지 올리기"에 있다.
 
 - `zeekad-pipeline:dev`(근거 API)는 `zeek_AD` 저장소에서 만든 이미지다. 로컬 PC에 있는 것을 그대로 쓴다. 다시 만들어야 하면 `zeek_AD` 저장소의 안내대로 `docker build -f deploy/pipeline/Dockerfile -t zeekad-pipeline:dev .`를 실행한다(바탕 이미지는 digest로 고정돼 있다).
 - 로컬 PC와 NAS는 모두 `x86_64`라 이미지를 그대로 옮길 수 있다.
@@ -615,6 +618,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `demo`에 틀린 비밀번호를 여러 번 넣어도 잠기지 않는다. 짧은 시간에 로그인을 많이 시도하면 `429`가 난다. (리허설 [6]·[7])
 - [ ] 감사 로그의 로그인 IP가 실제 접속 IP다(4.3). (리허설 [7])
 - [ ] `https://soc.<DDNS 이름>.synology.me/api/incidents?asset=%27%20OR%201%3D1--`가 `403`(WAF)이다. XSS(`?asset=%3Cscript%3E`)·경로 탐색(`?asset=../../etc/passwd`)도 `403`. (리허설 [8])
+- [ ] 로그인 경로가 아닌 `POST /api/...`(예: `/api/incidents/101/rank/2/assignment`)에 인증 없이 `Content-Type: application/xml`로 깨진 XML 본문(`<a><b></a>`)을 보내면 `400`(WAF)이다. 이 요청은 로그인 실패를 만들지 않는다. 예: `curl.exe -s -o NUL -w "%{http_code}" -X POST -H "Content-Type: application/xml" --data-binary "<a><b></a>" https://soc.<DDNS 이름>.synology.me/api/incidents/101/rank/2/assignment`. NAS의 `nginx-waf` 로그에서 그 요청의 규칙 `200002`를 확인한다. ([T31])
 - [ ] 응답 헤더에 `Strict-Transport-Security`(DSM HSTS), `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server`에 버전이 없다(DSM 앞단이 `Server: nginx`를 붙인다. 4.2). 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1], HSTS는 공개 주소에서만)
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
 - [ ] 로그아웃 상태에서 `https://soc.<DDNS 이름>.synology.me/`에 접속하면 `https://soc.<DDNS 이름>.synology.me/login`으로 간다(주소에 `:8080`·`:18480`·`http://`가 없다). (리허설 [1])

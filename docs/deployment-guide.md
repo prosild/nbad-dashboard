@@ -12,7 +12,9 @@
 - **사용자 접속 (Windows 호스트 브라우저)**: Windows 브라우저에서 배포 VM의 IP 또는 호스트명(`https://<VM_IP>`)으로 접속합니다. 외부 요청은 `nginx-waf`로만 들어옵니다.
 
 ### 1.2 대시보드 컨테이너 구성
-- **`nginx-waf` (`docker/nginx-waf/Dockerfile`)**: `owasp/modsecurity-crs:nginx-alpine` 기반 앞단 리버스 프록시 + ModSecurity v3 WAF(OWASP CRS `PARANOIA=1`, `SecRuleEngine On`, `USER nginx`).
+- **`nginx-waf` (`docker/nginx-waf/Dockerfile`)**: `owasp/modsecurity-crs:4.30.0-nginx-alpine-202611190211` 기반 앞단 리버스 프록시 + ModSecurity v3 WAF(OWASP CRS `PARANOIA=1`, `SecRuleEngine On`, `USER nginx`).
+  - 기반 이미지는 태그와 digest(`@sha256:f7b4ec03…5412`)로 고정합니다. 빌드할 때마다 nginx·ModSecurity·CRS 판이 바뀌지 않습니다.
+  - 이 기반에 든 `libxml2` `2.13.9-r2`는 HIGH 취약점(`CVE-2026-86144`)이 있어 `libxml2`만 `2.13.9-r3` 이상으로 올립니다. 판은 하한만 고정하므로 빌드할 때 Alpine 저장소에 있는 그 이상 판이 들어옵니다. 하한을 채우는 판이 없으면 빌드가 실패합니다. 다른 패키지는 올리지 않습니다(4.1).
   - 외부 트래픽은 `nginx-waf`의 HTTPS(`${WAF_HTTPS_PORT:-443}` → 컨테이너 `8443`) 및 HTTP(`${WAF_HTTP_PORT:-80}` → 컨테이너 `8080`, HTTPS로 `301` 리다이렉트) 포트만 통과합니다.
   - `/actuator/**` 경로는 앞단 Nginx에서 `403 Forbidden`으로 즉시 차단합니다.
   - `compose.yml`의 `ALLOWED_METHODS: "GET HEAD POST PUT OPTIONS"`로 CRS 허용 메서드(기본 `GET HEAD POST OPTIONS`)에 `PUT`만 더합니다. SPA의 사용자 수정 요청 `PUT /api/admin/users/{id}` 때문입니다. 앱이 쓰지 않는 `DELETE`·`PATCH`는 허용하지 않습니다. `PARANOIA`·`BLOCKING_PARANOIA=1`, `ANOMALY_INBOUND=5`, `MODSEC_RULE_ENGINE=on`은 그대로이고 WAF 예외 규칙은 두지 않습니다.
@@ -137,7 +139,7 @@ cp .env.example .env
 2. **`builder` (`eclipse-temurin:17-jdk-alpine`)**: `src/main`과 1단계의 `frontend/dist`를 받아 `./gradlew bootJar`. `build.gradle` `processResources`가 `frontend/dist`를 jar의 `static/`으로 넣습니다. Gradle은 Node·npm을 호출하지 않습니다.
 3. **런타임 (`eclipse-temurin:17-jre-alpine`)**: `apk upgrade`, 비루트 `appuser`, `HEALTHCHECK`(`/login`), jar만 복사. Node.js 런타임 컨테이너는 배포 스택에 두지 않습니다.
 
-`.dockerignore`가 `frontend/node_modules`·`frontend/dist`·`frontend/.vite`를 빌드 컨텍스트에서 빼므로 Windows 호스트 산출물이 이미지에 섞이지 않습니다. `RUN apk upgrade` 레이어를 빌드 캐시에서 다시 쓰면 그 뒤 나온 Alpine 보안 패치가 들어가지 않습니다. 그래서 배포·보안 재검증 전에는 `docker compose build --pull --no-cache`로 다시 빌드합니다.
+`.dockerignore`가 `frontend/node_modules`·`frontend/dist`·`frontend/.vite`를 빌드 컨텍스트에서 빼므로 Windows 호스트 산출물이 이미지에 섞이지 않습니다. `RUN apk upgrade` 레이어를 빌드 캐시에서 다시 쓰면 그 뒤 나온 Alpine 보안 패치가 들어가지 않습니다. WAF Dockerfile의 `libxml2` 올리기 레이어도 같습니다. 그래서 배포·보안 재검증 전에는 `docker compose build --pull --no-cache`로 다시 빌드합니다. WAF 기반은 digest로 고정했으므로 `--pull`은 그 digest를 받아 올 뿐 새 기반을 가져오지 않습니다.
 
 ```bash
 docker compose build
@@ -148,6 +150,16 @@ docker compose build
 docker build -t zeek-ad-dashboard-app:local -f Dockerfile .
 docker build -t zeek-ad-dashboard-waf:local -f docker/nginx-waf/Dockerfile ./docker/nginx-waf
 ```
+
+#### WAF 기반 이미지 올리기
+WAF 이미지에서는 전체 `apk upgrade`를 하지 않습니다. 기반의 ModSecurity nginx 모듈은 상류가 특정 nginx 판에 맞춰 빌드한 것이라, nginx 패키지가 함께 올라가면 모듈과 어긋날 수 있습니다. 기반을 올릴 때는 아래 순서를 따릅니다.
+1. Docker Hub `owasp/modsecurity-crs`에서 `<CRS 판>-nginx-alpine-<날짜>` 형식의 새 태그와 그 index digest를 확인합니다.
+2. `docker/nginx-waf/Dockerfile`의 `FROM` 태그와 digest를 함께 바꿉니다.
+3. 새 기반에 `libxml2` `2.13.9-r3` 이상이 이미 들어 있으면(`docker run --rm --entrypoint apk <새 기반> list -I libxml2`) Dockerfile의 `libxml2` 올리기 `RUN` 줄을 지웁니다.
+4. `docker compose -f compose.yml -f docker/verify/compose.verify.yml build --pull --no-cache`로 다시 빌드하고 Trivy로 WAF 이미지를 스캔합니다.
+5. `scripts/security-scan.ps1`(E2E·ZAP)과 배포 전 리허설을 다시 돌립니다.
+
+CRS 판이 바뀌면 `compose.yml`의 CRS 변수(`ALLOWED_METHODS`, `PARANOIA`·`BLOCKING_PARANOIA`, `ANOMALY_INBOUND`)가 그대로 적용되는지 확인하고, E2E의 WAF 차단 판정과 ZAP 결과를 다시 봅니다. 지금은 WAF 오탐 예외 규칙이 없습니다.
 
 ### 4.2 `zeek_AD`와 통합 기동 방법 (2가지 중 선택)
 
@@ -185,7 +197,7 @@ docker compose ps
 
 ## 5. Nginx + ModSecurity WAF TLS 인증서 운영 방법 (VM IP SAN 지원)
 
-`owasp/modsecurity-crs:nginx-alpine`의 내장 진입점 스크립트(`/docker-entrypoint.d/10-generate-certificate.sh`)는 고치지 않고 그대로 씁니다. 환경에 따라 아래 두 방식 중 하나를 고릅니다.
+WAF 기반 이미지(`owasp/modsecurity-crs`)의 내장 진입점 스크립트(`/docker-entrypoint.d/10-generate-certificate.sh`)는 고치지 않고 그대로 씁니다. 환경에 따라 아래 두 방식 중 하나를 고릅니다.
 
 1. **기본 자체 서명 인증서(자동 생성)**:
    - `SSL_CERT_FILE=/etc/nginx/conf/server.crt`, `SSL_CERT_KEY_FILE=/etc/nginx/conf/server.key`(기본값)를 그대로 두면 컨테이너가 시작할 때 `localhost`용 EC P-256 자체 서명 인증서를 만듭니다. Git과 이미지에는 개인키가 남지 않습니다.

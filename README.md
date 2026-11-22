@@ -142,7 +142,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 문서
 
 - [주요 판단 기록](docs/design-decisions.md)
-- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T30`)
+- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T31`)
 - [배포 및 운영 가이드](docs/deployment-guide.md): VMware 실습 환경
 - [포트폴리오 공개 배포 안내서](docs/portfolio-deployment.md): 공개 데모(Synology NAS)
 - [보안 검증 보고서](docs/security-verification-report.md)
@@ -152,7 +152,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 
 - 공개 데모의 인시던트 큐 응답이 0.8초대입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다.
 - 앱은 받은 전달 헤더를 그대로 믿습니다. WAF만 앱에 닿게 해서 지키지만 같은 Docker 네트워크의 다른 컨테이너가 탈취되면 감사 로그 IP를 꾸밀 수 있습니다. 앱이 WAF에서 온 헤더만 믿게 하는 것이 다음 과제입니다.
-- Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다. 마지막 Trivy에서 WAF 기반 이미지의 `libxml2` HIGH 1건도 나왔습니다(기반 이미지를 다시 받아 빌드하면 고친 버전이 들어옵니다).
+- Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.
 - 그 밖의 후보: 정기 초기화하는 체험용 분석가 계정, 사용자 지정 기간, 큐에서 이웃 인시던트로 이동할 때 전체 집합을 읽는 문제.
 
 ## 데이터 출처
