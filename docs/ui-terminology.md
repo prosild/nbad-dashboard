@@ -148,6 +148,10 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | 2026-11-22 | T27 | 인시던트 목록 · 표(1920px 미만) | 탐지 · 경과 칸의 탐지 시각, 호스트 이름 최대 17rem(2xl), 담당 최대 6.5rem·10rem(2xl), 1536px부터 통신 방향·세션 수 | **1920px 미만**: 탐지 시각은 툴팁·판독기 글자("탐지 시각 …")로만 두고 경과와 표지만 보인다, 줄인 **지연** 표지. 호스트 이름 최대 폭 2.5rem(1536px 미만)·4rem(1536~1919px), 담당 최대 4.5rem·6rem. 1536~1919px은 통신 방향·세션 수를 숨긴다(정렬 기준이면 보임). **1920px부터** 모든 칸, 호스트 칸 최대 15rem·담당 7.5rem(전체 이름은 툴팁). "발생 시각 · 지속"은 1536px부터 그대로 | 프론트엔드 | 1280~1920px 큐 표 가로 스크롤 0(T27) | 아니요 |
 | 2026-11-21 | T27 | 운영 현황 · 수집원 상태 · 상세 머리 툴팁 · 목록 리포트 툴팁 · 에스컬레이션 툴팁 | 작업 번호 `#44`("탐지 작업 #44", "리포트 작업 #40") | **작업 44**("탐지 작업 44", "리포트 작업 40"). 칸 머리가 이미 작업("최근 끝난 작업")이면 숫자만. `#`은 인시던트 번호에만 쓴다 | 프론트엔드 | 인시던트 번호와 작업 번호를 섞지 않기 | 아니요 |
 | 2026-11-21 | T27 | 화면 문구 회귀 시험 | (없음) | 보이는 글과 툴팁에 "작업 #"이 없어야 한다 | 프론트엔드 시험(`uiTerminology.test.tsx`) | 위 표기 변경 회귀 | 아니요 |
+| 2026-11-23 | T37 | 상세 · AI 리포트 탭 · 요약 탭(확인된 사실·가능한 해석·리포트의 경보 권고) | 문장 옆 근거 번호 칩(`F01`). 누르면 사실 이름·값 원문(`connection_count` · `155261`, 객체는 JSON 글). 안내 "근거 번호를 누르면 근거 값을 볼 수 있습니다" | 문장 아래 근거 목록 "항목 이름 + 값"(예: 세션 수 155,261). 근거 번호는 끝에 작게(판독기 글자 "근거 번호 F01"). 4개가 넘으면 "근거 N개 더 보기"·"근거 접기". 항목 툴팁에 근거 번호·zeek_AD 이름·원문 값. 값 안 가명에 주소(`X1(203.0.*.*)`). 안내 "문장 아래는 리포트가 인용한 근거 사실입니다. 끝의 번호는 근거 번호입니다" | 프론트엔드 사전 `utils/factLabels.ts`(값: API `facts[].valueJson`, 주소: `report.pseudonyms`) | 관제에서 근거를 바로 읽게 한다(사용자 2026-11-23). 사전에 없는 이름·값 모양은 원문(`data-raw`) | 예(아래 'AI 리포트 근거 사실 이름' 절) |
+| 2026-11-23 | T37 | 상세 · AI 리포트 탭 | (없음) | 접힌 구역 "근거 사실 전체 (N개)"(옆에 "리포트가 인용한 항목 N개"). 묶음별 표(규모·방향 / 탐지 모델 / 평소 대비 / 세션 상태·전송 계층·서비스 프로토콜 / 프로토콜 로그 / 상대 IP·목적지 포트 / 주요 세션 / 사전에 없는 항목), 열은 번호·항목·값, 리포트가 인용한 행에 "인용" 표지 | 프론트엔드(값: API `allFacts`) | 인용하지 않은 사실도 볼 수 있게 한다 | 아니요 |
+| 2026-11-23 | T37 | 상세 · 검증 실패 사유 | 문제 항목을 JSON 글 그대로(`{"kind":"number_not_in_facts",…}`) | `리포트 글의 숫자 "…"가 근거 사실에 없습니다 (위치: …)`, `리포트 글의 가명 "X1(203.0.*.*)"가 근거 사실에 없습니다 (위치: …)`. 가명표에 없는 가명은 그대로, 모르는 `kind`·모양은 원문 | 프론트엔드(값: API `verificationProblemItems` = zeek_AD `zeekad_verification_problems`의 `kind`·`value`·`where`) | 공개 데이터 실패 4건의 `kind`는 `number_not_in_facts`·`pseudonym_not_in_facts` 둘이다 | 예(`kind` 값) |
+| 2026-11-23 | T37 | 인시던트 목록 "리포트·판단" 가운데 칩 · 상세 검증 표지(머리·AI 리포트 탭) | 접근성 이름·툴팁 "검증 통과" / "검증 실패"(상세 표지는 툴팁 없음) | 표지 이름은 그대로. 접근성 이름·툴팁: "AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다" / 목록 "AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다" / 상세 "AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 검증 실패 사유를 확인합니다" | 프론트엔드(`labels.ts` `VERIFICATION_DESCRIPTION`) | 사용자 질문 "검증 통과가 뭘 의미하는거지?". 공개 데이터 실패 사례에서 확인한 검사(글 속 숫자·가명)까지만 말하고 해석을 보증한다고 읽히지 않게 한다 | 예 |
 
 ## 처리 흐름 용어 (T25)
 
@@ -212,7 +216,7 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | 영역 | 남긴 것(화면에 쓰는 필드) | 뺀 것(화면에서 없앰. 접어 두지도 않는다) |
 |---|---|---|
 | 요약 헤더 | 우선순위(화면 계산, 현재 상태 반영), 상태·판정(`currentStatus`·`currentResolution`), 호스트(`hostIp`·`hostName`), 방향(`zeekadRole`), 탐지 모델(`zeekadPickedBy` + `zeekadAlsoFlaggedBy` 수), 발생 시각·지속(`eventStart`·`eventEnd`), 세션 수(`connectionCount`), 경보 발송(T21: 사건 알림 Slack 기록 `alerted`. 발송 판단 `zeekadWouldSend`는 발송 판단 탭), 리포트 검증(`report.verificationPassed`) | 인시던트 ID 원문(복사 버튼만. 복사 값은 원문 `incidentId`), 모델 버전 `bundleId`·탐지 작업 시각(툴팁에만) |
-| AI 리포트 | 관측 요약, 확인된 사실(근거 칩 `F*`), 가능한 해석(ATT&CK 칩), 관련 ATT&CK 기법 후보(가설), 리포트의 경보 권고, 추가 확인 권고, 리포트의 한계, 검증 결과 배지 하나(실패일 때만 `verificationReason`·`verificationProblems`), AI 작성 오류(`llmError`), 작성 시각 | `llmModelRequested`·`llmModelVersion`, 토큰 수(`llmInputTokens`·`llmOutputTokens`·`llmThinkingTokens`), `llmSeconds`, `reportVersion`·`inputVersion`, `sourceRun`, 가명 대응표 `pseudonyms`(본문·사실 칩의 가명 병기 `H(192.168.*.*)`는 백엔드가 그대로 하므로 남는다) |
+| AI 리포트 | 관측 요약, 확인된 사실·가능한 해석·리포트의 경보 권고와 문장 아래 근거(T37: `facts[].valueJson`을 항목 이름 + 값으로, 번호 `F*`는 끝에 작게), 가능한 해석의 ATT&CK 칩, 관련 ATT&CK 기법 후보(가설), 추가 확인 권고, 리포트의 한계, 근거 사실 전체(T37: `allFacts`, 기본 접힘), 검증 결과 배지 하나(툴팁·접근성 이름에 뜻, 실패일 때만 `verificationReason`과 `verificationProblemItems` 문장), AI 작성 오류(`llmError`), 작성 시각 | `llmModelRequested`·`llmModelVersion`, 토큰 수(`llmInputTokens`·`llmOutputTokens`·`llmThinkingTokens`), `llmSeconds`, `reportVersion`·`inputVersion`, `sourceRun`, 가명 대응표 `pseudonyms`(표로는 보이지 않는다. 문장 속 가명 병기 `H(192.168.*.*)`는 백엔드가 하고, 근거 값 안 가명의 주소는 화면이 이 맵에서 찾아 붙인다. T37) |
 | 증적 | 핵심 수치(세션 수·송신/수신 바이트·고유 상대 IP 수·고유 목적지 포트 수·페이로드 바이트가 부푼 세션 수), 분포(전송 계층·서비스 프로토콜·세션 상태), 상위 상대 IP·포트, 주요 세션(필드별 열), 프로토콜별 기록 수, 증적의 한계, 원본 증적(`additionalFields`, 증적 탭 맨 아래 기본 접힘) | — |
 | 관측 계정 | 계정 이름(`zeekad_name`, 없으면 `kerberosUser`·`ntlmUser`), 종류(`zeekad_name_kind`), 마지막 관측(`last_seen`) | 출처 로그(`zeekad_source_log`), 관측 횟수(`observations`·`observation_count`), 처음 관측(`first_seen`), 자산 IP·캡처 등 부가 필드 |
 | 발송 판단(T21 탭 이름) | 최종 결과(`wouldSend`·`decidedBy`), 세 의견 한 줄씩(`policyChoice`+`policyReasons`+`policyMandatory`, `llmChoice`, `decisionModelChoice`+선택 확률 숫자 `decisionModelConfidence`), 의견 불일치(`opinionMismatch`)일 때만 강조, `decisionModelError` | 정책 ID `policyId`, 판단 모델 ID `decisionModel`, 선택지별 확률 막대 `decisionModelProbabilities` |
@@ -252,6 +256,40 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | ATT&CK 전술 (`attackTactic`) | `reconnaissance` → 정찰, `resource-development` → 자원 개발, `initial-access` → 최초 접근, `execution` → 실행, `persistence` → 지속성 확보, `privilege-escalation` → 권한 상승, `defense-evasion` → 방어 회피, `credential-access` → 자격 증명 접근, `discovery` → 탐색, `lateral-movement` → 내부 확산, `collection` → 수집, `command-and-control` → 명령 및 제어, `exfiltration` → 유출, `impact` → 영향 (제목 표기 `Command and Control` 등도 같은 이름) | zeek_AD 보고서 `tactics` | 예 |
 | 알림 규칙 사유 (`policyReasonText`) | `queue_rank A <= B` → 탐지 순위 B위 이내(현재 A위), `flagging_models A >= B` → B개 이상 모델이 탐지(현재 A개) | zeek_AD `policy_reasons` | 예 |
 | 에스컬레이션 사유 (`reviewReasonText`) | `주체=선택지` 나열(예: `llm=analyst_review, decision_model=analyst_review`) → `AI 리포트: 에스컬레이션 · 판단 모델: 에스컬레이션` | zeek_AD `zeekad_review_reason` | 예 |
+
+## AI 리포트 근거 사실 이름 (T37, zeek_AD와 공유)
+
+zeek_AD 리포트 근거 사실(`zeekad_facts`, `[{id, name, value}]`)의 이름을 화면 항목 이름으로, 값을 읽기 좋은 모양으로 바꾸는 사전이다(`frontend/src/utils/factLabels.ts`). 이름 규칙으로 바꾸고, 상태·역할·모델 이름은 위 표시 이름 사전을 다시 쓴다. 공개 데이터의 이름 102가지(2026-11-23, `demo`가 볼 수 있는 캡처)를 모두 덮는지 시험한다(`frontend/src/test/publicFactNames.ts`).
+
+- 사전에 없는 이름, 이름이 정한 모양과 다른 값(모르는 키가 더 있는 객체 포함)은 원문을 흐린 고정폭 글자로 보인다(`data-raw`). 지어내거나 숨기지 않는다.
+- 값을 다시 계산해 리포트 문장과 맞는지 판정하지 않는다. 화면은 zeek_AD가 준 값을 읽기 좋게 보일 뿐이다(평소 p95의 몇 배인지만 나눗셈으로 보인다).
+- 숫자는 천 단위 구분, 소수는 둘째 자리까지 보인다. 객체 안 null 칸은 `-`다(0으로 바꾸지 않는다). 원문 이름과 원문 값은 항목 툴팁에 있다.
+- 값 글 전체가 가명 키(`H`·`I1`·`X1` 등)와 같을 때만 `X1(203.0.*.*)`처럼 주소를 붙인다(문장과 같은 모양, 주소는 `report.pseudonyms`라 조회자는 가린 주소). `X1:443`처럼 섞인 글에는 붙이지 않는다.
+- 리포트가 인용한 번호가 사실 목록에 없으면 "근거 정보 없음"과 번호를 보인다.
+
+| 사실 이름(규칙) | 항목 이름 | 값 |
+|---|---|---|
+| `connection_count` / `unique_peers` / `unique_destination_ports` / `payload_bytes_inflated_connections` | 세션 수 / 고유 상대 IP 수 / 고유 목적지 포트 수 / 페이로드 바이트가 부푼 세션 수 | 천 단위 구분 |
+| `queue_rank` | 탐지 순위 | `N위` |
+| `bytes_sent_by_host` / `bytes_received_by_host` | 자산 송신 바이트 / 자산 수신 바이트 | B·KB·MB·GB·TB |
+| `incident_duration_seconds` | 인시던트 지속 시간 | `1시간 5분`, `45분`, `30초` |
+| `host_role` | 통신 방향 | 출발지·목적지(`hostRole`) |
+| `picked_by_model` / `also_flagged_by_models` | 탐지 모델 / 함께 탐지한 모델 | 모델 표시 이름(`detectionModel`), 여럿은 쉼표, 빈 배열은 "없음" |
+| `model_candidate_windows.<모델>` | `<모델 표시 이름>` 이상 판정 구간 | `candidate / windows 구간` |
+| `baseline.<지표>` | 평소 대비 · `<지표 이름>` | "이번 인시던트 최대 / 평소 중앙값 / 평소 p95 / 평소 최대" 한 줄. 평소 p95가 0보다 크면 "(평소 p95의 N배)"(비율 지표는 붙이지 않음) |
+| `baseline_windows` | 비교한 구간 수 | `평소 N구간 · 이번 인시던트 M구간` |
+| `conn_state.<상태>` | 세션 상태 · `<상태 표시 이름>`(`connState`) | `N건` |
+| `protocol.<이름>` / `transport.<이름>` | 서비스 프로토콜 · `<이름>`(`unidentified`는 식별 안 됨) / 전송 계층 · `<이름>` | `N건` |
+| `dns.*`·`http.*`·`tls.*`·`smb.*`·`kerberos.*`·`ntlm.*`·`ssh.*`·`ftp.*`·`dce_rpc.calls` | `DNS`·`HTTP`·`TLS`·`SMB`·`Kerberos`·`NTLM`·`SSH`·`FTP`·`DCE-RPC` + 하위 수치 이름(`protocolMetric`). `dns.max_query_length_chars`는 DNS 최장 질의 길이 | 천 단위 구분, 글자 수는 `N자` |
+| `dce_rpc.top_operation_N` | DCE-RPC 주요 호출 N | `<호출 이름> · 세션 N건` |
+| `top_peer_N` | 많이 통신한 상대 IP N | `X1(주소) · 세션 N건` |
+| `top_destination_port_N` | 많이 쓴 목적지 포트 N | `443/tcp · 세션 N건` |
+| `example_connection_N` | 주요 세션 N | `출발지 → 목적지:포트/전송 · 서비스 · 세션 상태 · 지속 · 출발지가 보냄 · 목적지가 보냄`(줄을 따로 쓴다). `start_seconds`는 뜻을 확인하지 않아 툴팁 원문에만 있다 |
+
+`baseline.<지표>` 지표 이름: `connections_per_window` 구간당 세션 수, `dce_rpc_calls_per_window` 구간당 DCE-RPC 호출 수, `distinct_peer_ports_per_window` 구간당 고유 상대 포트 수, `distinct_peers_per_window` 구간당 고유 상대 IP 수, `dns_max_query_length_chars` DNS 최장 질의 길이(`N자`), `dns_nxdomain_per_window` 구간당 DNS 없는 도메인 응답, `dns_queries_per_window` 구간당 DNS 질의 수, `ftp_failures_per_window` 구간당 FTP 실패 응답, `http_errors_per_window` 구간당 HTTP 오류 응답, `http_requests_per_window` 구간당 HTTP 요청 수, `icmp_connection_ratio` ICMP 세션 비율, `kerberos_failures_per_window` 구간당 Kerberos 실패 수, `payload_bytes_received_by_host_per_window` 구간당 자산 수신 페이로드 바이트(바이트 단위), `payload_bytes_sent_by_host_per_window` 구간당 자산 송신 페이로드 바이트(바이트 단위), `rejected_connection_ratio` 거부된 세션 비율, `smb_file_actions_per_window` 구간당 SMB 파일 작업 수, `smb_mappings_per_window` 구간당 SMB 공유 폴더 연결, `tls_without_sni_per_window` 구간당 SNI 없는 TLS 세션, `unestablished_connection_ratio` 성립하지 않은 세션 비율.
+
+- 이름이 `_ratio`로 끝나는 지표는 비율이다. 값이 0~1이면 %(소수 한 자리)로 보이고, 그 밖의 값(음수, 1 초과)은 바꾸지 않고 그대로 보인다. 공개 데이터의 세 비율 지표 값은 모두 0~1이다(설계자 확인 2026-11-23).
+- 구간은 zeek_AD 탐지의 5분 윈도우다.
 
 ## 탐지 모델 표시 이름 (T18b, 출처 zeek_AD)
 

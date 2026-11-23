@@ -1699,6 +1699,54 @@ FROM v GROUP BY m ORDER BY m
                 $e2eLogs.Add("[18] viewer1 percent-encoded +09:00 offset: $(Format-Resp $ok18 160)")
                 Assert-Status $ok18 200 "[18] %2B 오프셋은 통과"
 
+                # [19] AI 리포트 근거 구조 값(T37): 검증 DB의 101/1(cic17-wed) 리포트에 IPv4를 글 잎·배열·겹친 객체·객체 키·사실 이름·사실 id·
+                #      검증 문제 value/where에 넣고(같은 id 두 번, 가린 뒤 겹치는 키 포함) WAF를 거쳐 상세를 받는다. 조회자 응답 본문 전체에
+                #      가리지 않은 IPv4가 없고 새 칸(facts[].valueJson, allFacts, verificationProblemItems)이 있다. 분석가 응답에는 원문이 있다.
+                $sql19 = "UPDATE dashboard.raw_incident_reports SET " +
+                    "zeekad_facts = jsonb_build_array(" +
+                    "jsonb_build_object('id','F01','name','top_peer_1','value',jsonb_build_object('peer','X1','connections',210)), " +
+                    "jsonb_build_object('id','F02','name','leak_leaf','value','peer 198.51.100.7 seen'), " +
+                    "jsonb_build_object('id','F03','name','leak_array','value',jsonb_build_array('198.51.100.8',jsonb_build_object('deep',jsonb_build_array('198.51.100.9')))), " +
+                    "jsonb_build_object('id','F04','name','leak_key','value',jsonb_build_object('198.51.100.10',5,'nested',jsonb_build_object('198.51.100.11',jsonb_build_object('x','198.51.100.12')))), " +
+                    "jsonb_build_object('id','F05','name','name_198.51.100.13','value',1), " +
+                    "jsonb_build_object('id','198.51.100.14','name','id_leak','value',2), " +
+                    "jsonb_build_object('id','F07','name','collide','value',jsonb_build_object('198.51.1.1',1,'198.51.2.2',2)), " +
+                    "jsonb_build_object('id','F08','name','dup','value','first'), " +
+                    "jsonb_build_object('id','F08','name','dup','value','second')), " +
+                    "zeekad_report = jsonb_build_object('observation_summary','T37 E2E','claims',jsonb_build_array(jsonb_build_object('claim','T37 claim','fact_ids',jsonb_build_array('F01','F04','198.51.100.14','F08','198.51.100.99')))), " +
+                    "zeekad_verification_passed = FALSE, zeekad_verification_reason = 'verification', " +
+                    "zeekad_verification_problems = jsonb_build_array(jsonb_build_object('kind','number_not_in_facts','value','198.51.100.20','where','claims[0] 198.51.100.21'), jsonb_build_object('kind','pseudonym_not_in_facts','value','X1','where','observation_summary')) " +
+                    "WHERE job_id = 101 AND incident_id = 'cic17-wed|192.168.10.50|originator|1700000000'"
+                $ins19 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-c", $sql19)) -IgnoreExitCode
+                $e2eLogs.Add("[19] updated 101/1 report facts/problems with IPv4 test values in verify zeekad DB: exit=$($ins19.ExitCode) $($ins19.Output.Trim() -replace "`r?`n", ' ')")
+                Assert-True ($ins19.ExitCode -eq 0 -and $ins19.Output -match 'UPDATE 1') "[19] 검증 DB 101/1 리포트에 IPv4 시험 값 넣기"
+                $ipv4Re19 = '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])'
+                $q19V = Join-Path $tmpDir "q19-viewer.cookies"
+                $q19A = Join-Path $tmpDir "q19-analyst.cookies"
+                Assert-Status (Login-Api "viewer1" $q19V) 200 "[19] viewer1 로그인"
+                Assert-Status (Login-Api "analyst1" $q19A) 200 "[19] analyst1 로그인"
+                foreach ($who19 in @(@{ U = "viewer1"; Jar = $q19V; Masked = $true }, @{ U = "analyst1"; Jar = $q19A; Masked = $false })) {
+                    $r19 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $who19.Jar
+                    $rep19 = $r19.Json.detail.report
+                    $all19 = @($rep19.allFacts)
+                    $items19 = @($rep19.verificationProblemItems)
+                    $claimFacts19 = @($rep19.claims[0].facts)
+                    $hasValueJson19 = @($claimFacts19 | Where-Object { $_.PSObject.Properties.Name -contains 'valueJson' }).Count
+                    $ipHits19 = @([regex]::Matches($r19.Body, $ipv4Re19)).Count
+                    $ids19 = ($all19 | ForEach-Object { $_.id }) -join ','
+                    $e2eLogs.Add("[19] $($who19.U) GET /api/incidents/101/rank/1 -> HTTP $($r19.Status) bytes=$($r19.Body.Length) allFacts=$($all19.Count) ids=[$ids19] verificationProblemItems=$($items19.Count) claimFacts=$($claimFacts19.Count) withValueJson=$hasValueJson19 unmaskedIPv4InBody=$ipHits19")
+                    Assert-Status $r19 200 "[19] $($who19.U) 상세"
+                    Assert-True ($all19.Count -eq 9 -and $items19.Count -eq 2 -and $claimFacts19.Count -eq 5 -and $hasValueJson19 -eq 5) "[19] $($who19.U) 새 칸(allFacts 9·verificationProblemItems 2·facts[].valueJson)" $r19
+                    Assert-True (@($all19 | Where-Object { $_.id -eq 'F08' }).Count -eq 2) "[19] $($who19.U) 같은 id 두 사실이 전체 목록에 둘 다" $r19
+                    if ($who19.Masked) {
+                        Assert-True ($ipHits19 -eq 0) "[19] viewer1 응답 본문 전체에 가리지 않은 IPv4 0" $r19
+                        Assert-True ($null -eq $all19[6].valueJson -and $all19[6].value -eq '{"198.51.*.*":1,"198.51.*.*":2}') "[19] viewer1 키를 가린 뒤 겹치면 구조 값 null·글 값은 가림" $r19
+                        Assert-True ($all19[5].id -eq '198.51.*.*' -and $all19[4].name -eq 'name_198.51.*.*' -and $items19[0].where -eq 'claims[0] 198.51.*.*') "[19] viewer1 사실 id·이름·검증 문제 위치 가림" $r19
+                    } else {
+                        Assert-True ($r19.Body.Contains('"198.51.100.10"') -and $all19[5].id -eq '198.51.100.14' -and $items19[0].value -eq '198.51.100.20') "[19] analyst1 원문(객체 키·id·검증 문제 값)" $r19
+                    }
+                }
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
