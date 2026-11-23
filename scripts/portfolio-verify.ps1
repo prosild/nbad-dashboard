@@ -1809,8 +1809,8 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
         "FROM m LEFT JOIN dashboard.latest_incident_queue lq ON lq.incident_id = m.id GROUP BY m.head"
     $exp40 = @{}
     foreach ($ln in ((Invoke-Psql "zeekad" $exp40Sql).Output -split "`r?`n")) {
-        if ($ln.Trim() -match '^([0-9a-f]{64})\|(\d+)\|(\d+)\|(\d+)\|(t|f)$') {
-            $exp40[$Matches[1]] = [pscustomobject]@{ Public = [int]$Matches[2]; Hidden = [int]$Matches[3]; Others = ($Matches[5] -eq 't') }
+        if ($ln.Trim() -match '^([0-9a-f]{64})\|(\d+)\|(\d+)\|(\d+)\|(true|false)$') {
+            $exp40[$Matches[1]] = [pscustomobject]@{ Public = [int]$Matches[2]; Hidden = [int]$Matches[3]; Others = ($Matches[5] -eq 'true') }
         }
     }
     $refs40 = @{}
