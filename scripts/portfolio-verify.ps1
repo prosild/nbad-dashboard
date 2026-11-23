@@ -1739,7 +1739,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $hiddenIn39 = (@($demoHiddenCaptures | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',')
     $t39b = if ($hiddenIn39) { (Invoke-Psql "zeekad" ("SELECT count(*) FROM dashboard.slack_deliveries WHERE zeekad_thread_parent IS NOT NULL " +
         "AND split_part(zeekad_thread_parent, '|', 1) IN ($hiddenIn39) AND split_part(incident_id, '|', 1) IN ($publicIn39)")).Output.Trim() } else { '0' }
-    $t39bPairs = (Invoke-Psql "zeekad" "SELECT split_part(zeekad_thread_parent, '|', 1) || ' <- ' || split_part(incident_id, '|', 1) || ' = ' || count(*) FROM dashboard.slack_deliveries WHERE zeekad_thread_parent IS NOT NULL GROUP BY 1 ORDER BY 1").Output.Trim() -replace "`r?`n", '; '
+    $t39bPairs = (Invoke-Psql "zeekad" "SELECT split_part(zeekad_thread_parent, '|', 1) || ' <- ' || split_part(incident_id, '|', 1) || ' = ' || count(*) FROM dashboard.slack_deliveries WHERE zeekad_thread_parent IS NOT NULL GROUP BY split_part(zeekad_thread_parent, '|', 1), split_part(incident_id, '|', 1) ORDER BY 1").Output.Trim() -replace "`r?`n", '; '
     $e2eLogs.Add("[T39b] public incident rows whose thread parent is in a hidden capture=$t39b; parent capture <- incident capture (all rows): $t39bPairs")
     Assert-True ($t39b -eq '0') "[T39b] 공개 인시던트 Slack 행의 부모가 숨김 캡처인 것 0 ($t39b)"
     # [T39c] 최신 큐에 있는 옛 인시던트의 번호 = 공개 앱 DB(내보낸 목록, 전부). 최신 큐에 없는 번호("행만")는 개수·범위만 적는다.

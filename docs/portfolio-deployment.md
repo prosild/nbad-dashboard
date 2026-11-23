@@ -44,7 +44,7 @@
   - `PORTFOLIO_SUBNET`을 바꾸면 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 서브넷 안으로 바꾼다. 게이트웨이 주소는 반영 전에 NAS에서 확인한다(3.8 `T32`).
   - 남은 위험: 같은 bridge에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격은 막지 못한다. 또 게이트웨이를 믿으므로 NAS 호스트의 로컬 프로세스와 host 네트워크 컨테이너는 `127.0.0.1:18480`으로 전달 헤더를 꾸밀 수 있다. 이것은 원래 전제(이 포트에는 DSM만 붙는다)와 같다. 공개 스택은 네트워크(ipam)를 다시 만들지 않으려고 동적 배정 범위를 따로 두지 않았다. 그래서 `nginx-waf`가 내려가 있는 동안 다른 컨테이너가 `.250`을 받으면 앱이 그 컨테이너를 믿는다(그때 `nginx-waf`는 주소 충돌로 뜨지 않아 장애로 드러난다). 네트워크를 다시 만들 일이 있으면 VMware 스택처럼 `ip_range`를 준다.
 - **절대 URL**: 신뢰 출처(DSM)가 보낸 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
-- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119`)와 체험용 분석가 `trial-analyst`(ANALYST, 허용 캡처는 `demo`와 같은 변수, `T33`)만 활성. `trial-analyst`는 분석가라 마스킹이 없다(공개 전 노출 확인 1.3). 실습망 캡처는 Kali 실행 결과 `lab-20261119`만 정확한 ID로 보인다. 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, 2026-11-21 결정). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
+- **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119,lab-20261122`)와 체험용 분석가 `trial-analyst`(ANALYST, 허용 캡처는 `demo`와 같은 변수, `T33`)만 활성. `trial-analyst`는 분석가라 마스킹이 없다(공개 전 노출 확인 1.3). 실습망 캡처는 Kali 실행 결과 `lab-20261119`와 Kali 공격 7종 + 타깃 VM `lab-20261122`(`T39`)만 정확한 ID로 보인다. 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`·시험 뒤 유휴 구간 `lab-20261123`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, 2026-11-21·2026-11-23 결정). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **계정 잠금과 로그인 속도 제한(`T29`에서 바꿈)**: 모든 계정은 앱 기본대로 틀린 비밀번호 5번에 15분 잠긴다(`compose.portfolio.yml`이 `DASHBOARD_MAX_FAILED_ATTEMPTS="5"`로 고정하고 `.env`를 쓰지 않는다. `T12`~`T27`은 `PORTFOLIO_MAX_FAILED_ATTEMPTS=1000000`으로 모든 계정의 잠금을 사실상 껐었다. NAS `.env`에 그 줄이 남아 있어도 이제 쓰이지 않는다). 비밀번호를 공개한 `demo`·`trial-analyst`만 아래 잠금 제외로 빠진다. 비공개 ANALYST·ADMIN 계정이 남의 시도로 15분 잠길 수 있는 것은 받아들인다(방문자 화면은 공개 계정 둘). nginx는 `POST /api/auth/login`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`).
 - **조회 속도 제한(`T36`)**: nginx가 DSM에서 온 요청(공개 경로)의 `/api/` `GET`·`HEAD`를 클라이언트 IP당 분당 200회 + 버스트 30으로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_READ_RATE`, `PORTFOLIO_READ_BURST`, 로그인·쓰기 제한과 다른 영역). 허용 밖 인시던트 조회 거부 감사(`ACCESS_DENIED_IDOR`)가 한 IP에서 쌓이는 속도를 묶으려는 것이다. `/api/auth/`(로그인 상태·안내 문구·CSRF)는 조회 거부 감사를 만들지 않아 세지 않는다. 그래서 한도에 걸린 동안에도 새로고침이 로그인 화면으로 바뀌지 않고 로그인할 수 있다. 정적 파일·화면 경로, 스택 안 8443 리스너와 다른 컨테이너에서 온 요청도 세지 않는다. 값은 빠른 사람 사용을 실제 화면으로 흉내 내 잰 최대치보다 분당 3배, 10초 2배 넘게 잡았다. 흉내는 5분 동안 현황판 60초마다 새로 고침, 큐 쪽 넘김 10번(3초 간격), 상세 이전·다음 20번(3초 간격), 운영 현황 두 번이고 `/api/` 요청은 1분 최대 65건, 10초 최대 14건이었다. 한도에 걸린 화면은 "요청을 처리하지 못했습니다" 안내와 "다시 시도" 버튼을 보이고, 한도가 풀린 뒤 다시 시도나 새로고침 한 번으로 돌아온다. 화면이 스스로 다시 부르지는 않는다(공개 데모는 고정 스냅샷이라 자동 갱신이 원래 꺼져 있다). 공인 IP 하나를 나눠 쓰는 방문자들(회사·학교 NAT)은 한도를 함께 쓴다.
 - **공유 계정 잠금 제외(`T29`, `T33`에서 넓힘)**: `compose.portfolio.yml`이 `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES=demo,trial-analyst`(기본, `.env`의 같은 이름으로 바꿀 수 있음)를 넘긴다. 비밀번호를 공개한 공유 계정을 누군가 틀린 비밀번호로 잠가 다른 방문자를 막지 못하게 하려는 것이다. 앱은 로그인 때 DB 역할이 VIEWER 또는 ANALYST인 목록 계정만 잠금에서 빼고(실패 수·잠금을 바꾸지 않음), 실패 감사(`LOGIN_FAILURE`, `lockoutExempt: true`)는 그대로 남긴다. ADMIN은 목록에 있어도 잠긴다. 무작위 대입은 위 IP당 로그인 속도 제한이 막는다(값은 바꾸지 않았다). **운영 규칙: 목록에는 비밀번호를 공개한 공유 계정만 넣는다.** 실제 분석가처럼 비공개 비밀번호 계정을 넣으면 그 계정도 잠기지 않아 여러 IP에서 대입할 때 막을 것이 IP당 속도 제한뿐이다. 목록의 계정이 없거나 VIEWER·ANALYST가 아니면 앱이 시작할 때 경고 로그를 남긴다(이름만). 공개 데모에서는 로그인 실패를 일부러 만들어 시험하지 않는다(실패하면 방문자가 막힐 수 있다). 리허설 `[T29]`가 대신 확인한다.
@@ -81,7 +81,7 @@
 - **결정을 소비하는 주체 없음**: 공개 스택의 `api`는 `run_api.py` 하나뿐이고 `zeekad_api`에는 `zeekad` 표 쓰기 권한이 없다. 쓰기 권한이 있는 `zeekad_worker`는 NOLOGIN이고 워커가 없다. 그래서 검토 결정 뒤 재개·보고서·Slack 같은 후속 쓰기가 없다(리허설 `[T33f]`가 세 표 밖 `zeekad` 표 전부의 행 수·내용 해시를 쓰기 전·직후·2분 뒤에 비교한다).
 - **쓰기 속도 제한**: nginx가 네 쓰기 경로의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
 - **사유·메모 길이 상한**: 앱이 상태 변경 사유와 검토 메모를 500자(앞뒤 공백 뺀 코드 포인트)까지만 받는다(제품 기능, 모든 스택).
-- **노출**: `trial-analyst`는 `demo`와 같은 캡처를 마스킹 없이 본다. 공개 전 리허설에서 `lab-20261119`의 모든 인시던트에서 화면이 부르는 API 응답을 두 계정으로 받아 비교하고(`scripts/portfolio-verify.ps1 -ExposureDir <저장소 밖 폴더>`), 드러나는 값의 종류를 운영자가 확인했다. 새 실습망 캡처를 공개할 때도 같은 확인을 한다(3.10).
+- **노출**: `trial-analyst`는 `demo`와 같은 캡처를 마스킹 없이 본다. 공개 전 리허설에서 `lab-20261119`(`T33`)와 `lab-20261122`(`T39`)의 모든 인시던트에서 화면이 부르는 API 응답을 두 계정으로 받아 비교하고(`scripts/portfolio-verify.ps1 -ExposureDir <저장소 밖 폴더>`, 대상 캡처는 스크립트의 `$exposureLabCapture`), 드러나는 값의 종류를 운영자가 확인했다. 새 실습망 캡처를 공개할 때도 같은 확인을 한다(3.10).
 
 ## 2. 로컬 PC에서 준비
 
@@ -113,7 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/portfolio-snapshot.p
 - 원본은 `-SshHost`가 있으면 그 호스트(배포 VM), 없으면 로컬 PC의 `zeekad-postgres-1` 컨테이너다. 어느 쪽이든 컨테이너 안 로컬 소켓 인증(`psql`·`pg_dump -U postgres`)만 쓰며 `zeek_AD`의 `.env`·비밀번호를 읽지 않고 원본에 쓰지 않는다.
 - VM 원본은 `wsl -d Ubuntu --exec bash -c "ssh <배포 VM> bash -s < <스크립트>"`로 보낸다. 원격 명령은 한 줄짜리 스크립트 파일(`build/portfolio/source-remote/NN.sh`)로 만들어 인용이 세 겹(PowerShell→WSL→ssh→원격 셸)으로 깨지는 것을 피한다. 보내는 명령은 `docker inspect`, `docker exec <pg> psql`(SELECT만), `pg_dump --version`, `pg_dump -Fc zeekad`(표준 출력), `pg_dumpall --globals-only --no-role-passwords`뿐이고 VM에 파일을 남기지 않는다. 덤프 바이트는 PowerShell을 거치지 않고 WSL bash가 바로 `/mnt/c/...` 파일에 쓴다. 보낸 명령 전체는 `build/portfolio/source-commands.txt`에 남는다. `zeekad` 밖의 DB(특히 VM 대시보드 앱 DB)는 덤프하지 않는다.
 - 원본 `pg_dump`가 복원 이미지(`pgvector/pgvector:0.8.1-pg17`) 서버보다 높은 버전이면 멈춘다.
-- 덤프 전후로 `dashboard.latest_incident_queue` 캡처별 건수를 센다. 파이프라인이 도는 중이라도 **공개할 캡처**(`-PublicCaptures`, 기본 `cic17-*,syn1-*,lab-20261119`)만 전후가 같으면 된다. 공개 캡처가 바뀌면 멈춘다. 그 밖의 캡처 변화는 `manifest.json`의 `nonPublicCountChanges`에 정보로 남는다.
+- 덤프 전후로 `dashboard.latest_incident_queue` 캡처별 건수를 센다. 파이프라인이 도는 중이라도 **공개할 캡처**(`-PublicCaptures`, 기본 `cic17-*,syn1-*,lab-20261119,lab-20261122`)만 전후가 같으면 된다. 공개 캡처가 바뀌면 멈춘다. 그 밖의 캡처 변화는 `manifest.json`의 `nonPublicCountChanges`에 정보로 남는다.
 - 결과(`build/portfolio/`, Git 제외): `zeekad.dump`(`pg_dump -Fc`), `zeekad.dump.sha256`, `manifest.json`(원본 `sourceHost`·`sourceTransport`, SHA-256, 내보낸 시각, 버전, 공개·숨김 캡처, 캡처별 건수, 캡처별 최신 작업 `captureLatestJobs`: 작업 ID·번들·사건 수·첫·마지막 사건 시각·`feedback_summary` `'all'` 행 수·전체 작업 목록. `latest_incident_queue`에서 한 캡처에 작업이 둘 이상이면 멈춘다), `source-globals.sql`(역할 비교용, 비밀번호 없음), `source-commands.txt`, `secret-scan.txt`(덤프·근거 API 이미지의 비밀값 패턴 위치·건수, 값은 남기지 않음).
 - 새 스냅샷을 만들기 전에 이전 `build/portfolio/`를 `build/portfolio-pre-<작업 ID>/`로 옮겨 둔다(되돌리기용).
 - `secret-scan.txt`에서 Slack 웹훅·토큰·API 키처럼 보이는 것이 새로 나오면 배포하지 말고 먼저 확인한다(지우지 않는다).
@@ -577,7 +577,7 @@ for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{rang
 docker volume ls --format '{{.Name}}' | grep -v '^zeekad-portfolio_' | sort > ~/zeekad-portfolio-check/$ID-volumes-before.txt
 docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local > ~/zeekad-portfolio-check/$ID-app-image-before.txt
 # 2) 보존: 스냅샷 세 파일과 바뀌는 배포 파일을 *.pre-$ID로(이미 있으면 덮지 않는다)
-for f in snapshot/zeekad.dump snapshot/zeekad.dump.sha256 snapshot/manifest.json docker/portfolio/seed/seed_demo.py compose.portfolio.yml; do
+for f in snapshot/zeekad.dump snapshot/zeekad.dump.sha256 snapshot/manifest.json docker/portfolio/seed/seed_demo.py compose.portfolio.yml docker/portfolio/initdb/02-restore-snapshot.sh; do
   [ -e "$f.pre-$ID" ] || cp -p "$f" "$f.pre-$ID" || exit 2
 done
 # 3) 앱 DB 백업(NAS 안에만. 비밀번호 해시가 들어 있으므로 밖으로 옮기거나 내용을 출력하지 않는다)
@@ -628,9 +628,9 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
   - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든 뒤 8을 한다. 이때 지난 감사 로그는 백업에만 남는다.
 - 스크립트로 실행할 때는 단계를 스크립트 파일로 저장해 NAS의 `~/zeekad-portfolio-check/<작업 ID>-step-<단계>.sh`로 풀고 `bash <그 파일> < /dev/null`로 실행한다(표준 입력으로 넘기지 않는다). 출력은 `build/portfolio-evidence/<작업 ID>/nas-replace.txt`(시드는 `nas-seed.txt`)처럼 Git 제외 경로에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
 
-### 3.10 새 실습망 캡처를 공개할 때(`T33`)
+### 3.10 새 실습망 캡처를 공개할 때(`T33`, `T39`)
 
-zeek_AD 실습망에 표적 VM이 늘어 새 캡처(정찰·무차별 대입·비커닝·느린 유출, 나중에 측면 이동)를 공개할 때의 순서다. 캡처 ID는 앱 코드·초기화 SQL에 없다(허용 캡처는 `DEMO_CAPTURE_PATTERNS` 한 곳).
+zeek_AD 실습망에 표적 VM이 늘어 새 캡처(정찰·무차별 대입·비커닝·느린 유출, 나중에 측면 이동)를 공개할 때의 순서다. 허용 캡처는 `DEMO_CAPTURE_PATTERNS`(비어 있으면 시드 기본값) 한 곳이다. 앱 코드에서 캡처 ID가 있는 곳은 캡처 표시 이름 사전(`frontend/src/utils/labels.ts` `LAB_CAPTURE_NOTES`, zeek_AD 표의 글) 하나뿐이고 권한에는 쓰이지 않는다. 초기화 SQL에는 없다.
 
 1. 로컬 PC: 새 스냅샷(2.2) → `secret-scan.txt` 확인 → 리허설(2.3)을 `-ExposureDir <저장소 밖 폴더>`와 함께 돌린다(허용 캡처를 바꿨으면 리허설 셸에 같은 `DEMO_CAPTURE_PATTERNS`를 준다).
 2. **분석가 노출 확인**: `exposure.md`(필드별 개수·값 형태)를 운영자가 본다. 필요하면 `exposure-values.txt`(실제 값, 커밋하지 않음)를 본다. 점검 항목: HTTP URI(쿼리 문자열의 토큰·계정), 인증 필드(사용자 이름, Kerberos·NTLM·SMB 계정), 호스트 이름(집 장비·개인 이름), 사설 대역(집 LAN `192.168.x`가 섞였는지), 공인 주소(집 공인 IP가 섞였는지), Slack 원문. 공개하면 안 되는 값이 있으면 그 캡처는 공개하지 않는다.
@@ -638,6 +638,13 @@ zeek_AD 실습망에 표적 VM이 늘어 새 캡처(정찰·무차별 대입·�
 4. 3.9 순서로 스냅샷을 바꾼다(8a의 `sandbox-setup`이 새 볼륨에 기준선을 만든다). 볼륨을 다시 만들지 않고 데이터만 바꾸는 경우에는 `sandbox-setup --rebuild-baseline`으로 기준선을 다시 만든다(체험 계정 흔적이 있으면 멈추므로 먼저 `sandbox-reset … --once`).
 5. 허용 캡처 변수(`DEMO_CAPTURE_PATTERNS`)를 바꿨으면 시드를 다시 돌린다(두 공개 계정에 같이 반영된다).
 6. `sandbox-reset`을 다시 시작하고 다음 정각 로그(3.5)와 4.4를 확인한다.
+
+`T39`(`lab-20261122` 공개, `lab-20261123` 숨김)에서 더한 것:
+- **공개 전 내용 목록**: 노출 확인(`exposure.md`)은 두 계정의 차이만 보인다. 조회자에게도 그대로 보이는 도메인·URI·계정 이름·사용자 에이전트는 따로 본다. 같은 덤프를 일회용 컨테이너(`--network none`)에 복원해 새 캡처의 `dashboard` 뷰 행에서 도메인·IPv6·실습망 밖 IPv4·계정·호스트·사람 기록·Slack 채널과 버튼 URL 호스트를 뽑고, 리허설의 `demo` 응답 원문(`-ExposureDir` 아래 `demo-responses/`, 커밋하지 않음)에서도 같은 종류를 본다. 개인 도메인·실명·집 네트워크 주소·실제 서비스 계정처럼 보이는 것이 있으면 공개하지 않는다.
+- **옛 캡처 그대로인지**: 옛 스냅샷과 새 스냅샷을 각각 일회용 컨테이너에 복원해 옛 캡처의 `latest_incident_queue`(캡처·`incident_id`·탐지 시각·순위·작업 ID) 개수와 내용 해시가 같은지 본다. 다르면(zeek_AD가 옛 캡처를 다시 채점) 인시던트 번호와 공개된 링크가 달라지므로 멈춘다.
+- **인시던트 번호 유지**: 3.9는 앱 DB도 새로 만들어 번호를 처음부터 다시 매긴다(탐지 시각 = 그 인시던트가 처음 나온 성공 작업의 완료 시각 → 캡처 → `incident_id` 순). 새 캡처의 작업이 옛 작업보다 늦게 끝났으면 옛 번호는 그대로이고 새 캡처는 그 뒤 번호를 받는다. 교체 전에 공개 앱 DB의 `incident_refs`를 `BEGIN READ ONLY`로 번호와 `sha256(incident_id)`만 내보내고(주소가 든 `incident_id` 원문은 내보내지 않는다), 리허설에 `-ExpectedRefsFile <그 파일>`로 주면 `[T39c]`가 최신 큐에 있는 옛 인시던트의 번호가 모두 같은지 본다. NAS 교체 직전(3.9의 0) 뒤 4) 전)에 한 번 더 내보내 공개 확인에서 견준다.
+- **스레드 부모**: 공개 인시던트의 Slack 행 부모(`zeekad_thread_parent`)가 숨김 캡처에 있으면 숨김 캡처의 인시던트 ID가 조회자에게 보인다. 리허설 `[T39b]`가 0인지 본다(`lab-20261123`의 부모는 `lab-20261122`에 있어 반대 방향이다).
+- **복원 뒤 통계**: `02-restore-snapshot.sh`가 복원 끝에 `zeekad` DB를 `ANALYZE`한다(복원 직후 행 수 추정이 어긋나 큐가 느려진 일, `T35`). 3.9 2)의 보존 목록에 이 파일을 넣었다.
 
 ## 4. DSM 설정
 
@@ -689,7 +696,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 **같은 LAN(로컬 PC)에서 확인할 때**: 공유기에 NAT 루프백이 없으면 로컬 PC에서 공인 IP로는 접속되지 않는다. 대신 `curl.exe --resolve soc.<DDNS 이름>.synology.me:443:<NAS 주소> https://soc.<DDNS 이름>.synology.me/...`로 NAS의 DSM `443`에 직접 붙는다(인증서·역방향 프록시·헤더는 공개 경로와 같다). 브라우저가 필요한 항목은 `curl.exe`의 인증서 검증 성공(`--insecure` 없이 종료 코드 0)과 `Set-Cookie` 속성으로 대신한다. 로컬 PC의 모든 요청은 같은 클라이언트 IP(로컬 PC의 LAN IP)라 로그인 요청 사이에 7초 정도 간격을 두지 않으면 속도 제한(`429`)에 걸린다. 공개 IP 접속 자체와 방문자 공인 IP 기록(4.3)은 외부망(휴대전화 데이터 등)에서만 확인할 수 있다.
 
 - [ ] 브라우저 주소 표시줄에 인증서 경고가 없다(4.1 하위 도메인 인증서). `http://` 접속은 공유기가 `443`만 포워딩하므로 외부에서는 해당 없다.
-- [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 보이는 캡처(`snapshot/manifest.json`의 `publicCaptures`: `cic17-*` 4, `syn1-*` 4, `lab-20261119`) 건수가 매니페스트와 같고, `lab-20261119` 사건의 목록·상세·증적·AI 리포트가 보인다. 숨김 캡처(`hiddenCaptures`: `lab-20261201`, `lab-20261118` 등)는 캡처 목록에 없고, 직접 조회(목록 `captureId=<숨김 캡처>`·그 캡처의 사건 상세)는 `403`이다. 첫 화면(`/`)은 관제 현황판이다. (리허설 [2]·[3])
+- [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 보이는 캡처(`snapshot/manifest.json`의 `publicCaptures`: `cic17-*` 4, `syn1-*` 4, `lab-20261119`, `lab-20261122`) 건수가 매니페스트와 같고, 두 실습망 캡처 사건의 목록·상세·증적·AI 리포트가 보인다. `lab-20261122` 상세의 Slack 탭에 스레드 답글과 "채널에도 표시" 표지가 보인다(리허설 [T39a]). 숨김 캡처(`hiddenCaptures`: `lab-20261201`, `lab-20261118`, `lab-20261123` 등)는 캡처 목록에 없고, 직접 조회(목록 `captureId=<숨김 캡처>`·그 캡처의 사건 상세)는 `403`이다. 첫 화면(`/`)은 관제 현황판이다. 숨김 캡처 ID는 현황판·운영 현황·검토 목록 응답에도 없다. 최신 큐에 있던 인시던트의 번호(`/incidents/<번호>`)는 교체 전과 같다. (리허설 [2]·[3]·[T39])
 - [ ] IP는 뒤 두 옥텟이 가려져 보인다(`192.168.*.*`). (리허설 [3])
 - [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
 - [ ] `trial-analyst` / 공개 비밀번호로 로그인되고 역할이 `ANALYST`, 허용 캡처가 `demo`와 같으며 숨긴 캡처 직접 조회가 `403`이다. 공개 데모에서는 쓰기(상태 변경·결정·담당)와 로그인 실패를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T33]`). (리허설 [T33a])
@@ -710,7 +717,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 
 ## 5. 계정 시드의 직접 SQL 단계와 위험
 
-시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*,lab-20261119`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, `TRIAL_ANALYST_PASSWORD`가 있으면 `trial-analyst`도 같은 조건(역할 `ANALYST`, 같은 허용 캡처), 다른 계정 모두 비활성)면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음). 바꿀 것이 있을 때만 바꾼다.
+시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*,lab-20261119,lab-20261122`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, `TRIAL_ANALYST_PASSWORD`가 있으면 `trial-analyst`도 같은 조건(역할 `ANALYST`, 같은 허용 캡처), 다른 계정 모두 비활성)면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음). 바꿀 것이 있을 때만 바꾼다.
 
 가능한 단계는 앱 관리자 API로 한다(`admin` 로그인 + `.env`의 `BOOTSTRAP_ADMIN_TOTP_SECRET`으로 계산한 TOTP 코드, 감사 로그 `USER_ADMIN_CHANGE`):
 공개 계정 생성(`CREATE_USER`), 역할·허용 캡처·표시 이름 수정(`UPDATE_USER`), 활성화·다른 계정 비활성화(`TOGGLE_ENABLED`, 상태를 읽고 필요할 때만 호출), 잠금 해제(`UNLOCK_ACCOUNT`).
