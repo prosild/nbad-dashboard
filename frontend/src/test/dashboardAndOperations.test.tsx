@@ -1174,3 +1174,36 @@ describe('T41 현황판 갱신 실패: 값 남기기와 자동 갱신 잇기', (
     expect(overviewCount(calls)).toBe(1);
   });
 });
+
+describe('T41 현황판: 조건을 바꾼 직후 불러오는 동안', () => {
+  it('옛 조건의 값·불러온 시각·옛 조건의 실패 표시를 보이지 않고 불러오는 중으로 보인다', async () => {
+    const sw = switchable();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    // 7일 overview는 gate가 풀릴 때까지 응답하지 않는다(가짜 fetch가 약속을 그대로 돌려준다)
+    const view = renderAt('/', {
+      ...sw.options,
+      overview: (url) => (url.includes('period=7d') ? (gate.then(() => json(fakeOverview(url))) as unknown as Response) : sw.options.overview!(url)),
+    });
+    const user = userEvent.setup();
+    await kpiRegion();
+    // 24시간에서 실패해 옛 값 + 표시
+    sw.set('429');
+    await user.click(screen.getByRole('button', { name: '새로 고침' }));
+    await screen.findByTestId('stale-notice');
+    sw.set('ok');
+    // 7일로 바꾸면 응답이 오기 전에는 옛 조건의 값·표시·배너가 없다
+    await user.click(within(screen.getByRole('region', { name: '보기 조건' })).getByRole('button', { name: '7일' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: '핵심 지표' })).toBeNull());
+    expect(screen.queryByTestId('stale-notice')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('관제 현황을 불러오는 중...')).toBeInTheDocument();
+    expect(loadedAtText()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    release();
+    await kpiRegion();
+    expect(screen.queryByTestId('stale-notice')).toBeNull();
+    view.unmount();
+  });
+});

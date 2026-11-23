@@ -132,7 +132,8 @@ export function DashboardPage() {
   /** 에스컬레이션 대기(현재, 기간 무관). 불러오지 못하면 null. 셋째 요청이라 따로 다룬다 */
   const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [failure, setFailure] = useState<ErrorNotice | null>(null);
+  /** 마지막 불러오기의 실패와 그 조건. 다음 성공 때 지운다 */
+  const [failure, setFailure] = useState<{ condKey: string; notice: ErrorNotice } | null>(null);
   const [pendingError, setPendingError] = useState(false);
   /** 마지막으로 성공한 응답이 고정 스냅샷이었나(조건과 상관없이). null = 아직 한 번도 성공하지 못해 모른다 */
   const [lastSnapshot, setLastSnapshot] = useState<boolean | null>(null);
@@ -165,7 +166,7 @@ export function DashboardPage() {
       setRefreshHalted(false);
     } else {
       const reasons = [ov, queue].flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
-      setFailure(errorNotice(reasons[0], '관제 현황을 불러오지 못했습니다.'));
+      setFailure({ condKey, notice: errorNotice(reasons[0], '관제 현황을 불러오지 못했습니다.') });
       setRefreshHalted(!reasons.every(keepsAutoRefresh));
       // 같은 조건으로 성공한 값만 남긴다(다른 조건의 값을 지금 조건의 값처럼 보이지 않는다)
       setLoaded((prev) => (prev && prev.condKey === condKey ? prev : null));
@@ -193,11 +194,14 @@ export function DashboardPage() {
     setSearchParams(next);
   }
 
-  const overview = loaded?.overview ?? null;
-  const queue = loaded?.queue ?? null;
+  // 지금 조건으로 받은 값만 그린다(조건을 바꾼 직후 불러오는 동안에도 옛 조건의 값을 지금 조건의 값처럼 보이지 않는다)
+  const current = loaded !== null && loaded.condKey === condKey ? loaded : null;
+  const overview = current?.overview ?? null;
+  const queue = current?.queue ?? null;
+  const failed = failure !== null && failure.condKey === condKey ? failure.notice : null;
   const shortNames = useMemo(() => captureShortNames((queue?.sources ?? []).map((s) => s.captureId)), [queue]);
   /** 같은 조건으로 성공한 값을 남긴 채 실패한 상태(최신이 아니다) */
-  const stale = failure !== null && loaded !== null && loaded.condKey === condKey;
+  const stale = failed !== null && current !== null;
 
   return (
     <AppShell title="현황판" subtitle="기간 안에 무엇이 탐지됐고 수집원이 정상인지 한 화면에서 봅니다">
@@ -227,7 +231,7 @@ export function DashboardPage() {
                 </span>
               )}
               <span>
-                불러온 시각 <span className="tabular-nums text-slate-300">{formatDateTime(loaded?.loadedAt ?? null)}</span>
+                불러온 시각 <span className="tabular-nums text-slate-300">{formatDateTime(current?.loadedAt ?? null)}</span>
               </span>
               <button type="button" onClick={() => void load()} disabled={loading} className="soc-btn-secondary py-1 text-xs">
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -237,20 +241,20 @@ export function DashboardPage() {
           </div>
         </section>
 
-        {failure && stale && (
+        {failed && stale && (
           <StaleNotice
-            notice={failure}
-            loadedAt={loaded?.loadedAt ?? null}
+            notice={failed}
+            loadedAt={current?.loadedAt ?? null}
             autoRetry={autoRefresh}
             loading={loading}
             onRetry={() => void load()}
           />
         )}
-        {failure && !stale && (
-          <ErrorAlert message={failure.message} rateLimited={failure.rateLimited} onRetry={() => void load()} />
+        {failed && !stale && (
+          <ErrorAlert message={failed.message} rateLimited={failed.rateLimited} onRetry={() => void load()} />
         )}
 
-        {loading && !overview && !queue && !failure ? (
+        {loading && !overview && !queue && !failed ? (
           <LoadingPanel label="관제 현황을 불러오는 중..." />
         ) : !overview || !queue ? null : (
           <>
