@@ -1837,7 +1837,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
             if ([int]$q40.Json.summary.total -ne $e.Public) { $t40aBad += "$($pair[0]) #$($ref.No) summary.total=$($q40.Json.summary.total)" }
         }
         $t40aSizes += $e.Public
-        $t40aLines += "#$($ref.No) capture=$($ref.Capture) members(public latest)=$($e.Public) hidden=$($e.Hidden)"
+        $t40aLines += "#$($ref.No) capture=$(if ($demoVisibleCaptures -contains $ref.Capture) { $ref.Capture } else { '<hidden>' }) members(public latest)=$($e.Public) hidden=$($e.Hidden)"
         if ($null -eq $largest40 -or $e.Public -gt $largest40.Size) { $largest40 = [pscustomobject]@{ No = $ref.No; Size = $e.Public } }
     }
     $e2eLogs.Add("[T40a] thread heads with other incidents=$($heads40.Count); sizes=[$((@($t40aSizes | Sort-Object) -join ', '))]; hidden members(latest queue)=$t40aHiddenMembers`n       $($t40aLines -join "`n       ")`n       mismatches=$($t40aBad.Count)$(if ($t40aBad.Count) { ' ' + ($t40aBad -join '; ') })")
