@@ -209,6 +209,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(screen.queryByRole('button', { name: /^순위 기준 정렬/ })).toBeNull();
   });
 
+  // T40: 상호작용이 많아 평소에도 기본 5초에 가깝고 PC 부하가 높을 때 5.1~5.4초로 넘었다. 이 시험만 15초로 둔다
   it('열 머리를 누르면 서버 정렬 파라미터가 바뀌고 다시 누르면 방향이 바뀐다(URL에 남음). 처음 방향은 열마다 정해져 있다', async () => {
     const user = userEvent.setup();
     const { queueCalls } = renderQueue('/incidents?page=2');
@@ -240,7 +241,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(params().get('dir')).toBe('asc');
     await waitFor(() => expect(lastCall(queueCalls).get('sort')).toBe('status'));
     expect(tableIds()).not.toContain(10);
-  });
+  }, 15_000);
 
   it('세션 수 없음(null)은 서버가 내림·오름 모두 맨 뒤로 보내고 화면은 그 순서를 그대로 그린다', async () => {
     renderQueue('/incidents?sort=connections&dir=asc&size=100');
