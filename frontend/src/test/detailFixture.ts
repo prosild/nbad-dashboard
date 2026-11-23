@@ -147,6 +147,9 @@ export function baseDetail(): IncidentDetailView {
     slackThreadGroups: [
       {
         threadKey: INCIDENT_ID,
+        headIsSelf: true,
+        headIncidentNo: null,
+        memberCount: 1,
         deliveries: [
           {
             jobId: 40,

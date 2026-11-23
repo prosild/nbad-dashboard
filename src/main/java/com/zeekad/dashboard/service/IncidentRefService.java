@@ -192,6 +192,33 @@ public class IncidentRefService {
         }
     }
 
+    /**
+     * T40: incident_id들의 번호 행을 읽기만 한다(동기화·대기·쓰기 없음). 행이 없는 incident_id는 결과에 없다.
+     * 읽기 실패는 예외로 올리지 않고 빈 맵이다(호출 쪽은 "볼 수 없음"으로 막는다).
+     */
+    public Map<String, IncidentRef> readRefsOnly(Collection<String> incidentIds) {
+        Map<String, IncidentRef> out = new HashMap<>();
+        if (incidentIds == null) {
+            return out;
+        }
+        List<String> list = new ArrayList<>(new LinkedHashSet<>(incidentIds));
+        list.removeIf(id -> id == null || id.isBlank());
+        try {
+            for (int i = 0; i < list.size(); i += READ_CHUNK) {
+                List<String> part = list.subList(i, Math.min(list.size(), i + READ_CHUNK));
+                for (IncidentRef r : refMapper.findByIncidentIds(part.toArray(new String[0]))) {
+                    if (r.getIncidentId() != null && r.getIncidentNo() != null) {
+                        out.put(r.getIncidentId(), r);
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("인시던트 번호 읽기 실패({})", e.getClass().getSimpleName());
+            return new HashMap<>();
+        }
+        return out;
+    }
+
     /** 하나의 번호(없으면 null) */
     public Long numberFor(String incidentId) {
         if (incidentId == null) {

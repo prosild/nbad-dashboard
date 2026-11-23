@@ -806,7 +806,12 @@ INSERT INTO dashboard.raw_slack_deliveries (
     (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'status', 'status:closed', 'dry_run', 'recorded',
      '{"channel": "#sec-alerts", "text": "상태 변경: 10.99.70.11 종결(오탐)"}'::jsonb,
      NULL, NULL, NULL, TIMESTAMPTZ '2026-11-17 04:20:32Z',
-     NULL, FALSE);
+     NULL, FALSE),
+    -- T40: 허용 캡처를 가로지르는 알림 묶음(syn1-wed 인시던트가 cic17-wed 머리의 스레드에 답글). 페이로드 맨 위에도 부모가 있다(T39 new-shapes.md)
+    (211, 'syn1-wed|10.99.70.11|originator|1763352000', 'status', 'status:investigating', 'dry_run', 'recorded',
+     '{"channel": "#sec-alerts", "text": "연관 스레드 상태 답글: 10.99.70.11 분석 중", "zeekad_thread_parent": "cic17-wed|192.168.10.50|originator|1700000000"}'::jsonb,
+     NULL, NULL, NULL, TIMESTAMPTZ '2026-11-17 04:20:33Z',
+     'cic17-wed|192.168.10.50|originator|1700000000', FALSE);
 
 INSERT INTO dashboard.raw_slack_summaries (
     job_id, capture_id, zeekad_message_version, zeekad_delivery_mode, zeekad_delivery_status,

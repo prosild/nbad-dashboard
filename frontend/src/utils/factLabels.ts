@@ -487,7 +487,37 @@ const PROBLEM_KINDS: Record<string, (value: string) => string> = {
   // 값 뒤에 받침에 따라 달라지는 조사를 두지 않는다(T38: `"524,288"가` 같은 어긋남)
   number_not_in_facts: (value) => `리포트 글에서 근거 사실에 없는 숫자: "${value}"`,
   pseudonym_not_in_facts: (value) => `리포트 글에서 근거 사실에 없는 가명: "${value}"`,
+  // T40: 종류 이름은 공개 데모 #2269의 실제 값, 뜻은 zeek_AD 계약 v2("보고서의 attack_ids는 zeekad_attack_candidates 안에서만 나온다")
+  attack_id_not_in_candidates: (value) => `리포트가 인용한 ATT&CK ID 가운데 후보 목록에 없는 ID: "${value}"`,
 };
+
+/** 검증 실패 사유의 화면 문장(T40). 모르는 값은 원문(known=false). raw = 받은 값 그대로 */
+export interface VerificationReasonView {
+  text: string;
+  known: boolean;
+  raw: string;
+}
+
+/**
+ * zeek_AD 계약 v2 `zeekad_verification_reason`: `verification`(숫자·가명·ATT&CK ID가 사실과 안 맞음), `call`(호출 실패).
+ * `call: <글>`(T39에서 본 실제 값 `call: ClientError`)은 콜론 뒤 글을 받은 그대로 덧붙인다. 그 밖의 값은 뜻을 짓지 않고 원문이다.
+ */
+export function describeVerificationReason(reason: string | null | undefined): VerificationReasonView | null {
+  if (reason === null || reason === undefined || reason.trim() === '') return null;
+  const value = reason.trim();
+  if (value === 'verification') {
+    return { text: '리포트 내용이 근거와 맞지 않음(숫자·가명·ATT&CK ID)', known: true, raw: reason };
+  }
+  if (value === 'call') {
+    return { text: 'LLM 호출 실패', known: true, raw: reason };
+  }
+  const call = /^call:\s*(.*)$/s.exec(value);
+  if (call) {
+    const detail = call[1].trim();
+    return { text: detail ? `LLM 호출 실패: ${detail}` : 'LLM 호출 실패', known: true, raw: reason };
+  }
+  return { text: reason, known: false, raw: reason };
+}
 
 export function describeProblem(item: unknown, pseudonyms: Pseudonyms): ProblemView {
   if (typeof item === 'string') {

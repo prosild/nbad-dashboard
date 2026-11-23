@@ -2,7 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import type { ReportView } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge, VerificationBadge } from '../StatusBadge';
-import { describeProblem } from '../../utils/factLabels';
+import { describeProblem, describeVerificationReason } from '../../utils/factLabels';
 import { AllFactsTable, FactEvidence } from './FactEvidence';
 
 /**
@@ -129,6 +129,20 @@ export function ReportLimitations({ report }: { report: ReportView }) {
   );
 }
 
+/** T40 검증 실패 사유: 사전에 있는 값은 한국어(원문은 툴팁), 없는 값은 원문(data-raw) */
+function VerificationReasonText({ reason }: { reason: string | null }) {
+  const view = describeVerificationReason(reason);
+  if (view === null) return <>-</>;
+  if (view.known) {
+    return <span title={`zeek_AD 값: ${view.raw}`}>{view.text}</span>;
+  }
+  return (
+    <span className="font-mono" data-raw="">
+      {view.text}
+    </span>
+  );
+}
+
 /** 검증 실패일 때만 사유·문제 항목을 보인다. */
 export function ReportVerificationProblems({ report }: { report: ReportView }) {
   if (report.verificationPassed !== false) return null;
@@ -140,7 +154,9 @@ export function ReportVerificationProblems({ report }: { report: ReportView }) {
     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200">
       <div className="flex items-center gap-1.5 font-semibold">
         <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-        검증 실패 사유: {report.verificationReason || '-'}
+        <span className="[overflow-wrap:anywhere]">
+          검증 실패 사유: <VerificationReasonText reason={report.verificationReason} />
+        </span>
       </div>
       {problems.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">

@@ -429,6 +429,24 @@
         ORDER BY created_at ASC, job_id ASC
     </select>
 
+    <!-- T40 알림 묶음 답글 행의 incident_id. Java가 부모를 trim()해 비교하는 것과 맞춘다. 상한은 서비스가 준다. -->
+    <select id="findThreadReplyIncidentIds" resultType="string">
+        SELECT DISTINCT incident_id
+        FROM dashboard.slack_deliveries
+        WHERE TRIM(zeekad_thread_parent) = #{headIncidentId}
+        ORDER BY incident_id
+        LIMIT #{limit}
+    </select>
+
+    <!-- T40 묶음 구성원 수: 허용 캡처 안 최신 큐 행(큐 thread 조건 period=all의 total과 같은 행 집합) -->
+    <select id="countLatestQueueByIncidentIds" resultType="long">
+        SELECT COUNT(*)
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+          AND lq.incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+    </select>
+
     <select id="findSlackSummaries" resultMap="slackSummaryMap">
         SELECT job_id, capture_id, zeekad_message_version, zeekad_delivery_mode,
                zeekad_delivery_status, slack_payload, slack_ts, delivered_at, created_at
@@ -666,6 +684,10 @@
         </if>
         <if test="c.assigneeMode == 'none' and c.hasAssigneeIds">
             AND NOT (b.incident_id = ANY(#{c.assigneeIncidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler}))
+        </if>
+        <!-- T40 알림 묶음 조건(일반 조건): 머리 ∪ 답글 incident_id 배열 하나. 권한 경계는 base의 허용 캡처다. -->
+        <if test="c.threadIncidentIds != null">
+            AND b.incident_id = ANY(#{c.threadIncidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
         </if>
         <if test="c.detectedAfter != null">
             AND b.detected_at &gt; #{c.detectedAfter}

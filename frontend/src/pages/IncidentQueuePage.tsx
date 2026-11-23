@@ -293,7 +293,14 @@ export function IncidentQueuePage() {
   const listQuery = useMemo(() => searchParams.toString(), [searchParams]);
 
   const chips = useMemo(() => {
-    const list: { key: string; label: string; raw?: string }[] = [];
+    const list: { key: string; label: string; raw?: string; title?: string }[] = [];
+    // T40 알림 묶음 조건(상세 Slack 탭의 "같은 묶음 인시던트 N건 보기"에서 온다)
+    if (query.thread !== null)
+      list.push({
+        key: 'thread',
+        label: `알림 묶음 #${query.thread}`,
+        title: `최초 알림 인시던트 #${query.thread}의 Slack 스레드에 묶인 인시던트만 봅니다`,
+      });
     if (query.pickedBy) {
       const model = lookupLabel('detectionModel', query.pickedBy);
       list.push(
@@ -314,7 +321,7 @@ export function IncidentQueuePage() {
     if (query.alerted) list.push({ key: 'alerted', label: '경보 발송만' });
     if (query.overdue) list.push({ key: 'overdue', label: '착수 지연만' });
     return list;
-  }, [query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted, query.overdue]);
+  }, [query.thread, query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted, query.overdue]);
 
   function toggleStripFilter(key: (typeof STRIP_FILTER_KEYS)[number], value: string) {
     const current = searchParams.get(key);
@@ -411,6 +418,7 @@ export function IncidentQueuePage() {
                       type="button"
                       onClick={() => updateParam(chip.key, '')}
                       aria-label={`${chip.label}${chip.raw ? ` ${chip.raw}` : ''} 필터 지우기`}
+                      title={chip.title}
                       className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-xs text-slate-200 transition hover:border-slate-500"
                     >
                       <span>

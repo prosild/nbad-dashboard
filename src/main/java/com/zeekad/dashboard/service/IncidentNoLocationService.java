@@ -54,6 +54,11 @@ public class IncidentNoLocationService {
         throw new IllegalStateException("unreachable");
     }
 
+    /** T40 큐 thread 조건의 번호: 번호 API와 같은 형식 검사(400, 감사 없음) */
+    public static long parseThreadNo(String raw) {
+        return parse(raw);
+    }
+
     /** 양의 정수(Long 범위)만. 숫자가 아님·0 이하·범위 초과는 400(감사 없음) */
     static long parse(String raw) {
         String s = raw == null ? "" : raw.trim();

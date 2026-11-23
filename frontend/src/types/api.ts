@@ -405,6 +405,12 @@ export interface SlackDeliveryView {
 export interface SlackThreadGroup {
   threadKey: string;
   deliveries: SlackDeliveryView[];
+  /** T40 묶음 머리가 지금 인시던트 */
+  headIsSelf: boolean;
+  /** T40 머리 인시던트 번호(머리를 볼 수 있을 때만, 아니면 null) */
+  headIncidentNo: number | null;
+  /** T40 묶음 인시던트 가운데 허용 캡처 안 최신 큐에 있는 수(머리를 볼 수 없으면 0) */
+  memberCount: number;
 }
 
 export interface AnalystReviewView {

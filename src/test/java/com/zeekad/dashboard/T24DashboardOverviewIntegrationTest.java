@@ -506,7 +506,8 @@ class T24DashboardOverviewIntegrationTest {
         TimeContextService tcs = new TimeContextService(props, zeekadReadMapper, clock);
         com.zeekad.dashboard.service.AckTargetService ack = new com.zeekad.dashboard.service.AckTargetService(props, tcs);
         IncidentQueueService qs = new IncidentQueueService(zeekadReadMapper, captureAccessService, maskingService, tcs,
-                ack, incidentAssignmentService, incidentRefService);
+                ack, incidentAssignmentService, incidentRefService,
+                new com.zeekad.dashboard.service.SlackThreadService(zeekadReadMapper));
         return new DashboardOverviewService(zeekadReadMapper, qs, tcs, maskingService,
                 new com.zeekad.dashboard.service.HandlingMetricsService(zeekadReadMapper, tcs, ack, incidentAssignmentService));
     }

@@ -1774,6 +1774,172 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($t39dLeaks.Count -eq 0) "[T39d] 현황판·운영 현황·검토 목록·큐 응답에 숨김 캡처 ID 없음"
     Assert-True ($t39dIp.Count -eq 0) "[T39d] 가려지지 않은 IPv4 0"
 
+    Write-Host "=== [T40] 알림 묶음 건너가기: 큐 thread·상세 묶음 칸·403·숨김·마스킹·응답 시간 ==="
+    # 값(incident_id·IP)은 기록하지 않는다. 묶음 머리는 sha256(incident_id)로만 맞추고 기록에는 번호·개수만 쓴다.
+    $t40d = New-Client "198.51.100.140"
+    Assert-Status (Login-Api $t40d "demo" $env:DEMO_PASSWORD) 200 "[T40] demo 로그인"
+    $t40t = New-Client "198.51.100.141"
+    Assert-Status (Login-Api $t40t $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T40] $trialUser 로그인"
+    $t40Ip = [System.Collections.Generic.List[string]]::new()
+    $t40Leaks = [System.Collections.Generic.List[string]]::new()
+    # 읽기 한도(T36)에 걸리면 잠시 뒤 다시 보낸다(판정하지 않는다)
+    $get40 = {
+        param([string]$P, $C)
+        for ($try = 1; $try -le 6; $try++) {
+            $r = Invoke-Http -Path $P -Client $C
+            if ($r.Status -ne 429) { return $r }
+            Start-Sleep -Seconds 5
+        }
+        return $r
+    }
+    $check40 = {
+        param($R, [string]$Label)
+        Find-UnmaskedIpv4 $R.Json "t40[$Label]" $t40Ip
+        foreach ($hc in $demoHiddenCaptures) { if ($R.Body.Contains($hc)) { $t40Leaks.Add("$Label -> $hc") } }
+    }
+    $sha40 = { param([string]$S) ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($S))) -replace '-', '').ToLowerInvariant() }
+
+    # 독립 SQL: 묶음 열쇠(부모가 있으면 부모, 없으면 자기)마다 구성원(열쇠 ∪ TRIM(부모) = 열쇠인 행) 가운데 공개 캡처·최신 큐에 있는 수와 숨김 캡처 수
+    $hiddenIn40 = if ($hiddenIn39) { $hiddenIn39 } else { "''" }
+    $exp40Sql = "WITH keys AS (SELECT DISTINCT COALESCE(NULLIF(TRIM(zeekad_thread_parent), ''), incident_id) AS head FROM dashboard.slack_deliveries), " +
+        "rep AS (SELECT TRIM(zeekad_thread_parent) AS head, incident_id FROM dashboard.slack_deliveries WHERE NULLIF(TRIM(zeekad_thread_parent), '') IS NOT NULL), " +
+        "m AS (SELECT head, head AS id FROM keys UNION SELECT k.head, r.incident_id FROM keys k JOIN rep r ON r.head = k.head) " +
+        "SELECT encode(sha256(convert_to(m.head, 'UTF8')), 'hex') || '|' || count(*) FILTER (WHERE lq.capture_id IN ($publicIn39)) || '|' || count(*) FILTER (WHERE lq.capture_id IN ($hiddenIn40)) || '|' || " +
+        "(count(DISTINCT m.id) - 1) || '|' || bool_or(m.id <> m.head) " +
+        "FROM m LEFT JOIN dashboard.latest_incident_queue lq ON lq.incident_id = m.id GROUP BY m.head"
+    $exp40 = @{}
+    foreach ($ln in ((Invoke-Psql "zeekad" $exp40Sql).Output -split "`r?`n")) {
+        if ($ln.Trim() -match '^([0-9a-f]{64})\|(\d+)\|(\d+)\|(\d+)\|(t|f)$') {
+            $exp40[$Matches[1]] = [pscustomobject]@{ Public = [int]$Matches[2]; Hidden = [int]$Matches[3]; Others = ($Matches[5] -eq 't') }
+        }
+    }
+    $refs40 = @{}
+    foreach ($ln in ((Invoke-Psql "zeekad_dashboard" "SELECT encode(sha256(convert_to(incident_id, 'UTF8')), 'hex') || '|' || incident_no || '|' || capture_id FROM incident_refs").Output -split "`r?`n")) {
+        if ($ln.Trim() -match '^([0-9a-f]{64})\|(\d+)\|(.+)$') { $refs40[$Matches[1]] = [pscustomobject]@{ No = [long]$Matches[2]; Capture = $Matches[3] } }
+    }
+    $heads40 = @($exp40.Keys | Where-Object { $exp40[$_].Others })
+
+    # [T40a] 다른 인시던트가 붙은 묶음 머리마다 큐 thread=<번호>&period=all의 total = 독립 SQL(구성원 ∩ 공개 캡처 ∩ 최신 큐). 숨김 캡처 인시던트는 응답에 없다
+    $t40aLines = @(); $t40aBad = @(); $t40aHiddenMembers = 0; $t40aSizes = @(); $largest40 = $null
+    foreach ($h in $heads40) {
+        $ref = $refs40[$h]
+        if ($null -eq $ref) { $t40aBad += "head without ref row"; continue }
+        $e = $exp40[$h]
+        $t40aHiddenMembers += $e.Hidden
+        foreach ($pair in @(@("demo", $t40d), @($trialUser, $t40t))) {
+            $q40 = & $get40 "/api/incidents/queue?period=all&size=100&thread=$($ref.No)" $pair[1]
+            Assert-Status $q40 200 "[T40a] $($pair[0]) thread=$($ref.No)"
+            & $check40 $q40 "a:$($pair[0]):$($ref.No)"
+            $items40 = @($q40.Json.items)
+            if ([int]$q40.Json.total -ne $e.Public -or $items40.Count -ne $e.Public) { $t40aBad += "$($pair[0]) #$($ref.No) total=$($q40.Json.total) items=$($items40.Count) expected=$($e.Public)" }
+            if (@($items40 | Where-Object { $demoHiddenCaptures -contains $_.captureId }).Count) { $t40aBad += "$($pair[0]) #$($ref.No) hidden item" }
+            if ([int]$q40.Json.summary.total -ne $e.Public) { $t40aBad += "$($pair[0]) #$($ref.No) summary.total=$($q40.Json.summary.total)" }
+        }
+        $t40aSizes += $e.Public
+        $t40aLines += "#$($ref.No) capture=$($ref.Capture) members(public latest)=$($e.Public) hidden=$($e.Hidden)"
+        if ($null -eq $largest40 -or $e.Public -gt $largest40.Size) { $largest40 = [pscustomobject]@{ No = $ref.No; Size = $e.Public } }
+    }
+    $e2eLogs.Add("[T40a] thread heads with other incidents=$($heads40.Count); sizes=[$((@($t40aSizes | Sort-Object) -join ', '))]; hidden members(latest queue)=$t40aHiddenMembers`n       $($t40aLines -join "`n       ")`n       mismatches=$($t40aBad.Count)$(if ($t40aBad.Count) { ' ' + ($t40aBad -join '; ') })")
+    Assert-True ($heads40.Count -ge 1 -and $t40aBad.Count -eq 0) "[T40a] 묶음 머리 $($heads40.Count)개의 큐 thread total = 독립 SQL(demo·$trialUser), 숨김 구성원 제외"
+    Assert-True ($t40aHiddenMembers -ge 1) "[T40a] 숨김 캡처 구성원이 실제로 있다($t40aHiddenMembers건, 이 데이터가 곧 시험)"
+
+    # [T40b] lab-20261122 상세 전부: 묶음마다 memberCount = 독립 SQL, headIncidentNo = incident_refs 번호(행이 없으면 null), restricted- 0
+    $rows40 = @((Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE capture_id = 'lab-20261122' ORDER BY job_id, queue_rank").Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+/\d+$' })
+    $t40bBad = @(); $t40bGroups = 0; $t40bLinks = 0; $t40bRestricted = 0; $t40bSelf = 0
+    foreach ($row in $rows40) {
+        $j40, $r40 = $row -split '/'
+        $dt = & $get40 "/api/incidents/$j40/rank/$r40" $t40t
+        $dd = & $get40 "/api/incidents/$j40/rank/$r40" $t40d
+        Assert-Status $dt 200 "[T40b] $trialUser 상세 $row"
+        Assert-Status $dd 200 "[T40b] demo 상세 $row"
+        & $check40 $dd "b:demo:$row"
+        foreach ($hc in $demoHiddenCaptures) { if ($dt.Body.Contains($hc)) { $t40Leaks.Add("b:trial:$row -> $hc") } }
+        $gt = @($dt.Json.detail.slackThreadGroups); $gd = @($dd.Json.detail.slackThreadGroups)
+        if ($gt.Count -ne $gd.Count) { $t40bBad += "$row group count trial=$($gt.Count) demo=$($gd.Count)" ; continue }
+        for ($gi = 0; $gi -lt $gt.Count; $gi++) {
+            $t40bGroups++
+            $g = $gt[$gi]
+            if ([string]$g.threadKey -like 'restricted-*' -or [string]$gd[$gi].threadKey -like 'restricted-*') { $t40bRestricted++ }
+            $hk = & $sha40 ([string]$g.threadKey)
+            $e = $exp40[$hk]
+            $ref = $refs40[$hk]
+            $expNo = if ($ref -and ($demoVisibleCaptures -contains $ref.Capture)) { $ref.No } else { $null }
+            $expCount = if ($null -ne $expNo -or $g.headIsSelf) { if ($e) { $e.Public } else { -1 } } else { 0 }
+            if ($g.headIsSelf) { $t40bSelf++ }
+            if ($null -ne $g.headIncidentNo -and -not $g.headIsSelf) { $t40bLinks++ }
+            $gotNo = if ($null -eq $g.headIncidentNo) { $null } else { [long]$g.headIncidentNo }
+            if ($gotNo -ne $expNo) { $t40bBad += "$row g$gi headIncidentNo=$gotNo expected=$expNo" }
+            if ([int]$g.memberCount -ne $expCount) { $t40bBad += "$row g$gi memberCount=$($g.memberCount) expected=$expCount" }
+            if ([int]$gd[$gi].memberCount -ne [int]$g.memberCount -or "$($gd[$gi].headIncidentNo)" -ne "$($g.headIncidentNo)" -or $gd[$gi].headIsSelf -ne $g.headIsSelf -or @($gd[$gi].deliveries).Count -ne @($g.deliveries).Count) {
+                $t40bBad += "$row g$gi demo differs from $trialUser"
+            }
+        }
+    }
+    $e2eLogs.Add("[T40b] lab-20261122 details=$($rows40.Count) (demo + $trialUser); groups=$t40bGroups headIsSelf=$t40bSelf with head link=$t40bLinks restricted=$t40bRestricted; mismatches=$($t40bBad.Count)$(if ($t40bBad.Count) { ' ' + (($t40bBad | Select-Object -First 10) -join '; ') })")
+    Assert-True ($rows40.Count -eq $expectedCounts['lab-20261122'] -and $t40bBad.Count -eq 0) "[T40b] lab-20261122 상세 $($rows40.Count)건 묶음 칸 = 독립 SQL, demo = $trialUser"
+    Assert-True ($t40bRestricted -eq 0 -and $t40bLinks -ge 1) "[T40b] restricted- 0, 최초 알림 링크가 있는 묶음 $t40bLinks개"
+
+    # [T40c] 숨김 캡처(lab-20261123) 인시던트 번호를 thread로 주면 403(두 계정), 형식 오류는 400
+    $hiddenNos40 = @((Invoke-Psql "zeekad_dashboard" "SELECT incident_no FROM incident_refs WHERE capture_id = 'lab-20261123' ORDER BY incident_no LIMIT 2").Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
+    $t40cLines = @()
+    Assert-True ($hiddenNos40.Count -ge 1) "[T40c] lab-20261123 번호 행이 있다"
+    foreach ($hn in $hiddenNos40) {
+        foreach ($pair in @(@("demo", $t40d), @($trialUser, $t40t))) {
+            $f40 = & $get40 "/api/incidents/queue?period=all&thread=$hn" $pair[1]
+            Assert-Status $f40 403 "[T40c] $($pair[0]) 숨김 캡처 번호 thread"
+            $t40cLines += "$($pair[0]) thread=<hidden no> -> $($f40.Status)"
+        }
+    }
+    foreach ($bad in @("abc", "0", "1.5")) {
+        $b40 = & $get40 "/api/incidents/queue?period=all&thread=$bad" $t40d
+        Assert-Status $b40 400 "[T40c] demo thread=$bad"
+        $t40cLines += "demo thread=$bad -> $($b40.Status)"
+    }
+    $e2eLogs.Add("[T40c] $($t40cLines -join '; ')")
+
+    # [T40e] 응답 시간(데우기 1 + 3회, curl 포함 ms): 가장 큰 묶음으로 상세·큐 목록(thread)·이전·다음(thread).
+    #        한도 = T39 기준 중앙값의 max(×1.5, +100ms). 기준: 상세 [T27d] 209ms·큐 all size=50 [T27d] 367ms(handoff/T39/evidence/rehearsal-timing.md),
+    #        이웃 이동 period=all 221ms(handoff/T39/evidence/neighbors-timing.txt, 그림 스택)
+    $q40big = & $get40 "/api/incidents/queue?period=all&size=50&thread=$($largest40.No)" $t40d
+    $items40big = @($q40big.Json.items)
+    $member40 = if ($items40big.Count -ge 2) { $items40big[1] } else { $items40big[0] }
+    $t40eTargets = [ordered]@{
+        "detail" = @("/api/incidents/$($member40.jobId)/rank/$($member40.queueRank)", 209)
+        "queue-thread" = @("/api/incidents/queue?period=all&size=50&thread=$($largest40.No)", 367)
+        "neighbors-thread" = @("/api/incidents/queue/neighbors?jobId=$($member40.jobId)&queueRank=$($member40.queueRank)&period=all&thread=$($largest40.No)", 221)
+    }
+    $t40eLines = @(); $t40eOver = @()
+    foreach ($k in $t40eTargets.Keys) {
+        $pth = $t40eTargets[$k][0]; $baseMs = [int]$t40eTargets[$k][1]
+        $warm = & $get40 $pth $t40d
+        Assert-Status $warm 200 "[T40e] $k (데우기)"
+        $ms = @()
+        for ($n = 0; $n -lt 3; $n++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $pth -Client $t40d
+            $sw.Stop()
+            Assert-Status $r 200 "[T40e] $k"
+            & $check40 $r "e:$k"
+            $ms += [int]$sw.ElapsedMilliseconds
+        }
+        $median = ($ms | Sort-Object)[1]
+        $limit = [Math]::Max([int]($baseMs * 1.5), $baseMs + 100)
+        if ($median -gt $limit) { $t40eOver += $k }
+        $t40eLines += "$k=[$($ms -join ', ')] median=$median limit=$limit (T39 $baseMs)"
+    }
+    $e2eLogs.Add("[T40e] largest thread #$($largest40.No) size=$($largest40.Size); $($t40eLines -join '; ')")
+    Assert-True ($t40eOver.Count -eq 0) "[T40e] 응답 시간 한도 안 (넘은 것: $($t40eOver -join ', '))"
+
+    # [T40d] 새 요청 전체: demo 가려지지 않은 IPv4 0, 두 계정 응답에 숨김 캡처 ID 0.
+    #        타 인시던트 답글 행의 페이로드에서 맨 위 zeekad_thread_parent 말고 다른 자리에 머리 incident_id가 글로 든 행 수(있으면 멈추고 묻는다)
+    $t40Payload = (Invoke-Psql "zeekad" ("SELECT count(*) FROM dashboard.slack_deliveries WHERE NULLIF(TRIM(zeekad_thread_parent), '') IS NOT NULL " +
+        "AND TRIM(zeekad_thread_parent) <> incident_id AND position(TRIM(zeekad_thread_parent) in (slack_payload::jsonb - 'zeekad_thread_parent')::text) > 0")).Output.Trim()
+    $e2eLogs.Add("[T40d] reply rows whose payload carries the head incident_id outside the top-level zeekad_thread_parent=$t40Payload")
+    Assert-True ($t40Payload -eq '0') "[T40d] 페이로드 다른 자리의 머리 incident_id 0 ($t40Payload)"
+    $e2eLogs.Add("[T40d] unmasked IPv4 JSON paths=$($t40Ip.Count)$(if ($t40Ip.Count) { ' ' + (($t40Ip | Select-Object -First 10) -join ', ') }); hidden capture traces=$($t40Leaks.Count)$(if ($t40Leaks.Count) { ' ' + (($t40Leaks | Select-Object -First 10) -join ', ') })")
+    Assert-True ($t40Ip.Count -eq 0) "[T40d] demo 가려지지 않은 IPv4 0"
+    Assert-True ($t40Leaks.Count -eq 0) "[T40d] demo·$trialUser 응답에 숨김 캡처 ID 0"
+
     # [T27f] 앱 컨테이너를 다시 띄워도 번호가 그대로이고 새 행이 0
     $before27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || md5(string_agg(incident_no || '=' || incident_id, ',' ORDER BY incident_no)) FROM incident_refs").Output.Trim()
     $rs27 = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "--force-recreate", "dashboard-app")) -IgnoreExitCode
@@ -2203,7 +2369,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
 
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T29]·[T32]·[T36] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T39]·[T40]·[T29]·[T32]·[T36] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="

@@ -32,7 +32,9 @@ function delivery(over: Partial<SlackDeliveryView> = {}): SlackDeliveryView {
   };
 }
 
-const group = (...deliveries: SlackDeliveryView[]): SlackThreadGroup[] => [{ threadKey: 'inc-1', deliveries }];
+const group = (...deliveries: SlackDeliveryView[]): SlackThreadGroup[] => [
+  { threadKey: 'inc-1', deliveries, headIsSelf: true, headIncidentNo: null, memberCount: 1 },
+];
 
 // 본문과 블록 글 양쪽에 넣는 링크·토큰·맨 URL
 const TOKENS =

@@ -76,6 +76,7 @@ public class IncidentQueueService {
     private final AckTargetService ackTargetService;
     private final IncidentAssignmentService incidentAssignmentService;
     private final IncidentRefService incidentRefService;
+    private final SlackThreadService slackThreadService;
 
     public IncidentQueueService(ZeekadReadMapper zeekadReadMapper,
                                 CaptureAccessService captureAccessService,
@@ -83,8 +84,10 @@ public class IncidentQueueService {
                                 TimeContextService timeContextService,
                                 AckTargetService ackTargetService,
                                 IncidentAssignmentService incidentAssignmentService,
-                                IncidentRefService incidentRefService) {
+                                IncidentRefService incidentRefService,
+                                SlackThreadService slackThreadService) {
         this.incidentRefService = incidentRefService;
+        this.slackThreadService = slackThreadService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.captureAccessService = captureAccessService;
         this.maskingService = maskingService;
@@ -118,14 +121,25 @@ public class IncidentQueueService {
                               String overdue,
                               /* T34: 사용자 지정 기간(period=custom일 때만) */
                               String start,
-                              String end) {
+                              String end,
+                              /* T40: 알림 묶음 조건(인시던트 번호) */
+                              String thread) {
+        /** T40 앞 호출 호환(알림 묶음 조건 없음) */
+        public QueueParams(String period, String source, String captureId, String priority, String status,
+                           String reviewPending, String alerted, String pickedBy, String role, String hasReport,
+                           String wouldSend, String asset, String sort, String dir, String page, String size,
+                           String assignee, String overdue, String start, String end) {
+            this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, null);
+        }
+
         /** T34 앞 호출 호환(지정 기간 없음) */
         public QueueParams(String period, String source, String captureId, String priority, String status,
                            String reviewPending, String alerted, String pickedBy, String role, String hasReport,
                            String wouldSend, String asset, String sort, String dir, String page, String size,
                            String assignee, String overdue) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, assignee, overdue, null, null);
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, null, null, null);
         }
 
         /** T25 앞 호출 호환(담당·착수 지연 조건 없음) */
@@ -133,7 +147,7 @@ public class IncidentQueueService {
                            String reviewPending, String alerted, String pickedBy, String role, String hasReport,
                            String wouldSend, String asset, String sort, String dir, String page, String size) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, null, null, null, null);
+                    wouldSend, asset, sort, dir, page, size, null, null, null, null, null);
         }
     }
 
@@ -481,8 +495,9 @@ public class IncidentQueueService {
     /** T34: 지정 기간(period=custom, start·end)까지 받는다 */
     public Condition resolveCondition(DashboardUserPrincipal principal, String period, String start, String end,
                                       String source, String captureId, String clientIp) {
+        // 현황판·운영 현황은 알림 묶음 조건(thread)을 받지 않는다
         QueueParams p = new QueueParams(period, source, captureId, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, start, end);
+                null, null, null, null, null, null, null, start, end, null);
         Scope scope = resolveScope(principal, p, clientIp, true);
         return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
                 scope.criteria().getDetectedAfter(), scope.criteria().getDetectedUntil(), scope.criteria());
@@ -585,6 +600,9 @@ public class IncidentQueueService {
                 throw invalid("담당 값이 올바르지 않습니다.");
             }
         }
+        // T40 알림 묶음 조건: 형식 오류는 400(감사 없음). 번호 해석은 다른 값 검사가 끝난 뒤에 한다
+        String threadRaw = trimToNull(p.thread());
+        Long threadNo = threadRaw == null ? null : IncidentNoLocationService.parseThreadNo(threadRaw);
 
         List<String> captureIds = new ArrayList<>();
         for (String cap : allowed) {
@@ -599,6 +617,9 @@ public class IncidentQueueService {
 
         OffsetDateTime anchor = timeContextService.anchorFor(allowed);
         UnifiedQueueCriteria c = new UnifiedQueueCriteria();
+        if (threadNo != null) {
+            c.setThreadIncidentIds(resolveThreadMembers(principal, allowed, threadNo, clientIp));
+        }
         // T25 담당 조건: 담당 행(담당자가 있는 것만)의 incident_id 목록을 배열 바인드 하나로 넘긴다.
         // me는 목록 안, none은 목록 밖. me인데 목록이 비면 빈 결과(VIEWER의 me도 빈 결과), none인데 비면 조건 없음.
         if (assignee != null) {
@@ -649,6 +670,24 @@ public class IncidentQueueService {
         UserRole role = principal != null ? principal.getRole() : UserRole.VIEWER;
         return new Scope(allowed, c.getCaptureIds(), anchor, period, periodStart, periodEnd, c,
                 trimToNull(p.asset()), role);
+    }
+
+    /**
+     * T40 thread 번호 → 묶음 구성원 incident_id. 번호 행을 한 번 읽고, 없는 번호와 허용 밖 캡처는
+     * 번호 API와 같은 403(사유를 나눠 IDOR 감사)이다. 번호가 머리가 아니어도 그 인시던트를 머리로 본다.
+     * 결과의 권한 경계는 큐 기반 질의의 허용 캡처다(배열에 허용 밖 incident_id가 섞여도 나오지 않는다).
+     */
+    private String[] resolveThreadMembers(DashboardUserPrincipal principal, List<String> allowed, long threadNo,
+                                          String clientIp) {
+        com.zeekad.dashboard.model.IncidentRef ref = incidentRefService.findByNo(threadNo);
+        if (ref == null) {
+            captureAccessService.denyIncidentNo(principal, null, threadNo, "thread_no_not_found", clientIp);
+        }
+        if (ref.getCaptureId() == null || !allowed.contains(ref.getCaptureId())) {
+            captureAccessService.denyIncidentNo(principal, ref.getCaptureId(), threadNo, "thread_no_capture_denied",
+                    clientIp);
+        }
+        return slackThreadService.memberIds(ref.getIncidentId());
     }
 
     /**

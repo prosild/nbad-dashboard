@@ -79,6 +79,14 @@ public interface ZeekadReadMapper {
 
     List<SlackDelivery> findSlackDeliveries(@Param("incidentId") String incidentId);
 
+    /** T40 알림 묶음: TRIM(zeekad_thread_parent) = 머리인 행의 incident_id(중복 없이, 상한 limit건) */
+    List<String> findThreadReplyIncidentIds(@Param("headIncidentId") String headIncidentId,
+                                            @Param("limit") int limit);
+
+    /** T40 묶음 구성원 가운데 허용 캡처 안이고 최신 큐에 있는 행 수 */
+    long countLatestQueueByIncidentIds(@Param("captureIds") List<String> captureIds,
+                                       @Param("incidentIds") String[] incidentIds);
+
     List<SlackSummary> findSlackSummaries(@Param("captureId") String captureId);
 
     IncidentStatus findIncidentStatus(@Param("incidentId") String incidentId);

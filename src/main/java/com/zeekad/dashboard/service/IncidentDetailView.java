@@ -167,9 +167,17 @@ public record IncidentDetailView(
     ) {
     }
 
+    /**
+     * 알림 묶음 하나. T40: headIsSelf = 묶음 머리가 지금 인시던트, headIncidentNo = 머리를 볼 수 있을 때만 머리 번호,
+     * memberCount = 머리를 볼 수 있을 때 묶음 인시던트 가운데 허용 캡처 안 최신 큐에 있는 수(볼 수 없으면 0).
+     * 머리를 볼 수 없는 묶음의 threadKey는 restricted-N 표지다.
+     */
     public record SlackThreadGroup(
             String threadKey,
-            List<SlackDeliveryView> deliveries
+            List<SlackDeliveryView> deliveries,
+            boolean headIsSelf,
+            Long headIncidentNo,
+            long memberCount
     ) {
     }
 

@@ -1,7 +1,9 @@
 import { useId, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Radio } from 'lucide-react';
 import type { SlackDeliveryView, SlackThreadGroup } from '../../types/api';
-import { formatDateTime } from '../../utils/format';
+import { formatDateTime, formatNumber } from '../../utils/format';
+import { incidentPath } from '../../utils/incidentLink';
 import { lookupSlackMessageVersion } from '../../utils/labels';
 import { parseSlackMessage, type SlackBlockView, type SlackLine } from '../../utils/slackText';
 import { CodeLabel, LookupText, SocBadge } from '../StatusBadge';
@@ -228,6 +230,37 @@ function SlackDeliveryCard({
 
 const hasParent = (d: SlackDeliveryView) => d.threadParent !== null && d.threadParent !== '';
 
+const validNo = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n > 0;
+
+/**
+ * T40 묶음 건너가기. 서버가 머리를 볼 수 있을 때만 머리 번호를 준다(허용 캡처 밖·번호 행 없음은 null이고 이유를 적지 않는다).
+ * 다른 인시던트의 알림 글은 이 탭에 가져오지 않고, 그 인시던트 화면·큐로 가는 길만 둔다.
+ */
+function ThreadLinks({ group }: { group: SlackThreadGroup }) {
+  const headNo = validNo(group.headIncidentNo) ? group.headIncidentNo : null;
+  if (headNo === null) return null;
+  const headLink = !group.headIsSelf ? incidentPath({ incidentNo: headNo }, 'tab=slack') : null;
+  const showMembers = group.memberCount >= 2;
+  if (!headLink && !showMembers) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-testid="slack-thread-links">
+      {headLink && (
+        <Link to={headLink} className="text-cyan-300 hover:text-cyan-200 hover:underline">
+          최초 알림 인시던트 #{headNo}
+        </Link>
+      )}
+      {showMembers && (
+        <Link
+          to={`/incidents?${new URLSearchParams({ period: 'all', thread: String(headNo) }).toString()}`}
+          className="text-cyan-300 hover:text-cyan-200 hover:underline"
+        >
+          같은 묶음 인시던트 {formatNumber(group.memberCount)}건 보기
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export function SlackThreadsSection({ threadGroups }: { threadGroups: SlackThreadGroup[] }) {
   if (threadGroups.length === 0) {
     return <p className="text-sm text-slate-400">이 인시던트로 보낸 Slack 알림이 없습니다.</p>;
@@ -241,6 +274,7 @@ export function SlackThreadsSection({ threadGroups }: { threadGroups: SlackThrea
             <span className="font-semibold text-slate-200">알림 묶음</span>
             <span className="text-slate-400">메시지 {group.deliveries.length}건</span>
           </div>
+          <ThreadLinks group={group} />
           {group.deliveries.map((delivery, idx) => {
             const reply = hasParent(delivery);
             // 부모가 기록된 알림만 답글로 그린다. 순서·판으로 스레드 관계를 추정하지 않는다.

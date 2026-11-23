@@ -201,12 +201,14 @@ describe('T37 근거 사실 사전', () => {
       where: null,
     });
     expect(describeProblem('옛 형식 문제 글', VIEWER_PS)).toEqual({ text: '옛 형식 문제 글', known: false, where: null });
-    // T39: lab-20261122에서 처음 나온 kind. zeek_AD 문서에 설명이 없어 사전에 두지 않고 원문으로 보인다(뜻을 지어내지 않는다)
+    // T39에서 처음 나온 kind. T40: 계약 41행("보고서의 attack_ids는 zeekad_attack_candidates 안에서만 나온다")을 근거로 사전에 더했다
     expect(describeProblem({ kind: 'attack_id_not_in_candidates', value: 'T0000', where: 'possible_explanations[0]' }, VIEWER_PS)).toEqual({
-      text: '{"kind":"attack_id_not_in_candidates","value":"T0000","where":"possible_explanations[0]"}',
-      known: false,
-      where: null,
+      text: '리포트가 인용한 ATT&CK ID 가운데 후보 목록에 없는 ID: "T0000"',
+      known: true,
+      where: 'possible_explanations[0]',
     });
+    // 모양이 다르면(키가 더 있음) 지금처럼 원문
+    expect(describeProblem({ kind: 'attack_id_not_in_candidates', value: 'T0000', extra: 1 }, VIEWER_PS).known).toBe(false);
   });
 });
 

@@ -979,3 +979,47 @@ describe('기간 밖 안내(T29)', () => {
     expect(screen.queryByTestId('source-outside')).toBeNull();
   });
 });
+
+describe('T40 알림 묶음 조건(thread)', () => {
+  it('주소의 thread를 큐 API에 넘기고 "알림 묶음 #번호" 표지(툴팁)와 지우기를 보인다', async () => {
+    const user = userEvent.setup();
+    const { queueCalls } = renderQueue('/incidents?period=all&thread=2269');
+    await ready();
+    expect(lastCall(queueCalls).get('thread')).toBe('2269');
+    const chip = screen.getByRole('button', { name: '알림 묶음 #2269 필터 지우기' });
+    expect(chip).toHaveAttribute('title', '최초 알림 인시던트 #2269의 Slack 스레드에 묶인 인시던트만 봅니다');
+    expect(chip).toHaveTextContent('알림 묶음 #2269');
+    await user.click(chip);
+    expect(params().get('thread')).toBeNull();
+    expect(params().get('period')).toBe('all');
+    await waitFor(() => expect(lastCall(queueCalls).get('thread')).toBeNull());
+  });
+
+  it('필터 초기화가 thread도 지운다', async () => {
+    const user = userEvent.setup();
+    renderQueue('/incidents?period=all&thread=12&alerted=true');
+    await ready();
+    await user.click(screen.getByRole('button', { name: '필터 초기화' }));
+    expect(params().get('thread')).toBeNull();
+    expect(params().get('alerted')).toBeNull();
+    expect(params().get('period')).toBe('all');
+  });
+
+  it('상세로 가는 링크의 from=에 thread가 실린다(상세의 이전·다음이 묶음 안에서 움직인다)', async () => {
+    renderQueue('/incidents?period=all&thread=12');
+    await ready();
+    const table = screen.getByRole('table');
+    const firstRow = within(table).getAllByRole('row')[1];
+    const href = within(firstRow).getAllByRole('link')[0].getAttribute('href') ?? '';
+    const from = new URLSearchParams(new URLSearchParams(href.split('?')[1] ?? '').get('from') ?? '');
+    expect(from.get('thread')).toBe('12');
+    expect(from.get('period')).toBe('all');
+  });
+
+  it('숫자가 아닌 thread는 버린다(API에 보내지 않고 표지도 없다)', async () => {
+    const { queueCalls } = renderQueue('/incidents?period=all&thread=12abc');
+    await ready();
+    expect(lastCall(queueCalls).get('thread')).toBeNull();
+    expect(screen.queryByRole('button', { name: /알림 묶음/ })).toBeNull();
+  });
+});

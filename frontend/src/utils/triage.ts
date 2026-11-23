@@ -165,6 +165,13 @@ export function parseAssignee(raw: string | null | undefined): AssigneeFilter | 
   return raw === 'me' || raw === 'none' ? raw : null;
 }
 
+/** T40 알림 묶음 조건: 최초 알림 인시던트 번호(양의 정수). 숫자가 아니면 버린다(null) */
+export function parseThread(raw: string | null | undefined): number | null {
+  if (!raw || !/^[0-9]{1,15}$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
 export interface QueueQuery {
   period: Period;
   /** T34 지정 기간(period=custom일 때만) */
@@ -178,6 +185,8 @@ export interface QueueQuery {
   overdue: boolean;
   /** T25 담당 조건 */
   assignee: AssigneeFilter | null;
+  /** T40 알림 묶음(최초 알림 인시던트 번호) */
+  thread: number | null;
   pickedBy: string;
   role: string;
   status: string;
@@ -208,6 +217,7 @@ export function parseQueueQuery(params: URLSearchParams): QueueQuery {
     alerted: params.get('alerted') === 'true',
     overdue: params.get('overdue') === 'true',
     assignee: parseAssignee(params.get('assignee')),
+    thread: parseThread(params.get('thread')),
     pickedBy: params.get('pickedBy') ?? '',
     role: params.get('role') ?? '',
     status: params.get('status') ?? '',
@@ -239,6 +249,7 @@ export function queueApiParams(
     alerted: q.alerted ? 'true' : undefined,
     overdue: q.overdue ? 'true' : undefined,
     assignee: q.assignee ?? undefined,
+    thread: q.thread !== null ? String(q.thread) : undefined,
     pickedBy: q.pickedBy || undefined,
     role: q.role || undefined,
     status: q.status || undefined,

@@ -31,6 +31,8 @@ public class UnifiedQueueCriteria {
     /** T25 담당 조건: me(목록 안) · none(목록 밖) · null. 목록은 담당자가 있는 incident_id(배열 바인드 하나) */
     private String assigneeMode;
     private String[] assigneeIncidentIds;
+    /** T40 알림 묶음 조건: 머리 ∪ 답글 incident_id(배열 바인드 하나). null이면 조건 없음. 비는 경우는 없다(머리가 늘 든다) */
+    private String[] threadIncidentIds;
     /** T25 착수 지연 식: 실습망 캡처(captureIds 안)와 우선순위별 경계(기준 시각 − 목표). 하나라도 없으면 지연 0 */
     private List<String> liveCaptureIds = List.of();
     private OffsetDateTime ackHighBefore;
@@ -59,6 +61,7 @@ public class UnifiedQueueCriteria {
         c.applyStripFilters = applyStripFilters;
         c.assigneeMode = assigneeMode;
         c.assigneeIncidentIds = assigneeIncidentIds;
+        c.threadIncidentIds = threadIncidentIds;
         c.liveCaptureIds = liveCaptureIds;
         c.ackHighBefore = ackHighBefore;
         c.ackMediumBefore = ackMediumBefore;
@@ -100,6 +103,8 @@ public class UnifiedQueueCriteria {
     public void setAssigneeMode(String assigneeMode) { this.assigneeMode = assigneeMode; }
     public String[] getAssigneeIncidentIds() { return assigneeIncidentIds; }
     public void setAssigneeIncidentIds(String[] assigneeIncidentIds) { this.assigneeIncidentIds = assigneeIncidentIds; }
+    public String[] getThreadIncidentIds() { return threadIncidentIds; }
+    public void setThreadIncidentIds(String[] threadIncidentIds) { this.threadIncidentIds = threadIncidentIds; }
     public boolean isHasAssigneeIds() { return assigneeIncidentIds != null && assigneeIncidentIds.length > 0; }
     public List<String> getLiveCaptureIds() { return liveCaptureIds; }
     public void setLiveCaptureIds(List<String> liveCaptureIds) { this.liveCaptureIds = liveCaptureIds; }

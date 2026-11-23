@@ -3,11 +3,13 @@ package com.zeekad.dashboard.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.zeekad.dashboard.client.EvidenceApiClient;
 import com.zeekad.dashboard.client.EvidenceApiResponse;
 import com.zeekad.dashboard.client.EvidenceData;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
+import com.zeekad.dashboard.model.IncidentRef;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.AnalystReviewItem;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
@@ -49,6 +51,11 @@ public class IncidentDetailService {
     private final MaskingService maskingService;
     private final PseudonymAnnotator pseudonymAnnotator;
     private final ObjectMapper objectMapper;
+    private final IncidentRefService incidentRefService;
+    private final SlackThreadService slackThreadService;
+
+    /** 페이로드 맨 위의 스레드 부모 키(T39 new-shapes.md) */
+    private static final String PAYLOAD_THREAD_PARENT = "zeekad_thread_parent";
 
     public IncidentDetailService(ZeekadReadMapper zeekadReadMapper,
                                  CaptureAccessService captureAccessService,
@@ -56,7 +63,11 @@ public class IncidentDetailService {
                                  EvidenceApiClient evidenceApiClient,
                                  MaskingService maskingService,
                                  PseudonymAnnotator pseudonymAnnotator,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 IncidentRefService incidentRefService,
+                                 SlackThreadService slackThreadService) {
+        this.incidentRefService = incidentRefService;
+        this.slackThreadService = slackThreadService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.captureAccessService = captureAccessService;
         this.incidentQueryService = incidentQueryService;
@@ -115,8 +126,9 @@ public class IncidentDetailService {
         }
 
         List<SlackDelivery> rawDeliveries = zeekadReadMapper.findSlackDeliveries(rawIncident.getIncidentId());
-        List<IncidentDetailView.SlackDeliveryView> deliveryViews = buildSlackDeliveryViews(rawDeliveries, role);
-        List<IncidentDetailView.SlackThreadGroup> threadGroups = groupSlackDeliveries(deliveryViews);
+        SlackThreads slackThreads = buildSlackThreads(rawDeliveries, rawIncident.getIncidentId(), principal, role);
+        List<IncidentDetailView.SlackDeliveryView> deliveryViews = slackThreads.deliveries();
+        List<IncidentDetailView.SlackThreadGroup> threadGroups = slackThreads.groups();
 
         IncidentStatus status = zeekadReadMapper.findIncidentStatus(rawIncident.getIncidentId());
         String currentStatus = resolveStatus(status, rawIncident);
@@ -564,72 +576,120 @@ public class IncidentDetailService {
         );
     }
 
-    private List<IncidentDetailView.SlackDeliveryView> buildSlackDeliveryViews(List<SlackDelivery> deliveries,
-                                                                               UserRole role) {
-        if (deliveries == null || deliveries.isEmpty()) {
-            return List.of();
-        }
-        boolean mask = maskingService.shouldMask(role);
-        List<IncidentDetailView.SlackDeliveryView> views = new ArrayList<>(deliveries.size());
-        for (SlackDelivery d : deliveries) {
-            String rawThreadParent = (d.getZeekadThreadParent() != null && !d.getZeekadThreadParent().isBlank())
-                    ? d.getZeekadThreadParent().trim()
-                    : null;
-            String rawIncidentId = d.getIncidentId();
-            String threadRoleLabel;
-            if (rawThreadParent == null) {
-                threadRoleLabel = "최초 알림";
-            } else if (rawThreadParent.equals(rawIncidentId)) {
-                threadRoleLabel = "후속 알림";
-            } else {
-                threadRoleLabel = "타 인시던트 후속 알림";
-            }
-            String rawThreadKey = rawThreadParent != null ? rawThreadParent : rawIncidentId;
-            String displayThreadKey = mask ? maskingService.maskIpsInText(rawThreadKey) : rawThreadKey;
-
-            SlackDelivery masked = maskingService.maskSlackDelivery(d, role);
-            String displayThreadParent = (masked.getZeekadThreadParent() != null && !masked.getZeekadThreadParent().isBlank())
-                    ? masked.getZeekadThreadParent()
-                    : null;
-            views.add(new IncidentDetailView.SlackDeliveryView(
-                    masked.getJobId(),
-                    masked.getZeekadMessageKind(),
-                    masked.getZeekadMessageVersion(),
-                    masked.getZeekadDeliveryMode(),
-                    masked.getZeekadDeliveryStatus(),
-                    masked.isDryRunOrRecorded(),
-                    masked.getSlackTs(),
-                    masked.getDeliveredAt(),
-                    masked.getError(),
-                    masked.getCreatedAt(),
-                    prettyJson(masked.getSlackPayload()),
-                    displayThreadParent,
-                    displayThreadKey,
-                    threadRoleLabel,
-                    masked.isReplyBroadcast()
-            ));
-        }
-        return Collections.unmodifiableList(views);
+    /** 상세 Slack 탭의 행 목록(원래 순서)과 묶음 목록(처음 나온 순서) */
+    private record SlackThreads(List<IncidentDetailView.SlackDeliveryView> deliveries,
+                                List<IncidentDetailView.SlackThreadGroup> groups) {
     }
 
-    private List<IncidentDetailView.SlackThreadGroup> groupSlackDeliveries(
-            List<IncidentDetailView.SlackDeliveryView> deliveries) {
+    /**
+     * T40: 묶음은 원문 열쇠(부모가 있으면 부모 incident_id, 없으면 자기 incident_id)로 나누고 보이는 값만 가린다.
+     * 머리를 볼 수 있다 = 머리가 자기 자신이거나, 머리의 incident_refs 행(읽기만)이 있고 그 캡처가 허용 캡처 안이다.
+     * 볼 수 있는 묶음에만 머리 번호와 구성원 수(허용 캡처 안 최신 큐)를 낸다. 볼 수 없는 묶음은 threadKey·threadParent와
+     * 페이로드 맨 위 zeekad_thread_parent를 응답 안 순서 표지(restricted-N)로 바꿔 머리의 식별자를 내보내지 않는다.
+     */
+    private SlackThreads buildSlackThreads(List<SlackDelivery> deliveries,
+                                           String rawSelfId,
+                                           DashboardUserPrincipal principal,
+                                           UserRole role) {
         if (deliveries == null || deliveries.isEmpty()) {
-            return List.of();
+            return new SlackThreads(List.of(), List.of());
         }
-        Map<String, List<IncidentDetailView.SlackDeliveryView>> grouped = new LinkedHashMap<>();
-        for (IncidentDetailView.SlackDeliveryView item : deliveries) {
-            String key = item.threadKey() != null ? item.threadKey() : "-";
-            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+        boolean mask = maskingService.shouldMask(role);
+        Map<String, List<Integer>> indexesByKey = new LinkedHashMap<>();
+        String[] rawParents = new String[deliveries.size()];
+        for (int i = 0; i < deliveries.size(); i++) {
+            SlackDelivery d = deliveries.get(i);
+            String rawParent = (d.getZeekadThreadParent() != null && !d.getZeekadThreadParent().isBlank())
+                    ? d.getZeekadThreadParent().trim()
+                    : null;
+            rawParents[i] = rawParent;
+            String ownId = d.getIncidentId() != null ? d.getIncidentId() : rawSelfId;
+            String rawKey = rawParent != null ? rawParent : ownId;
+            indexesByKey.computeIfAbsent(rawKey != null ? rawKey : "", k -> new ArrayList<>()).add(i);
         }
-        List<IncidentDetailView.SlackThreadGroup> result = new ArrayList<>(grouped.size());
-        for (Map.Entry<String, List<IncidentDetailView.SlackDeliveryView>> entry : grouped.entrySet()) {
-            result.add(new IncidentDetailView.SlackThreadGroup(
-                    entry.getKey(),
-                    Collections.unmodifiableList(entry.getValue())
-            ));
+
+        // 행 읽기 → 캡처 확인 → 그 뒤에만 번호를 낸다(번호 동기화·쓰기 없음)
+        Map<String, IncidentRef> refs = incidentRefService.readRefsOnly(indexesByKey.keySet());
+        List<String> allowed = captureAccessService.listAllowedCaptures(principal);
+
+        IncidentDetailView.SlackDeliveryView[] views = new IncidentDetailView.SlackDeliveryView[deliveries.size()];
+        List<IncidentDetailView.SlackThreadGroup> groups = new ArrayList<>(indexesByKey.size());
+        int restrictedSeq = 0;
+        for (Map.Entry<String, List<Integer>> entry : indexesByKey.entrySet()) {
+            String rawKey = entry.getKey();
+            boolean self = rawKey.equals(rawSelfId);
+            IncidentRef ref = refs.get(rawKey);
+            boolean visible = self
+                    || (ref != null && ref.getCaptureId() != null && allowed.contains(ref.getCaptureId()));
+            Long headNo = visible && ref != null ? ref.getIncidentNo() : null;
+            long memberCount = visible
+                    ? slackThreadService.countVisibleMembers(allowed, slackThreadService.memberIds(rawKey))
+                    : 0L;
+            String restricted = null;
+            if (!visible) {
+                restrictedSeq++;
+                restricted = "restricted-" + restrictedSeq;
+            }
+            String displayKey = visible ? (mask ? maskingService.maskIpsInText(rawKey) : rawKey) : restricted;
+
+            List<IncidentDetailView.SlackDeliveryView> groupViews = new ArrayList<>(entry.getValue().size());
+            for (int i : entry.getValue()) {
+                views[i] = toSlackDeliveryView(deliveries.get(i), rawParents[i], displayKey, restricted, role);
+                groupViews.add(views[i]);
+            }
+            groups.add(new IncidentDetailView.SlackThreadGroup(
+                    displayKey, Collections.unmodifiableList(groupViews), self, headNo, memberCount));
         }
-        return Collections.unmodifiableList(result);
+        return new SlackThreads(List.of(views), Collections.unmodifiableList(groups));
+    }
+
+    private IncidentDetailView.SlackDeliveryView toSlackDeliveryView(SlackDelivery d,
+                                                                     String rawThreadParent,
+                                                                     String displayThreadKey,
+                                                                     String restricted,
+                                                                     UserRole role) {
+        String threadRoleLabel;
+        if (rawThreadParent == null) {
+            threadRoleLabel = "최초 알림";
+        } else if (rawThreadParent.equals(d.getIncidentId())) {
+            threadRoleLabel = "후속 알림";
+        } else {
+            threadRoleLabel = "타 인시던트 후속 알림";
+        }
+        SlackDelivery masked = maskingService.maskSlackDelivery(d, role);
+        String displayThreadParent;
+        if (rawThreadParent == null) {
+            displayThreadParent = null;
+        } else if (restricted != null) {
+            displayThreadParent = restricted;
+        } else {
+            displayThreadParent = (masked.getZeekadThreadParent() != null && !masked.getZeekadThreadParent().isBlank())
+                    ? masked.getZeekadThreadParent()
+                    : null;
+        }
+        JsonNode payload = masked.getSlackPayload();
+        if (restricted != null && payload instanceof ObjectNode obj && obj.has(PAYLOAD_THREAD_PARENT)) {
+            ObjectNode copy = obj.deepCopy();
+            copy.put(PAYLOAD_THREAD_PARENT, restricted);
+            payload = copy;
+        }
+        return new IncidentDetailView.SlackDeliveryView(
+                masked.getJobId(),
+                masked.getZeekadMessageKind(),
+                masked.getZeekadMessageVersion(),
+                masked.getZeekadDeliveryMode(),
+                masked.getZeekadDeliveryStatus(),
+                masked.isDryRunOrRecorded(),
+                masked.getSlackTs(),
+                masked.getDeliveredAt(),
+                masked.getError(),
+                masked.getCreatedAt(),
+                prettyJson(payload),
+                displayThreadParent,
+                displayThreadKey,
+                threadRoleLabel,
+                masked.isReplyBroadcast()
+        );
     }
 
     private String resolveStatus(IncidentStatus status, IncidentQueueItem queueItem) {
