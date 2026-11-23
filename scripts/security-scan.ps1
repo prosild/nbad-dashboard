@@ -1483,6 +1483,51 @@ FROM v GROUP BY m ORDER BY m
                 $e2eLogs.Add("[14d] response times (analyst1, warm 1 + 3 samples, includes curl): $($t14 -join '; ')")
                 Assert-True ($slow14.Count -eq 0) "[14d] 응답 시간 최댓값 1초 이하 ($($slow14 -join ', '))"
 
+                # [20] 알림 묶음 건너가기(T40). [14e]가 analyst2를 잠그므로 그 앞에서 돈다. 시드: cic17-wed 머리(101/1)의 스레드에 같은 캡처 답글(101/2)과 syn1-wed 답글(211/1, 상태 알림)이 있다.
+                #      analyst1(cic17-*): 머리 번호·구성원 2(syn1 제외), 큐 thread total 2·syn1 없음. viewer1: 같은 수, 가리지 않은 IPv4 0.
+                #      analyst2(syn1-*): 211/1 상세에 restricted-1 묶음(머리 번호 null·구성원 0·머리 incident_id 없음), 머리 번호 thread 403(IDOR 감사), 형식 오류 400.
+                $ipv4Re20 = '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])'
+                $q20A1 = Join-Path $tmpDir "q20-a1.cookies"
+                $q20A2 = Join-Path $tmpDir "q20-a2.cookies"
+                $q20V = Join-Path $tmpDir "q20-v.cookies"
+                Assert-Status (Login-Api "analyst1" $q20A1) 200 "[20] analyst1 로그인"
+                Assert-Status (Login-Api "analyst2" $q20A2) 200 "[20] analyst2 로그인"
+                Assert-Status (Login-Api "viewer1" $q20V) 200 "[20] viewer1 로그인"
+                $d20 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $q20A1
+                Assert-Status $d20 200 "[20] analyst1 머리 상세"
+                $self20 = @($d20.Json.detail.slackThreadGroups | Where-Object { $_.headIsSelf -eq $true })
+                $headNo20 = if ($self20.Count) { $self20[0].headIncidentNo } else { $null }
+                $e2eLogs.Add("[20] analyst1 101/rank/1 groups=$(@($d20.Json.detail.slackThreadGroups).Count) self headIncidentNo=$headNo20 memberCount=$(if ($self20.Count) { $self20[0].memberCount })")
+                Assert-True ($self20.Count -eq 1 -and $null -ne $headNo20 -and [int]$self20[0].memberCount -eq 2) "[20] analyst1 머리 묶음 번호·구성원 2(허용 밖 syn1 제외)" $d20
+                $m20 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $q20A1
+                $mg20 = @($m20.Json.detail.slackThreadGroups | Where-Object { -not $_.headIsSelf })
+                Assert-True ($mg20.Count -ge 1 -and "$($mg20[0].headIncidentNo)" -eq "$headNo20" -and [int]$mg20[0].memberCount -eq 2) "[20] analyst1 답글 인시던트의 최초 알림 번호·구성원 수" $m20
+                foreach ($who20 in @(@{ U = "analyst1"; Jar = $q20A1 }, @{ U = "viewer1"; Jar = $q20V })) {
+                    $q20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=$headNo20" -CookieJar $who20.Jar
+                    $n20 = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&thread=$headNo20" -CookieJar $who20.Jar
+                    $ip20 = @([regex]::Matches($q20.Body, $ipv4Re20)).Count
+                    $e2eLogs.Add("[20] $($who20.U) queue thread=$headNo20 -> HTTP $($q20.Status) total=$($q20.Json.total) summary.total=$($q20.Json.summary.total) syn1=$($q20.Body.Contains('syn1-')) unmaskedIPv4=$ip20; new-count=$($n20.Json.count)")
+                    Assert-Status $q20 200 "[20] $($who20.U) 큐 thread"
+                    Assert-True ([int]$q20.Json.total -eq 2 -and [int]$q20.Json.summary.total -eq 2 -and [int]$n20.Json.count -eq 2 -and -not $q20.Body.Contains('syn1-')) "[20] $($who20.U) 큐 thread total 2·허용 밖 구성원 없음" $q20
+                    if ($who20.U -eq "viewer1") { Assert-True ($ip20 -eq 0) "[20] viewer1 큐 thread 가리지 않은 IPv4 0" $q20 }
+                }
+                $r20 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1" -CookieJar $q20A2
+                $rg20 = @($r20.Json.detail.slackThreadGroups | Where-Object { [string]$_.threadKey -like 'restricted-*' })
+                $e2eLogs.Add("[20] analyst2 211/rank/1 groups=$(@($r20.Json.detail.slackThreadGroups).Count) restricted=$($rg20.Count) headIncidentNo=$(if ($rg20.Count) { $rg20[0].headIncidentNo }) memberCount=$(if ($rg20.Count) { $rg20[0].memberCount }) cic17InBody=$($r20.Body.Contains('cic17-')) headIpInBody=$($r20.Body.Contains('192.168.10.50'))")
+                Assert-Status $r20 200 "[20] analyst2 상세 211/1"
+                Assert-True ($rg20.Count -eq 1 -and $null -eq $rg20[0].headIncidentNo -and [int]$rg20[0].memberCount -eq 0 -and -not $r20.Body.Contains('cic17-') -and -not $r20.Body.Contains('192.168.10.50')) "[20] analyst2 허용 밖 머리: restricted-1·번호 없음·머리 식별자 없음" $r20
+                $idor20Before = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_capture_denied%'")
+                $f20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=$headNo20" -CookieJar $q20A2
+                $nf20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=99999999" -CookieJar $q20A2
+                $b20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=abc" -CookieJar $q20A2
+                $idor20After = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_capture_denied%'")
+                $nf20Audit = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_not_found%'")
+                $e2eLogs.Add("[20] analyst2 queue thread=<cic17 head> -> HTTP $($f20.Status); thread=99999999 -> HTTP $($nf20.Status) same body=$($f20.Body -eq $nf20.Body); thread=abc -> HTTP $($b20.Status); IDOR thread_no_capture_denied $idor20Before -> $idor20After, thread_no_not_found=$nf20Audit")
+                Assert-Status $f20 403 "[20] analyst2 허용 밖 머리 번호 thread 403"
+                Assert-Status $nf20 403 "[20] analyst2 없는 번호 thread 403"
+                Assert-Status $b20 400 "[20] analyst2 thread 형식 오류 400"
+                Assert-True ($f20.Body -eq $nf20.Body -and $idor20After -eq $idor20Before + 1 -and $nf20Audit -ge 1) "[20] 같은 403 본문·IDOR 감사 사유 구분" $f20
+
                 # [14e] 기본 설정(DASHBOARD_LOCKOUT_EXEMPT_USERNAMES 비움)에서는 지금처럼 5번째 실패에 잠긴다(analyst2, 마지막 단계라 뒤 단계에 영향 없음)
                 $exempt14 = (Invoke-NativeCapture "docker" ($execPrefix + @('printf "%s" "${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES-<unset>}"')) -IgnoreExitCode).Output.Trim()
                 $auditBase14 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
@@ -1754,50 +1799,6 @@ FROM v GROUP BY m ORDER BY m
                         Assert-True ($r19.Body.Contains('"198.51.100.10"') -and $all19[5].id -eq '198.51.100.14' -and $items19[0].value -eq '198.51.100.20') "[19] analyst1 원문(객체 키·id·검증 문제 값)" $r19
                     }
                 }
-
-                # [20] 알림 묶음 건너가기(T40). 시드: cic17-wed 머리(101/1)의 스레드에 같은 캡처 답글(101/2)과 syn1-wed 답글(211/1, 상태 알림)이 있다.
-                #      analyst1(cic17-*): 머리 번호·구성원 2(syn1 제외), 큐 thread total 2·syn1 없음. viewer1: 같은 수, 가리지 않은 IPv4 0.
-                #      analyst2(syn1-*): 211/1 상세에 restricted-1 묶음(머리 번호 null·구성원 0·머리 incident_id 없음), 머리 번호 thread 403(IDOR 감사), 형식 오류 400.
-                $q20A1 = Join-Path $tmpDir "q20-a1.cookies"
-                $q20A2 = Join-Path $tmpDir "q20-a2.cookies"
-                $q20V = Join-Path $tmpDir "q20-v.cookies"
-                Assert-Status (Login-Api "analyst1" $q20A1) 200 "[20] analyst1 로그인"
-                Assert-Status (Login-Api "analyst2" $q20A2) 200 "[20] analyst2 로그인"
-                Assert-Status (Login-Api "viewer1" $q20V) 200 "[20] viewer1 로그인"
-                $d20 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1" -CookieJar $q20A1
-                Assert-Status $d20 200 "[20] analyst1 머리 상세"
-                $self20 = @($d20.Json.detail.slackThreadGroups | Where-Object { $_.headIsSelf -eq $true })
-                $headNo20 = if ($self20.Count) { $self20[0].headIncidentNo } else { $null }
-                $e2eLogs.Add("[20] analyst1 101/rank/1 groups=$(@($d20.Json.detail.slackThreadGroups).Count) self headIncidentNo=$headNo20 memberCount=$(if ($self20.Count) { $self20[0].memberCount })")
-                Assert-True ($self20.Count -eq 1 -and $null -ne $headNo20 -and [int]$self20[0].memberCount -eq 2) "[20] analyst1 머리 묶음 번호·구성원 2(허용 밖 syn1 제외)" $d20
-                $m20 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $q20A1
-                $mg20 = @($m20.Json.detail.slackThreadGroups | Where-Object { -not $_.headIsSelf })
-                Assert-True ($mg20.Count -ge 1 -and "$($mg20[0].headIncidentNo)" -eq "$headNo20" -and [int]$mg20[0].memberCount -eq 2) "[20] analyst1 답글 인시던트의 최초 알림 번호·구성원 수" $m20
-                foreach ($who20 in @(@{ U = "analyst1"; Jar = $q20A1 }, @{ U = "viewer1"; Jar = $q20V })) {
-                    $q20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=$headNo20" -CookieJar $who20.Jar
-                    $n20 = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&thread=$headNo20" -CookieJar $who20.Jar
-                    $ip20 = @([regex]::Matches($q20.Body, $ipv4Re19)).Count
-                    $e2eLogs.Add("[20] $($who20.U) queue thread=$headNo20 -> HTTP $($q20.Status) total=$($q20.Json.total) summary.total=$($q20.Json.summary.total) syn1=$($q20.Body.Contains('syn1-')) unmaskedIPv4=$ip20; new-count=$($n20.Json.count)")
-                    Assert-Status $q20 200 "[20] $($who20.U) 큐 thread"
-                    Assert-True ([int]$q20.Json.total -eq 2 -and [int]$q20.Json.summary.total -eq 2 -and [int]$n20.Json.count -eq 2 -and -not $q20.Body.Contains('syn1-')) "[20] $($who20.U) 큐 thread total 2·허용 밖 구성원 없음" $q20
-                    if ($who20.U -eq "viewer1") { Assert-True ($ip20 -eq 0) "[20] viewer1 큐 thread 가리지 않은 IPv4 0" $q20 }
-                }
-                $r20 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1" -CookieJar $q20A2
-                $rg20 = @($r20.Json.detail.slackThreadGroups | Where-Object { [string]$_.threadKey -like 'restricted-*' })
-                $e2eLogs.Add("[20] analyst2 211/rank/1 groups=$(@($r20.Json.detail.slackThreadGroups).Count) restricted=$($rg20.Count) headIncidentNo=$(if ($rg20.Count) { $rg20[0].headIncidentNo }) memberCount=$(if ($rg20.Count) { $rg20[0].memberCount }) cic17InBody=$($r20.Body.Contains('cic17-')) headIpInBody=$($r20.Body.Contains('192.168.10.50'))")
-                Assert-Status $r20 200 "[20] analyst2 상세 211/1"
-                Assert-True ($rg20.Count -eq 1 -and $null -eq $rg20[0].headIncidentNo -and [int]$rg20[0].memberCount -eq 0 -and -not $r20.Body.Contains('cic17-') -and -not $r20.Body.Contains('192.168.10.50')) "[20] analyst2 허용 밖 머리: restricted-1·번호 없음·머리 식별자 없음" $r20
-                $idor20Before = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_capture_denied%'")
-                $f20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=$headNo20" -CookieJar $q20A2
-                $nf20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=99999999" -CookieJar $q20A2
-                $b20 = Invoke-Http -Url "$baseHttps/api/incidents/queue?period=all&thread=abc" -CookieJar $q20A2
-                $idor20After = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_capture_denied%'")
-                $nf20Audit = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE action_type = 'ACCESS_DENIED_IDOR' AND actor_username = 'analyst2' AND detail_json LIKE '%thread_no_not_found%'")
-                $e2eLogs.Add("[20] analyst2 queue thread=<cic17 head> -> HTTP $($f20.Status); thread=99999999 -> HTTP $($nf20.Status) same body=$($f20.Body -eq $nf20.Body); thread=abc -> HTTP $($b20.Status); IDOR thread_no_capture_denied $idor20Before -> $idor20After, thread_no_not_found=$nf20Audit")
-                Assert-Status $f20 403 "[20] analyst2 허용 밖 머리 번호 thread 403"
-                Assert-Status $nf20 403 "[20] analyst2 없는 번호 thread 403"
-                Assert-Status $b20 400 "[20] analyst2 thread 형식 오류 400"
-                Assert-True ($f20.Body -eq $nf20.Body -and $idor20After -eq $idor20Before + 1 -and $nf20Audit -ge 1) "[20] 같은 403 본문·IDOR 감사 사유 구분" $f20
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
