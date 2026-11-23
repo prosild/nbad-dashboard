@@ -1794,7 +1794,8 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     }
     $check40 = {
         param($R, [string]$Label)
-        Find-UnmaskedIpv4 $R.Json "t40[$Label]" $t40Ip
+        # 가리지 않은 IPv4 검사는 조회자(demo) 응답에만. trial-analyst는 마스킹 없는 분석가다
+        if (-not $Label.Contains($trialUser)) { Find-UnmaskedIpv4 $R.Json "t40[$Label]" $t40Ip }
         foreach ($hc in $demoHiddenCaptures) { if ($R.Body.Contains($hc)) { $t40Leaks.Add("$Label -> $hc") } }
     }
     $sha40 = { param([string]$S) ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($S))) -replace '-', '').ToLowerInvariant() }
