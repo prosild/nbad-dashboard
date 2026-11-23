@@ -88,6 +88,14 @@ export const LABEL_DICTIONARIES = {
     status: '상태 변경 알림',
     daily_summary: '일일 요약',
   },
+  /**
+   * 사건 알림의 판 (zeek_AD zeekad_message_version 앞머리, T38). 판 번호(`.v1`)는 보지 않는다.
+   * `template` = 탐지 직후 틀 문장으로 보내는 알림, `llm-report` = AI 리포트가 생긴 뒤 보내는 알림.
+   */
+  slackMessageVersion: {
+    template: '즉시 알림(틀 문장)',
+    'llm-report': 'AI 리포트 알림',
+  },
   /** Slack 전송 방식 (zeek_AD zeekad_delivery_mode) */
   slackDeliveryMode: {
     dry_run: 'Dry-run',
@@ -236,6 +244,18 @@ export function lookupLabel(dict: LabelDictionaryName, value: string | boolean |
     return { text: hit, known: true, raw };
   }
   return { text: raw, known: false, raw };
+}
+
+/**
+ * Slack 사건 알림의 판 표지(T38). `template.v1`·`llm-report.v2`처럼 판 번호가 달라도 앞머리(첫 `.` 앞)로 찾는다.
+ * 모르는 판은 원문 그대로(미등록 값), 판이 없으면 null(표지를 두지 않는다).
+ */
+export function lookupSlackMessageVersion(version: string | null | undefined): LabelLookup | null {
+  if (version === null || version === undefined || version.trim() === '') return null;
+  const raw = version.trim();
+  const prefix = raw.split('.')[0];
+  const hit = lookupLabel('slackMessageVersion', prefix);
+  return hit.known ? { ...hit, raw } : { text: raw, known: false, raw };
 }
 
 /** 글만 필요한 곳(<option>, aria-label 등). 사전에 없는 값은 원래 값 그대로. */

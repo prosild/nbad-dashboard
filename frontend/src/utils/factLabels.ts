@@ -484,8 +484,9 @@ export interface ProblemView {
 }
 
 const PROBLEM_KINDS: Record<string, (value: string) => string> = {
-  number_not_in_facts: (value) => `리포트 글의 숫자 "${value}"가 근거 사실에 없습니다`,
-  pseudonym_not_in_facts: (value) => `리포트 글의 가명 "${value}"가 근거 사실에 없습니다`,
+  // 값 뒤에 받침에 따라 달라지는 조사를 두지 않는다(T38: `"524,288"가` 같은 어긋남)
+  number_not_in_facts: (value) => `리포트 글에서 근거 사실에 없는 숫자: "${value}"`,
+  pseudonym_not_in_facts: (value) => `리포트 글에서 근거 사실에 없는 가명: "${value}"`,
 };
 
 export function describeProblem(item: unknown, pseudonyms: Pseudonyms): ProblemView {

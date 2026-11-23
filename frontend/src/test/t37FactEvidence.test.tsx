@@ -176,19 +176,25 @@ describe('T37 근거 사실 사전', () => {
 
   it('검증 문제 문장: 숫자·가명(주소 붙임, 가명표에 없으면 그대로)·위치, 모르는 kind와 글은 원문', () => {
     expect(describeProblem({ kind: 'number_not_in_facts', value: '1,234', where: 'claims[0].claim' }, VIEWER_PS)).toEqual({
-      text: '리포트 글의 숫자 "1,234"가 근거 사실에 없습니다',
+      text: '리포트 글에서 근거 사실에 없는 숫자: "1,234"',
       known: true,
       where: 'claims[0].claim',
     });
     expect(describeProblem({ kind: 'number_not_in_facts', value: 443, where: null }, VIEWER_PS).text).toBe(
-      '리포트 글의 숫자 "443"가 근거 사실에 없습니다',
+      '리포트 글에서 근거 사실에 없는 숫자: "443"',
     );
     expect(describeProblem({ kind: 'pseudonym_not_in_facts', value: 'X1', where: 'observation_summary' }, VIEWER_PS).text).toBe(
-      '리포트 글의 가명 "X1(203.0.*.*)"가 근거 사실에 없습니다',
+      '리포트 글에서 근거 사실에 없는 가명: "X1(203.0.*.*)"',
     );
     expect(describeProblem({ kind: 'pseudonym_not_in_facts', value: 'Z9', where: 'x' }, VIEWER_PS).text).toBe(
-      '리포트 글의 가명 "Z9"가 근거 사실에 없습니다',
+      '리포트 글에서 근거 사실에 없는 가명: "Z9"',
     );
+    // T38: 값의 받침(있음 "524,288"·"443"·"X1", 없음 "1,234"·"Z9")과 상관없이 값 뒤에 조사가 붙지 않는다
+    for (const value of ['524,288', '1,234', '443', '9']) {
+      const text = describeProblem({ kind: 'number_not_in_facts', value, where: null }, VIEWER_PS).text;
+      expect(text).toBe(`리포트 글에서 근거 사실에 없는 숫자: "${value}"`);
+      expect(text).not.toMatch(/"[가이]/);
+    }
     expect(describeProblem({ kind: 'new_check', value: 'a', where: 'b' }, VIEWER_PS)).toEqual({
       text: '{"kind":"new_check","value":"a","where":"b"}',
       known: false,
@@ -314,10 +320,10 @@ describe('T37 근거 화면', () => {
         })}
       />,
     );
-    const first = screen.getByText(/리포트 글의 숫자 "77"가 근거 사실에 없습니다/).closest('li') as HTMLElement;
+    const first = screen.getByText(/리포트 글에서 근거 사실에 없는 숫자: "77"/).closest('li') as HTMLElement;
     expect(within(first).getByText('claims[1].claim')).toHaveAttribute('data-raw');
-    expect(first.textContent).toBe('리포트 글의 숫자 "77"가 근거 사실에 없습니다 (위치: claims[1].claim)');
-    expect(screen.getByText(/리포트 글의 가명 "X1\(203\.0\.\*\.\*\)"가 근거 사실에 없습니다/)).toBeInTheDocument();
+    expect(first.textContent).toBe('리포트 글에서 근거 사실에 없는 숫자: "77" (위치: claims[1].claim)');
+    expect(screen.getByText(/리포트 글에서 근거 사실에 없는 가명: "X1\(203\.0\.\*\.\*\)"/)).toBeInTheDocument();
     expect(screen.getByText('{"kind":"mystery","value":1}')).toHaveAttribute('data-raw');
     expect(screen.queryByText(/\{"kind":"number_not_in_facts"/)).toBeNull();
   });

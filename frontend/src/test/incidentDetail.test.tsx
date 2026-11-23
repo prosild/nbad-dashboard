@@ -745,7 +745,6 @@ describe('인시던트 상세 화면(T19)', () => {
       'rank-and-multi-model',
       'gemini-decision-1',
       '선택지별 선택 확률',
-      'secret-payload',
       'Slack 원본 메시지 보기',
       '17000.123',
       'kerberos.log',
@@ -776,6 +775,12 @@ describe('인시던트 상세 화면(T19)', () => {
     await user.click(screen.getByRole('tab', { name: 'Slack' }));
     expect(within(panel()).getByText('2026-11-12 11:31:00')).toBeInTheDocument();
     expect(within(panel()).getByText('인시던트 알림')).toBeInTheDocument();
+    // T38: 알림 본문(`text`)은 보이고 원본 JSON 키·ts·parent는 없다(2026-11-21 `T19` 결정 가운데 본문만 되살림)
+    expect(within(panel()).getByText('secret-payload')).toBeInTheDocument();
+    const slackHtml = panel().innerHTML;
+    for (const hidden of ['"text"', '{"', '17000.123', 'Slack 원본 메시지 보기']) {
+      expect(slackHtml, hidden).not.toContain(hidden);
+    }
   });
 
   it('XSS 페이로드(주요 세션 값·원본 증적·Slack·리포트)는 모든 탭에서 글로만 나온다', async () => {

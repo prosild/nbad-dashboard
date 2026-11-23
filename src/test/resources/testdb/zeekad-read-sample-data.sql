@@ -289,7 +289,8 @@ INSERT INTO dashboard.raw_slack_deliveries (
     zeekad_thread_parent, zeekad_reply_broadcast
 ) VALUES
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'incident', 'incident.v1', 'dry_run', 'recorded',
-     '{"channel": "#sec-alerts", "text": "경보: 192.168.10.50 -> 203.0.113.45"}' FORMAT JSON,
+     '{"channel": "#sec-alerts", "text": "경보: 192.168.10.50 -> 203.0.113.45", "blocks": [{"type": "header", "text": {"type": "plain_text", "text": "[cic17-wed] 조사 큐 1위 · 192.168.10.50 (출발지)"}}, {"type": "section", "text": {"type": "mrkdwn", "text": "*관측 요약*
+192.168.10.50에서 203.0.113.45로 연결"}}, {"type": "context", "elements": [{"type": "mrkdwn", "text": "판단 규칙 score &gt;= 0.9 · 근거 192.0.2.44"}]}]}' FORMAT JSON,
      NULL, NULL, NULL, TIMESTAMP WITH TIME ZONE '2026-11-16 03:11:00Z',
      NULL, NULL),
     (101, 'cic17-wed|192.168.10.50|originator|1700000000', 'status', 'status:investigating', 'dry_run', 'recorded',

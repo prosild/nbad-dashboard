@@ -688,6 +688,69 @@ class IncidentDetailAndSecurityIntegrationTest {
     }
 
     /**
+     * T38: 화면이 Slack 알림 본문(text)과 전문(blocks)을 보이게 됐다. 조회자 응답의 payloadJson 글 전체(text와 blocks 안 글)에
+     * 가리지 않은 IPv4가 없고 가린 모양이 실제로 있다. 분석가 응답에는 원문이 있다. 서버 코드는 바꾸지 않았다.
+     */
+    @Test
+    void t38SlackPayloadTextAndBlocksAreMaskedForViewerAndRawForAnalyst() throws Exception {
+        String analyst = "t38_slack_analyst";
+        userAdminService.createUser(analyst, "알림분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        String aBody = mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String aPayloads = slackPayloadTexts(aBody);
+        assertThat(aPayloads)
+                .contains("경보: 192.168.10.50 -> 203.0.113.45")
+                .contains("조사 큐 1위 · 192.168.10.50 (출발지)")
+                .contains("192.168.10.50에서 203.0.113.45로 연결")
+                .contains("근거 192.0.2.44")
+                .contains("\"blocks\"");
+
+        String viewer = "t38_slack_viewer";
+        userAdminService.createUser(viewer, "알림조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        String vBody = mockMvc.perform(get("/api/incidents/101/rank/1").session(loginAs(viewer, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maskedView").value(true))
+                .andReturn().getResponse().getContentAsString();
+        String vPayloads = slackPayloadTexts(vBody);
+        assertThat(UNMASKED_IPV4.matcher(vPayloads).find()).as("VIEWER payloadJson에 가려지지 않은 IPv4").isFalse();
+        assertThat(Pattern.compile("\\d+\\.\\d+\\.\\*\\.\\*").matcher(vPayloads).results().count())
+                .as("VIEWER payloadJson의 가린 주소").isGreaterThanOrEqualTo(4);
+        assertThat(vPayloads)
+                .contains("경보: 192.168.*.* -> 203.0.*.*")
+                .contains("조사 큐 1위 · 192.168.*.* (출발지)")
+                .contains("192.168.*.*에서 203.0.*.*로 연결")
+                .contains("근거 192.0.*.*");
+        // 서버 응답 칸과 스레드 역할 문구는 그대로다
+        JsonNode first = objectMapper.readTree(vBody).path("detail").path("slackThreadGroups").path(0).path("deliveries").path(0);
+        assertThat(first.path("threadRoleLabel").asText()).isEqualTo("최초 알림");
+        assertThat(first.has("payloadJson")).isTrue();
+        assertThat(first.has("slackTs")).isTrue();
+        assertThat(first.has("threadParent")).isTrue();
+    }
+
+    /** 상세 응답의 slackDeliveries·slackThreadGroups에 있는 payloadJson 글을 모두 이어 붙인다. */
+    private String slackPayloadTexts(String body) throws Exception {
+        JsonNode detail = objectMapper.readTree(body).path("detail");
+        StringBuilder sb = new StringBuilder();
+        int count = 0;
+        for (JsonNode d : detail.path("slackDeliveries")) {
+            sb.append(d.path("payloadJson").asText()).append('\n');
+            count++;
+        }
+        for (JsonNode g : detail.path("slackThreadGroups")) {
+            for (JsonNode d : g.path("deliveries")) {
+                sb.append(d.path("payloadJson").asText()).append('\n');
+                count++;
+            }
+        }
+        assertThat(count).as("Slack 기록 수").isGreaterThan(0);
+        return sb.toString();
+    }
+
+    /**
      * T37: 리포트 근거 사실의 구조 값(valueJson)·근거 사실 전체(allFacts)·검증 문제 구조 목록(verificationProblemItems).
      * IPv4를 글 잎·배열·겹친 객체·객체 키·사실 이름·사실 id·검증 문제 value/where에 일부러 넣는다.
      * 조회자 응답 본문 전체에 가리지 않은 IPv4가 없고, 분석가 응답에는 원문이 있다. 기존 칸(value 글, 인용 사실, 글 목록)은 그대로다.
