@@ -4,14 +4,14 @@
 
 ## 최근 검증
 
-주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 E2E 실행은 `T35`(2026-11-23, E2E commit `8dab414`)입니다. `T36`은 앱·`compose.yml`·8443 리스너를 바꾸지 않아 E2E·Vitest를 다시 돌리지 않았습니다. 리허설은 `T36`(`e130615`) 결과입니다. 공개 주소 확인은 `T36` 반영 뒤 결과입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
+주요 변경 뒤 아래 검증을 다시 돌립니다. 가장 최근 E2E 실행은 `T37`(2026-11-23, E2E commit `e297263`)입니다. 리허설은 `T36`(`e130615`) 결과입니다(`T37`은 compose·WAF·시드를 바꾸지 않아 리허설을 다시 돌리지 않았습니다). 공개 주소 확인은 `T37` 반영 뒤 결과입니다. 실행 기록 원본은 저장소 밖에 보관합니다.
 
 | 검증 | 다시 돌리는 방법 | 결과 |
 |---|---|---|
-| 프론트엔드 타입 검사·Vitest·빌드, Gradle `check`(단위·통합·정적 보안 시험) | `npm --prefix frontend run typecheck`, `run test`, `run build`, `.\gradlew.bat check --rerun-tasks --no-daemon` | 모두 통과(Gradle 시험 204개는 `T36`, Vitest 232개는 `T35`) |
-| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1 -SkipTrivy` (의존성·Dockerfile 변경 없음) | 종료 코드 `0`, 사유·메모 길이 상한 `[17]`·사용자 지정 기간 `[18]` 포함, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
+| 프론트엔드 타입 검사·Vitest·빌드, Gradle `check`(단위·통합·정적 보안 시험) | `npm --prefix frontend run typecheck`, `run test`, `run build`, `.\gradlew.bat check --rerun-tasks --no-daemon` | 모두 통과(Gradle 시험 208개, Vitest 252개, `T37`) |
+| VMware 구성 E2E(PostgreSQL 17 + WAF + SPA/JSON API, 역할별 권한·IDOR·마스킹·감사 로그) + OWASP ZAP 베이스라인 | `scripts/security-scan.ps1 -SkipTrivy` (의존성·Dockerfile 변경 없음) | 종료 코드 `0`, 사유·메모 길이 상한 `[17]`·사용자 지정 기간 `[18]`·AI 리포트 근거 새 칸의 조회자 IPv4 마스킹(객체 키 포함) `[19]` 포함, ZAP High `0`·Medium `0`·Low `0`(허용 예외 `XSRF-TOKEN` 제외)·Informational `4` |
 | 공개 스택 리허설(스냅샷 복원, 시드, E2E `[0]`~`[8]`·`[T33]`(체험 계정 초기화, 주기 1분)·`[T25]`·`[T27]`·`[T29]`·`[T32]`·`[T36]`(익명 볼륨·조회 한도·HSTS·빠른 사람 사용 흉내), ZAP) | `scripts/portfolio-verify.ps1` | 통과, ZAP High `0`·Medium `0`·Low `0`·Informational `4` |
-| 공개 주소 확인(`demo` 로그인·마스킹·허용 캡처·숨김 캡처 `403`·보안 헤더·쿠키 속성 등) | [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트(WAF 차단·깨진 XML 본문 `400`·전달 헤더 신뢰 포함) | PASS `180`, FAIL `0`(사용자 지정 기간 `[T34]`, 이전·다음 이동 = 목록 순서·응답 시간 `[T35]`, HSTS 하나·조회 한도·볼륨·초기화 `[T36]` 포함) |
+| 공개 주소 확인(`demo` 로그인·마스킹·허용 캡처·숨김 캡처 `403`·보안 헤더·쿠키 속성 등) | [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트(WAF 차단·깨진 XML 본문 `400`·전달 헤더 신뢰 포함) | PASS `187`, FAIL `0`(사용자 지정 기간 `[T34]`, 이전·다음 이동 = 목록 순서·응답 시간 `[T35]`, HSTS 하나·조회 한도·볼륨·초기화 `[T36]`, 리포트 있는 상세 112건의 근거 새 칸·조회자 IPv4 `0`·응답 시간 `[T37]` 포함) |
 
 Trivy는 의존성이나 Dockerfile이 바뀔 때만 돌립니다. 마지막 실행은 `T31`(2026-11-22)입니다.
 
