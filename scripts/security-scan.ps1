@@ -527,6 +527,14 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/1 -> HTTP $($viewerDetail.Status) hostIp=$($vd1.incident.hostIp) slack threadRoleLabel=[$($vd1Labels -join ', ')] replyBroadcast=$($vd1Broadcast.Count) threadGroups=$(@($vd1.slackThreadGroups).Count)")
                 Assert-True ($vd1.incident.hostIp -eq "192.168.*.*" -and -not $viewerDetail.Body.Contains("192.168.10.50")) "viewer1 인시던트 상세 IP 마스킹" $viewerDetail
                 Assert-True (($vd1Labels -contains "최초 알림") -and ($vd1Labels -contains "후속 알림") -and $vd1Broadcast.Count -gt 0 -and @($vd1.slackThreadGroups).Count -gt 0) "viewer1 Slack 스레드 묶음·재알림(broadcast)" $viewerDetail
+                # T38: 화면이 알림 본문(text)과 전문(blocks)을 보인다. 조회자 payloadJson 글 전체(시드 101/1에 blocks 안 주소·버튼 URL 주소)에
+                # 가리지 않은 IPv4가 없고 가린 모양이 있다. 값은 적지 않고 개수만 적는다.
+                $vdPayloads = (@($vd1.slackDeliveries | ForEach-Object { [string]$_.payloadJson }) + @($vd1.slackThreadGroups | ForEach-Object { $_.deliveries } | ForEach-Object { [string]$_.payloadJson })) -join "`n"
+                $vdPayloadUnmasked = [regex]::Matches($vdPayloads, '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])').Count
+                $vdPayloadMasked = [regex]::Matches($vdPayloads, '\d+\.\d+\.\*\.\*').Count
+                $vdPayloadBlocks = ([regex]::Matches($vdPayloads, '"blocks"')).Count
+                $e2eLogs.Add("[4b] viewer1 101/rank/1 payloadJson (T38): unmasked IPv4=$vdPayloadUnmasked masked=$vdPayloadMasked blocks=$vdPayloadBlocks")
+                Assert-True ($vdPayloadBlocks -gt 0 -and $vdPayloadUnmasked -eq 0 -and $vdPayloadMasked -ge 1) "viewer1 Slack payloadJson(text·blocks) IPv4 마스킹(T38)" $viewerDetail
 
                 $viewerDetail2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $viewerCookies
                 Assert-Status $viewerDetail2 200 "viewer1 인시던트 상세(101/rank/2)"
