@@ -515,9 +515,16 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(table).queryByRole('img', { name: '경보 발송' })).toBeNull();
     const row3 = within(table).getByText('10.0.3.1').closest('tr') as HTMLElement;
     expect(within(row3).getByText('Medium')).toBeInTheDocument();
-    expect(within(row3).getByRole('img', { name: '검증 통과' })).toBeInTheDocument();
+    // T37: 검증 칩의 접근성 이름·툴팁에 무엇을 검증했는지 적는다(표지 이름은 그대로)
+    const passChip = within(row3).getByRole('img', {
+      name: 'AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
+    });
+    expect(passChip).toHaveAttribute('title', passChip.getAttribute('aria-label'));
     const row4 = within(table).getByText('10.0.4.1').closest('tr') as HTMLElement;
-    expect(within(row4).getByRole('img', { name: '검증 실패' })).toBeInTheDocument();
+    const failChip = within(row4).getByRole('img', {
+      name: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다',
+    });
+    expect(failChip).toHaveAttribute('title', failChip.getAttribute('aria-label'));
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;
     expect(within(row36).getByText('Low')).toBeInTheDocument();
     expect(row36).toHaveAccessibleName(new RegExp(`수집원: 실습망 센서 · ${escapeRe(LAB_NAME)} · 캡처 ID: lab-20261119`));

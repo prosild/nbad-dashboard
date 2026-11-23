@@ -347,6 +347,17 @@ export function detectionModelInfo(id: string | null | undefined): DetectionMode
   };
 }
 
+/**
+ * AI 리포트 검증 표지의 뜻(T37). 큐 "리포트·판단" 칸의 가운데 칩과 상세 검증 표지의 툴팁·접근성 이름에 쓴다.
+ * 공개 데이터의 실패 사례에서 드러난 검사(리포트 글의 숫자·가명이 근거 사실에 있는가)까지만 말한다.
+ * 검증이 리포트의 해석까지 보증한다고 읽히는 말은 쓰지 않는다(SPEC 2026-11-23 T37 결정).
+ */
+export const VERIFICATION_DESCRIPTION = {
+  passed: 'AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
+  failedQueue: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다',
+  failedDetail: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 검증 실패 사유를 확인합니다',
+} as const;
+
 /** 미등록 값 툴팁 문구 */
 export function unregisteredTitle(raw: string): string {
   return `미등록 값: ${raw} (표시 이름 사전에 없음)`;

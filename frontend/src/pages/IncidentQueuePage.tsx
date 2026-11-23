@@ -54,7 +54,7 @@ import {
   formatRelativeTo,
 } from '../utils/format';
 import { incidentPath } from '../utils/incidentLink';
-import { captureInfo, captureShortNames, detectionModelInfo, labelText, lookupLabel, shortNameOf } from '../utils/labels';
+import { captureInfo, captureShortNames, detectionModelInfo, labelText, lookupLabel, shortNameOf, VERIFICATION_DESCRIPTION } from '../utils/labels';
 import {
   DEFAULT_PAGE_SIZE,
   DEFAULT_PERIOD,
@@ -1238,8 +1238,8 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
       {hasReport && item.zeekadVerificationPassed === true ? (
         <span
           role="img"
-          aria-label="검증 통과"
-          title="검증 통과"
+          aria-label={VERIFICATION_DESCRIPTION.passed}
+          title={VERIFICATION_DESCRIPTION.passed}
           className={`${CHIP_BASE} border-emerald-500/35 bg-emerald-500/10 text-emerald-300`}
         >
           <ShieldCheck className="h-3 w-3" aria-hidden="true" />
@@ -1247,8 +1247,8 @@ function SignalChips({ item }: { item: UnifiedQueueItem }) {
       ) : hasReport && item.zeekadVerificationPassed === false ? (
         <span
           role="img"
-          aria-label="검증 실패"
-          title="검증 실패"
+          aria-label={VERIFICATION_DESCRIPTION.failedQueue}
+          title={VERIFICATION_DESCRIPTION.failedQueue}
           className={`${CHIP_BASE} border-amber-500/40 bg-amber-500/15 text-amber-300`}
         >
           <AlertTriangle className="h-3 w-3" aria-hidden="true" />

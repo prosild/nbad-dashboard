@@ -2,7 +2,8 @@ import { AlertTriangle } from 'lucide-react';
 import type { ReportView } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge, VerificationBadge } from '../StatusBadge';
-import { FactChips } from './FactChips';
+import { describeProblem } from '../../utils/factLabels';
+import { AllFactsTable, FactEvidence } from './FactEvidence';
 
 /**
  * AI 리포트 조각들. 요약 탭과 AI 리포트 탭이 같은 조각을 쓴다.
@@ -15,13 +16,13 @@ export function ReportClaims({ report }: { report: ReportView }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-2">
         <h4 className="soc-subhead">확인된 사실</h4>
-        <span className="text-[11px] text-slate-500">근거 번호를 누르면 근거 값을 볼 수 있습니다</span>
+        <span className="text-[11px] text-slate-500">문장 아래는 리포트가 인용한 근거 사실입니다. 끝의 번호는 근거 번호입니다</span>
       </div>
       <ul className="space-y-1.5">
         {report.claims.map((item, idx) => (
           <li key={idx} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5">
             <p className="text-sm text-slate-100">{item.claim}</p>
-            <FactChips facts={item.facts} />
+            <FactEvidence facts={item.facts} pseudonyms={report.pseudonyms} />
           </li>
         ))}
       </ul>
@@ -47,7 +48,7 @@ export function ReportExplanations({ report }: { report: ReportView }) {
                 ))}
               </div>
             )}
-            <FactChips facts={item.facts} />
+            <FactEvidence facts={item.facts} pseudonyms={report.pseudonyms} />
           </li>
         ))}
       </ul>
@@ -131,16 +132,36 @@ export function ReportLimitations({ report }: { report: ReportView }) {
 /** 검증 실패일 때만 사유·문제 항목을 보인다. */
 export function ReportVerificationProblems({ report }: { report: ReportView }) {
   if (report.verificationPassed !== false) return null;
+  // T37: 구조 목록(kind·value·where)을 문장으로 보인다. 옛 응답이면 글 목록을 원문 그대로 보인다.
+  const problems = report.verificationProblemItems
+    ? report.verificationProblemItems.map((item) => describeProblem(item, report.pseudonyms))
+    : report.verificationProblems.map((text) => ({ text, known: false, where: null as string | null }));
   return (
     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200">
       <div className="flex items-center gap-1.5 font-semibold">
         <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
         검증 실패 사유: {report.verificationReason || '-'}
       </div>
-      {report.verificationProblems.length > 0 && (
-        <ul className="mt-1 list-disc space-y-0.5 pl-4">
-          {report.verificationProblems.map((prob, idx) => (
-            <li key={idx}>{prob}</li>
+      {problems.length > 0 && (
+        <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">
+          {problems.map((prob, idx) => (
+            <li key={idx}>
+              {prob.known ? (
+                <>
+                  {prob.text}
+                  {prob.where && (
+                    <span className="text-amber-200/80">
+                      {' '}
+                      (위치: <span className="font-mono" data-raw="">{prob.where}</span>)
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="font-mono" data-raw="">
+                  {prob.text}
+                </span>
+              )}
+            </li>
           ))}
         </ul>
       )}
@@ -197,7 +218,7 @@ export function ReportSection({ report }: { report: ReportView }) {
             )}
           </div>
           {report.sendRecommendation.reason && <p className="text-sm text-slate-200">{report.sendRecommendation.reason}</p>}
-          <FactChips facts={report.sendRecommendation.facts} />
+          <FactEvidence facts={report.sendRecommendation.facts} pseudonyms={report.pseudonyms} />
         </div>
       )}
 
@@ -205,6 +226,8 @@ export function ReportSection({ report }: { report: ReportView }) {
         <ReportFollowUp report={report} idPrefix="report-tab" />
         <ReportLimitations report={report} />
       </div>
+
+      <AllFactsTable report={report} />
     </div>
   );
 }

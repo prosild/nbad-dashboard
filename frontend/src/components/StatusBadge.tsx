@@ -20,6 +20,7 @@ import {
   labelText,
   lookupLabel,
   unregisteredTitle,
+  VERIFICATION_DESCRIPTION,
   type LabelDictionaryName,
   type LabelLookup,
 } from '../utils/labels';
@@ -295,16 +296,22 @@ export function VerificationBadge({ passed }: { passed: boolean | null | undefin
   if (passed === null || passed === undefined) {
     return null;
   }
-  return passed ? (
-    <SocBadge tone="positive">
-      <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-      <CodeLabel dict="verification" value={true} />
-    </SocBadge>
-  ) : (
-    <SocBadge tone="attention">
-      <AlertTriangle className="h-3 w-3" aria-hidden="true" />
-      <CodeLabel dict="verification" value={false} />
-    </SocBadge>
+  // T37: 이름은 "검증 통과"·"검증 실패" 그대로 두고 툴팁·접근성 이름에 무엇을 검증했는지 적는다.
+  const description = passed ? VERIFICATION_DESCRIPTION.passed : VERIFICATION_DESCRIPTION.failedDetail;
+  return (
+    <span role="img" aria-label={description} title={description} className="inline-flex">
+      {passed ? (
+        <SocBadge tone="positive">
+          <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+          {labelText('verification', true)}
+        </SocBadge>
+      ) : (
+        <SocBadge tone="attention">
+          <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+          {labelText('verification', false)}
+        </SocBadge>
+      )}
+    </span>
   );
 }
 

@@ -304,7 +304,13 @@ export interface EvidenceView {
 export interface FactItem {
   id: string;
   name: string;
+  /** 글 값(객체·배열은 JSON 글). 화면 호환용 */
   value: string;
+  /**
+   * T37 구조 값(JSON 그대로, 조회자는 글 잎·객체 키의 IPv4가 가려짐).
+   * null: 값이 null이거나 없음, 또는 조회자 마스킹 뒤 키가 겹쳐 싣지 않음(그때 value가 원문 자리를 맡는다).
+   */
+  valueJson?: unknown;
 }
 
 export interface ClaimItem {
@@ -355,6 +361,10 @@ export interface ReportView {
   limitations: string[];
   followUp: string[];
   attackCandidates: AttackCandidateItem[];
+  /** T37: 근거 사실 전체(원래 순서, 인용하지 않은 것 포함) */
+  allFacts?: FactItem[];
+  /** T37: 검증 문제 구조 목록(객체 {kind, value, where} 또는 글) */
+  verificationProblemItems?: unknown[];
 }
 
 export interface SendDecisionView {

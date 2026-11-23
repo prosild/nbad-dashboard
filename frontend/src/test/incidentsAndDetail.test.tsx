@@ -137,7 +137,7 @@ describe('인시던트 목록 및 상세 화면', () => {
     expect(screen.getByText('전체 인시던트')).toBeInTheDocument();
   });
 
-  it('인시던트 상세에서 F* 근거 펼침, 선택 확률, Slack 스레드, 상태 전이, 검토 결정 및 XSS 이스케이프를 검증한다', async () => {
+  it('인시던트 상세에서 F* 근거 표시, 선택 확률, Slack 스레드, 상태 전이, 검토 결정 및 XSS 이스케이프를 검증한다', async () => {
     const xssPayload = '<script>window.__xss=1</script><img src=x onerror=alert(1)>';
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -349,10 +349,11 @@ describe('인시던트 목록 및 상세 화면', () => {
     expect(within(panel()).getByText('확정이 아닌 가설')).toBeInTheDocument();
     expect(within(panel()).getByText(`관측 요약 ${xssPayload}`)).toBeInTheDocument();
 
-    // F1 클릭 시 근거 이름/값 펼치기
-    await user.click(within(panel()).getByRole('button', { name: /F1/ }));
-    expect(within(panel()).getByText('outbound_443_count')).toBeInTheDocument();
-    expect(within(panel()).getByText('142')).toBeInTheDocument();
+    // T37: 근거는 문장 아래 바로 보인다(누르지 않음). 사전에 없는 이름은 원문(data-raw), 번호는 끝에 작게(판독기 글자 "근거 번호 F1")
+    const f1 = within(panel()).getByText('근거 번호 F1').closest('li') as HTMLElement;
+    expect(within(f1).getByText('outbound_443_count')).toHaveAttribute('data-raw');
+    expect(within(f1).getByText('142')).toBeInTheDocument();
+    expect(within(panel()).queryByRole('button', { name: /F1/ })).toBeNull();
 
     // 증적 탭: 증적 조회 실패 문구
     await openTab('증적');
