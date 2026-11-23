@@ -13,10 +13,12 @@
 
 ## 공개 데모 둘러보기
 
-- 데이터는 2026-11-19 15:55:59 KST에 멈춘 고정 스냅샷입니다. 화면의 "최근 24시간"은 이 기준 시각에서 셉니다.
-- `demo`는 조회자(`VIEWER`)입니다. IP는 뒤 두 옥텟이 가려지고(`10.10.*.*`), 상태 변경·담당 지정·에스컬레이션 결정은 할 수 없습니다. 볼 수 있는 캡처는 CIC-IDS2017(`cic17-*`), 합성 APT를 끼운 CIC 데이터(`syn1-*`), Kali 실습망 캡처(`lab-20261119`)입니다.
+- 데이터는 2026-11-23 09:48:35 KST에 멈춘 고정 스냅샷입니다. 화면의 "최근 24시간"은 이 기준 시각에서 셉니다.
+- `demo`는 조회자(`VIEWER`)입니다. IP는 뒤 두 옥텟이 가려지고(`10.10.*.*`), 상태 변경·담당 지정·에스컬레이션 결정은 할 수 없습니다. 볼 수 있는 캡처는 CIC-IDS2017(`cic17-*`), 합성 APT를 끼운 CIC 데이터(`syn1-*`), Kali 실습망 캡처 둘(`lab-20261119`, `lab-20261122`)입니다.
 - `trial-analyst`는 분석가(`ANALYST`)입니다. 볼 수 있는 캡처는 `demo`와 같고 IP가 가려지지 않습니다. 모든 방문자가 같은 계정을 쓰므로 다른 방문자가 바꾼 상태나 적은 사유가 다음 정각까지 보일 수 있습니다. 정각 직후에는 화면을 새로 고쳐 주세요.
-- 기본 기간(24시간)에는 실습망 인시던트 52건만 보입니다. 기간을 **전체**로 넓히면 가져온 데이터까지 2,180건이 보입니다.
+- 기본 기간(24시간)에는 실습망 인시던트 88건(`lab-20261122`)만 보입니다. 기간을 **전체**로 넓히면 가져온 데이터까지 2,268건이 보입니다.
+- 실습망 인시던트에 붙은 빨간 **착수 지연** 표지는 데이터가 고정 스냅샷이라서 생깁니다. 스냅샷 뒤로는 아무도 착수하지 않았으므로, 상태가 신규인 채 탐지 뒤 착수 목표(High 30분, Medium 4시간, Low 24시간)를 기준 시각까지 넘긴 건에 표지가 붙습니다(전체 기간 126건). `trial-analyst`로 로그인해 그 건의 상태를 "분석 중"으로 바꾸면 표지가 사라지고, 매시 정각 초기화 때 다시 붙습니다. CIC·합성 같은 가져온 데이터는 재생 데이터라 착수 목표를 따지지 않아 표지가 붙지 않습니다.
+- `lab-20261122`는 Kali에서 공격 7종(빠른·느린 스캔, 비커닝, 느린 유출, 측면 이동, SSH 무차별 대입, DNS 터널)을 타깃 VM으로 실행한 날의 캡처입니다(인시던트 88건, 그중 Slack 경보 77건). 상세의 **Slack** 탭에서 알림이 스레드로 묶인 모습을 볼 수 있습니다. 묶음의 첫 알림은 "최초 알림", 뒤 알림은 들여쓴 답글이고, 채널에도 다시 올린 답글에는 "채널에도 표시" 표지가 붙습니다. 스레드를 기록하기 전(2026-11-19 06:20 UTC 전)의 알림은 같은 인시던트의 첫 알림만 "최초 알림"이고 그 뒤 알림은 "스레드 기록 없음"으로 보입니다(`lab-20261119`와 가져온 데이터).
 - 기간 버튼 끝의 **기간 지정**에서 시작·끝 시각(KST, 분 단위)을 정하면 그 구간에 탐지된 인시던트만 봅니다. 범위는 주소에 남아 링크로 나눌 수 있습니다. 현황판 탐지 추이에서 막대를 누르면 그 구간의 큐로 갑니다.
 
 처음 보실 때 권하는 순서:
@@ -165,6 +167,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 - **CIC-IDS2017**: Canadian Institute for Cybersecurity(University of New Brunswick)의 공개 데이터셋입니다. https://www.unb.ca/cic/datasets/ids-2017.html
   > Iman Sharafaldin, Arash Habibi Lashkari, and Ali A. Ghorbani, "Toward Generating a New Intrusion Detection Dataset and Intrusion Traffic Characterization", 4th International Conference on Information Systems Security and Privacy (ICISSP), Portugal, January 2018.
 - **합성 APT(`syn1-*`)**: CIC-IDS2017 Zeek 로그 사본에 합성 APT 패턴 5종(beacon, 느린 유출, DNS 터널, 측면 이동, 느린 정찰)을 코드로 끼워 넣은 데이터입니다. 네트워크로 보낸 트래픽이 아닙니다(zeek_AD [DD-008](https://github.com/prosild/zeek_AD/blob/main/docs/design-decisions/DD-008-synthetic-apt-injection.md)).
-- **실습망(`lab-20261119`)**: 격리된 실습망에서 Kali Linux로 공격하고 정상 배경 트래픽을 섞어 배포 VM이 직접 수집한 트래픽입니다.
+- **실습망(`lab-20261119`, `lab-20261122`)**: 격리된 실습망에서 Kali Linux로 공격하고 배포 VM이 직접 수집한 트래픽입니다. `lab-20261119`는 정상 배경 트래픽을 섞었고, `lab-20261122`는 타깃 VM을 두고 공격 7종을 실행했습니다.
 
 이 데이터를 zeek_AD 파이프라인이 분석한 결과를 보여 줍니다.

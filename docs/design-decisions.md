@@ -25,7 +25,7 @@
 
 **결과·근거.**
 - 계정 시드가 `demo`와 `trial-analyst`만 활성으로 두고 나머지 계정은 비활성으로 만든다: `docker/portfolio/seed/seed_demo.py`.
-- 두 공개 계정의 열람 범위는 공개해도 되는 캡처(`cic17-*`, `syn1-*`, `lab-20261119`)뿐이고 시험 캡처를 직접 조회하면 `403`이다: [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트, `scripts/portfolio-verify.ps1`.
+- 두 공개 계정의 열람 범위는 공개해도 되는 캡처(`cic17-*`, `syn1-*`, `lab-20261119`, `lab-20261122`)뿐이고 시험 캡처를 직접 조회하면 `403`이다: [`docs/portfolio-deployment.md`](portfolio-deployment.md) 4.4 체크리스트, `scripts/portfolio-verify.ps1`.
 - 초기화: `docker/portfolio/sandbox/sandbox-setup.sh`(기준선·함수·전용 역할), `docker/portfolio/sandbox/sandbox-reset.sh`(매시 정각), 리허설 `[T33]`(되돌림·권한 거부·잠금 대기·옛 기준선 거부·속도 제한).
 
 ## 2. 비밀번호를 공개한 계정의 잠금 문제 (2026-11-20, 2026-11-21에 바꿈)
