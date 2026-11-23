@@ -269,6 +269,8 @@ class T40SlackThreadIntegrationTest {
         for (JsonNode it : q.get("items")) {
             if (it.get("ackOverdue").asBoolean()) overdueRows++;
         }
+        // 시험 자료가 묶음 안에 착수 지연 행을 실제로 만든다(0 = 0으로 통과하지 않게)
+        assertThat(overdueRows).isPositive();
         assertThat(getJson(a, base + "&overdue=true").get("total").asLong()).isEqualTo(overdueRows);
         assertThat(q.at("/summary/overdue").asLong()).isEqualTo(overdueRows);
         // 담당 조건: 묶음 안 하나를 맡으면 me = 1, none = 2
