@@ -32,9 +32,11 @@ import java.util.regex.Pattern;
 @Service
 public class MaskingService {
 
-    // Java의 \b는 한글 등 유니코드 문자도 단어 문자로 취급하므로 ASCII 영숫자/밑줄/점 경계를 사용한다.
+    // 경계는 숫자로만 본다(T37): 앞에 숫자나 "숫자."가 붙거나 뒤에 숫자나 ".숫자"가 이어지면 더 긴 숫자열이라 IP로 보지 않는다.
+    // 영문자·밑줄·점·한글에 붙은 IP(name_10.0.0.1, peer.10.0.0.1, 10.0.0.1에서, 문장 끝 10.0.0.1.)도 가린다.
+    // T37 전에는 앞뒤가 ASCII 영숫자·밑줄·점이면 가리지 않아 위 꼴(한글 뒤 제외)이 조회자에게 원문으로 나갔다.
     private static final Pattern IPV4_PATTERN =
-            Pattern.compile("(?<![A-Za-z0-9_.])(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})(?![A-Za-z0-9_.])");
+            Pattern.compile("(?<!\\d)(?<!\\d\\.)(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})(?!\\d)(?!\\.\\d)");
 
     private final ObjectMapper objectMapper;
 
@@ -135,6 +137,54 @@ public class MaskingService {
             return copy;
         }
         return node.deepCopy();
+    }
+
+    /**
+     * T37: 글 잎과 객체 키 모두의 IPv4를 가린다(maskJsonIps는 키를 그대로 두므로 따로 둔다).
+     * 가린 뒤 같은 객체 안에서 키가 겹치면 값을 잃지 않도록 전체를 null로 돌려준다(호출자는 구조 값을 싣지 않는다).
+     */
+    public JsonNode maskJsonIpsIncludingKeys(JsonNode node) {
+        if (node == null) {
+            return null;
+        }
+        try {
+            return maskJsonIpsIncludingKeysOrThrow(node);
+        } catch (MaskedKeyCollisionException e) {
+            return null;
+        }
+    }
+
+    private JsonNode maskJsonIpsIncludingKeysOrThrow(JsonNode node) {
+        if (node.isTextual()) {
+            return TextNode.valueOf(maskIpsInText(node.asText()));
+        }
+        if (node.isObject()) {
+            ObjectNode copy = objectMapper.createObjectNode();
+            Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                String maskedKey = maskIpsInText(entry.getKey());
+                if (copy.has(maskedKey)) {
+                    throw new MaskedKeyCollisionException();
+                }
+                copy.set(maskedKey, maskJsonIpsIncludingKeysOrThrow(entry.getValue()));
+            }
+            return copy;
+        }
+        if (node.isArray()) {
+            ArrayNode copy = objectMapper.createArrayNode();
+            for (JsonNode child : node) {
+                copy.add(maskJsonIpsIncludingKeysOrThrow(child));
+            }
+            return copy;
+        }
+        return node.deepCopy();
+    }
+
+    private static final class MaskedKeyCollisionException extends RuntimeException {
+        MaskedKeyCollisionException() {
+            super(null, null, false, false);
+        }
     }
 
     public IncidentQueueItem maskIncidentQueueItem(IncidentQueueItem item, UserRole role) {

@@ -62,6 +62,43 @@ class MaskingServiceTest {
                 .containsEntry("resp_h", "203.0.*.*");
     }
 
+    /** T37: 경계는 숫자로만 본다. 영문자·밑줄·점·한글에 붙은 IPv4와 문장 끝 IPv4도 가리고, 더 긴 숫자열은 그대로 둔다. */
+    @Test
+    void masksIpv4AdjacentToLettersUnderscoreDotAndSentenceEnd() {
+        assertThat(maskingService.maskIpsInText("name_198.51.100.13")).isEqualTo("name_198.51.*.*");
+        assertThat(maskingService.maskIpsInText("peer.198.51.100.13")).isEqualTo("peer.198.51.*.*");
+        assertThat(maskingService.maskIpsInText("host198.51.100.13x")).isEqualTo("host198.51.*.*x");
+        assertThat(maskingService.maskIpsInText("접속 주소는 10.0.0.1.")).isEqualTo("접속 주소는 10.0.*.*.");
+        assertThat(maskingService.maskIpsInText("10.0.0.1에서 10.0.0.2로")).isEqualTo("10.0.*.*에서 10.0.*.*로");
+        assertThat(maskingService.maskIpsInText("X1(203.0.113.45)")).isEqualTo("X1(203.0.*.*)");
+        assertThat(maskingService.maskIpsInText("cic17-wed|192.168.10.50|originator|1700000000"))
+                .isEqualTo("cic17-wed|192.168.*.*|originator|1700000000");
+        // 더 긴 숫자열(다섯 마디, 앞뒤에 숫자)과 범위 밖 옥텟은 IP가 아니다
+        assertThat(maskingService.maskIpsInText("1.198.51.100.13")).isEqualTo("1.198.51.100.13");
+        assertThat(maskingService.maskIpsInText("198.51.100.13.7")).isEqualTo("198.51.100.13.7");
+        assertThat(maskingService.maskIpsInText("1234.5.6.7")).isEqualTo("1234.5.6.7");
+        assertThat(maskingService.maskIpsInText("999.1.1.1")).isEqualTo("999.1.1.1");
+        assertThat(maskingService.maskIpsInText("버전 evidence.v1, 2.5초")).isEqualTo("버전 evidence.v1, 2.5초");
+    }
+
+    /** T37: 객체 키까지 가리는 마스킹. 키가 겹치면 null. 기존 maskJsonIps(가명 맵·Slack 페이로드)는 키를 그대로 둔다(바꾸지 않음). */
+    @Test
+    void maskJsonIpsIncludingKeysMasksKeysAndReturnsNullOnCollisionWhileMaskJsonIpsKeepsKeys() throws Exception {
+        JsonNode node = objectMapper.readTree(
+                "{\"10.1.2.3\":{\"k\":[\"10.1.2.4\",{\"10.9.8.7\":\"x 10.1.2.5\"}]},\"n\":1,\"b\":true,\"z\":null}");
+        JsonNode masked = maskingService.maskJsonIpsIncludingKeys(node);
+        assertThat(masked.toString()).isEqualTo(
+                "{\"10.1.*.*\":{\"k\":[\"10.1.*.*\",{\"10.9.*.*\":\"x 10.1.*.*\"}]},\"n\":1,\"b\":true,\"z\":null}");
+        assertThat(node.toString()).contains("10.1.2.3");
+        assertThat(maskingService.maskJsonIpsIncludingKeys(
+                objectMapper.readTree("{\"a\":{\"10.1.1.1\":1,\"10.1.2.2\":2}}"))).isNull();
+        assertThat(maskingService.maskJsonIpsIncludingKeys(objectMapper.readTree("[\"10.1.1.1\"]")).toString())
+                .isEqualTo("[\"10.1.*.*\"]");
+        assertThat(maskingService.maskJsonIpsIncludingKeys(null)).isNull();
+        assertThat(maskingService.maskJsonIps(node).toString()).isEqualTo(
+                "{\"10.1.2.3\":{\"k\":[\"10.1.*.*\",{\"10.9.8.7\":\"x 10.1.*.*\"}]},\"n\":1,\"b\":true,\"z\":null}");
+    }
+
     @Test
     void preservesOriginalValuesForAnalystAndAdmin() throws Exception {
         AssetNameRecord rawAsset = new AssetNameRecord();

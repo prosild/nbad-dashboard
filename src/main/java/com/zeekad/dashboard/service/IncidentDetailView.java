@@ -1,5 +1,6 @@
 package com.zeekad.dashboard.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.zeekad.dashboard.model.zeekad.AssetNameRecord;
 import com.zeekad.dashboard.model.zeekad.IncidentModelScore;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
@@ -64,7 +65,11 @@ public record IncidentDetailView(
         }
     }
 
-    public record FactItem(String id, String name, String value) {
+    /**
+     * 근거 사실 한 건. value는 화면 호환용 글(객체·배열은 JSON 글), valueJson은 T37 구조 값(역할별 마스킹,
+     * 조회자는 글 잎과 객체 키의 IPv4를 가림). 가린 키가 겹치거나 값이 없으면 valueJson은 null이다.
+     */
+    public record FactItem(String id, String name, String value, JsonNode valueJson) {
     }
 
     public record ClaimItem(String claim, List<FactItem> facts) {
@@ -103,13 +108,18 @@ public record IncidentDetailView(
             SendRecommendationItem sendRecommendation,
             List<String> limitations,
             List<String> followUp,
-            List<AttackCandidateItem> attackCandidates
+            List<AttackCandidateItem> attackCandidates,
+            // T37: 근거 사실 전체(원래 순서, 인용 여부와 무관, 같은 id도 모두). 역할별 마스킹은 facts와 같다.
+            List<FactItem> allFacts,
+            // T37: 검증 문제 구조 목록. 객체 항목은 {kind, value, where …}(조회자는 키·글 잎 IPv4 가림), 그 밖은 글.
+            List<JsonNode> verificationProblemItems
     ) {
         public static ReportView absent() {
             return new ReportView(
                     false, null, null, null, null, null, null, null, null, null, null,
                     null, null, List.of(), null, null, Map.of(), null,
-                    List.of(), List.of(), null, List.of(), List.of(), List.of()
+                    List.of(), List.of(), null, List.of(), List.of(), List.of(),
+                    List.of(), List.of()
             );
         }
     }

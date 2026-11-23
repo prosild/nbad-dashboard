@@ -3,6 +3,7 @@ package com.zeekad.dashboard.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.zeekad.dashboard.client.EvidenceApiClient;
 import com.zeekad.dashboard.client.EvidenceApiResponse;
 import com.zeekad.dashboard.client.EvidenceData;
@@ -223,7 +224,8 @@ public class IncidentDetailService {
         boolean mask = maskingService.shouldMask(role);
         Map<String, String> pseudonyms = pseudonymAnnotator.buildEffectivePseudonymMap(
                 report.getZeekadPseudonyms(), role);
-        Map<String, IncidentDetailView.FactItem> factIndex = parseFacts(report.getZeekadFacts(), mask);
+        ParsedFacts parsedFacts = parseFacts(report.getZeekadFacts(), mask);
+        Map<String, IncidentDetailView.FactItem> factIndex = parsedFacts.index();
 
         JsonNode body = report.getZeekadReport();
         String observationSummary = null;
@@ -235,9 +237,10 @@ public class IncidentDetailService {
 
         if (body != null && body.isObject()) {
             observationSummary = annotateText(textOrNull(body.get("observation_summary")), pseudonyms, role);
-            claims = parseClaims(body.get("claims"), pseudonyms, factIndex, role);
-            explanations = parseExplanations(body.get("possible_explanations"), pseudonyms, factIndex, role);
-            sendRecommendation = parseSendRecommendation(body.get("send_recommendation"), pseudonyms, factIndex, role);
+            claims = parseClaims(body.get("claims"), pseudonyms, factIndex, mask, role);
+            explanations = parseExplanations(body.get("possible_explanations"), pseudonyms, factIndex, mask, role);
+            sendRecommendation = parseSendRecommendation(
+                    body.get("send_recommendation"), pseudonyms, factIndex, mask, role);
             limitations = annotateTextList(extractTextArray(body.get("limitations")), pseudonyms, role);
             followUp = annotateTextList(extractTextArray(body.get("follow_up")), pseudonyms, role);
         }
@@ -248,6 +251,8 @@ public class IncidentDetailService {
                     .map(maskingService::maskIpsInText)
                     .toList();
         }
+        List<JsonNode> verificationProblemItems =
+                buildVerificationProblemItems(report.getZeekadVerificationProblems(), mask);
 
         String verificationReason = mask
                 ? maskingService.maskIpsInText(report.getZeekadVerificationReason())
@@ -283,15 +288,23 @@ public class IncidentDetailService {
                 sendRecommendation,
                 limitations,
                 followUp,
-                attackCandidates
+                attackCandidates,
+                parsedFacts.all(),
+                verificationProblemItems
         );
     }
 
-    private Map<String, IncidentDetailView.FactItem> parseFacts(JsonNode factsNode, boolean mask) {
+    /** T37: parseFacts 결과. index는 인용 해석용(같은 id면 뒤의 것), all은 원래 순서 전체 목록. */
+    private record ParsedFacts(Map<String, IncidentDetailView.FactItem> index,
+                               List<IncidentDetailView.FactItem> all) {
+    }
+
+    private ParsedFacts parseFacts(JsonNode factsNode, boolean mask) {
         if (factsNode == null || !factsNode.isArray()) {
-            return Collections.emptyMap();
+            return new ParsedFacts(Collections.emptyMap(), List.of());
         }
         Map<String, IncidentDetailView.FactItem> index = new LinkedHashMap<>();
+        List<IncidentDetailView.FactItem> all = new ArrayList<>();
         for (JsonNode node : factsNode) {
             if (node == null || !node.isObject()) {
                 continue;
@@ -304,14 +317,59 @@ public class IncidentDetailService {
             String rawVal = nodeValueToString(node.get("value"));
             String value = mask ? maskingService.maskIpsInText(rawVal) : rawVal;
             String safeName = name != null ? (mask ? maskingService.maskIpsInText(name) : name) : "-";
-            index.put(id, new IncidentDetailView.FactItem(id, safeName, value != null ? value : "-"));
+            String safeId = mask ? maskingService.maskIpsInText(id) : id;
+            IncidentDetailView.FactItem item = new IncidentDetailView.FactItem(
+                    safeId, safeName, value != null ? value : "-", structuredValue(node.get("value"), mask));
+            // 인용 해석은 원래 id로 찾는다(같은 id면 뒤의 것). 전체 목록에는 원래 순서로 모두 넣는다.
+            index.put(id, item);
+            all.add(item);
         }
-        return Collections.unmodifiableMap(index);
+        return new ParsedFacts(Collections.unmodifiableMap(index), Collections.unmodifiableList(all));
+    }
+
+    /** T37: 사실 값의 구조 값. 조회자는 글 잎과 객체 키의 IPv4를 가리고, 가린 키가 겹치면 null(글 값만 남김). */
+    private JsonNode structuredValue(JsonNode valueNode, boolean mask) {
+        if (valueNode == null || valueNode.isMissingNode()) {
+            return null;
+        }
+        return mask ? maskingService.maskJsonIpsIncludingKeys(valueNode) : valueNode.deepCopy();
+    }
+
+    /**
+     * T37: 검증 문제 구조 목록. 항목 고르기는 extractTextArray와 같다(null·빈 글 제외).
+     * 객체 항목은 구조 그대로(조회자는 키·글 잎 IPv4 가림, 가린 키가 겹치면 가린 글), 그 밖은 글로 넘긴다.
+     */
+    private List<JsonNode> buildVerificationProblemItems(JsonNode problemsNode, boolean mask) {
+        if (problemsNode == null || problemsNode.isNull()) {
+            return List.of();
+        }
+        List<JsonNode> source = new ArrayList<>();
+        if (problemsNode.isArray()) {
+            problemsNode.forEach(source::add);
+        } else {
+            source.add(problemsNode);
+        }
+        List<JsonNode> items = new ArrayList<>();
+        for (JsonNode child : source) {
+            String text = nodeValueToString(child);
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            String safeText = mask ? maskingService.maskIpsInText(text) : text;
+            if (child.isObject()) {
+                JsonNode structured = mask ? maskingService.maskJsonIpsIncludingKeys(child) : child.deepCopy();
+                items.add(structured != null ? structured : TextNode.valueOf(safeText));
+            } else {
+                items.add(TextNode.valueOf(safeText));
+            }
+        }
+        return Collections.unmodifiableList(items);
     }
 
     private List<IncidentDetailView.ClaimItem> parseClaims(JsonNode claimsNode,
                                                            Map<String, String> pseudonyms,
                                                            Map<String, IncidentDetailView.FactItem> factIndex,
+                                                           boolean mask,
                                                            UserRole role) {
         if (claimsNode == null || !claimsNode.isArray()) {
             return List.of();
@@ -329,7 +387,7 @@ public class IncidentDetailService {
             if (node.isObject()) {
                 String claimText = annotateText(textOrNull(node.get("claim")), pseudonyms, role);
                 if (claimText != null) {
-                    List<IncidentDetailView.FactItem> facts = resolveFacts(node.get("fact_ids"), factIndex);
+                    List<IncidentDetailView.FactItem> facts = resolveFacts(node.get("fact_ids"), factIndex, mask);
                     items.add(new IncidentDetailView.ClaimItem(claimText, facts));
                 }
             }
@@ -340,6 +398,7 @@ public class IncidentDetailService {
     private List<IncidentDetailView.ExplanationItem> parseExplanations(JsonNode expNode,
                                                                        Map<String, String> pseudonyms,
                                                                        Map<String, IncidentDetailView.FactItem> factIndex,
+                                                                       boolean mask,
                                                                        UserRole role) {
         if (expNode == null || !expNode.isArray()) {
             return List.of();
@@ -357,7 +416,7 @@ public class IncidentDetailService {
             if (node.isObject()) {
                 String text = annotateText(textOrNull(node.get("explanation")), pseudonyms, role);
                 if (text != null) {
-                    List<IncidentDetailView.FactItem> facts = resolveFacts(node.get("fact_ids"), factIndex);
+                    List<IncidentDetailView.FactItem> facts = resolveFacts(node.get("fact_ids"), factIndex, mask);
                     List<String> attackIds = extractTextArray(node.get("attack_ids"));
                     items.add(new IncidentDetailView.ExplanationItem(text, facts, attackIds));
                 }
@@ -370,13 +429,14 @@ public class IncidentDetailService {
             JsonNode recNode,
             Map<String, String> pseudonyms,
             Map<String, IncidentDetailView.FactItem> factIndex,
+            boolean mask,
             UserRole role) {
         if (recNode == null || !recNode.isObject() || recNode.isEmpty()) {
             return null;
         }
         String choice = textOrNull(recNode.get("choice"));
         String reason = annotateText(textOrNull(recNode.get("reason")), pseudonyms, role);
-        List<IncidentDetailView.FactItem> facts = resolveFacts(recNode.get("fact_ids"), factIndex);
+        List<IncidentDetailView.FactItem> facts = resolveFacts(recNode.get("fact_ids"), factIndex, mask);
         if (choice == null && reason == null && facts.isEmpty()) {
             return null;
         }
@@ -407,7 +467,8 @@ public class IncidentDetailService {
     }
 
     private List<IncidentDetailView.FactItem> resolveFacts(JsonNode factIdsNode,
-                                                            Map<String, IncidentDetailView.FactItem> factIndex) {
+                                                            Map<String, IncidentDetailView.FactItem> factIndex,
+                                                            boolean mask) {
         List<String> ids = extractTextArray(factIdsNode);
         if (ids.isEmpty()) {
             return List.of();
@@ -418,7 +479,8 @@ public class IncidentDetailService {
             if (found != null) {
                 resolved.add(found);
             } else {
-                resolved.add(new IncidentDetailView.FactItem(id, "근거 정보 없음", "-"));
+                String safeId = mask ? maskingService.maskIpsInText(id) : id;
+                resolved.add(new IncidentDetailView.FactItem(safeId, "근거 정보 없음", "-", null));
             }
         }
         return Collections.unmodifiableList(resolved);

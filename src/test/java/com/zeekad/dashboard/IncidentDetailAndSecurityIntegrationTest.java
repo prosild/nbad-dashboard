@@ -687,6 +687,213 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .isFalse();
     }
 
+    /**
+     * T37: 리포트 근거 사실의 구조 값(valueJson)·근거 사실 전체(allFacts)·검증 문제 구조 목록(verificationProblemItems).
+     * IPv4를 글 잎·배열·겹친 객체·객체 키·사실 이름·사실 id·검증 문제 value/where에 일부러 넣는다.
+     * 조회자 응답 본문 전체에 가리지 않은 IPv4가 없고, 분석가 응답에는 원문이 있다. 기존 칸(value 글, 인용 사실, 글 목록)은 그대로다.
+     */
+    @Test
+    void t37StructuredFactsAllFactsAndProblemItemsAreMaskedForViewerIncludingKeysAndRawForAnalyst() throws Exception {
+        String factsJson = """
+                [
+                  {"id": "F01", "name": "connection_count", "value": 412},
+                  {"id": "F02", "name": "top_peer_1", "value": {"peer": "X1", "connections": 210}},
+                  {"id": "F03", "name": "leak_leaf", "value": "peer 198.51.100.7 seen"},
+                  {"id": "F04", "name": "leak_array", "value": ["198.51.100.8", {"deep": ["198.51.100.9"]}]},
+                  {"id": "F05", "name": "leak_key", "value": {"198.51.100.10": 5, "nested": {"198.51.100.11": {"x": "198.51.100.12"}}}},
+                  {"id": "F06", "name": "name_198.51.100.13", "value": 1},
+                  {"id": "198.51.100.14", "name": "id_leak", "value": 2},
+                  {"id": "F08", "name": "collide", "value": {"198.51.1.1": 1, "198.51.2.2": 2}},
+                  {"id": "F09", "name": "dup", "value": "first"},
+                  {"id": "F09", "name": "dup", "value": "second"},
+                  "not-an-object",
+                  {"name": "no_id", "value": 3},
+                  {"id": "F12", "name": "null_value", "value": null}
+                ]
+                """;
+        String reportJson = """
+                {
+                  "observation_summary": "H가 X1로 세션",
+                  "claims": [
+                    {"claim": "X1과 많은 세션", "fact_ids": ["F02", "F09", "F05", "198.51.100.14", "F77", "198.51.100.99"]}
+                  ],
+                  "possible_explanations": [
+                    {"explanation": "해석", "fact_ids": ["F08"], "attack_ids": []}
+                  ],
+                  "send_recommendation": {"choice": "send", "reason": "이유", "fact_ids": ["F03"]}
+                }
+                """;
+        String problemsJson = """
+                [
+                  {"kind": "number_not_in_facts", "value": "198.51.100.20", "where": "claims[0] 198.51.100.21"},
+                  {"kind": "pseudonym_not_in_facts", "value": "X1", "where": "observation_summary"},
+                  "plain 198.51.100.22",
+                  {"198.51.3.3": 1, "198.51.4.4": 2},
+                  {"kind": "number_not_in_facts", "value": 443, "where": ["198.51.100.23"]}
+                ]
+                """;
+        insertT37ReportFixture(reportJson, factsJson, problemsJson);
+
+        // 분석가: 원문 그대로, 키 겹침 없음
+        String analyst = "t37_facts_analyst";
+        userAdminService.createUser(analyst, "근거분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MvcResult aRes = mockMvc.perform(get("/api/incidents/{jobId}/rank/1", XSS_JOB_ID)
+                        .session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode aReport = objectMapper.readTree(aRes.getResponse().getContentAsString()).at("/detail/report");
+        JsonNode aAll = aReport.get("allFacts");
+        assertThat(aAll).hasSize(11);
+        List<String> aIds = new java.util.ArrayList<>();
+        aAll.forEach(f -> aIds.add(f.get("id").asText()));
+        assertThat(aIds).containsExactly("F01", "F02", "F03", "F04", "F05", "F06", "198.51.100.14", "F08", "F09", "F09", "F12");
+        assertThat(aAll.get(8).get("value").asText()).isEqualTo("first");
+        assertThat(aAll.get(9).get("value").asText()).isEqualTo("second");
+        assertThat(aAll.get(0).get("valueJson").isNumber()).isTrue();
+        assertThat(aAll.get(0).get("valueJson").asInt()).isEqualTo(412);
+        assertThat(aAll.get(1).get("valueJson").get("peer").asText()).isEqualTo("X1");
+        assertThat(aAll.get(3).at("/valueJson/1/deep/0").asText()).isEqualTo("198.51.100.9");
+        assertThat(aAll.get(4).get("valueJson").has("198.51.100.10")).isTrue();
+        assertThat(aAll.get(4).at("/valueJson/nested/198.51.100.11/x").asText()).isEqualTo("198.51.100.12");
+        assertThat(aAll.get(5).get("name").asText()).isEqualTo("name_198.51.100.13");
+        assertThat(aAll.get(7).get("valueJson").size()).isEqualTo(2);
+        assertThat(aAll.get(10).get("valueJson").isNull()).isTrue();
+        assertThat(aAll.get(10).get("value").asText()).isEqualTo("-");
+        // 기존 칸: 인용 해석(같은 id면 뒤의 것, 없는 번호는 "근거 정보 없음"), value 글
+        JsonNode aClaimFacts = aReport.at("/claims/0/facts");
+        assertThat(aClaimFacts).hasSize(6);
+        assertThat(aClaimFacts.get(0).get("value").asText()).isEqualTo("{\"peer\":\"X1\",\"connections\":210}");
+        assertThat(aClaimFacts.get(1).get("value").asText()).isEqualTo("second");
+        assertThat(aClaimFacts.get(2).get("value").asText())
+                .isEqualTo("{\"198.51.100.10\":5,\"nested\":{\"198.51.100.11\":{\"x\":\"198.51.100.12\"}}}");
+        assertThat(aClaimFacts.get(3).get("id").asText()).isEqualTo("198.51.100.14");
+        assertThat(aClaimFacts.get(4).get("name").asText()).isEqualTo("근거 정보 없음");
+        assertThat(aClaimFacts.get(4).get("value").asText()).isEqualTo("-");
+        assertThat(aClaimFacts.get(4).get("valueJson").isNull()).isTrue();
+        assertThat(aClaimFacts.get(5).get("id").asText()).isEqualTo("198.51.100.99");
+        assertThat(aReport.at("/sendRecommendation/facts/0/value").asText()).isEqualTo("peer 198.51.100.7 seen");
+        // 검증 문제: 글 목록은 그대로(객체는 JSON 글), 구조 목록 추가
+        JsonNode aProblems = aReport.get("verificationProblems");
+        assertThat(aProblems).hasSize(5);
+        assertThat(aProblems.get(0).asText())
+                .isEqualTo("{\"kind\":\"number_not_in_facts\",\"value\":\"198.51.100.20\",\"where\":\"claims[0] 198.51.100.21\"}");
+        assertThat(aProblems.get(2).asText()).isEqualTo("plain 198.51.100.22");
+        JsonNode aItems = aReport.get("verificationProblemItems");
+        assertThat(aItems).hasSize(5);
+        assertThat(aItems.get(0).get("kind").asText()).isEqualTo("number_not_in_facts");
+        assertThat(aItems.get(0).get("value").asText()).isEqualTo("198.51.100.20");
+        assertThat(aItems.get(0).get("where").asText()).isEqualTo("claims[0] 198.51.100.21");
+        assertThat(aItems.get(2).isTextual()).isTrue();
+        assertThat(aItems.get(3).size()).isEqualTo(2);
+        assertThat(aItems.get(4).get("value").asInt()).isEqualTo(443);
+        assertThat(aReport.at("/pseudonyms/X1").asText()).isEqualTo("203.0.113.99");
+
+        // 조회자: 본문 전체에 가리지 않은 IPv4 없음(칸별이 아니라 응답 글 전체)
+        String viewer = "t37_facts_viewer";
+        userAdminService.createUser(viewer, "근거조회자", "Pass1234!", UserRole.VIEWER,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        MvcResult vRes = mockMvc.perform(get("/api/incidents/{jobId}/rank/1", XSS_JOB_ID)
+                        .session(loginAs(viewer, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maskedView").value(true))
+                .andReturn();
+        String vBody = vRes.getResponse().getContentAsString();
+        assertThat(UNMASKED_IPV4.matcher(vBody).find()).as("VIEWER 상세 응답에 가려지지 않은 IPv4").isFalse();
+        JsonNode vReport = objectMapper.readTree(vBody).at("/detail/report");
+        JsonNode vAll = vReport.get("allFacts");
+        assertThat(vAll).hasSize(11);
+        List<String> vIds = new java.util.ArrayList<>();
+        vAll.forEach(f -> vIds.add(f.get("id").asText()));
+        assertThat(vIds).containsExactly("F01", "F02", "F03", "F04", "F05", "F06", "198.51.*.*", "F08", "F09", "F09", "F12");
+        assertThat(vAll.get(2).get("valueJson").asText()).isEqualTo("peer 198.51.*.* seen");
+        assertThat(vAll.get(3).at("/valueJson/0").asText()).isEqualTo("198.51.*.*");
+        assertThat(vAll.get(3).at("/valueJson/1/deep/0").asText()).isEqualTo("198.51.*.*");
+        assertThat(vAll.get(4).get("valueJson").has("198.51.*.*")).isTrue();
+        assertThat(vAll.get(4).at("/valueJson/nested/198.51.*.*/x").asText()).isEqualTo("198.51.*.*");
+        assertThat(vAll.get(5).get("name").asText()).isEqualTo("name_198.51.*.*");
+        // 키를 가린 뒤 겹치면 구조 값은 싣지 않고(null) 글 값은 가린 채 남는다
+        assertThat(vAll.get(7).get("valueJson").isNull()).isTrue();
+        assertThat(vAll.get(7).get("value").asText()).isEqualTo("{\"198.51.*.*\":1,\"198.51.*.*\":2}");
+        assertThat(vAll.get(1).get("valueJson").get("peer").asText()).isEqualTo("X1");
+        assertThat(vReport.at("/pseudonyms/X1").asText()).isEqualTo("203.0.*.*");
+        JsonNode vClaimFacts = vReport.at("/claims/0/facts");
+        assertThat(vClaimFacts.get(1).get("value").asText()).isEqualTo("second");
+        assertThat(vClaimFacts.get(2).get("value").asText())
+                .isEqualTo("{\"198.51.*.*\":5,\"nested\":{\"198.51.*.*\":{\"x\":\"198.51.*.*\"}}}");
+        assertThat(vClaimFacts.get(3).get("id").asText()).isEqualTo("198.51.*.*");
+        assertThat(vClaimFacts.get(5).get("id").asText()).isEqualTo("198.51.*.*");
+        assertThat(vClaimFacts.get(5).get("name").asText()).isEqualTo("근거 정보 없음");
+        assertThat(vReport.at("/possibleExplanations/0/facts/0/valueJson").isNull()).isTrue();
+        JsonNode vProblems = vReport.get("verificationProblems");
+        assertThat(vProblems.get(0).asText())
+                .isEqualTo("{\"kind\":\"number_not_in_facts\",\"value\":\"198.51.*.*\",\"where\":\"claims[0] 198.51.*.*\"}");
+        JsonNode vItems = vReport.get("verificationProblemItems");
+        assertThat(vItems).hasSize(5);
+        assertThat(vItems.get(0).get("value").asText()).isEqualTo("198.51.*.*");
+        assertThat(vItems.get(0).get("where").asText()).isEqualTo("claims[0] 198.51.*.*");
+        assertThat(vItems.get(1).get("value").asText()).isEqualTo("X1");
+        assertThat(vItems.get(2).asText()).isEqualTo("plain 198.51.*.*");
+        // 키 겹침 객체 항목은 가린 글로 넘긴다
+        assertThat(vItems.get(3).isTextual()).isTrue();
+        assertThat(vItems.get(3).asText()).isEqualTo("{\"198.51.*.*\":1,\"198.51.*.*\":2}");
+        assertThat(vItems.get(4).at("/where/0").asText()).isEqualTo("198.51.*.*");
+
+        // 허용 밖 인시던트는 지금처럼 403
+        String outsider = "t37_facts_outsider";
+        userAdminService.createUser(outsider, "범위밖조회자", "Pass1234!", UserRole.VIEWER,
+                "syn1-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/1", XSS_JOB_ID).session(loginAs(outsider, "Pass1234!")))
+                .andExpect(status().isForbidden());
+    }
+
+    /** T37: 근거 사실이 없거나 배열이 아니면 전체 목록과 구조 목록은 빈 배열이다(null 아님). */
+    @Test
+    void t37ReportWithoutFactsHasEmptyAllFactsAndProblemItems() throws Exception {
+        insertT37ReportFixture("{\"observation_summary\": \"요약\"}", "{\"not\": \"array\"}", "[]");
+        String analyst = "t37_nofacts_analyst";
+        userAdminService.createUser(analyst, "근거없음분석가", "Pass1234!", UserRole.ANALYST,
+                "cic17-*", "seed", "ADMIN", "127.0.0.1");
+        mockMvc.perform(get("/api/incidents/{jobId}/rank/1", XSS_JOB_ID).session(loginAs(analyst, "Pass1234!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.detail.report.present").value(true))
+                .andExpect(jsonPath("$.detail.report.allFacts").isArray())
+                .andExpect(jsonPath("$.detail.report.allFacts").isEmpty())
+                .andExpect(jsonPath("$.detail.report.verificationProblemItems").isEmpty());
+    }
+
+    private void insertT37ReportFixture(String reportJson, String factsJson, String problemsJson) {
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_scoring_jobs
+                (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
+                VALUES (?, ?, 'zeekad-fusion/1', 'succeeded', TIMESTAMP WITH TIME ZONE '2026-11-17 02:00:00Z',
+                        TIMESTAMP WITH TIME ZONE '2026-11-17 02:04:00Z', NULL, 1)
+                """, XSS_JOB_ID, XSS_CAPTURE_ID);
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_incident_queue
+                (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role,
+                 event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name)
+                VALUES (?, ?, 'zeekad-fusion/1', 1, ?, '192.168.77.10', 'originator',
+                        TIMESTAMP WITH TIME ZONE '2026-11-17 01:50:00Z', TIMESTAMP WITH TIME ZONE '2026-11-17 02:00:00Z',
+                        'tgn_recon', NULL, 99, ARRAY['t37-host'])
+                """, XSS_JOB_ID, XSS_CAPTURE_ID, XSS_INC_ID);
+        zeekadJdbc.update("""
+                INSERT INTO dashboard.raw_incident_reports (
+                    job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
+                    zeekad_report, zeekad_verification_passed, zeekad_verification_reason, zeekad_verification_problems,
+                    llm_model_requested, llm_model_version, llm_seconds, llm_input_tokens, llm_output_tokens, llm_thinking_tokens,
+                    llm_error, zeekad_attack_candidates, zeekad_source_run, created_at, zeekad_facts, zeekad_pseudonyms
+                ) VALUES (
+                    ?, ?, 'llm', 'llm-report.v1', 'evidence.v1',
+                    ? FORMAT JSON, FALSE, 'verification', ? FORMAT JSON,
+                    'gemini-2.5-pro', 'gemini-2.5-pro-002', 1.2, 500, 200, 100,
+                    NULL, '[]' FORMAT JSON, 'run-t37', TIMESTAMP WITH TIME ZONE '2026-11-17 02:05:00Z',
+                    ? FORMAT JSON,
+                    '{"H": "192.168.77.10", "X1": "203.0.113.99"}' FORMAT JSON
+                )
+                """, XSS_JOB_ID, XSS_INC_ID, reportJson, problemsJson, factsJson);
+    }
+
     private Cookie fetchCsrfCookie() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/csrf")).andExpect(status().isOk()).andReturn();
         return res.getResponse().getCookie("XSRF-TOKEN");
