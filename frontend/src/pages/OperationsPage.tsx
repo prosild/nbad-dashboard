@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers, MessageSquare, Server } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { errorNotice, type ErrorNotice } from '../api/client';
 import { dashboardApi, operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
@@ -104,7 +104,7 @@ export function OperationsPage() {
   const [data, setData] = useState<OperationsApiResponse | null>(null);
   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const seq = useRef(0);
 
@@ -130,7 +130,7 @@ export function OperationsPage() {
     // 한쪽만 실패하면 받은 쪽은 그대로 보이고 오류를 알린다(수집원 상태는 overview, 나머지는 운영 현황 API)
     const failed = [ops, ov].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     if (failed) {
-      setErrorMsg(failed.reason instanceof ApiError ? failed.reason.message : '운영 현황을 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(failed.reason, '운영 현황을 불러오지 못했습니다.'));
     }
     setData(ops.status === 'fulfilled' ? ops.value : null);
     setOverview(ov.status === 'fulfilled' ? ov.value : null);
@@ -227,7 +227,7 @@ export function OperationsPage() {
           </div>
         </section>
 
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadOperations()} />}
+        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadOperations()} />}
 
         {loading && !data ? (
           <LoadingPanel label="운영 현황을 불러오는 중..." />

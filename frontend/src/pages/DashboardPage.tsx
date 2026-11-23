@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Activity, ArrowRight, Bell, List, RefreshCw, Server } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { Activity, AlertTriangle, ArrowRight, Bell, List, RefreshCw, Server } from 'lucide-react';
+import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { dashboardApi, incidentsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
@@ -99,12 +99,22 @@ export function useAutoRefresh(enabled: boolean, refresh: () => void, intervalMs
   }, [enabled, intervalMs]);
 }
 
-interface DashboardData {
-  overview: DashboardOverviewResponse | null;
-  queue: UnifiedQueueResponse | null;
-  /** 에스컬레이션 대기(현재, 기간 무관). 불러오지 못하면 null */
-  pending: number | null;
-  loadedAt: string | null;
+/** 한 번의 불러오기에서 overview·큐(기간 조건)가 모두 성공한 값. 어느 조건(condKey)으로 받았는지 함께 기억한다(T41). */
+interface LoadedData {
+  condKey: string;
+  overview: DashboardOverviewResponse;
+  queue: UnifiedQueueResponse;
+  /** 마지막으로 성공한 시각 */
+  loadedAt: string;
+}
+
+/**
+ * T41: 갱신 실패 뒤에도 60초 자동 갱신을 이어 가는 실패인가. 429·5xx·네트워크 오류(응답 없음)만 이어 간다.
+ * 401·403과 그 밖의 4xx는 멈춘다(로그아웃·권한 없음 상태에서 거부 요청과 감사 기록을 되풀이하지 않는다).
+ */
+export function keepsAutoRefresh(err: unknown): boolean {
+  if (err instanceof ApiError) return err.rateLimited || err.status >= 500;
+  return true;
 }
 
 export function DashboardPage() {
@@ -118,10 +128,18 @@ export function DashboardPage() {
     captureId: searchParams.get('captureId') || null,
   };
   const condKey = conditionQuery(cond);
-  const [data, setData] = useState<DashboardData>({ overview: null, queue: null, pending: null, loadedAt: null });
+  const [loaded, setLoaded] = useState<LoadedData | null>(null);
+  /** 에스컬레이션 대기(현재, 기간 무관). 불러오지 못하면 null. 셋째 요청이라 따로 다룬다 */
+  const [pending, setPending] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ErrorNotice | null>(null);
   const [pendingError, setPendingError] = useState(false);
+  /** 마지막으로 성공한 응답이 고정 스냅샷이었나(조건과 상관없이). null = 아직 한 번도 성공하지 못해 모른다 */
+  const [lastSnapshot, setLastSnapshot] = useState<boolean | null>(null);
+  /** 401·403 등 이어 가지 않는 실패로 자동 갱신을 멈췄나. 다음 성공 때 풀린다 */
+  const [refreshHalted, setRefreshHalted] = useState(false);
+  /** 조건 줄의 수집원 목록(마지막 성공 값, 조건과 상관없이) */
+  const [barQueue, setBarQueue] = useState<UnifiedQueueResponse | null>(null);
   const seq = useRef(0);
 
   const load = useCallback(async () => {
@@ -129,7 +147,6 @@ export function DashboardPage() {
     const c = Object.fromEntries(new URLSearchParams(condKey)) as Record<string, string>;
     const params = { period: c.period, start: c.start, end: c.end, source: c.source, captureId: c.captureId };
     setLoading(true);
-    setErrorMsg(null);
     // 현황판 호출은 셋: overview(P,S), 큐(P,S, 탐지 시각 최근순, summary 포함), 큐(전체 기간, S, 에스컬레이션 대기용)
     const [ov, queue, pendingQueue] = await Promise.allSettled([
       dashboardApi.overview(params),
@@ -137,17 +154,22 @@ export function DashboardPage() {
       incidentsApi.queue({ ...params, period: 'all', start: undefined, end: undefined, size: RECENT_PAGE_SIZE }),
     ]);
     if (my !== seq.current) return;
-    const failed = [ov, queue].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
-    if (failed) {
-      setErrorMsg(failed.reason instanceof ApiError ? failed.reason.message : '관제 현황을 불러오지 못했습니다.');
-    }
     setPendingError(pendingQueue.status === 'rejected');
-    setData((prev) => ({
-      overview: ov.status === 'fulfilled' ? ov.value : failed ? null : prev.overview,
-      queue: queue.status === 'fulfilled' ? queue.value : failed ? null : prev.queue,
-      pending: pendingQueue.status === 'fulfilled' ? pendingQueue.value.summary.reviewPending : null,
-      loadedAt: new Date().toISOString(),
-    }));
+    setPending(pendingQueue.status === 'fulfilled' ? pendingQueue.value.summary.reviewPending : null);
+    if (ov.status === 'fulfilled' && queue.status === 'fulfilled') {
+      // T41: 한 번의 불러오기는 통째로 반영한다(두 요청 모두 성공했을 때만 값을 바꾼다)
+      setLoaded({ condKey, overview: ov.value, queue: queue.value, loadedAt: new Date().toISOString() });
+      setBarQueue(queue.value);
+      setLastSnapshot(Boolean(ov.value.snapshot ?? queue.value.snapshot));
+      setFailure(null);
+      setRefreshHalted(false);
+    } else {
+      const reasons = [ov, queue].flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
+      setFailure(errorNotice(reasons[0], '관제 현황을 불러오지 못했습니다.'));
+      setRefreshHalted(!reasons.every(keepsAutoRefresh));
+      // 같은 조건으로 성공한 값만 남긴다(다른 조건의 값을 지금 조건의 값처럼 보이지 않는다)
+      setLoaded((prev) => (prev && prev.condKey === condKey ? prev : null));
+    }
     setLoading(false);
   }, [condKey]);
 
@@ -155,10 +177,12 @@ export function DashboardPage() {
     void load();
   }, [load]);
 
-  const snapshot = Boolean(data.overview?.snapshot ?? data.queue?.snapshot);
+  // T41: 스냅샷 여부는 마지막으로 성공한 응답의 값(조건과 상관없이). 모르는 동안(한 번도 성공 못 함)은 켜 둔다
+  const snapshot = lastSnapshot === true;
   // T34: 지정 기간은 지난 구간을 조사하는 화면이라 목록이 움직이지 않게 자동 갱신을 끈다(수동 새로 고침은 그대로)
   const custom = cond.period === 'custom';
-  useAutoRefresh(Boolean(data.overview) && !snapshot && !custom, () => void load(), DASHBOARD_REFRESH_MS);
+  const autoRefresh = !snapshot && !custom && !refreshHalted;
+  useAutoRefresh(autoRefresh, () => void load(), DASHBOARD_REFRESH_MS);
 
   function updateParams(changes: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
@@ -169,12 +193,11 @@ export function DashboardPage() {
     setSearchParams(next);
   }
 
-  const shortNames = useMemo(
-    () => captureShortNames((data.queue?.sources ?? []).map((s) => s.captureId)),
-    [data.queue],
-  );
-  const overview = data.overview;
-  const queue = data.queue;
+  const overview = loaded?.overview ?? null;
+  const queue = loaded?.queue ?? null;
+  const shortNames = useMemo(() => captureShortNames((queue?.sources ?? []).map((s) => s.captureId)), [queue]);
+  /** 같은 조건으로 성공한 값을 남긴 채 실패한 상태(최신이 아니다) */
+  const stale = failure !== null && loaded !== null && loaded.condKey === condKey;
 
   return (
     <AppShell title="현황판" subtitle="기간 안에 무엇이 탐지됐고 수집원이 정상인지 한 화면에서 봅니다">
@@ -190,10 +213,10 @@ export function DashboardPage() {
             />
             <SourceField
               id="dashboard-source"
-              sources={queue?.sources ?? []}
+              sources={barQueue?.sources ?? []}
               value={sourceSelectValue(cond.source, cond.captureId)}
               onChange={(v) => updateParams(sourceSelectChanges(v))}
-              anchor={queue?.anchor ?? null}
+              anchor={barQueue?.anchor ?? null}
               snapshot={snapshot}
             />
             <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
@@ -204,7 +227,7 @@ export function DashboardPage() {
                 </span>
               )}
               <span>
-                불러온 시각 <span className="tabular-nums text-slate-300">{formatDateTime(data.loadedAt)}</span>
+                불러온 시각 <span className="tabular-nums text-slate-300">{formatDateTime(loaded?.loadedAt ?? null)}</span>
               </span>
               <button type="button" onClick={() => void load()} disabled={loading} className="soc-btn-secondary py-1 text-xs">
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -214,14 +237,25 @@ export function DashboardPage() {
           </div>
         </section>
 
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void load()} />}
+        {failure && stale && (
+          <StaleNotice
+            notice={failure}
+            loadedAt={loaded?.loadedAt ?? null}
+            autoRetry={autoRefresh}
+            loading={loading}
+            onRetry={() => void load()}
+          />
+        )}
+        {failure && !stale && (
+          <ErrorAlert message={failure.message} rateLimited={failure.rateLimited} onRetry={() => void load()} />
+        )}
 
-        {loading && !overview && !queue ? (
+        {loading && !overview && !queue && !failure ? (
           <LoadingPanel label="관제 현황을 불러오는 중..." />
         ) : !overview || !queue ? null : (
           <>
             <OutsidePeriodNotice queue={queue} onAllPeriod={() => updateParams(presetUrlChanges('all', DASHBOARD_DEFAULT_PERIOD))} />
-            <KpiRow cond={cond} queue={queue} pending={data.pending} pendingError={pendingError} />
+            <KpiRow cond={cond} queue={queue} pending={pending} pendingError={pendingError} />
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
               <TrendPanel
@@ -262,6 +296,48 @@ export function DashboardPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * T41: 갱신에 실패해 화면 값이 최신이 아니라는 한 줄 표시. 실패 이유, 마지막 성공 시각, 다시 시도.
+ * "60초마다 다시 시도" 말은 자동 갱신이 이어질 때만 붙인다.
+ */
+function StaleNotice({
+  notice,
+  loadedAt,
+  autoRetry,
+  loading,
+  onRetry,
+}: {
+  notice: ErrorNotice;
+  loadedAt: string | null;
+  autoRetry: boolean;
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      data-testid="stale-notice"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-100"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+      <span className="font-semibold text-amber-200">최신 값이 아닙니다</span>
+      <span className="min-w-0 break-words">{notice.message}</span>
+      <span className="text-amber-100/80">
+        마지막 성공 <span className="tabular-nums">{formatDateTime(loadedAt)}</span>
+      </span>
+      {autoRetry && (
+        <span className="text-amber-100/80" data-testid="stale-auto-retry">
+          {DASHBOARD_REFRESH_MS / 1000}초마다 다시 시도합니다
+        </span>
+      )}
+      <button type="button" onClick={onRetry} disabled={loading} className="soc-btn-secondary ml-auto py-1 text-xs">
+        <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+        다시 시도
+      </button>
+    </div>
   );
 }
 

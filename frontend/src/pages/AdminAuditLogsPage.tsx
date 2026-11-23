@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, FileSearch, Filter } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { errorNotice, type ErrorNotice } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
@@ -81,7 +81,7 @@ function AuditLogRow({ log }: { log: AuditLog }) {
 export function AdminAuditLogsPage() {
   const [data, setData] = useState<AdminAuditLogsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
 
   const [actionType, setActionType] = useState('');
   const [actorUsername, setActorUsername] = useState('');
@@ -94,7 +94,7 @@ export function AdminAuditLogsPage() {
       const res = await adminApi.listAuditLogs(params);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '감사 로그를 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(err, '감사 로그를 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -180,7 +180,7 @@ export function AdminAuditLogsPage() {
 
         {errorMsg && (
           <ErrorAlert
-            message={errorMsg}
+            message={errorMsg.message} rateLimited={errorMsg.rateLimited}
             onRetry={() => void loadLogs({ actionType, actorUsername, limit })}
           />
         )}

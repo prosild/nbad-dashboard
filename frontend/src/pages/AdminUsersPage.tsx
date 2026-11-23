@@ -8,7 +8,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
@@ -29,7 +29,7 @@ export function AdminUsersPage() {
   const { notify } = useToast();
   const [data, setData] = useState<AdminUsersListResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -51,7 +51,7 @@ export function AdminUsersPage() {
       const res = await adminApi.listUsers();
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '사용자 목록을 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(err, '사용자 목록을 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -331,7 +331,7 @@ export function AdminUsersPage() {
           </section>
         )}
 
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadUsers()} />}
+        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadUsers()} />}
 
         {loading && !data ? (
           <LoadingPanel label="사용자 목록을 불러오는 중..." />

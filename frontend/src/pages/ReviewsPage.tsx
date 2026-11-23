@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ClipboardCheck, ExternalLink, Info } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
@@ -79,7 +79,7 @@ export function ReviewsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
   const nowMs = useNowMs();
 
   const captureId = searchParams.get('captureId') ?? '';
@@ -92,7 +92,7 @@ export function ReviewsPage() {
       const res = await reviewsApi.list(captureId || undefined, pendingOnly);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '에스컬레이션 목록을 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(err, '에스컬레이션 목록을 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -179,7 +179,7 @@ export function ReviewsPage() {
           </div>
         </section>
 
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadReviews()} />}
+        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadReviews()} />}
 
         {loading && !data ? (
           <LoadingPanel label="에스컬레이션 목록을 불러오는 중..." />

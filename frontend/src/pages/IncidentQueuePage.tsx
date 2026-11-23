@@ -22,7 +22,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { errorNotice, type ErrorNotice } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { AppShell } from '../components/AppShell';
@@ -151,7 +151,7 @@ export function IncidentQueuePage() {
   const [dataKey, setDataKey] = useState<string | null>(null);
   const requestSeq = useRef(0);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [legacyNotice, setLegacyNotice] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -189,7 +189,7 @@ export function IncidentQueuePage() {
       pendingHighlightRef.current = null;
     } catch (err) {
       if (seq !== requestSeq.current) return;
-      setErrorMsg(err instanceof ApiError ? err.message : '인시던트 목록을 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(err, '인시던트 목록을 불러오지 못했습니다.'));
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
@@ -592,7 +592,7 @@ export function IncidentQueuePage() {
           </div>
         )}
 
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadQueue()} />}
+        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadQueue()} />}
 
         {loading && !data ? (
           <LoadingPanel label="인시던트 목록을 불러오는 중..." />

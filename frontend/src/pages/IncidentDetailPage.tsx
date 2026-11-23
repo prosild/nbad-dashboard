@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react';
-import { ApiError } from '../api/client';
+import { errorNotice, type ErrorNotice } from '../api/client';
 import { incidentsApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { AppShell } from '../components/AppShell';
@@ -95,14 +95,14 @@ export function IncidentDetailPage() {
   const incidentNo = numberMode ? parseIncidentNo(params.incidentNo) : null;
   const [location, setLocation] = useState<IncidentNoLocation | null>(null);
   const [locateAttempt, setLocateAttempt] = useState(0);
-  const [locateError, setLocateError] = useState<string | null>(null);
+  const [locateError, setLocateError] = useState<ErrorNotice | null>(null);
   const jobId = numberMode ? (location ? String(location.jobId) : undefined) : params.jobId;
   const queueRank = numberMode ? (location ? String(location.queueRank) : undefined) : params.queueRank;
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, timeContext } = useAuth();
   const [data, setData] = useState<IncidentDetailApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
 
   const rawTab = searchParams.get('tab');
   const tab: DetailTab = isDetailTab(rawTab) ? rawTab : 'summary';
@@ -121,7 +121,7 @@ export function IncidentDetailPage() {
   useEffect(() => {
     if (!numberMode) return undefined;
     if (incidentNo === null) {
-      setLocateError('잘못된 인시던트 경로입니다.');
+      setLocateError({ message: '잘못된 인시던트 경로입니다.', rateLimited: false });
       setLoading(false);
       return undefined;
     }
@@ -136,7 +136,7 @@ export function IncidentDetailPage() {
         if (cancelled) return;
         setLocation(null);
         setLoading(false);
-        setLocateError(err instanceof ApiError ? err.message : '인시던트 정보를 불러오지 못했습니다.');
+        setLocateError(errorNotice(err, '인시던트 정보를 불러오지 못했습니다.'));
       });
     return () => {
       cancelled = true;
@@ -148,7 +148,7 @@ export function IncidentDetailPage() {
       return; // 위치를 받기 전
     }
     if (!jobId || !queueRank) {
-      setErrorMsg('잘못된 인시던트 경로입니다.');
+      setErrorMsg({ message: '잘못된 인시던트 경로입니다.', rateLimited: false });
       setLoading(false);
       return;
     }
@@ -158,7 +158,7 @@ export function IncidentDetailPage() {
       const res = await incidentsApi.detail(jobId, queueRank);
       setData(res);
     } catch (err) {
-      setErrorMsg(err instanceof ApiError ? err.message : '인시던트 정보를 불러오지 못했습니다.');
+      setErrorMsg(errorNotice(err, '인시던트 정보를 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -312,9 +312,9 @@ export function IncidentDetailPage() {
           </div>
         )}
         {locateError && (
-          <ErrorAlert message={locateError} onRetry={incidentNo !== null ? () => setLocateAttempt((n) => n + 1) : undefined} />
+          <ErrorAlert message={locateError.message} rateLimited={locateError.rateLimited} onRetry={incidentNo !== null ? () => setLocateAttempt((n) => n + 1) : undefined} />
         )}
-        {errorMsg && <ErrorAlert message={errorMsg} onRetry={() => void loadDetail()} />}
+        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadDetail()} />}
 
         {loading && !current && !locateError ? (
           <LoadingPanel label="인시던트 정보를 불러오는 중..." />

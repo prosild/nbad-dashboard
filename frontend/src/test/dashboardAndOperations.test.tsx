@@ -939,3 +939,238 @@ describe('현황판 기간 밖 안내(T29)', () => {
     );
   });
 });
+
+/* ───────────────────────── T41 갱신 실패 ───────────────────────── */
+
+/** WAF(nginx limit_req)의 429는 본문이 JSON이 아니다 */
+const wafRateLimited = () =>
+  new Response('<html><body>429 Too Many Requests</body></html>', { status: 429, headers: { 'Content-Type': 'text/html' } });
+
+type Mode = 'ok' | '429' | '500' | '503' | 'network' | '401' | '403' | '404';
+
+function failWith(mode: Mode): Response {
+  if (mode === '429') return wafRateLimited();
+  if (mode === 'network') throw new TypeError('Failed to fetch');
+  const status = Number(mode);
+  return json({ status, code: status === 401 ? 'SESSION_EXPIRED' : `E${status}`, message: `서버 문구 ${status}` }, status);
+}
+
+/** overview·큐 응답을 시험 안에서 바꾼다. 셋째 요청(전체 기간 큐)은 따로 다룬다 */
+function switchable(opts: { snapshot?: boolean } = {}) {
+  const state = { overview: 'ok' as Mode, queue: 'ok' as Mode, overviewBody: null as ((url: string) => DashboardOverviewResponse) | null };
+  const options: RenderOptions = {
+    snapshot: opts.snapshot,
+    overview: (url) =>
+      state.overview === 'ok' ? json((state.overviewBody ?? ((u: string) => fakeOverview(u, { snapshot: opts.snapshot })))(url)) : failWith(state.overview),
+    queue: (url) =>
+      state.queue === 'ok'
+        ? json(fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter, snapshot: opts.snapshot, newestOutsidePeriod: minutesAgo(10) }))
+        : failWith(state.queue),
+  };
+  const set = (m: Mode) => {
+    state.overview = m;
+    state.queue = m;
+  };
+  return { state, options, set };
+}
+
+const overviewCount = (calls: string[]) => calls.filter((c) => c.startsWith('/api/dashboard/overview')).length;
+const loadedAtText = () => {
+  const bar = screen.getByRole('region', { name: '보기 조건' });
+  return within(bar).getByText('불러온 시각').textContent;
+};
+
+async function tick(ms: number) {
+  await act(async () => {
+    vi.advanceTimersByTime(ms);
+  });
+}
+
+describe('T41 현황판 갱신 실패: 값 남기기와 자동 갱신 잇기', () => {
+  it('성공 → 429(값 남음, 표시, 불러온 시각 그대로) → 60초 뒤 자동으로 다시 부름 → 성공(표시 사라짐)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const sw = switchable();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { calls } = renderAt('/', sw.options);
+    const kpi = await kpiRegion();
+    const before = loadedAtText();
+    expect(overviewCount(calls)).toBe(1);
+
+    sw.set('429');
+    await tick(1000);
+    await user.click(screen.getByRole('button', { name: '새로 고침' }));
+    const notice = await screen.findByTestId('stale-notice');
+    expect(notice).toHaveTextContent('최신 값이 아닙니다');
+    expect(notice).toHaveTextContent('요청이 많아 잠시 제한됐습니다. 잠시 뒤 다시 시도하세요.');
+    expect(notice).toHaveTextContent('마지막 성공');
+    expect(within(notice).getByTestId('stale-auto-retry')).toHaveTextContent('60초마다 다시 시도합니다');
+    expect(within(notice).getByRole('button', { name: '다시 시도' })).toBeInTheDocument();
+    // 값은 남고(배너 없이) 불러온 시각은 마지막 성공 시각 그대로
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(kpi).toBeInTheDocument();
+    expect(kpiValue(within(screen.getByRole('region', { name: '핵심 지표' })).getByRole('link', { name: /탐지된 인시던트/ }))).toBe(5);
+    expect(loadedAtText()).toBe(before);
+    expect(overviewCount(calls)).toBe(2);
+
+    // 실패 직후 연달아 부르지 않는다
+    await tick(DASHBOARD_REFRESH_MS / 2);
+    expect(overviewCount(calls)).toBe(2);
+
+    sw.set('ok');
+    await tick(DASHBOARD_REFRESH_MS);
+    await waitFor(() => expect(overviewCount(calls)).toBe(3));
+    await waitFor(() => expect(screen.queryByTestId('stale-notice')).toBeNull());
+    expect(loadedAtText()).not.toBe(before);
+  });
+
+  it('overview만 성공하고 큐가 실패하면 둘 다 옛 값 그대로다(새 overview와 옛 큐가 섞이지 않는다)', async () => {
+    const sw = switchable();
+    const user = userEvent.setup();
+    renderAt('/', sw.options);
+    await kpiRegion();
+    const trend = screen.getByRole('region', { name: '탐지 추이' });
+    await waitFor(() => expect(trend.querySelectorAll('[data-bucket]')).toHaveLength(24));
+
+    // 다음 overview는 구간 3개로 다르게, 큐는 실패
+    sw.state.overviewBody = (u) => {
+      const o = fakeOverview(u);
+      return { ...o, trend: { ...o.trend, buckets: o.trend.buckets.slice(0, 3) } };
+    };
+    sw.state.queue = '500';
+    await user.click(screen.getByRole('button', { name: '새로 고침' }));
+    const notice = await screen.findByTestId('stale-notice');
+    expect(notice).toHaveTextContent('서버 문구 500');
+    expect(screen.getByRole('region', { name: '탐지 추이' }).querySelectorAll('[data-bucket]')).toHaveLength(24);
+
+    // 반대로 큐만 성공하고 overview가 실패해도 그대로
+    sw.state.overviewBody = null;
+    sw.state.queue = 'ok';
+    sw.state.overview = '503';
+    await user.click(screen.getByRole('button', { name: '새로 고침' }));
+    await waitFor(() => expect(screen.getByTestId('stale-notice')).toHaveTextContent('서버 문구 503'));
+    expect(screen.getByRole('region', { name: '탐지 추이' }).querySelectorAll('[data-bucket]')).toHaveLength(24);
+  });
+
+  it('조건을 바꾼 뒤 실패하면 이전 값이 보이지 않고 오류 배너가 보인다', async () => {
+    const sw = switchable();
+    const user = userEvent.setup();
+    renderAt('/', sw.options);
+    await kpiRegion();
+    sw.set('429');
+    const bar = screen.getByRole('region', { name: '보기 조건' });
+    await user.click(within(bar).getByRole('button', { name: '7일' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('요청이 잠시 제한됐습니다');
+    expect(alert).not.toHaveTextContent('관리자에게');
+    expect(screen.queryByRole('region', { name: '핵심 지표' })).toBeNull();
+    expect(screen.queryByRole('region', { name: '탐지 추이' })).toBeNull();
+    expect(screen.queryByTestId('stale-notice')).toBeNull();
+    // 다른 조건으로 성공한 시각을 지금 조건의 "불러온 시각"으로 보이지 않는다
+    expect(loadedAtText()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+
+    // 다시 시도로 돌아온다
+    sw.set('ok');
+    await user.click(within(alert).getByRole('button', { name: '다시 시도' }));
+    await kpiRegion();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('처음 불러오기가 429·5xx·네트워크로 실패해도 60초마다 다시 부른다', async () => {
+    for (const mode of ['429', '500', 'network'] as Mode[]) {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      setVisibility('visible');
+      const sw = switchable();
+      sw.set(mode);
+      const view = renderAt('/', sw.options);
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(overviewCount(view.calls)).toBe(1);
+      await tick(DASHBOARD_REFRESH_MS / 2);
+      expect(overviewCount(view.calls), mode).toBe(1);
+      await tick(DASHBOARD_REFRESH_MS / 2);
+      await waitFor(() => expect(overviewCount(view.calls), mode).toBe(2));
+      sw.set('ok');
+      await tick(DASHBOARD_REFRESH_MS);
+      await waitFor(() => expect(overviewCount(view.calls), mode).toBe(3));
+      await kpiRegion();
+      expect(screen.queryByRole('alert')).toBeNull();
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('401·403(과 그 밖의 4xx) 실패 뒤에는 60초가 지나도 부르지 않는다. 표시에 "다시 시도합니다" 말이 없다', async () => {
+    for (const mode of ['403', '404', '401'] as Mode[]) {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      setVisibility('visible');
+      const sw = switchable();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const view = renderAt('/', sw.options);
+      await kpiRegion();
+      sw.set(mode);
+      await user.click(screen.getByRole('button', { name: '새로 고침' }));
+      await waitFor(() => expect(overviewCount(view.calls)).toBe(2));
+      if (mode !== '401') {
+        const notice = await screen.findByTestId('stale-notice');
+        expect(within(notice).queryByTestId('stale-auto-retry')).toBeNull();
+      }
+      await tick(DASHBOARD_REFRESH_MS * 3);
+      expect(overviewCount(view.calls), mode).toBe(2);
+      if (mode !== '401') {
+        // 사람이 다시 시도해 성공하면 다시 켜진다
+        sw.set('ok');
+        await user.click(within(screen.getByTestId('stale-notice')).getByRole('button', { name: '다시 시도' }));
+        await waitFor(() => expect(screen.queryByTestId('stale-notice')).toBeNull());
+        expect(overviewCount(view.calls)).toBe(3);
+        await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0));
+        await tick(DASHBOARD_REFRESH_MS);
+        await waitFor(() => expect(overviewCount(view.calls), mode).toBe(4));
+      }
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('고정 스냅샷이면 조건을 바꾼 뒤 실패해 값이 비어도 자동 갱신이 없다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const sw = switchable({ snapshot: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { calls } = renderAt('/', sw.options);
+    await kpiRegion();
+    sw.set('429');
+    await user.click(within(screen.getByRole('region', { name: '보기 조건' })).getByRole('button', { name: '7일' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('요청이 잠시 제한됐습니다');
+    expect(screen.queryByRole('region', { name: '핵심 지표' })).toBeNull();
+    const n = overviewCount(calls);
+    await tick(DASHBOARD_REFRESH_MS * 3);
+    expect(overviewCount(calls)).toBe(n);
+  });
+
+  it('고정 스냅샷에서 같은 조건 실패: 값이 남고 표시에 "다시 시도합니다" 말이 없다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const sw = switchable({ snapshot: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { calls } = renderAt('/', sw.options);
+    await kpiRegion();
+    sw.set('429');
+    await user.click(screen.getByRole('button', { name: '새로 고침' }));
+    const notice = await screen.findByTestId('stale-notice');
+    expect(within(notice).queryByTestId('stale-auto-retry')).toBeNull();
+    expect(screen.getByRole('region', { name: '핵심 지표' })).toBeInTheDocument();
+    await tick(DASHBOARD_REFRESH_MS * 3);
+    expect(overviewCount(calls)).toBe(2);
+  });
+
+  it('지정 기간에서는 실패해도 자동 갱신이 없다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibility('visible');
+    const sw = switchable();
+    sw.set('500');
+    const { calls } = renderAt(`/?period=custom&start=${encodeURIComponent('2026-11-19T00:30:00Z')}&end=${encodeURIComponent('2026-11-19T03:00:00Z')}`, sw.options);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    await tick(DASHBOARD_REFRESH_MS * 3);
+    expect(overviewCount(calls)).toBe(1);
+  });
+});
