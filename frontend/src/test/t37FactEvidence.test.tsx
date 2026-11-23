@@ -229,6 +229,12 @@ describe('T37 근거 화면', () => {
     expect(screen.getByRole('button', { name: '근거 접기' })).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('근거가 5개면(하나만 숨게 되면) 더 보기 버튼 없이 모두 보인다', () => {
+    render(<ReportClaims report={report({ claims: [{ claim: '문장', facts: sixFacts.slice(0, 5) }], pseudonyms: VIEWER_PS })} />);
+    expect(within(screen.getByRole('list', { name: '근거 사실 5개' })).getAllByRole('listitem')).toHaveLength(5);
+    expect(screen.queryByRole('button', { name: /더 보기/ })).toBeNull();
+  });
+
   it('인용한 번호가 사실 목록에 없으면 "근거 정보 없음"과 번호를 보인다', () => {
     const missing: FactItem = { id: 'F99', name: '근거 정보 없음', value: '-', valueJson: null };
     render(<ReportClaims report={report({ claims: [{ claim: '문장', facts: [missing] }] })} />);

@@ -93,13 +93,15 @@ function FactRow({ fact, pseudonyms }: { fact: FactItem; pseudonyms: Pseudonyms 
   );
 }
 
-/** 문장 아래 근거 목록. 인용이 많으면 처음 FACT_PREVIEW_COUNT개만 보이고 "근거 N개 더 보기"로 편다. */
+/** 문장 아래 근거 목록. 인용이 FACT_PREVIEW_COUNT + 1개를 넘으면 처음 FACT_PREVIEW_COUNT개만 보이고 "근거 N개 더 보기"로 편다. */
 export function FactEvidence({ facts, pseudonyms }: { facts: FactItem[]; pseudonyms: Pseudonyms }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
   if (!facts || facts.length === 0) return null;
-  const hidden = Math.max(0, facts.length - FACT_PREVIEW_COUNT);
-  const shown = expanded ? facts : facts.slice(0, FACT_PREVIEW_COUNT);
+  // 하나만 숨게 되면 버튼 대신 모두 보인다("근거 1개 더 보기"는 버튼이 근거 한 줄과 같은 자리를 차지한다).
+  const collapsible = facts.length > FACT_PREVIEW_COUNT + 1;
+  const hidden = collapsible ? facts.length - FACT_PREVIEW_COUNT : 0;
+  const shown = expanded || !collapsible ? facts : facts.slice(0, FACT_PREVIEW_COUNT);
   return (
     <div className="mt-2 border-l-2 border-slate-700 pl-2.5">
       <ul id={listId} aria-label={`근거 사실 ${facts.length}개`} className="space-y-1">
