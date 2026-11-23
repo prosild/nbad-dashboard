@@ -8,9 +8,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.test.context.ActiveProfiles;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,6 +53,13 @@ class DataSourceConfigTest {
         assertThat(userMapper.countAll()).isGreaterThanOrEqualTo(0L);
         assertThat(zeekadReadProbeMapper.selectOne()).isEqualTo(1);
         assertThat(zeekadWriteProbeMapper.selectOne()).isEqualTo(1);
-        assertThat(dashboardProperties.getEvidenceApi().getUrl()).isEqualTo("http://127.0.0.1:8000");
+        // T41: 시험 프로필은 임시 포트 범위 밖의 닫힌 포트를 쓴다(application-test.yml 주석). 앱 기본값은 아래에서 따로 본다.
+        assertThat(dashboardProperties.getEvidenceApi().getUrl()).isEqualTo("http://127.0.0.1:1");
+    }
+
+    @Test
+    void evidenceApiDefaultUrlInApplicationYmlIsUnchanged() throws Exception {
+        String yml = new String(new ClassPathResource("application.yml").getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(yml).contains("url: ${ZEEKAD_EVIDENCE_API_URL:http://127.0.0.1:8000}");
     }
 }

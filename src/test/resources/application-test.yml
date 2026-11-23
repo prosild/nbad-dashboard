@@ -21,5 +21,11 @@ dashboard:
       username: dashboard_ro
       password: ""
       driver-class-name: org.h2.Driver
+  # T41: 근거 조회 API가 없는 시험의 주소. 앱 기본값 127.0.0.1:8000은 이 PC처럼 TCP 임시(원본) 포트 범위가 8000을 포함하면
+  #   (Windows 동적 포트 1024~15000 등) 드물게 원본 포트가 8000으로 잡혀 TCP 자기 연결이 되고, 클라이언트가 자기 요청을 응답으로 읽어
+  #   상태 -1 → 상세 조회 500이 났다(T36 verify 2차 T21 시험 실패). 1번 포트는 어느 OS에서도 임시 포트 범위 밖이라 늘 연결 거부다.
+  #   근거 API를 흉내 내는 시험은 지금처럼 @DynamicPropertySource로 따로 준다.
+  evidence-api:
+    url: http://127.0.0.1:1
   security:
     bcrypt-strength: 4
