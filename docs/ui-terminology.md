@@ -152,6 +152,10 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | 2026-11-23 | T37 | 상세 · AI 리포트 탭 | (없음) | 접힌 구역 "근거 사실 전체 (N개)"(옆에 "리포트가 인용한 항목 N개"). 묶음별 표(규모·방향 / 탐지 모델 / 평소 대비 / 세션 상태·전송 계층·서비스 프로토콜 / 프로토콜 로그 / 상대 IP·목적지 포트 / 주요 세션 / 사전에 없는 항목), 열은 번호·항목·값, 리포트가 인용한 행에 "인용" 표지 | 프론트엔드(값: API `allFacts`) | 인용하지 않은 사실도 볼 수 있게 한다 | 아니요 |
 | 2026-11-23 | T37 | 상세 · 검증 실패 사유 | 문제 항목을 JSON 글 그대로(`{"kind":"number_not_in_facts",…}`) | `리포트 글의 숫자 "…"가 근거 사실에 없습니다 (위치: …)`, `리포트 글의 가명 "X1(203.0.*.*)"가 근거 사실에 없습니다 (위치: …)`. 가명표에 없는 가명은 그대로, 모르는 `kind`·모양은 원문 | 프론트엔드(값: API `verificationProblemItems` = zeek_AD `zeekad_verification_problems`의 `kind`·`value`·`where`) | 공개 데이터 실패 4건의 `kind`는 `number_not_in_facts`·`pseudonym_not_in_facts` 둘이다 | 예(`kind` 값) |
 | 2026-11-23 | T37 | 인시던트 목록 "리포트·판단" 가운데 칩 · 상세 검증 표지(머리·AI 리포트 탭) | 접근성 이름·툴팁 "검증 통과" / "검증 실패"(상세 표지는 툴팁 없음) | 표지 이름은 그대로. 접근성 이름·툴팁: "AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다" / 목록 "AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다" / 상세 "AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 검증 실패 사유를 확인합니다" | 프론트엔드(`labels.ts` `VERIFICATION_DESCRIPTION`) | 사용자 질문 "검증 통과가 뭘 의미하는거지?". 공개 데이터 실패 사례에서 확인한 검사(글 속 숫자·가명)까지만 말하고 해석을 보증한다고 읽히지 않게 한다 | 예 |
+| 2026-11-23 | T38 | 상세 · Slack 탭 | 카드에 역할·종류·시각·전송 결과만. 같은 인시던트의 알림 두 건이 똑같은 카드 두 장 | 카드에 알림 본문(한 줄 요약), 접힌 칸 "알림 전문 보기"·"알림 전문 접기"(제목·문단·이름과 값·작은 글, 버튼은 "버튼: 근거 보기"처럼 이름만). 링크·채널·사용자 토큰과 URL은 지우고 링크 글만 남긴다. mrkdwn 굵게·기울임은 낱말 경계의 짝만 풀고 `&gt;`·`&lt;`·`&amp;`는 글자로 | 프론트엔드 `utils/slackText.ts`(값: API `payloadJson`의 `text`·`blocks` = zeek_AD `slack_payload`) | 사용자 질문 "#2188은 왜 slack에 메시지 2건이야?". 알림 글은 zeek_AD가 기록한 그대로 보이고 고치거나 요약하지 않는다 | 아니요 |
+| 2026-11-23 | T38 | 상세 · Slack 탭 · 인시던트 알림 | (없음) | 판 표지 "즉시 알림(틀 문장)"(`template.*`) / "AI 리포트 알림"(`llm-report.*`). 판 번호와 상관없이 앞머리로 찾는다. 모르는 판은 원문, 상태 변경 알림에는 표지 없음 | 프론트엔드 사전 `slackMessageVersion`(값: zeek_AD `zeekad_message_version`) | 같은 인시던트의 두 알림(탐지 직후 틀 문장 알림, AI 리포트가 생긴 뒤 알림)을 구별한다 | 예(판 앞머리) |
+| 2026-11-23 | T38 | 상세 · Slack 탭 · 역할 표지 | 스레드 부모가 없는 알림은 모두 "최초 알림" | `created_at`이 2026-11-19 06:20 UTC보다 이르고 부모가 없는 알림은 묶음의 첫 알림만 "최초 알림", 둘째부터는 흐린 표지 "스레드 기록 없음"(툴팁·판독기 글 "스레드 기록 도입(2026-11-19) 전의 알림입니다. 첫 알림의 스레드 답글인지 기록에 없습니다."). 그 뒤 기록과 부모가 있는 알림은 서버 문구 그대로 | 프론트엔드(기준 시각: zeek_AD 데이터 계약 v2 `slack_deliveries` 절 "스레드 두 열을 읽는 법", 2026-11-23 회신) | 스레드 두 열은 migration 016(2026-11-19 06:19:54Z 적용)부터 기록된다. 그 전 행의 부모 없음은 "머리 알림"이 아니라 "스레드 정보 없음"이다 | 예 |
+| 2026-11-23 | T38 | 상세 · 검증 실패 사유 | `리포트 글의 숫자 "…"가 근거 사실에 없습니다`, `리포트 글의 가명 "…"가 근거 사실에 없습니다` | `리포트 글에서 근거 사실에 없는 숫자: "…"`, `리포트 글에서 근거 사실에 없는 가명: "…"`(위치 표시는 그대로) | 프론트엔드(`utils/factLabels.ts`) | 값 뒤 조사가 받침과 어긋났다(`"524,288"가`) | 아니요 |
 
 ## 처리 흐름 용어 (T25)
 
@@ -220,10 +224,17 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | 증적 | 핵심 수치(세션 수·송신/수신 바이트·고유 상대 IP 수·고유 목적지 포트 수·페이로드 바이트가 부푼 세션 수), 분포(전송 계층·서비스 프로토콜·세션 상태), 상위 상대 IP·포트, 주요 세션(필드별 열), 프로토콜별 기록 수, 증적의 한계, 원본 증적(`additionalFields`, 증적 탭 맨 아래 기본 접힘) | — |
 | 관측 계정 | 계정 이름(`zeekad_name`, 없으면 `kerberosUser`·`ntlmUser`), 종류(`zeekad_name_kind`), 마지막 관측(`last_seen`) | 출처 로그(`zeekad_source_log`), 관측 횟수(`observations`·`observation_count`), 처음 관측(`first_seen`), 자산 IP·캡처 등 부가 필드 |
 | 발송 판단(T21 탭 이름) | 최종 결과(`wouldSend`·`decidedBy`), 세 의견 한 줄씩(`policyChoice`+`policyReasons`+`policyMandatory`, `llmChoice`, `decisionModelChoice`+선택 확률 숫자 `decisionModelConfidence`), 의견 불일치(`opinionMismatch`)일 때만 강조, `decisionModelError` | 정책 ID `policyId`, 판단 모델 ID `decisionModel`, 선택지별 확률 막대 `decisionModelProbabilities` |
-| Slack | 발송 시각, 알림 역할(최초·후속), 메시지 종류, 채널에도 표시(`replyBroadcast`), Dry-run, 전송 결과·방식, 오류 | 원본 페이로드 `payloadJson`, `slackTs`, `threadParent`(툴팁 포함), 리포트 작업 번호 툴팁 |
+| Slack | 발송 시각, 알림 역할(최초·후속, T38: 기준 시각 전 둘째부터는 "스레드 기록 없음"), 메시지 종류, 판 표지(T38: 인시던트 알림의 `messageVersion`), 알림 본문과 접힌 전문(T38: `payloadJson`의 `text`·`blocks`를 글로), 채널에도 표시(`replyBroadcast`), Dry-run, 전송 결과·방식, 오류 | 원본 JSON(`payloadJson` 글 그대로), 채널, URL(링크·버튼 주소), `slackTs`, `threadParent`(툴팁·속성 포함), 리포트 작업 번호 툴팁 |
 | 이력·조치 | 상태 변경 이력(항목마다 변경자·사유·판정, T21), 에스컬레이션 요청·결정·반영(서버 라벨, 반영 지연 보조 표시), 조치 패널(상태 변경·에스컬레이션 결정) | — |
 
 - 이전·다음 이동: 목록 행 링크가 목록 쿼리를 `from=`으로 넘긴다. 상세는 그 쿼리로 `GET /api/incidents`를 한 번 불러 목록과 같은 함수(`triage.ts`의 `orderQueue`)로 순서를 만든다. `from=`이 없으면 같은 캡처·탐지 작업의 목록을 파이프라인 순위(`queueRank`) 순으로 쓴다.
+
+### Slack 알림 표시 (T38)
+
+- 알림 본문은 `payloadJson`의 `text`, 전문은 `blocks`다. `header`는 제목, `section`의 글은 문단, `fields`는 이름과 값, `context`는 작은 글, `actions`는 버튼 이름만 보인다. 모르는 블록, 그림 요소, `accessory`는 건너뛴다.
+- 글 풀이 순서: (1) `<http…|글>`·`<mailto:…|글>`은 글만 남기고 `<http…>`·`<#…>`·`<@…>`·`<!…>`는 지운다. (2) 맨 URL을 지우고 `사건:`처럼 이름만 남은 줄은 그리지 않는다. (3) 낱말 경계의 `*굵게*`·`_기울임_`만 푼다(`transformer_v2` 같은 낱말 안 밑줄과 시간 범위 `~`는 그대로). (4) `&gt;`·`&lt;`·`&amp;`를 글자로 푼다. `[근거 보기](…)` 같은 대괄호 글은 글자 그대로다.
+- 조회자 응답은 서버가 `payloadJson` 글 잎의 IPv4를 이미 가린다. 화면은 받은 글을 그대로 그리고 본문 속 가명(`H`·`X1`)에 주소를 붙이지 않는다.
+- **스레드 기록 없음**: `created_at`이 2026-11-19 06:20 UTC(`2026-11-19T06:20:00Z`)보다 이른 알림은 zeek_AD가 스레드 정보(`zeekad_thread_parent`·`zeekad_reply_broadcast`)를 기록하기 전 기록이다. 그런 알림 가운데 묶음의 둘째부터는 첫 알림의 스레드 답글이었는지 알 수 없어 이 표지를 붙인다. 답글로 그리지도 채널 알림이라고 적지도 않는다. 공개 스냅샷의 알림은 모두 이 기준 전 기록이다. 지금 zeek_AD는 같은 사건의 뒤 알림을 첫 알림의 스레드 답글로 보낸다(zeek_AD 데이터 계약 v2, 2026-11-23 회신).
 
 ## 표시 이름 사전 (코드 값 → 표시 이름)
 
@@ -244,6 +255,7 @@ zeek_AD와 공유하는 화면 표기 변경 기록이다(2026-11-20부터). 표
 | 관측 이름 종류 (`assetNameKind`) | `kerberos_machine` → 컴퓨터 계정, `kerberos_user` → 사용자 계정, `ntlm_user` → NTLM 사용자 계정 | zeek_AD `zeekad_name_kind` | 예 |
 | 자산 관측 항목 (`assetAttribute`) | `zeekad_name` → 이름, `zeekad_name_kind` → 이름 종류, `zeekad_source_log` → 출처 로그, `observations`·`observation_count` → 관측 횟수, `first_seen` → 처음 관측, `last_seen` → 마지막 관측 | zeek_AD `zeekad_asset_observations` | 예 |
 | Slack 메시지 종류 (`slackMessageKind`) | `incident` → 인시던트 알림, `status` → 상태 변경 알림, `daily_summary` → 일일 요약 | zeek_AD | 예 |
+| Slack 알림 판 (`slackMessageVersion`, T38) | 앞머리 `template` → 즉시 알림(틀 문장), `llm-report` → AI 리포트 알림. 판 번호(`.v1`)는 보지 않는다. 인시던트 알림에만 쓴다 | zeek_AD `zeekad_message_version` | 예 |
 | Slack 전송 방식 (`slackDeliveryMode`) | `dry_run` → Dry-run, `live` → 실제 전송 | zeek_AD | 예 |
 | Slack 전송 결과 (`slackDeliveryStatus`) | `recorded` → 기록됨, `sent`·`delivered` → 전송됨, `failed` → 전송 실패 | zeek_AD | 예 |
 | 탐지 작업 상태 (`jobStatus`) | `succeeded` → 완료, `failed` → 실패, `running` → 진행 중, `queued`·`pending` → 대기 | zeek_AD `scoring_jobs.status` | 예 |

@@ -134,7 +134,7 @@
 
 **고른 것.** 상세는 판단·조치에 쓰는 정보만 남기고(접어 두지도 않음), 용어는 관제 표준 용어로 바꿨다. 관제에서 그대로 쓰는 영어는 영어로, 한국 관제에서 굳은 말은 그 말로 쓰고 내부 DB·필드 이름은 계속 숨긴다.
 
-**결과·근거.** 남긴 것과 뺀 것의 표: [`docs/ui-terminology.md`](ui-terminology.md) '상세 화면 표시 항목'. 옛 표기가 화면에 다시 나오면 실패하는 회귀 시험: `frontend/src/test/uiTerminology.test.tsx`(`OLD_TERMS`).
+**결과·근거.** 남긴 것과 뺀 것의 표: [`docs/ui-terminology.md`](ui-terminology.md) '상세 화면 표시 항목'. Slack 알림 본문은 2026-11-23(`T38`)에 다시 보이게 했다. 같은 인시던트에 알림이 두 건이면 카드만으로 무엇을 알렸는지 구별할 수 없었다. 원본 JSON·채널·URL은 지금도 화면에 두지 않는다. 옛 표기가 화면에 다시 나오면 실패하는 회귀 시험: `frontend/src/test/uiTerminology.test.tsx`(`OLD_TERMS`).
 
 ## 9. 도메인 없이 공개 주소를 만들었다 (2026-11-20)
 
