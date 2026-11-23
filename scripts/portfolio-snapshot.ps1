@@ -10,7 +10,7 @@
     [string]$SshHost = "",
     [string]$WslDistro = "Ubuntu",
     # 공개할 캡처(demo 허용 패턴과 같은 형식: 정확한 ID 또는 접두사*). 덤프 전후 건수는 이 캡처들만 같으면 된다.
-    [string]$PublicCaptures = "cic17-*,syn1-*,lab-20261119",
+    [string]$PublicCaptures = "cic17-*,syn1-*,lab-20261119,lab-20261122",
     [switch]$SkipSecretScan
 )
 

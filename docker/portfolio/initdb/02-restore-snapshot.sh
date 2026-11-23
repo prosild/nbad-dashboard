@@ -21,6 +21,10 @@ echo "portfolio-restore: pg_restore --exit-on-error into zeekad (owners and priv
 pg_restore --username "$POSTGRES_USER" --dbname zeekad --exit-on-error --verbose "$SNAPSHOT_DIR/zeekad.dump" 2>&1 \
     | sed 's/^/portfolio-restore: /'
 
+# 복원 직후에는 플래너 통계가 없어 행 수 추정이 어긋난다(T35에서 큐가 느려진 일). 자동 통계를 기다리지 않고 바로 만든다(T39).
+echo "portfolio-restore: ANALYZE zeekad"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname zeekad -c "ANALYZE" | sed 's/^/portfolio-restore: /'
+
 echo "portfolio-restore: incidents per capture (dashboard.latest_incident_queue)"
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname zeekad -AtF ' = ' \
     -c "SELECT capture_id, count(*) FROM dashboard.latest_incident_queue GROUP BY capture_id ORDER BY capture_id" \

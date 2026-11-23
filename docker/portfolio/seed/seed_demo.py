@@ -6,9 +6,9 @@
   이미 있으면 다른 계정처럼 비활성으로 둔다(T33 이전 공개 스택과 같다). 이 계정이 바꾼 것은 sandbox-reset이 매시 정각에 되돌린다.
 두 계정의 허용 캡처는 같다.
 
-허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119
-(Kali 실습망 캡처 lab-20261119만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 같은 나머지 실습망
-캡처는 시연 화면에서 숨긴다, 2026-11-21 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
+허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119,lab-20261122
+(Kali 실습망 캡처 lab-20261119·lab-20261122만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·첫 VM 실행 lab-20261118·
+시험 뒤 유휴 구간 lab-20261123 같은 나머지 실습망 캡처는 시연 화면에서 숨긴다, 2026-11-21·2026-11-23 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
 
 compose.portfolio.yml의 demo-seed 서비스(zeekad-pipeline 이미지의 Python)로 실행한다. 다시 실행해도 안전하다(멱등).
 1. zeekad_dashboard를 dashboard_app 계정으로 읽어 현재 상태를 확인한다. 이미 목표 상태면 아무것도 바꾸지 않고 끝낸다.
@@ -40,7 +40,7 @@ DEMO_ROLE = "VIEWER"
 ANALYST_USERNAME = "trial-analyst"
 ANALYST_ROLE = "ANALYST"
 DEFAULT_ANALYST_DISPLAY_NAME = "포트폴리오 방문자 (분석가 체험)"
-DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119"
+DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119,lab-20261122"
 ADMIN_USERNAME = "admin"
 SEED_ACTOR = "portfolio-seed"
 

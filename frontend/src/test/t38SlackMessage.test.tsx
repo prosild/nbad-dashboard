@@ -150,6 +150,41 @@ describe('T38 Slack 알림 본문과 전문', () => {
     expect(screen.getAllByText(/근거 보기 링크 채널 사용자 전체/).length).toBe(4);
   });
 
+  it('T39: 페이로드 맨 위의 reply_broadcast·zeekad_thread_parent(lab-20261122 새 키)는 그리지 않고 본문·전문만 보인다', async () => {
+    const user = userEvent.setup();
+    const payload = {
+      channel: 'C0SECRETCHAN',
+      text: '[캡처] 조사 큐 2위 · 10.10.*.* (출발지)',
+      reply_broadcast: true,
+      zeekad_thread_parent: 'lab-x|10.10.*.*|originator|1763820000',
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: '[캡처] 조사 큐 2위' } },
+        { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: '근거 보기' }, url: 'http://127.0.*.*:8000/api/v1/jobs/1/incidents/2' }] },
+      ],
+    };
+    expect(parseSlackMessage(JSON.stringify(payload)).body).not.toBeNull();
+    const { container } = render(
+      <SlackThreadsSection
+        threadGroups={group(
+          delivery({ createdAt: AFTER }),
+          delivery({
+            createdAt: AFTER,
+            threadParent: 'lab-x|10.10.*.*|originator|1763820000',
+            threadRoleLabel: '머리 사건 후속 답글',
+            replyBroadcast: true,
+            payloadJson: JSON.stringify(payload),
+          }),
+        )}
+      />,
+    );
+    await openFull(user);
+    const html = container.innerHTML;
+    for (const hidden of ['reply_broadcast', 'zeekad_thread_parent', 'lab-x', '1763820000', '127.0', ':8000', 'api/v1', 'C0SECRETCHAN', '"text"']) {
+      expect(html, hidden).not.toContain(hidden);
+    }
+    expect(screen.getByText('[캡처] 조사 큐 2위 · 10.10.*.* (출발지)')).toBeTruthy();
+  });
+
   it('글 풀이: 굵게·기울임은 낱말 경계 짝만, 낱말 안 밑줄·~·대괄호 글은 그대로, 엔티티는 마지막에 푼다', () => {
     const flat = (s: string) => slackTextLines(s).map((l) => l.map((seg) => seg.text).join(''));
     expect(flat('*관측 요약*\n• 근거 _(F01, F02)_')).toEqual(['관측 요약', '• 근거 (F01, F02)']);

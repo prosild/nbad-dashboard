@@ -201,6 +201,12 @@ describe('T37 근거 사실 사전', () => {
       where: null,
     });
     expect(describeProblem('옛 형식 문제 글', VIEWER_PS)).toEqual({ text: '옛 형식 문제 글', known: false, where: null });
+    // T39: lab-20261122에서 처음 나온 kind. zeek_AD 문서에 설명이 없어 사전에 두지 않고 원문으로 보인다(뜻을 지어내지 않는다)
+    expect(describeProblem({ kind: 'attack_id_not_in_candidates', value: 'T0000', where: 'possible_explanations[0]' }, VIEWER_PS)).toEqual({
+      text: '{"kind":"attack_id_not_in_candidates","value":"T0000","where":"possible_explanations[0]"}',
+      known: false,
+      where: null,
+    });
   });
 });
 

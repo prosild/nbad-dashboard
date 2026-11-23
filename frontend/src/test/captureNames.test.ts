@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureInfo, captureText, captureShortName, captureShortNames, shortNameOf } from '../utils/labels';
+import { LAB_CAPTURE_NOTES, captureInfo, captureText, captureShortName, captureShortNames, shortNameOf } from '../utils/labels';
 
 /** 수집 구간(캡처) 표시 이름(zeek_AD 데이터 계약 v2, Q65) */
 describe('캡처 표시 이름', () => {
@@ -29,10 +29,19 @@ describe('캡처 표시 이름', () => {
     ]);
   });
 
-  it('실습망 덧붙임 3개와 표에 없는 새 lab-*', () => {
+  it('실습망 덧붙임 5개와 표에 없는 새 lab-*', () => {
     expect(captureText('lab-20261119')).toBe('실습망 2026-11-19 · Kali 공격 + 정상 배경');
     expect(captureText('lab-20261118')).toBe('실습망 2026-11-18 · 시험');
     expect(captureText('lab-20261201')).toBe('실습망 2026-12-01 · 시험(가짜 패킷)');
+    // T39: zeek_AD data-contract-v2 "실습망 캡처별 표시"(2026-11-23)
+    expect(captureText('lab-20261122')).toBe('실습망 2026-11-22 · Kali 공격 7종 + 타깃 VM');
+    expect(captureText('lab-20261123')).toBe('실습망 2026-11-23 · 시험(위 캡처의 뒤 시간)');
+    expect(captureInfo('lab-20261122').tooltip).toContain('SSH 무차별 대입, DNS 터널');
+    expect(captureInfo('lab-20261123').tooltip).toContain('공격 실행 기록은 없다');
+    // 화면 번들은 조회자 마스킹을 거치지 않으므로 사전 문구에 IPv4를 두지 않는다
+    for (const id of Object.keys(LAB_CAPTURE_NOTES)) {
+      expect(LAB_CAPTURE_NOTES[id].description).not.toMatch(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+    }
     expect(captureInfo('lab-20261119').tooltip).toContain('배포 VM이 격리 실습망에서 실제로 수집한 트래픽(날짜는 UTC)');
     expect(captureInfo('lab-20261119').tooltip).toContain('정상 배경 35분');
     expect(captureInfo('lab-20261201').tooltip).toContain('시험용 생성기로 만든 패킷');
@@ -64,11 +73,12 @@ describe('짧은 수집원 이름(T24)', () => {
     expect(captureShortName(null)).toBe('-');
   });
 
-  it('공개 캡처 9개가 서로 다른 짧은 이름이고, 허용 목록 안에서 겹치면 연도를 붙인다', () => {
-    const publicIds = ['cic17-tue', 'cic17-wed', 'cic17-thu', 'cic17-fri', 'syn1-tue', 'syn1-wed', 'syn1-thu', 'syn1-fri', 'lab-20261119'];
+  it('공개 캡처 10개가 서로 다른 짧은 이름이고, 허용 목록 안에서 겹치면 연도를 붙인다', () => {
+    const publicIds = ['cic17-tue', 'cic17-wed', 'cic17-thu', 'cic17-fri', 'syn1-tue', 'syn1-wed', 'syn1-thu', 'syn1-fri', 'lab-20261119', 'lab-20261122'];
     const names = captureShortNames(publicIds);
-    expect(new Set(publicIds.map((id) => names.get(id))).size).toBe(9);
+    expect(new Set(publicIds.map((id) => names.get(id))).size).toBe(10);
     expect(names.get('lab-20261119')).toBe('실습 11-19');
+    expect(names.get('lab-20261122')).toBe('실습 11-22');
     const clash = captureShortNames(['lab-20251119', 'lab-20261119', 'lab-20261120']);
     expect(clash.get('lab-20251119')).toBe('실습 2025-11-19');
     expect(clash.get('lab-20261119')).toBe('실습 2026-11-19');

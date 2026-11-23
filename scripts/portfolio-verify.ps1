@@ -7,6 +7,8 @@
     [string]$ReportDir = "build/portfolio-verify",
     # T33 노출 확인 결과(exposure.md·exposure-values.txt)를 쓸 폴더. 주면 [T33x]를 돌린다. 실제 값이 들어가므로 커밋하지 않는 곳으로 준다.
     [string]$ExposureDir = "",
+    # T39 인시던트 번호 대조 목록(공개 앱 DB에서 읽기 전용으로 내보낸 "번호|sha256(incident_id)" 줄). 주면 [T39c]를 돈다.
+    [string]$ExpectedRefsFile = "",
     # T36 빠른 사람 사용 흉내·429 회복 확인 도구(handoff/T36/tools/read-usage.js, playwright-core). 주면 [T36d]를 돌린다.
     [string]$UsageScript = "",
     [switch]$SkipZap
@@ -87,8 +89,11 @@ $expectedCounts = [ordered]@{}
 foreach ($p in $manifest.captureIncidentCounts.PSObject.Properties) { $expectedCounts[$p.Name] = [int]$p.Value }
 # T22: demo 허용 캡처는 시드 기본값 cic17-*,syn1-*,lab-20261119(공개 데모는 배포 VM 스냅샷. Kali 실습망 lab-20261119만 공개,
 #      시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 등 나머지는 숨김, 2026-11-21 결정). 정확한 ID는 그 캡처만, 접두사*는 접두사 일치.
-$demoPatterns = @("cic17-*", "syn1-*", "lab-20261119")
-$demoLabCapture = "lab-20261119"
+# T39: lab-20261122(Kali 공격 7종 + 타깃 VM)를 더하고 시험 뒤 유휴 구간 lab-20261123은 숨긴다(2026-11-23 결정).
+#      실습망 단언은 공개 실습망 캡처 목록 전체를 본다. 노출 확인(-ExposureDir)은 처음 공개하는 lab-20261122를 본다(lab-20261119는 T33에서 봤다).
+$demoPatterns = @("cic17-*", "syn1-*", "lab-20261119", "lab-20261122")
+$demoLabCaptures = @("lab-20261119", "lab-20261122")
+$exposureLabCapture = "lab-20261122"
 function Test-DemoPattern([string]$CaptureId) {
     foreach ($p in $demoPatterns) {
         if ($p.EndsWith('*')) { if ($CaptureId.StartsWith($p.Substring(0, $p.Length - 1), [StringComparison]::Ordinal)) { return $true } }
@@ -362,30 +367,48 @@ function Get-ValueShape([string]$V) {
 }
 
 function Invoke-T33Exposure($TrialClient) {
-    Write-Host "=== [T33x] 노출 확인(demo vs $trialUser, $demoLabCapture) ==="
+    Write-Host "=== [T33x] 노출 확인(demo vs $trialUser, $exposureLabCapture) ==="
     New-Item -ItemType Directory -Force -Path $ExposureFullDir | Out-Null
     $dc = New-Client "198.51.100.240"
     Assert-Status (Login-Api $dc "demo" $env:DEMO_PASSWORD) 200 "[T33x] demo 로그인"
-    $q = Invoke-Http -Path "/api/incidents/queue?period=all&captureId=$demoLabCapture&size=100" -Client $TrialClient
-    Assert-Status $q 200 "[T33x] $trialUser 실습망 큐"
-    $items = @($q.Json.items)
-    Assert-True ($items.Count -eq [int]$q.Json.total) "[T33x] 실습망 큐 한 쪽에 전부(total=$($q.Json.total))"
+    # T39: 큐를 쪽마다 넘겨 그 캡처의 인시던트를 전부 모은다(표본으로 줄이지 않는다).
+    $items = [System.Collections.Generic.List[object]]::new()
     $reqs = [System.Collections.Generic.List[object]]::new()
-    $reqs.Add(@("queue", "/api/incidents/queue?period=all&captureId=$demoLabCapture&size=100"))
-    $reqs.Add(@("list", "/api/incidents?captureId=$demoLabCapture"))
-    $reqs.Add(@("reviews", "/api/reviews?captureId=$demoLabCapture"))
-    $reqs.Add(@("operations", "/api/operations?period=all&captureId=$demoLabCapture"))
-    $reqs.Add(@("overview", "/api/dashboard/overview?period=all&captureId=$demoLabCapture"))
+    $qTotal = -1
+    for ($page = 1; $page -le 50; $page++) {
+        $qPath = "/api/incidents/queue?period=all&captureId=$exposureLabCapture&size=100&page=$page"
+        $q = Invoke-Http -Path $qPath -Client $TrialClient
+        Assert-Status $q 200 "[T33x] $trialUser 실습망 큐 $page쪽"
+        $qTotal = [int]$q.Json.total
+        $reqs.Add(@("queue", $qPath))
+        foreach ($it in @($q.Json.items)) { $items.Add($it) }
+        if (@($q.Json.items).Count -eq 0 -or $items.Count -ge $qTotal) { break }
+    }
+    Assert-True ($items.Count -eq $qTotal -and $qTotal -eq $expectedCounts[$exposureLabCapture]) "[T33x] 실습망 큐 전부 모음($($items.Count) = total $qTotal = manifest $($expectedCounts[$exposureLabCapture]))"
+    $reqs.Add(@("list", "/api/incidents?captureId=$exposureLabCapture"))
+    $reqs.Add(@("reviews", "/api/reviews?captureId=$exposureLabCapture"))
+    $reqs.Add(@("operations", "/api/operations?period=all&captureId=$exposureLabCapture"))
+    $reqs.Add(@("overview", "/api/dashboard/overview?period=all&captureId=$exposureLabCapture"))
+    # T39: 캡처에 묶이지 않은 조회자 응답도 본다(공개 전 내용 목록 8)
+    $reqs.Add(@("operations-all", "/api/operations?period=all"))
+    $reqs.Add(@("reviews-all", "/api/reviews"))
+    $reqs.Add(@("overview-all", "/api/dashboard/overview?period=all"))
     foreach ($it in $items) {
         $reqs.Add(@("detail", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)"))
         $reqs.Add(@("assignees", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)/assignees"))
     }
+    # T39: 공개 전 내용 목록(ㄴ)용으로 demo 응답 원문을 남긴다(실제 값, -ExposureDir 안에만. 커밋하지 않는다).
+    $demoRawDir = Join-Path $ExposureFullDir "demo-responses"
+    New-Item -ItemType Directory -Force -Path $demoRawDir | Out-Null
+    $rawSeq = 0
     $fields = @{}   # "kind path" -> @{ Values = HashSet; Count = n; Demo = HashSet(shapes) }
     $statusLines = [System.Collections.Generic.List[string]]::new()
     $leafTotal = 0
     foreach ($r in $reqs) {
         $tRes = Invoke-Http -Path $r[1] -Client $TrialClient
         $dRes = Invoke-Http -Path $r[1] -Client $dc
+        $rawSeq++
+        [IO.File]::WriteAllText((Join-Path $demoRawDir ("{0:D4}-{1}.json" -f $rawSeq, $r[0])), ("// GET $($r[1]) -> HTTP $($dRes.Status)`n" + [string]$dRes.Body), $utf8NoBom)
         if ($r[0] -ne 'detail' -and $r[0] -ne 'assignees') { $statusLines.Add("$($r[0]) $($r[1]): $trialUser HTTP $($tRes.Status), demo HTTP $($dRes.Status)") }
         Assert-Status $tRes 200 "[T33x] $trialUser $($r[1])"
         $tLeaves = [ordered]@{}; Get-JsonLeaves $tRes.Json "" $tLeaves
@@ -405,7 +428,7 @@ function Invoke-T33Exposure($TrialClient) {
     }
     $detailStatus = "detail·assignees: $($items.Count)건씩(모두 $trialUser 200), demo assignees HTTP $((Invoke-Http -Path "/api/incidents/$($items[0].jobId)/rank/$($items[0].queueRank)/assignees" -Client $dc).Status)"
     $md = [System.Collections.Generic.List[string]]::new()
-    $md.Add("# T33 노출 확인: $demoLabCapture, demo(VIEWER) vs $trialUser(ANALYST)")
+    $md.Add("# T33 노출 확인: $exposureLabCapture, demo(VIEWER) vs $trialUser(ANALYST)")
     $md.Add("")
     $md.Add("리허설 스택(스냅샷 $((Get-Content (Join-Path $SnapshotFullDir 'zeekad.dump.sha256') -Raw).Substring(0, 12))…), 인시던트 $($items.Count)건, 요청 $($reqs.Count)개(두 계정 각각), $trialUser 응답 값 $($leafTotal)개.")
     $md.Add("demo에서 가려지거나 없거나 다른 값만 센다. 값은 적지 않는다(실제 값은 exposure-values.txt, 커밋하지 않음).")
@@ -449,6 +472,12 @@ try {
     $e2eLogs.Add("[restore] postgres init log: sandbox-reset login failures before sandbox-setup (expected, not counted)=$($resetLoginFails.Count); errors=$($restoreErrors.Count) warnings=$($restoreWarnings.Count) done=$([bool]($restoreLines -match 'portfolio-restore: done'))$(if ($restoreWarnings.Count) { "`n    " + ($restoreWarnings -join "`n    ") })")
     Assert-True ($restoreErrors.Count -eq 0) "스냅샷 복원 로그 오류 0건"
     Assert-True ([bool]($restoreLines -match 'portfolio-restore: done')) "스냅샷 복원 완료 표지"
+    # T39: 복원 끝에 zeekad DB 통계를 만든다(02-restore-snapshot.sh의 ANALYZE)
+    $analyzeLines = @($restoreLines | Where-Object { $_ -match 'portfolio-restore: ANALYZE' })
+    $lastAnalyzed = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "zeekad", "-AtF", "|", "-c",
+        "SELECT count(*) || '|' || count(*) FILTER (WHERE last_analyze IS NOT NULL) FROM pg_stat_user_tables WHERE schemaname = 'zeekad'")) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[restore] ANALYZE lines=[$($analyzeLines -join ' / ')]; zeekad tables (all|last_analyze set)=$lastAnalyzed")
+    Assert-True ($analyzeLines.Count -ge 2 -and $lastAnalyzed -match '^(\d+)\|\1$') "[T39] 복원 끝 ANALYZE 실행, zeekad 표 모두 통계 있음 ($lastAnalyzed)"
 
     # --- 계정 시드 두 번(두 번째는 변경 없음이어야 한다) ---
     Write-Host "=== 계정 시드 1차·2차 실행 ==="
@@ -592,7 +621,9 @@ try {
     $queueByCapture = [ordered]@{}
     $bundleByCapture = @{}
     $e2eLogs.Add("[3-scope] manifest captures=[$($expectedCounts.Keys -join ', ')] demo visible=[$($demoVisibleCaptures -join ', ')] hidden=[$($demoHiddenCaptures -join ', ')]")
-    Assert-True ($demoVisibleCaptures -contains $demoLabCapture) "demo에게 보이는 캡처에 $demoLabCapture 포함(manifest 기준 $($demoVisibleCaptures.Count)개)"
+    foreach ($labCap in $demoLabCaptures) {
+        Assert-True ($demoVisibleCaptures -contains $labCap) "demo에게 보이는 캡처에 $labCap 포함(manifest 기준 $($demoVisibleCaptures.Count)개)"
+    }
     $defaultQueue = Invoke-Http -Path "/api/incidents" -Client $demo
     Assert-Status $defaultQueue 200 "demo 인시던트 목록(캡처 지정 없음)"
     $demoAllowed = @($defaultQueue.Json.allowedCaptures | Sort-Object)
@@ -632,10 +663,13 @@ try {
     foreach ($cap in $queueByCapture.Keys) { if ($queueByCapture[$cap].Count) { $detailTargets.Add($queueByCapture[$cap][0]) } }
     $withReport = @($queueByCapture.Values | ForEach-Object { $_ } | Where-Object { $_.hasReport }) | Select-Object -First 3
     foreach ($r in $withReport) { $detailTargets.Add($r) }
-    # T22: 실습망 lab-20261119는 따로 본다(AI 리포트가 있는 사건 상세 1건 이상, 증적 available=true 1건 이상).
-    $labWithReport = @(@($queueByCapture[$demoLabCapture]) | Where-Object { $_.hasReport }) | Select-Object -First 3
-    foreach ($r in $labWithReport) { $detailTargets.Add($r) }
-    $labReportOk = 0; $labEvidenceOk = 0
+    # T22: 실습망 캡처는 따로 본다(캡처마다 AI 리포트가 있는 사건 상세 1건 이상, 증적 available=true 1건 이상). T39: 공개 실습망 캡처 전부.
+    $labWithReport = @{}; $labReportOk = @{}; $labEvidenceOk = @{}
+    foreach ($labCap in $demoLabCaptures) {
+        $labWithReport[$labCap] = @(@(@($queueByCapture[$labCap]) | Where-Object { $_.hasReport }) | Select-Object -First 3)
+        foreach ($r in $labWithReport[$labCap]) { $detailTargets.Add($r) }
+        $labReportOk[$labCap] = 0; $labEvidenceOk[$labCap] = 0
+    }
     $evidenceOk = 0; $reportOk = 0; $slackCount = 0; $sendDecisionCount = 0
     $evidenceStructuredOk = 0
     $expectedProtocolLogKeys = @("dns", "ftp", "smb", "ssh", "tls", "http", "ntlm", "dce_rpc", "kerberos")
@@ -646,9 +680,9 @@ try {
         $dd = $d.Json.detail
         if ($dd.evidence.available -eq $true) { $evidenceOk++ }
         if ($dd.report.present -eq $true) { $reportOk++ }
-        if ($t.captureId -eq $demoLabCapture) {
-            if ($dd.evidence.available -eq $true) { $labEvidenceOk++ }
-            if ($dd.report.present -eq $true) { $labReportOk++ }
+        if ($demoLabCaptures -contains $t.captureId) {
+            if ($dd.evidence.available -eq $true) { $labEvidenceOk[$t.captureId]++ }
+            if ($dd.report.present -eq $true) { $labReportOk[$t.captureId]++ }
         }
         $slackCount += @($dd.slackDeliveries).Count
         if ($null -ne $dd.sendDecision) { $sendDecisionCount++ }
@@ -672,9 +706,11 @@ try {
     Assert-True ($evidenceOk -ge 1) "인시던트 상세 증적 available=true 1건 이상(근거 API 동작)"
     Assert-True ($evidenceStructuredOk -eq $evidenceOk) "증적 available=true 상세 모두 정형 칸 채워짐($evidenceStructuredOk/$evidenceOk)"
     Assert-True ($reportOk -ge 1) "리포트가 있는 인시던트 상세에서 리포트 표시 1건 이상"
-    $e2eLogs.Add("[3b-lab] $demoLabCapture details with hasReport=$(@($labWithReport).Count) report.present=$labReportOk evidence.available=$labEvidenceOk")
-    Assert-True ($labReportOk -ge 1) "$demoLabCapture AI 리포트가 있는 사건 상세 1건 이상"
-    Assert-True ($labEvidenceOk -ge 1) "$demoLabCapture 증적 available=true 1건 이상"
+    foreach ($labCap in $demoLabCaptures) {
+        $e2eLogs.Add("[3b-lab] $labCap details with hasReport=$(@($labWithReport[$labCap]).Count) report.present=$($labReportOk[$labCap]) evidence.available=$($labEvidenceOk[$labCap])")
+        Assert-True ($labReportOk[$labCap] -ge 1) "$labCap AI 리포트가 있는 사건 상세 1건 이상"
+        Assert-True ($labEvidenceOk[$labCap] -ge 1) "$labCap 증적 available=true 1건 이상"
+    }
     $ops = Invoke-Http -Path "/api/operations" -Client $demo
     Assert-Status $ops 200 "demo /api/operations"
     Find-UnmaskedIpv4 $ops.Json "operations" $ipHits
@@ -958,13 +994,20 @@ try {
     $qPending = [int](Invoke-Http -Path "/api/incidents/queue?period=all&size=25" -Client $demo).Json.summary.reviewPending
     $e2eLogs.Add("[T24b] escalation pending: queue(period=all).summary.reviewPending=$qPending; /api/reviews pendingOnly pending=$rvPending (reviews rows=$(@($rv.Json.reviews).Count))$(if ($qPending -ne $rvPending) { '; DIFFERENT: queue counts latest_incident_queue.zeekad_review_pending(latest analysis), /api/reviews lists analyst_review_queue rows' })")
 
-    # [T24c] 실습망 센서 상태 ok, lab-20261119 active(latest-data 기준), 기준 시각 = [T23b] SQL 기준 시각
+    # [T24c] 실습망 센서 상태 ok, 기준 시각을 만든 공개 실습망 캡처 하나만 active(latest-data 기준), 기준 시각 = [T23b] SQL 기준 시각
+    #        T39: 센서의 captureCount = manifest의 공개 실습망 캡처 수, active = 공개 실습망 캡처 가운데 성공 작업 finished_at이 가장 늦은 것.
     $ov24 = Invoke-Http -Path "/api/dashboard/overview?period=24h" -Client $demo
     $labSensor = @($ov24.Json.sensors | Where-Object { $_.sensorKey -eq 'lab-*' })
-    $labCap = @($ov24.Json.captures | Where-Object { $_.captureId -eq $demoLabCapture })
+    $publicLabCaps = @($demoVisibleCaptures | Where-Object { $_ -like 'lab-*' } | Sort-Object)
+    $publicLabIn = ($publicLabCaps | ForEach-Object { "'$_'" }) -join ','
+    $activeLabExpected = (Invoke-Psql "zeekad" "SELECT capture_id FROM dashboard.scoring_jobs WHERE status = 'succeeded' AND finished_at IS NOT NULL AND capture_id IN ($publicLabIn) ORDER BY finished_at DESC, capture_id LIMIT 1").Output.Trim()
+    $labCap = @($ov24.Json.captures | Where-Object { $_.captureId -eq $activeLabExpected })
+    $labOthers = @($ov24.Json.captures | Where-Object { $publicLabCaps -contains $_.captureId -and $_.captureId -ne $activeLabExpected })
+    $e2eLogs.Add("[T24c] public lab captures=[$($publicLabCaps -join ', ')] expected active (latest succeeded finished_at)=$activeLabExpected others=[$(@($labOthers | ForEach-Object { "$($_.captureId):$($_.state)" }) -join ', ')]")
     $e2eLogs.Add("[T24c] sensors=[$(@($ov24.Json.sensors | ForEach-Object { "$($_.sensorKey):$($_.health) lastScored=$($_.lastScoredAt) lastActivity=$($_.lastActivityAt) captures=$($_.captureCount) active=$($_.activeCaptureId)" }) -join '; ')] captures=[$(@($ov24.Json.captures | ForEach-Object { "$($_.captureId):$($_.state)" }) -join ', ')] anchor=$($ov24.Json.anchor) snapshot=$($ov24.Json.snapshot) alerting=$($ov24.Json.alerting | ConvertTo-Json -Compress)")
-    Assert-True ($labSensor.Count -eq 1 -and $labSensor[0].health -eq 'ok' -and $labSensor[0].captureCount -eq 1) "[T24c] 실습망 센서 상태 ok(공개 캡처 1개 묶음)" $ov24
-    Assert-True ($labCap.Count -eq 1 -and $labCap[0].state -eq 'active') "[T24c] $demoLabCapture 수집 중(active)" $ov24
+    Assert-True ($labSensor.Count -eq 1 -and $labSensor[0].health -eq 'ok' -and $labSensor[0].captureCount -eq $publicLabCaps.Count) "[T24c] 실습망 센서 상태 ok(공개 실습망 캡처 $($publicLabCaps.Count)개 묶음)" $ov24
+    Assert-True ($labCap.Count -eq 1 -and $labCap[0].state -eq 'active' -and $labSensor[0].activeCaptureId -eq $activeLabExpected) "[T24c] $activeLabExpected 수집 중(active)" $ov24
+    Assert-True ($labOthers.Count -eq ($publicLabCaps.Count - 1) -and @($labOthers | Where-Object { $_.state -eq 'active' }).Count -eq 0) "[T24c] 나머지 공개 실습망 캡처는 active 아님" $ov24
     Assert-True ((ConvertTo-EpochMicros ([string]$ov24.Json.anchor)) -eq $anchorMicros -and $ov24.Json.snapshot -eq $true) "[T24c] overview 기준 시각 = 공개 캡처 SQL 기준 시각(latest-data)" $ov24
     Assert-True (@($ov24.Json.captures | Where-Object { $_.sourceType -eq 'imported' -and $_.state -notin @('imported', 'failed', 'none') }).Count -eq 0) "[T24c] 가져온 데이터 캡처 상태" $ov24
 
@@ -1261,9 +1304,20 @@ try {
     $audit0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs").Output.Trim()
     $ahist0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignment_history").Output.Trim()
     Assert-True (& $isBaseline (& $baselineDiff)) "[T33d] 쓰기 전 세 표 = 기준선"
-    $open33 = @((Invoke-Psql "zeekad" "SELECT lq.job_id || '|' || lq.queue_rank || '|' || lq.incident_id FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = '$demoLabCapture' AND NOT EXISTS (SELECT 1 FROM zeekad.incident_status s WHERE s.incident_id = lq.incident_id) ORDER BY lq.job_id, lq.queue_rank LIMIT 6").Output -split "`r?`n" | Where-Object { $_ })
-    $pend33 = @((Invoke-Psql "zeekad" "SELECT r.job_id || '|' || r.incident_id FROM zeekad.analyst_review r WHERE r.action IS NULL AND split_part(r.incident_id, '|', 1) = '$demoLabCapture' ORDER BY r.job_id, r.incident_id LIMIT 2").Output -split "`r?`n" | Where-Object { $_ })
-    Assert-True ($open33.Count -ge 6 -and $pend33.Count -ge 2) "[T33d] 실습망 공개 캡처에 신규 인시던트 6건·미결정 검토 2건 (open=$($open33.Count), pending=$($pend33.Count))"
+    # T39: 표본은 공개 실습망 캡처에서 뽑되 lab-20261122를 먼저 보고 없으면 lab-20261119에서 뽑는다(어느 캡처인지 로그에 남긴다).
+    $open33 = @(); $pend33 = @(); $openCap33 = ''; $pendCap33 = ''
+    foreach ($sampleCap in @('lab-20261122', 'lab-20261119')) {
+        if ($open33.Count -lt 6) {
+            $open33 = @((Invoke-Psql "zeekad" "SELECT lq.job_id || '|' || lq.queue_rank || '|' || lq.incident_id FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = '$sampleCap' AND NOT EXISTS (SELECT 1 FROM zeekad.incident_status s WHERE s.incident_id = lq.incident_id) ORDER BY lq.job_id, lq.queue_rank LIMIT 6").Output -split "`r?`n" | Where-Object { $_ })
+            $openCap33 = $sampleCap
+        }
+        if ($pend33.Count -lt 2) {
+            $pend33 = @((Invoke-Psql "zeekad" "SELECT r.job_id || '|' || r.incident_id FROM zeekad.analyst_review r WHERE r.action IS NULL AND split_part(r.incident_id, '|', 1) = '$sampleCap' ORDER BY r.job_id, r.incident_id LIMIT 2").Output -split "`r?`n" | Where-Object { $_ })
+            $pendCap33 = $sampleCap
+        }
+    }
+    $e2eLogs.Add("[T33d] samples: open incidents from $openCap33 ($($open33.Count)), pending reviews from $pendCap33 ($($pend33.Count))")
+    Assert-True ($open33.Count -ge 6 -and $pend33.Count -ge 2) "[T33d] 실습망 공개 캡처에 신규 인시던트 6건($openCap33)·미결정 검토 2건($pendCap33) (open=$($open33.Count), pending=$($pend33.Count))"
     $inc = @($open33 | ForEach-Object { $p = $_ -split '\|', 3; [pscustomobject]@{ Job = $p[0]; Rank = $p[1]; Id = $p[2] } })
     $rev = @($pend33 | ForEach-Object { $p = $_ -split '\|', 2; [pscustomobject]@{ Job = [long]$p[0]; Id = $p[1] } })
 
@@ -1656,6 +1710,69 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $e2eLogs.Add("[T27e] hidden capture traces=$($t27Leaks.Count) [$(@($t27Leaks | Select-Object -Unique) -join ', ')]; unmasked IPv4 JSON paths=$($t27IpHits.Count)$(if ($t27IpHits.Count) { ' ' + (($t27IpHits | Select-Object -First 20) -join ', ') })")
     Assert-True ($t27Leaks.Count -eq 0) "[T27e] 숨김 캡처 흔적 0"
     Assert-True ($t27IpHits.Count -eq 0) "[T27e] VIEWER 가려지지 않은 IPv4 0"
+
+    Write-Host "=== [T39] 새 실습망 캡처: 스레드 기록·숨김 부모·번호 유지·숨김 흔적 ==="
+    $t39 = New-Client "198.51.100.139"
+    Assert-Status (Login-Api $t39 "demo" $env:DEMO_PASSWORD) 200 "[T39] demo 로그인"
+    $publicIn39 = (@($demoVisibleCaptures | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',')
+    # [T39a] demo로 lab-20261122 상세의 Slack 기록에 스레드 답글(threadParent)·재알림(replyBroadcast) 1건 이상, threadParent·payloadJson 포함 가려지지 않은 IPv4 0
+    $t39aRows = @((Invoke-Psql "zeekad" ("SELECT lq.job_id || '/' || lq.queue_rank FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = 'lab-20261122' " +
+        "AND EXISTS (SELECT 1 FROM dashboard.slack_deliveries d WHERE d.incident_id = lq.incident_id AND d.zeekad_reply_broadcast) " +
+        "AND EXISTS (SELECT 1 FROM dashboard.slack_deliveries d WHERE d.incident_id = lq.incident_id AND d.zeekad_thread_parent IS NOT NULL AND NOT d.zeekad_reply_broadcast) " +
+        "ORDER BY lq.job_id, lq.queue_rank LIMIT 3")).Output.Trim() -split "`r?`n" | Where-Object { $_ -match '^\d+/\d+$' })
+    $t39aReply = 0; $t39aBroadcast = 0; $t39aIp = [System.Collections.Generic.List[string]]::new(); $t39aLines = @()
+    foreach ($row in $t39aRows) {
+        $j39, $r39 = $row -split '/'
+        $d39 = Invoke-Http -Path "/api/incidents/$j39/rank/$r39" -Client $t39
+        Assert-Status $d39 200 "[T39a] demo lab-20261122 상세 $row"
+        $sd39 = @($d39.Json.detail.slackDeliveries)
+        $rep = @($sd39 | Where-Object { $_.threadParent }).Count
+        $bc = @($sd39 | Where-Object { $_.replyBroadcast -eq $true }).Count
+        $t39aReply += $rep; $t39aBroadcast += $bc
+        Find-UnmaskedIpv4 $d39.Json "t39a[$row]" $t39aIp
+        $t39aLines += "$row slack=$($sd39.Count) threadParent=$rep replyBroadcast=$bc maskedView=$($d39.Json.maskedView) sampleParent=$(@($sd39 | Where-Object { $_.threadParent } | Select-Object -First 1 | ForEach-Object { $_.threadParent }))"
+    }
+    $e2eLogs.Add("[T39a] lab-20261122 incidents with reply+broadcast rows (DB)=[$($t39aRows -join ', ')]`n       $($t39aLines -join "`n       ")`n       unmasked IPv4 JSON paths=$($t39aIp.Count)$(if ($t39aIp.Count) { ' ' + (($t39aIp | Select-Object -First 10) -join ', ') })")
+    Assert-True ($t39aRows.Count -ge 1 -and $t39aReply -ge 1 -and $t39aBroadcast -ge 1) "[T39a] lab-20261122 상세 Slack 기록에 스레드 답글 $t39aReply·재알림 $t39aBroadcast (1건 이상)"
+    Assert-True ($t39aIp.Count -eq 0) "[T39a] threadParent·payloadJson 포함 가려지지 않은 IPv4 0"
+    # [T39b] 공개 인시던트의 Slack 행 가운데 부모가 숨김 캡처에 있는 것 0(숨김 캡처 인시던트 ID가 조회자에게 보이게 된다)
+    $hiddenIn39 = (@($demoHiddenCaptures | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',')
+    $t39b = if ($hiddenIn39) { (Invoke-Psql "zeekad" ("SELECT count(*) FROM dashboard.slack_deliveries WHERE zeekad_thread_parent IS NOT NULL " +
+        "AND split_part(zeekad_thread_parent, '|', 1) IN ($hiddenIn39) AND split_part(incident_id, '|', 1) IN ($publicIn39)")).Output.Trim() } else { '0' }
+    $t39bPairs = (Invoke-Psql "zeekad" "SELECT split_part(zeekad_thread_parent, '|', 1) || ' <- ' || split_part(incident_id, '|', 1) || ' = ' || count(*) FROM dashboard.slack_deliveries WHERE zeekad_thread_parent IS NOT NULL GROUP BY 1 ORDER BY 1").Output.Trim() -replace "`r?`n", '; '
+    $e2eLogs.Add("[T39b] public incident rows whose thread parent is in a hidden capture=$t39b; parent capture <- incident capture (all rows): $t39bPairs")
+    Assert-True ($t39b -eq '0') "[T39b] 공개 인시던트 Slack 행의 부모가 숨김 캡처인 것 0 ($t39b)"
+    # [T39c] 최신 큐에 있는 옛 인시던트의 번호 = 공개 앱 DB(내보낸 목록, 전부). 최신 큐에 없는 번호("행만")는 개수·범위만 적는다.
+    if ($ExpectedRefsFile) {
+        $exp39 = @{}
+        foreach ($ln in [IO.File]::ReadAllLines((Resolve-RepoPath $ExpectedRefsFile))) { if ($ln -match '^(\d+)\|([0-9a-f]{64})$') { $exp39[$Matches[2]] = [long]$Matches[1] } }
+        $app39 = @{}
+        foreach ($ln in ((Invoke-Psql "zeekad_dashboard" "SELECT incident_no || '|' || encode(sha256(convert_to(incident_id, 'UTF8')), 'hex') FROM incident_refs").Output -split "`r?`n")) { if ($ln.Trim() -match '^(\d+)\|([0-9a-f]{64})$') { $app39[$Matches[2]] = [long]$Matches[1] } }
+        $latest39 = @{}
+        foreach ($ln in ((Invoke-Psql "zeekad" "SELECT encode(sha256(convert_to(incident_id, 'UTF8')), 'hex') FROM dashboard.latest_incident_queue").Output -split "`r?`n")) { if ($ln.Trim() -match '^[0-9a-f]{64}$') { $latest39[$ln.Trim()] = $true } }
+        $inLatest39 = @($exp39.Keys | Where-Object { $latest39.ContainsKey($_) })
+        $rowOnly39 = @($exp39.Keys | Where-Object { -not $latest39.ContainsKey($_) } | ForEach-Object { $exp39[$_] } | Sort-Object)
+        $diff39 = @($inLatest39 | Where-Object { -not $app39.ContainsKey($_) -or $app39[$_] -ne $exp39[$_] })
+        $newNos39 = @($app39.Keys | Where-Object { -not $exp39.ContainsKey($_) } | ForEach-Object { $app39[$_] } | Sort-Object)
+        $e2eLogs.Add("[T39c] expected refs=$($exp39.Count) (in latest queue $($inLatest39.Count), row-only $($rowOnly39.Count)$(if ($rowOnly39.Count) { " range $($rowOnly39[0])..$($rowOnly39[-1])" })); app refs=$($app39.Count); mismatched numbers=$($diff39.Count); new numbers=$($newNos39.Count)$(if ($newNos39.Count) { " range $($newNos39[0])..$($newNos39[-1])" })")
+        Assert-True ($inLatest39.Count -gt 0 -and $diff39.Count -eq 0) "[T39c] 최신 큐에 있는 옛 인시던트 $($inLatest39.Count)건 번호 = 공개 앱 DB (다름 $($diff39.Count))"
+    } else {
+        $e2eLogs.Add("[T39c] skipped (no -ExpectedRefsFile)")
+    }
+    # [T39d] 숨김 캡처 ID(lab-20261123 포함)가 demo의 현황판·운영 현황·검토 목록 응답 본문에 없다
+    $t39dLeaks = @(); $t39dIp = [System.Collections.Generic.List[string]]::new(); $t39dLines = @()
+    foreach ($pth in @("/api/dashboard/overview", "/api/dashboard/overview?period=all", "/api/operations", "/api/operations?period=all", "/api/reviews", "/api/reviews?pendingOnly=true", "/api/incidents/queue?period=all&size=100")) {
+        $r39 = Invoke-Http -Path $pth -Client $t39
+        Assert-Status $r39 200 "[T39d] demo $pth"
+        Find-UnmaskedIpv4 $r39.Json "t39d[$pth]" $t39dIp
+        $hit = @($demoHiddenCaptures | Where-Object { $r39.Body.Contains($_) })
+        if ($hit.Count) { $t39dLeaks += "$pth -> $($hit -join ',')" }
+        $t39dLines += "$pth HTTP $($r39.Status) bytes=$($r39.Body.Length) hidden=$($hit.Count)"
+    }
+    $e2eLogs.Add("[T39d] hidden captures=[$($demoHiddenCaptures -join ', ')]`n       $($t39dLines -join "`n       ")`n       leaks=$($t39dLeaks.Count) unmasked IPv4 paths=$($t39dIp.Count)")
+    Assert-True ($demoHiddenCaptures -contains 'lab-20261123') "[T39d] lab-20261123이 숨김 캡처(manifest)"
+    Assert-True ($t39dLeaks.Count -eq 0) "[T39d] 현황판·운영 현황·검토 목록·큐 응답에 숨김 캡처 ID 없음"
+    Assert-True ($t39dIp.Count -eq 0) "[T39d] 가려지지 않은 IPv4 0"
 
     # [T27f] 앱 컨테이너를 다시 띄워도 번호가 그대로이고 새 행이 0
     $before27 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || md5(string_agg(incident_no || '=' || incident_id, ',' ORDER BY incident_no)) FROM incident_refs").Output.Trim()
