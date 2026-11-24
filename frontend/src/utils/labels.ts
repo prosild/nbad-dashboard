@@ -38,10 +38,10 @@ export const LABEL_DICTIONARIES = {
     originator: '출발지',
     responder: '목적지',
   },
-  /** 리포트 작성 방식 (zeek_AD zeekad_report_kind) */
+  /** 리포트 작성 방식 (zeek_AD zeekad_report_kind). T43: 템플릿은 "템플릿 리포트"로 통일 */
   reportKind: {
     llm: 'AI 작성',
-    template: '템플릿 작성',
+    template: '템플릿 리포트',
   },
   /** 경보 발송 판단 선택지 (zeek_AD send decision choice) */
   sendChoice: {
@@ -374,8 +374,18 @@ export function detectionModelInfo(id: string | null | undefined): DetectionMode
  */
 export const VERIFICATION_DESCRIPTION = {
   passed: 'AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
-  failedQueue: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다',
+  // T43: 목록 응답에는 사유가 없으므로 검증 실패·호출 실패 가운데 어느 것인지 단정하지 않는다
+  failedQueue: 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세에서 봅니다',
   failedDetail: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 검증 실패 사유를 확인합니다',
+} as const;
+
+/**
+ * T43 리포트 종류의 뜻(zeek_AD 계약 v2: `llm` = LLM 리포트가 검증 통과, `template` = 검증 실패·호출 실패로 규칙 템플릿으로 바꿈).
+ * 템플릿 리포트의 내용을 의심하라는 말로 읽히지 않게, 화면에 보이는 리포트가 무엇인지를 먼저 말한다.
+ */
+export const REPORT_KIND_DESCRIPTION = {
+  llm: 'AI 작성 리포트',
+  template: '템플릿 리포트: AI 리포트를 쓰지 못해 사실만 나열한 템플릿 리포트로 대체됐습니다',
 } as const;
 
 /** 미등록 값 툴팁 문구 */

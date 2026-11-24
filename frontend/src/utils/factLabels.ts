@@ -519,6 +519,22 @@ export function describeVerificationReason(reason: string | null | undefined): V
   return { text: reason, known: false, raw: reason };
 }
 
+/**
+ * T43 템플릿 리포트가 왜 보이는지(AI 리포트를 쓰지 못한 이유)의 한 줄. 사유 구분은 describeVerificationReason을 쓴다.
+ * 그 밖의 값·없음은 뜻을 짓지 않고 "대체됐다"까지만 말한다(원문은 사유 상자가 보인다).
+ */
+export function templateReplacedText(reason: string | null | undefined): string {
+  const view = describeVerificationReason(reason);
+  const value = (reason ?? '').trim();
+  if (view?.known && value === 'verification') {
+    return 'AI가 쓴 리포트가 검증(글 속 숫자·가명·ATT&CK ID를 근거 사실과 대조)에서 걸려 쓰지 않았습니다. 아래는 사실만 나열한 템플릿 리포트입니다.';
+  }
+  if (view?.known) {
+    return `AI 호출이 실패해(${view.text}) AI 리포트를 쓰지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.`;
+  }
+  return 'AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 아래는 사실만 나열한 템플릿 리포트입니다.';
+}
+
 export function describeProblem(item: unknown, pseudonyms: Pseudonyms): ProblemView {
   if (typeof item === 'string') {
     return { text: item, known: false, where: null };

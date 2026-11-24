@@ -10,6 +10,7 @@ import {
   BellRing,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Database,
   FileText,
   FileX,
@@ -55,7 +56,17 @@ import {
   formatRelativeTo,
 } from '../utils/format';
 import { incidentPath } from '../utils/incidentLink';
-import { captureInfo, captureShortNames, detectionModelInfo, labelText, lookupLabel, shortNameOf, VERIFICATION_DESCRIPTION } from '../utils/labels';
+import {
+  captureInfo,
+  captureShortNames,
+  detectionModelInfo,
+  labelText,
+  lookupLabel,
+  REPORT_KIND_DESCRIPTION,
+  shortNameOf,
+  unregisteredTitle,
+  VERIFICATION_DESCRIPTION,
+} from '../utils/labels';
 import {
   DEFAULT_PAGE_SIZE,
   DEFAULT_PERIOD,
@@ -1149,7 +1160,7 @@ function QueueTable({
             <th scope="col" className="soc-th-compact px-1.5 2xl:px-2">
               탐지 모델
             </th>
-            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2" title="AI 분석 리포트 · 검증 · 발송 판단">
+            <th scope="col" className="soc-th-compact px-1.5 2xl:px-2" title="리포트(AI 작성·템플릿) · 검증 · 발송 판단">
               리포트·판단
             </th>
             <SortHeader column="status" label="상태 · 판정" {...headerProps} />
@@ -1304,16 +1315,42 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
 const CHIP_BASE = 'inline-flex h-5 w-5 items-center justify-center rounded border';
 
 /** 리포트·검증·발송 판단을 묶은 아이콘 칩(T21: 세 번째 칩은 발송 판단 zeekadWouldSend이며 "경보 발송"이 아니다). 각 칩은 접근성 이름과 툴팁을 가진다. */
-function SignalChips({ item }: { item: UnifiedQueueItem }) {
+export function SignalChips({ item }: { item: UnifiedQueueItem }) {
   const hasReport = item.zeekadReportJobId !== null;
-  const kind = labelText('reportKind', item.zeekadReportKind);
+  const kindLookup = lookupLabel('reportKind', item.zeekadReportKind);
+  const kind = kindLookup.text;
+  const kindNorm = (item.zeekadReportKind ?? '').trim().toLowerCase();
   return (
     <div className="flex items-center gap-0.5 2xl:gap-1">
-      {hasReport ? (
+      {hasReport && kindNorm === 'template' ? (
+        // T43: 템플릿 리포트는 다른 아이콘·주의 색조로 그려 마우스를 올리지 않아도 AI 작성 리포트와 구분된다
+        <span
+          role="img"
+          aria-label={REPORT_KIND_DESCRIPTION.template}
+          title={`${REPORT_KIND_DESCRIPTION.template} · 리포트 작업 ${item.zeekadReportJobId}`}
+          data-report-kind="template"
+          className={`${CHIP_BASE} border-amber-500/40 bg-amber-500/10 text-amber-200`}
+        >
+          <ClipboardList className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : hasReport && kindNorm === 'llm' ? (
+        <span
+          role="img"
+          aria-label={`${REPORT_KIND_DESCRIPTION.llm} 있음`}
+          title={`${REPORT_KIND_DESCRIPTION.llm} · 리포트 작업 ${item.zeekadReportJobId}`}
+          data-report-kind="llm"
+          className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
+        >
+          <FileText className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : hasReport ? (
         <span
           role="img"
           aria-label={`AI 분석 리포트 있음: ${kind}`}
-          title={`${kind} 리포트 · 리포트 작업 ${item.zeekadReportJobId}`}
+          title={`${kind} 리포트 · 리포트 작업 ${item.zeekadReportJobId}${
+            !kindLookup.known && item.zeekadReportKind ? `
+${unregisteredTitle(item.zeekadReportKind)}` : ''
+          }`}
           className={`${CHIP_BASE} border-slate-600 bg-slate-800 text-slate-100`}
         >
           <FileText className="h-3 w-3" aria-hidden="true" />

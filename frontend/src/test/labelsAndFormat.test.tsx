@@ -25,7 +25,8 @@ describe('표시 이름 사전', () => {
     expect(labelText('hostRole', 'originator')).toBe('출발지');
     expect(labelText('hostRole', 'responder')).toBe('목적지');
     expect(labelText('reportKind', 'llm')).toBe('AI 작성');
-    expect(labelText('reportKind', 'template')).toBe('템플릿 작성');
+    // T43: 리포트 쪽 낱말을 "템플릿 리포트"로 통일했다
+    expect(labelText('reportKind', 'template')).toBe('템플릿 리포트');
     expect(labelText('sendChoice', 'send')).toBe('전송');
     expect(labelText('sendChoice', 'hold')).toBe('보류');
     expect(labelText('sendChoice', 'analyst_review')).toBe('에스컬레이션');

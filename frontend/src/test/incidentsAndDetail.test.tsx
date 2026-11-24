@@ -133,7 +133,8 @@ describe('인시던트 목록 및 상세 화면', () => {
     // 리포트 작업 번호 툴팁(작성 방식을 앞에 더함)
     // T27: 작업 번호는 "작업 40"('#'은 인시던트 번호에만)
     expect(within(row1).getByTitle('AI 작성 리포트 · 리포트 작업 40')).toBeInTheDocument();
-    expect(within(row1).getByRole('img', { name: 'AI 분석 리포트 있음: AI 작성' })).toBeInTheDocument();
+    // T43: AI 작성 리포트 칩의 접근성 이름을 "AI 작성 리포트 있음"으로 바꿨다(템플릿 리포트 칩과 구분)
+    expect(within(row1).getByRole('img', { name: 'AI 작성 리포트 있음' })).toBeInTheDocument();
     expect(screen.getByText('전체 인시던트')).toBeInTheDocument();
   });
 

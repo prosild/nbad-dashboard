@@ -18,6 +18,18 @@ import {
 import { useToast } from '../ToastContext';
 import { incidentShareUrl } from '../../utils/incidentLink';
 import { AckOverdueBadge, elapsedText } from './AssignmentBits';
+import { isTemplateReplaced, TemplateReportBadge } from './ReportSection';
+import { describeVerificationReason } from '../../utils/factLabels';
+
+function isPlainLlm(kind: string | null | undefined): boolean {
+  return (kind ?? '').trim().toLowerCase() === 'llm';
+}
+
+/** T43 머리줄 "템플릿 대체" 표지의 툴팁·읽기 글: 대체됐다는 것과 AI 리포트를 쓰지 못한 사유 */
+function templateHeaderTitle(reason: string | null | undefined): string {
+  const view = describeVerificationReason(reason);
+  return `AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: ${view ? view.text : '-'}`;
+}
 
 /** 복사 버튼 글자. 접근성 이름·툴팁은 버튼에 있다 */
 const COPY_LABEL_CLASS = '';
@@ -166,12 +178,23 @@ export function DetailHeader({
         </Field>
         <Field label="AI 리포트">
           {detail.report.present ? (
-            detail.report.verificationPassed === null ? (
+            isTemplateReplaced(detail.report) ? (
+              // T43: 템플릿 리포트면 "검증 실패" 대신 "템플릿 대체"(사유는 툴팁·읽기 글)
+              <TemplateReportBadge label="템플릿 대체" title={templateHeaderTitle(detail.report.verificationReason)} />
+            ) : detail.report.verificationPassed === null ? (
               <SocBadge tone="neutral">
                 <CodeLabel dict="reportKind" value={detail.report.reportKind} />
               </SocBadge>
             ) : (
-              <VerificationBadge passed={detail.report.verificationPassed} />
+              <>
+                {/* 계약에 없는 조합(llm + 검증 실패, template + 통과, 모르는 kind)은 kind 표지와 검증 표지를 함께 보인다 */}
+                {!(isPlainLlm(detail.report.reportKind) && detail.report.verificationPassed === true) && (
+                  <SocBadge tone="neutral">
+                    <CodeLabel dict="reportKind" value={detail.report.reportKind} />
+                  </SocBadge>
+                )}
+                <VerificationBadge passed={detail.report.verificationPassed} />
+              </>
             )
           ) : (
             <SocBadge tone="muted">

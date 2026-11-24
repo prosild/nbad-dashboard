@@ -522,8 +522,9 @@ describe('통합 인시던트 큐(T23)', () => {
     });
     expect(passChip).toHaveAttribute('title', passChip.getAttribute('aria-label'));
     const row4 = within(table).getByText('10.0.4.1').closest('tr') as HTMLElement;
+    // T43: 실패 칩의 뜻을 "AI 리포트를 쓰지 못해 템플릿으로 대체"로 바꿨다(목록에는 사유가 없어 둘 가운데 단정하지 않는다)
     const failChip = within(row4).getByRole('img', {
-      name: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 상세에서 사유를 봅니다',
+      name: 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세에서 봅니다',
     });
     expect(failChip).toHaveAttribute('title', failChip.getAttribute('aria-label'));
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;

@@ -1,8 +1,9 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ClipboardList } from 'lucide-react';
 import type { ReportView } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge, VerificationBadge } from '../StatusBadge';
-import { describeProblem, describeVerificationReason } from '../../utils/factLabels';
+import { describeProblem, describeVerificationReason, templateReplacedText } from '../../utils/factLabels';
+import { REPORT_KIND_DESCRIPTION } from '../../utils/labels';
 import { AllFactsTable, FactEvidence } from './FactEvidence';
 
 /**
@@ -143,9 +144,30 @@ function VerificationReasonText({ reason }: { reason: string | null }) {
   );
 }
 
-/** 검증 실패일 때만 사유·문제 항목을 보인다. */
+/**
+ * T43 계약(zeek_AD data-contract-v2)대로의 템플릿 리포트인가: kind가 template이고 검증 실패(LLM 리포트를 버리고 템플릿으로 바꿈).
+ * 계약에 없는 조합(llm + 검증 실패, template + 통과·값 없음)은 false이고 화면은 kind 표지와 검증 표지를 함께 보인다.
+ */
+export function isTemplateReplaced(report: Pick<ReportView, 'present' | 'reportKind' | 'verificationPassed'>): boolean {
+  return report.present && (report.reportKind ?? '').trim().toLowerCase() === 'template' && report.verificationPassed === false;
+}
+
+/** T43 "템플릿 리포트" 표지(주의 색조, 실패의 빨강은 쓰지 않는다) */
+export function TemplateReportBadge({ label = '템플릿 리포트', title }: { label?: string; title: string }) {
+  return (
+    <span role="img" aria-label={`${label}: ${title}`} title={title} className="inline-flex" data-template-report="">
+      <SocBadge tone="attention">
+        <ClipboardList className="h-3 w-3" aria-hidden="true" />
+        {label}
+      </SocBadge>
+    </span>
+  );
+}
+
+/** 검증 실패일 때만 사유·문제 항목을 보인다. T43: 템플릿 리포트면 그 문제들이 쓰지 않은 AI 리포트의 것임을 제목에 적는다. */
 export function ReportVerificationProblems({ report }: { report: ReportView }) {
   if (report.verificationPassed !== false) return null;
+  const template = isTemplateReplaced(report);
   // T37: 구조 목록(kind·value·where)을 문장으로 보인다. 옛 응답이면 글 목록을 원문 그대로 보인다.
   const problems = report.verificationProblemItems
     ? report.verificationProblemItems.map((item) => describeProblem(item, report.pseudonyms))
@@ -155,9 +177,13 @@ export function ReportVerificationProblems({ report }: { report: ReportView }) {
       <div className="flex items-center gap-1.5 font-semibold">
         <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="[overflow-wrap:anywhere]">
-          검증 실패 사유: <VerificationReasonText reason={report.verificationReason} />
+          {template ? 'AI 리포트를 쓰지 않은 이유: ' : '검증 실패 사유: '}
+          <VerificationReasonText reason={report.verificationReason} />
         </span>
       </div>
+      {template && problems.length > 0 && (
+        <p className="mt-1 text-amber-200/80">아래 항목은 쓰지 않은 AI 리포트 글의 것입니다. 화면의 템플릿 리포트 내용이 아닙니다.</p>
+      )}
       {problems.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">
           {problems.map((prob, idx) => (
@@ -191,16 +217,30 @@ export function ReportSection({ report }: { report: ReportView }) {
     return <p className="text-sm text-slate-400">이 인시던트에는 AI 분석 리포트가 없습니다.</p>;
   }
 
+  const template = isTemplateReplaced(report);
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <SocBadge tone="neutral">
-          <CodeLabel dict="reportKind" value={report.reportKind} />
-        </SocBadge>
-        <VerificationBadge passed={report.verificationPassed} />
-        <span className="text-slate-400">
-          작성 시각 <span className="tabular-nums text-slate-300">{formatDateTime(report.createdAt)}</span>
-        </span>
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {template ? (
+            <TemplateReportBadge title={REPORT_KIND_DESCRIPTION.template} />
+          ) : (
+            <>
+              <SocBadge tone="neutral">
+                <CodeLabel dict="reportKind" value={report.reportKind} />
+              </SocBadge>
+              <VerificationBadge passed={report.verificationPassed} />
+            </>
+          )}
+          <span className="text-slate-400">
+            작성 시각 <span className="tabular-nums text-slate-300">{formatDateTime(report.createdAt)}</span>
+          </span>
+        </div>
+        {template && (
+          <p className="text-xs text-slate-300" data-testid="template-report-note">
+            {templateReplacedText(report.verificationReason)}
+          </p>
+        )}
       </div>
 
       {report.llmError && (
