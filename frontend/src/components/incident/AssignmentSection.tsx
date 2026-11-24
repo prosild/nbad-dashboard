@@ -19,6 +19,7 @@ export function AssignmentSection({
   closed,
   currentUsername,
   onRefresh,
+  blockedReason = null,
 }: {
   jobId: number;
   queueRank: number;
@@ -27,11 +28,15 @@ export function AssignmentSection({
   closed: boolean;
   currentUsername: string | null;
   onRefresh: () => Promise<void>;
+  /** T42: 값이 최신이 아닌 동안 담당 변경을 막는 이유(조치 패널 위에 한 번 보이고 버튼은 툴팁으로) */
+  blockedReason?: string | null;
 }) {
   const { notify } = useToast();
   const assignee = assignment?.assignee ?? null;
   const mine = Boolean(assignee && currentUsername && assignee.username.toLowerCase() === currentUsername.toLowerCase());
   const [busy, setBusy] = useState(false);
+  const blocked = blockedReason !== null;
+  const blockedTitle = blockedReason ?? undefined;
   const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<AssigneeCandidate[] | null>(null);
   const [picking, setPicking] = useState(false);
@@ -114,7 +119,8 @@ export function AssignmentSection({
             {!mine && (
               <button
                 type="button"
-                disabled={busy || !currentUsername}
+                disabled={busy || blocked || !currentUsername}
+                title={blockedTitle}
                 onClick={() => void submit(currentUsername, '내가 담당자가 되었습니다.')}
                 className="soc-btn-secondary px-2.5 py-1 text-xs"
               >
@@ -124,7 +130,8 @@ export function AssignmentSection({
             )}
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || blocked}
+              title={blockedTitle}
               onClick={() => void openPicker()}
               aria-expanded={picking}
               className="soc-btn-secondary px-2.5 py-1 text-xs"
@@ -135,7 +142,8 @@ export function AssignmentSection({
             {assignee && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || blocked}
+                title={blockedTitle}
                 onClick={() => void submit(null, '담당을 해제했습니다.')}
                 className="soc-btn-secondary px-2.5 py-1 text-xs"
               >
@@ -165,7 +173,8 @@ export function AssignmentSection({
               </select>
               <button
                 type="button"
-                disabled={!picked || busy}
+                disabled={!picked || busy || blocked}
+                title={blockedTitle}
                 onClick={() => void submit(picked, '담당자를 바꿨습니다.')}
                 className="soc-btn-primary px-2.5 py-1 text-xs"
               >

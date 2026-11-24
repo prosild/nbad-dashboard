@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ClipboardCheck, ExternalLink, Info } from 'lucide-react';
 import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { STALE_ACTION_BLOCKED, StaleNotice } from '../components/StaleNotice';
 import { ReviewDecisionButtons } from '../components/incident/ReviewDecisionButtons';
 import { CaptureName, CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
@@ -21,7 +22,15 @@ import {
   useNowMs,
 } from '../utils/reviewResume';
 
-function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSubmitted: () => Promise<void> }) {
+function ReviewRowActions({
+  item,
+  onSubmitted,
+  blockedReason,
+}: {
+  item: AnalystReviewItem;
+  onSubmitted: () => Promise<void>;
+  blockedReason: string | null;
+}) {
   const { notify } = useToast();
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -70,6 +79,7 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
         onDecide={(action) => void decide(action)}
         compact
         idPrefix={item.incidentId}
+        blockedReason={blockedReason}
       />
     </div>
   );
@@ -77,26 +87,37 @@ function ReviewRowActions({ item, onSubmitted }: { item: AnalystReviewItem; onSu
 
 export function ReviewsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<ReviewsApiResponse | null>(null);
+  /** 마지막 성공 응답과 그 조건 키(T42). 키가 지금 조건과 같을 때만 그린다 */
+  const [loaded, setLoaded] = useState<{ condKey: string; res: ReviewsApiResponse; loadedAt: string } | null>(null);
+  /** 조건과 상관없는 값(캡처 선택지·결정 가능 여부): 마지막 성공 응답의 것 */
+  const [lastRes, setLastRes] = useState<ReviewsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  /** 마지막 실패와 그 조건. 같은 조건의 다음 성공 때 지운다 */
+  const [failure, setFailure] = useState<{ condKey: string; notice: ErrorNotice } | null>(null);
+  /** 늦게 온 앞 요청의 응답을 버리기 위한 요청 순번 */
+  const seq = useRef(0);
   const nowMs = useNowMs();
 
   const captureId = searchParams.get('captureId') ?? '';
   const pendingOnly = searchParams.get('pendingOnly') === 'true';
+  const condKey = `${captureId}|${pendingOnly}`;
 
   const loadReviews = useCallback(async () => {
+    const my = ++seq.current;
     setLoading(true);
-    setErrorMsg(null);
     try {
       const res = await reviewsApi.list(captureId || undefined, pendingOnly);
-      setData(res);
+      if (my !== seq.current) return;
+      setLoaded({ condKey, res, loadedAt: new Date().toISOString() });
+      setLastRes(res);
+      setFailure(null);
     } catch (err) {
-      setErrorMsg(errorNotice(err, '에스컬레이션 목록을 불러오지 못했습니다.'));
+      if (my !== seq.current) return;
+      setFailure({ condKey, notice: errorNotice(err, '에스컬레이션 목록을 불러오지 못했습니다.') });
     } finally {
-      setLoading(false);
+      if (my === seq.current) setLoading(false);
     }
-  }, [captureId, pendingOnly]);
+  }, [captureId, pendingOnly, condKey]);
 
   useEffect(() => {
     void loadReviews();
@@ -116,13 +137,21 @@ export function ReviewsPage() {
     setSearchParams(next);
   }
 
+  // T42: 지금 조건(캡처·대기만)으로 받은 값만 그린다. 실패를 "총 0건"·빈 목록으로 그리지 않는다
+  const current = loaded !== null && loaded.condKey === condKey ? loaded : null;
+  const data = current?.res ?? null;
+  const failed = failure !== null && failure.condKey === condKey ? failure.notice : null;
+  /** 같은 조건의 값을 남긴 채 다시 읽기가 실패한 상태. 이 동안 결정 버튼을 막는다 */
+  const stale = failed !== null && current !== null;
+  const canDecide = lastRes?.canDecideReview ?? false;
+
   return (
     <AppShell
       title="에스컬레이션"
       subtitle="자동 판단이 엇갈려 분석가 검토로 넘어온 인시던트입니다. 승인하거나 오탐 종결하세요"
     >
       <div className="space-y-5">
-        {data && !data.canDecideReview && (
+        {lastRes && !lastRes.canDecideReview && (
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Info className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span>읽기 전용 계정입니다. 검토 결정은 분석가 계정에서 할 수 있습니다.</span>
@@ -151,7 +180,7 @@ export function ReviewsPage() {
                 className="soc-select text-xs"
               >
                 <option value="">열람 허용 캡처 전체</option>
-                {(data?.allowedCaptures ?? []).map((cap) => {
+                {(lastRes?.allowedCaptures ?? []).map((cap) => {
                   const info = captureInfo(cap);
                   return (
                     <option key={cap} value={cap} title={info.tooltip}>
@@ -175,14 +204,26 @@ export function ReviewsPage() {
 
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <ClipboardCheck className="h-4 w-4 text-slate-400" />
-            <span className="tabular-nums">총 {data?.reviews.length ?? 0}건</span>
+            <span className="tabular-nums" data-testid="reviews-total">
+              {data ? `총 ${data.reviews.length}건` : '총 -'}
+            </span>
           </div>
         </section>
 
-        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadReviews()} />}
+        {failed && stale && (
+          <StaleNotice
+            notice={failed}
+            loadedAt={current?.loadedAt ?? null}
+            loading={loading}
+            onRetry={() => void loadReviews()}
+          />
+        )}
+        {failed && !stale && (
+          <ErrorAlert message={failed.message} rateLimited={failed.rateLimited} onRetry={() => void loadReviews()} />
+        )}
 
-        {loading && !data ? (
-          <LoadingPanel label="에스컬레이션 목록을 불러오는 중..." />
+        {!data ? (
+          loading ? <LoadingPanel label="에스컬레이션 목록을 불러오는 중..." /> : null
         ) : (
           <div className="soc-card overflow-hidden">
             <div className="overflow-x-auto">
@@ -273,8 +314,12 @@ export function ReviewsPage() {
                           </td>
                           <td className="soc-td text-xs">
                             <div className="space-y-2">
-                              {data?.canDecideReview && isPending && (
-                                <ReviewRowActions item={item} onSubmitted={loadReviews} />
+                              {canDecide && isPending && (
+                                <ReviewRowActions
+                                  item={item}
+                                  onSubmitted={loadReviews}
+                                  blockedReason={stale ? STALE_ACTION_BLOCKED : null}
+                                />
                               )}
                               {/* T27: 번호가 있으면 순위가 없어도 고정 주소로, 둘 다 없으면 숨긴다 */}
                               {incidentPath(item) !== null && (

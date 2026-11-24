@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Activity, AlertTriangle, ArrowRight, Bell, List, RefreshCw, Server } from 'lucide-react';
+import { Activity, ArrowRight, Bell, List, RefreshCw, Server } from 'lucide-react';
 import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { dashboardApi, incidentsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { StaleNotice } from '../components/StaleNotice';
 import { CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, SocBadge } from '../components/StatusBadge';
 import { SourceStatusList } from '../components/dashboard/SourceStatus';
 import { TrendChart } from '../components/dashboard/TrendChart';
@@ -245,7 +246,7 @@ export function DashboardPage() {
           <StaleNotice
             notice={failed}
             loadedAt={current?.loadedAt ?? null}
-            autoRetry={autoRefresh}
+            autoRetrySeconds={autoRefresh ? DASHBOARD_REFRESH_MS / 1000 : null}
             loading={loading}
             onRetry={() => void load()}
           />
@@ -300,48 +301,6 @@ export function DashboardPage() {
         )}
       </div>
     </AppShell>
-  );
-}
-
-/**
- * T41: 갱신에 실패해 화면 값이 최신이 아니라는 한 줄 표시. 실패 이유, 마지막 성공 시각, 다시 시도.
- * "60초마다 다시 시도" 말은 자동 갱신이 이어질 때만 붙인다.
- */
-function StaleNotice({
-  notice,
-  loadedAt,
-  autoRetry,
-  loading,
-  onRetry,
-}: {
-  notice: ErrorNotice;
-  loadedAt: string | null;
-  autoRetry: boolean;
-  loading: boolean;
-  onRetry: () => void;
-}) {
-  return (
-    <div
-      role="status"
-      data-testid="stale-notice"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-100"
-    >
-      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
-      <span className="font-semibold text-amber-200">최신 값이 아닙니다</span>
-      <span className="min-w-0 break-words">{notice.message}</span>
-      <span className="text-amber-100/80">
-        마지막 성공 <span className="tabular-nums">{formatDateTime(loadedAt)}</span>
-      </span>
-      {autoRetry && (
-        <span className="text-amber-100/80" data-testid="stale-auto-retry">
-          {DASHBOARD_REFRESH_MS / 1000}초마다 다시 시도합니다
-        </span>
-      )}
-      <button type="button" onClick={onRetry} disabled={loading} className="soc-btn-secondary ml-auto py-1 text-xs">
-        <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-        다시 시도
-      </button>
-    </div>
   );
 }
 

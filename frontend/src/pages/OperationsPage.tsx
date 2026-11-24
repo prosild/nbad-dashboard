@@ -8,6 +8,7 @@ import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } fr
 import { SensorHealthBadge, SourceStatusTable, sensorHealthTooltip } from '../components/dashboard/SourceStatus';
 import { HandlingTimesPanel, WorkloadPanel } from '../components/dashboard/HandlingPanels';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { StaleNotice } from '../components/StaleNotice';
 import {
   CaptureName,
   CodeLabel,
@@ -99,12 +100,25 @@ export function latestSucceededJobs(data: OperationsApiResponse): ScoringJob[] {
     );
 }
 
+/** T42: 받은 값과 그 조건 키·받은 시각 */
+interface Keyed<T> {
+  condKey: string;
+  value: T;
+  loadedAt: string;
+}
+
 export function OperationsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<OperationsApiResponse | null>(null);
-  const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
+  /** T42: 받은 값마다 그 조건 키를 기억하고, 키가 지금 조건과 같을 때만 그린다(운영 현황 API·overview 따로) */
+  const [opsLoaded, setOpsLoaded] = useState<Keyed<OperationsApiResponse> | null>(null);
+  const [ovLoaded, setOvLoaded] = useState<Keyed<DashboardOverviewResponse> | null>(null);
+  const opsRef = useRef<Keyed<OperationsApiResponse> | null>(null);
+  const ovRef = useRef<Keyed<DashboardOverviewResponse> | null>(null);
+  /** 조건 줄의 수집원 목록(마지막 성공 값, 조건과 상관없이) */
+  const [barSources, setBarSources] = useState<NonNullable<OperationsApiResponse['sources']>>([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  /** 마지막 실패와 그 조건. keptOld = 실패한 쪽에 같은 조건의 앞 값을 남겼는가(최신 값이 아님) */
+  const [failure, setFailure] = useState<{ condKey: string; notice: ErrorNotice; keptOld: boolean } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const seq = useRef(0);
 
@@ -116,10 +130,11 @@ export function OperationsPage() {
   const source = parseSource(searchParams.get('source'));
   const captureId = searchParams.get('captureId') || null;
 
+  const condKey = JSON.stringify([period, rangeStart ?? null, rangeEnd ?? null, source, captureId]);
+
   const loadOperations = useCallback(async () => {
     const my = ++seq.current;
     setLoading(true);
-    setErrorMsg(null);
     const params = {
       ...periodApiParams({ period, range: rangeStart && rangeEnd ? { start: rangeStart, end: rangeEnd } : null }),
       source: captureId ? undefined : (source ?? undefined),
@@ -127,15 +142,27 @@ export function OperationsPage() {
     };
     const [ops, ov] = await Promise.allSettled([operationsApi.get(params), dashboardApi.overview(params)]);
     if (my !== seq.current) return;
-    // 한쪽만 실패하면 받은 쪽은 그대로 보이고 오류를 알린다(수집원 상태는 overview, 나머지는 운영 현황 API)
+    // 한쪽만 실패하면 받은 쪽은 그대로 보이고 오류를 알린다(수집원 상태는 overview, 나머지는 운영 현황 API).
+    // T42: 실패한 쪽은 같은 조건으로 받은 앞 값만 남긴다(다른 조건의 값을 지금 조건의 값처럼 보이지 않는다).
+    const loadedAt = new Date().toISOString();
+    const keep = <T,>(prev: Keyed<T> | null) => (prev && prev.condKey === condKey ? prev : null);
+    const nextOps = ops.status === 'fulfilled' ? { condKey, value: ops.value, loadedAt } : keep(opsRef.current);
+    const nextOv = ov.status === 'fulfilled' ? { condKey, value: ov.value, loadedAt } : keep(ovRef.current);
+    opsRef.current = nextOps;
+    ovRef.current = nextOv;
+    setOpsLoaded(nextOps);
+    setOvLoaded(nextOv);
+    if (ops.status === 'fulfilled') setBarSources(ops.value.sources ?? []);
     const failed = [ops, ov].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
     if (failed) {
-      setErrorMsg(errorNotice(failed.reason, '운영 현황을 불러오지 못했습니다.'));
+      const keptOld =
+        (ops.status === 'rejected' && nextOps !== null) || (ov.status === 'rejected' && nextOv !== null);
+      setFailure({ condKey, notice: errorNotice(failed.reason, '운영 현황을 불러오지 못했습니다.'), keptOld });
+    } else {
+      setFailure(null);
     }
-    setData(ops.status === 'fulfilled' ? ops.value : null);
-    setOverview(ov.status === 'fulfilled' ? ov.value : null);
     setLoading(false);
-  }, [period, rangeStart, rangeEnd, source, captureId]);
+  }, [period, rangeStart, rangeEnd, source, captureId, condKey]);
 
   useEffect(() => {
     void loadOperations();
@@ -150,8 +177,18 @@ export function OperationsPage() {
     setSearchParams(next);
   }
 
+  const data = opsLoaded !== null && opsLoaded.condKey === condKey ? opsLoaded.value : null;
+  const overview = ovLoaded !== null && ovLoaded.condKey === condKey ? ovLoaded.value : null;
+  const failed = failure !== null && failure.condKey === condKey ? failure : null;
+  /** 같은 조건으로 받은 앞 값을 남긴 채 다시 불러오기가 실패한 상태(최신 값이 아니다) */
+  const stale = failed !== null && failed.keptOld;
+  const lastLoadedAt = [opsLoaded, ovLoaded]
+    .filter((x): x is Keyed<OperationsApiResponse> | Keyed<DashboardOverviewResponse> => x !== null && x.condKey === condKey)
+    .map((x) => x.loadedAt)
+    .sort()[0] ?? null;
+
   const groups = useMemo(() => groupSummaries(data?.feedbackSummaries ?? []), [data]);
-  const shortNames = useMemo(() => captureShortNames((data?.sources ?? []).map((x) => x.captureId)), [data]);
+  const shortNames = useMemo(() => captureShortNames(barSources.map((x) => x.captureId)), [barSources]);
   const status = useMemo(() => {
     if (!data) return null;
     const { allRows } = selectSummaryRows(data.feedbackSummaries, latestSucceededJobs(data));
@@ -203,7 +240,7 @@ export function OperationsPage() {
             />
             <SourceField
               id="ops-source"
-              sources={data?.sources ?? []}
+              sources={barSources}
               value={sourceSelectValue(source, captureId)}
               onChange={(v) => updateParams(sourceSelectChanges(v))}
             />
@@ -220,17 +257,28 @@ export function OperationsPage() {
                 </span>
               )}
               <span>
-                {scope} 탐지 작업 {formatNumber(data?.jobsTotal ?? data?.jobs.length ?? 0)}건
+                {scope} 탐지 작업 {data ? `${formatNumber(data.jobsTotal ?? data.jobs.length)}건` : '-'}
               </span>
-              <span>· Slack 일일 요약 {formatNumber(data?.slackSummaries.length ?? 0)}건</span>
+              <span>· Slack 일일 요약 {data ? `${formatNumber(data.slackSummaries.length)}건` : '-'}</span>
             </div>
           </div>
         </section>
 
-        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadOperations()} />}
+        {failed && stale && (
+          <StaleNotice
+            notice={failed.notice}
+            loadedAt={lastLoadedAt}
+            loading={loading}
+            onRetry={() => void loadOperations()}
+          />
+        )}
+        {failed && !stale && (
+          <ErrorAlert message={failed.notice.message} rateLimited={failed.notice.rateLimited} onRetry={() => void loadOperations()} />
+        )}
 
-        {loading && !data ? (
-          <LoadingPanel label="운영 현황을 불러오는 중..." />
+        {/* T42: 지금 조건의 값이 하나도 없으면(불러오는 중·실패) 0건·"없습니다" 문구를 그리지 않는다 */}
+        {!data && !overview ? (
+          loading ? <LoadingPanel label="운영 현황을 불러오는 중..." /> : null
         ) : (
           <>
             {status && (
@@ -238,9 +286,13 @@ export function OperationsPage() {
                 <StatusCard
                   icon={Server}
                   title="수집원"
-                  tone={sensors.some((x) => x.health !== 'ok') || importedFailed > 0 ? 'attention' : 'ok'}
+                  tone={!overview ? 'neutral' : sensors.some((x) => x.health !== 'ok') || importedFailed > 0 ? 'attention' : 'ok'}
                 >
-                  {sensors.length === 0 ? (
+                  {!overview ? (
+                    <div className="text-sm text-slate-400" data-testid="ops-sources-missing">
+                      {loading ? '불러오는 중...' : '- 불러오지 못했습니다'}
+                    </div>
+                  ) : sensors.length === 0 ? (
                     <div className="text-sm text-slate-400">조건에 맞는 센서가 없습니다</div>
                   ) : (
                     <ul className="space-y-1">
@@ -260,6 +312,7 @@ export function OperationsPage() {
                       ))}
                     </ul>
                   )}
+                  {overview && (
                   <div className="text-xs text-slate-400" title="가장 최근 탐지 작업이 실패한 가져온 데이터 캡처 수">
                     가져온 데이터 실패{' '}
                     <span className={`tabular-nums ${importedFailed > 0 ? 'text-amber-300' : 'text-slate-300'}`}>
@@ -267,6 +320,7 @@ export function OperationsPage() {
                     </span>{' '}
                     / {formatNumber(importedCount)}개 캡처
                   </div>
+                  )}
                 </StatusCard>
                 <StatusCard icon={Cpu} title="모델 판정" tone="neutral">
                   <div
@@ -297,7 +351,9 @@ export function OperationsPage() {
                     <span className="tabular-nums text-slate-300">
                       {overview && (overview.alerting.latestDeliveredAt ?? overview.alerting.latestCreatedAt)
                         ? formatDateTime(overview.alerting.latestDeliveredAt ?? overview.alerting.latestCreatedAt)
-                        : '기록 없음'}
+                        : overview
+                          ? '기록 없음'
+                          : '-'}
                     </span>
                     {overview?.alerting.latestDryRun && <SocBadge tone="muted">Dry-run</SocBadge>}
                   </div>
@@ -321,6 +377,8 @@ export function OperationsPage() {
               </section>
             )}
 
+            {data && (
+            <>
             {data?.handlingTimes && <HandlingTimesPanel times={data.handlingTimes} scope={scope} />}
             {data?.workload && <WorkloadPanel workload={data.workload} overdueLink={overdueLink} />}
 
@@ -552,6 +610,8 @@ export function OperationsPage() {
                 </div>
               )}
             </CollapsibleSection>
+            </>
+            )}
           </>
         )}
       </div>

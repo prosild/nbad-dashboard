@@ -19,6 +19,8 @@ export function ReviewDecisionButtons({
   onDecide,
   compact = false,
   idPrefix,
+  blockedReason = null,
+  hideBlockedText = false,
 }: {
   note: string;
   /** 메모가 비었을 때 포커스를 옮길 입력 칸 id */
@@ -28,10 +30,15 @@ export function ReviewDecisionButtons({
   compact?: boolean;
   /** 같은 화면에 여러 개 있을 때 접근성 이름을 구분하는 말(에스컬레이션 목록의 인시던트) */
   idPrefix?: string;
+  /** T42: 값이 최신이 아닌 동안 결정을 막는 이유. 있으면 버튼을 막고 이유를 보인다 */
+  blockedReason?: string | null;
+  /** 이유를 다른 곳(조치 패널 위)에 이미 보일 때 버튼 위 한 줄을 뺀다(툴팁은 남는다) */
+  hideBlockedText?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [noteError, setNoteError] = useState(false);
   const hasNote = note.trim().length > 0;
+  const blocked = blockedReason !== null;
   const size = compact ? 'px-2 py-1 text-xs' : 'py-2 text-xs';
   const icon = compact ? 'h-3.5 w-3.5' : 'h-4 w-4';
 
@@ -65,7 +72,8 @@ export function ReviewDecisionButtons({
         <div className="flex gap-1.5">
           <button
             type="button"
-            disabled={submitting || !hasNote}
+            disabled={submitting || !hasNote || blocked}
+            title={blockedReason ?? undefined}
             onClick={() => {
               onDecide('dismiss');
               setConfirming(false);
@@ -95,10 +103,16 @@ export function ReviewDecisionButtons({
           {DISMISS_NOTE_REQUIRED}
         </p>
       )}
+      {blocked && !hideBlockedText && (
+        <p className="text-[11px] text-amber-200" data-testid="decision-blocked">
+          {blockedReason}
+        </p>
+      )}
       <div className={compact ? 'flex gap-1.5' : 'grid grid-cols-2 gap-2'}>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || blocked}
+          title={blockedReason ?? undefined}
           onClick={() => onDecide('confirm')}
           className={`soc-btn-emerald flex-1 ${size}`}
         >
@@ -107,7 +121,8 @@ export function ReviewDecisionButtons({
         </button>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || blocked}
+          title={blockedReason ?? undefined}
           onClick={askDismiss}
           className={`soc-btn-secondary flex-1 ${size}`}
         >

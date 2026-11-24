@@ -29,6 +29,7 @@ import { AppShell } from '../components/AppShell';
 import { AckOverdueBadge, AssigneeName, elapsedText } from '../components/incident/AssignmentBits';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { StaleNotice } from '../components/StaleNotice';
 import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import {
   CaptureName,
@@ -79,6 +80,14 @@ import {
 
 /** 자동 갱신 주기(T23): 60초마다 새 인시던트 수를 묻는다. 화면이 숨겨지면 멈춘다. */
 export const NEW_INCIDENT_POLL_MS = 60_000;
+
+/** T42: 성공한 큐 응답과 그 조건 키. apiKey = 요청 전체(행·쪽 표시), summaryKey = 쪽·정렬·크기를 뺀 조건(띠 합계 등) */
+interface QueueLoaded {
+  apiKey: string;
+  summaryKey: string;
+  res: UnifiedQueueResponse;
+  loadedAt: string;
+}
 
 /** 필터·정렬·쪽 크기 변경 때 지우는 쪽 번호 키 */
 const PAGE_KEY = 'page';
@@ -146,12 +155,16 @@ export function IncidentQueuePage() {
   const { user } = useAuth();
   /** 담당 선택(T25): VIEWER는 담당자가 될 수 없어 "내 담당"을 보이지 않는다 */
   const canBeAssignee = user?.role === 'ANALYST' || user?.role === 'ADMIN';
-  const [data, setData] = useState<UnifiedQueueResponse | null>(null);
-  /** data를 받은 요청의 쿼리 키(지금 URL과 같을 때만 URL을 고친다) */
-  const [dataKey, setDataKey] = useState<string | null>(null);
+  /** 마지막으로 성공한 응답과 그 응답의 조건 키(T42). 키가 지금 조건과 같을 때만 그린다 */
+  const [loaded, setLoaded] = useState<QueueLoaded | null>(null);
+  /** 조건과 상관없는 값(수집원 목록·짧은 이름·모델·역할 선택지·스냅샷 여부): 마지막 성공 응답의 것을 조건이 바뀌어도 쓴다 */
+  const [barData, setBarData] = useState<UnifiedQueueResponse | null>(null);
   const requestSeq = useRef(0);
+  /** 서버가 쪽 번호를 고쳐 준 응답의 키. 주소를 그 쪽으로 고친 뒤 같은 요청을 다시 보내지 않는다 */
+  const skipLoadKeyRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  /** 마지막 실패와 그 요청 키. 같은 키의 다음 성공 때 지운다 */
+  const [failure, setFailure] = useState<{ apiKey: string; notice: ErrorNotice } | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [legacyNotice, setLegacyNotice] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -170,6 +183,8 @@ export function IncidentQueuePage() {
   const query = parseQueueQuery(legacy.changed ? legacy.next : searchParams);
   const apiKey = JSON.stringify(queueApiParams(query));
   const pollKey = JSON.stringify(queueApiParams(query, { paging: false, sort: false, period: false }));
+  /** 띠 합계·새 건수·기간 밖 안내의 조건 키(T42): 쪽·정렬·크기를 뺀 조건(기간은 넣는다). 합계는 쪽·정렬과 무관하다 */
+  const summaryKey = JSON.stringify(queueApiParams(query, { paging: false, sort: false }));
 
   const [assetDraft, setAssetDraft] = useState(query.asset);
   useEffect(() => {
@@ -179,31 +194,64 @@ export function IncidentQueuePage() {
   const loadQueue = useCallback(async () => {
     const seq = ++requestSeq.current;
     setLoading(true);
-    setErrorMsg(null);
+    const params = JSON.parse(apiKey) as Record<string, string | undefined>;
     try {
-      const res = await incidentsApi.queue(JSON.parse(apiKey) as Record<string, string | undefined>);
+      const res = await incidentsApi.queue(params);
       if (seq !== requestSeq.current) return;
-      setData(res);
-      setDataKey(apiKey);
+      // 서버가 쪽 번호를 고쳐 준 응답(없는 쪽 → 마지막 쪽)은 고친 쪽의 값으로 기억한다.
+      // 주소를 그 쪽으로 고치면 지금 조건과 키가 같아져 숨기지 않고, 같은 요청을 다시 보내지 않는다.
+      let key = apiKey;
+      if (params.page !== undefined && params.page !== String(res.page)) {
+        key = JSON.stringify({ ...params, page: String(res.page) });
+        skipLoadKeyRef.current = key;
+      }
+      setLoaded({ apiKey: key, summaryKey, res, loadedAt: new Date().toISOString() });
+      setBarData(res);
+      setFailure(null);
       setHighlightAfter(pendingHighlightRef.current);
       pendingHighlightRef.current = null;
     } catch (err) {
       if (seq !== requestSeq.current) return;
-      setErrorMsg(errorNotice(err, '인시던트 목록을 불러오지 못했습니다.'));
+      setFailure({ apiKey, notice: errorNotice(err, '인시던트 목록을 불러오지 못했습니다.') });
+      pendingHighlightRef.current = null;
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [apiKey]);
+  }, [apiKey, summaryKey]);
 
   useEffect(() => {
     if (legacy.changed) return;
+    if (skipLoadKeyRef.current !== null && skipLoadKeyRef.current === apiKey) {
+      // 서버가 고쳐 준 쪽으로 주소만 고친 경우: 이미 그 쪽의 값이 있다
+      skipLoadKeyRef.current = null;
+      return;
+    }
+    skipLoadKeyRef.current = null;
     void loadQueue();
     // reloadTick: 같은 쿼리로 다시 부를 때(새 인시던트 불러오기)
-  }, [loadQueue, legacy.changed, reloadTick]);
+  }, [loadQueue, legacy.changed, reloadTick, apiKey]);
 
-  // 범위 밖 page는 서버가 고친 쪽으로, 허용 밖 size는 50으로 URL을 고친다(응답을 받은 뒤에만).
+  /** 행·쪽 표시: 요청 전체(apiKey)가 지금 조건과 같은 성공 응답만 */
+  const rowsLoaded = loaded !== null && loaded.apiKey === apiKey ? loaded : null;
+  /** 띠 합계·새 건수·기간 밖 안내: 쪽·정렬·크기를 뺀 조건이 같은 성공 응답만 */
+  const summaryLoaded = loaded !== null && loaded.summaryKey === summaryKey ? loaded : null;
+  const data = rowsLoaded?.res ?? null;
+  const summaryData = summaryLoaded?.res ?? null;
+  const failed = failure !== null && failure.apiKey === apiKey ? failure.notice : null;
+  /** 같은 조건으로 성공한 행을 남긴 채 다시 불러오기가 실패한 상태(최신이 아니다) */
+  const stale = failed !== null && rowsLoaded !== null;
+
+  // 범위 밖 page는 서버가 고친 쪽으로, 허용 밖 size는 50으로 URL을 고친다(지금 요청의 응답을 받은 뒤에만).
+  // 서버가 쪽을 고쳤으면 rowsLoaded가 아직 없다(키가 고친 쪽이라). 그때는 loaded의 원래 요청 쪽을 본다.
   useEffect(() => {
-    if (loading || !data || dataKey !== apiKey) return;
+    if (loading || !loaded) return;
+    const data = loaded.res;
+    const requested = JSON.parse(apiKey) as Record<string, string | undefined>;
+    const matches =
+      loaded.apiKey === apiKey ||
+      (skipLoadKeyRef.current === loaded.apiKey &&
+        loaded.apiKey === JSON.stringify({ ...requested, page: String(data.page) }));
+    if (!matches) return;
     const next = new URLSearchParams(searchParams);
     let changed = false;
     const rawPage = searchParams.get(PAGE_KEY);
@@ -218,14 +266,20 @@ export function IncidentQueuePage() {
       changed = true;
     }
     if (changed) setSearchParams(next, { replace: true });
-  }, [loading, data, dataKey, apiKey, searchParams, setSearchParams, query.size]);
+  }, [loading, loaded, apiKey, searchParams, setSearchParams, query.size]);
 
-  const since = data ? (data.latestDetectedAt ?? data.anchor) : null;
-  /** 짧은 수집원 이름(허용 캡처 목록 안에서 겹치면 연도를 붙인다) */
-  const shortNames = useMemo(() => captureShortNames((data?.sources ?? []).map((s) => s.captureId)), [data]);
+  // T42: since는 지금 조건(쪽·정렬 제외)의 성공 응답에서만 가져온다. 없으면 묻지 않는다
+  // (앞 조건의 최신 시각으로 지금 조건을 세면 틀린 "새 인시던트 N건"이 뜬다).
+  const since = summaryData ? (summaryData.latestDetectedAt ?? summaryData.anchor) : null;
+  /** 짧은 수집원 이름(허용 캡처 목록 안에서 겹치면 연도를 붙인다). 조건과 상관없는 값 */
+  const shortNames = useMemo(() => captureShortNames((barData?.sources ?? []).map((s) => s.captureId)), [barData]);
   // T34: 지정 기간은 지난 구간을 조사하는 화면이라 "새 인시던트" 확인(new-count)을 하지 않는다
   const customPeriod = query.period === 'custom';
-  const newCount = useNewIncidentCount(Boolean(data) && !data?.snapshot && !customPeriod, since, pollKey);
+  const newCount = useNewIncidentCount(
+    summaryData !== null && !summaryData.snapshot && !customPeriod,
+    since,
+    pollKey,
+  );
 
   /** URL 쿼리를 바꾼다. 기본은 쪽 번호를 지운다(1쪽으로). */
   function updateParams(changes: Record<string, string | null>, opts: { keepPage?: boolean } = {}) {
@@ -286,8 +340,14 @@ export function IncidentQueuePage() {
     next.set('sort', 'detected');
     next.set('dir', 'desc');
     next.delete(PAGE_KEY);
-    setSearchParams(next);
-    setReloadTick((n) => n + 1);
+    const nextQuery = parseQueueQuery(next);
+    if (JSON.stringify(queueApiParams(nextQuery)) === apiKey) {
+      // 기본 정렬 1쪽: 같은 조건 다시 불러오기(주소는 그대로라 요청은 reloadTick 한 번)
+      setReloadTick((n) => n + 1);
+    } else {
+      // 다른 정렬·쪽: 조건 변경이다. 주소 변경만으로 한 번 부른다(reloadTick을 함께 올리지 않는다)
+      setSearchParams(next);
+    }
   }
 
   const listQuery = useMemo(() => searchParams.toString(), [searchParams]);
@@ -358,7 +418,7 @@ export function IncidentQueuePage() {
         )}
 
         <SummaryStrip
-          summary={data?.summary ?? null}
+          summary={summaryData?.summary ?? null}
           priorityFilter={query.priority}
           reviewPendingFilter={query.reviewPending}
           alertedFilter={query.alerted}
@@ -366,7 +426,7 @@ export function IncidentQueuePage() {
           onToggle={toggleStripFilter}
         />
 
-        <OutsidePeriodNotice queue={data} onAllPeriod={() => handlePeriod('all')} />
+        <OutsidePeriodNotice queue={summaryData} onAllPeriod={() => handlePeriod('all')} />
 
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -375,15 +435,19 @@ export function IncidentQueuePage() {
               range={query.range}
               onChange={handlePeriod}
               onApplyRange={(r) => updateParams(customUrlChanges(r))}
-              current={data ? { periodStart: data.periodStart, periodEnd: data.periodEnd, anchor: data.anchor } : null}
+              current={
+                summaryData
+                  ? { periodStart: summaryData.periodStart, periodEnd: summaryData.periodEnd, anchor: summaryData.anchor }
+                  : null
+              }
             />
 
             <SourceField
-              sources={data?.sources ?? []}
+              sources={barData?.sources ?? []}
               value={sourceValue}
               onChange={handleSource}
-              anchor={data?.anchor ?? null}
-              snapshot={Boolean(data?.snapshot)}
+              anchor={barData?.anchor ?? null}
+              snapshot={Boolean(barData?.snapshot)}
             />
 
             <AssigneeField
@@ -437,7 +501,7 @@ export function IncidentQueuePage() {
             )}
 
             <div className="ml-auto flex items-center gap-2">
-              {data?.snapshot && (
+              {barData?.snapshot && (
                 <span
                   className="inline-flex items-center gap-1 text-[11px] text-slate-400"
                   title="데이터가 더 늘지 않는 고정 스냅샷이라 새 인시던트를 확인하지 않습니다"
@@ -473,7 +537,7 @@ export function IncidentQueuePage() {
                   className="soc-select w-full py-1.5 text-xs"
                 >
                   <option value="">모든 모델</option>
-                  {(data?.availableModels ?? []).map((m) => (
+                  {(barData?.availableModels ?? []).map((m) => (
                     <option key={m} value={m} title={detectionModelInfo(m).tooltip}>
                       {labelText('detectionModel', m)}
                     </option>
@@ -492,7 +556,7 @@ export function IncidentQueuePage() {
                   className="soc-select w-full py-1.5 text-xs"
                 >
                   <option value="">모든 방향</option>
-                  {(data?.availableRoles ?? []).map((r) => (
+                  {(barData?.availableRoles ?? []).map((r) => (
                     <option key={r} value={r}>
                       {labelText('hostRole', r)}
                     </option>
@@ -571,7 +635,7 @@ export function IncidentQueuePage() {
           )}
         </section>
 
-        {customPeriod && data && !data.snapshot && (
+        {customPeriod && summaryData && !summaryData.snapshot && (
           <p className="text-[11px] text-slate-400" data-testid="new-count-off">
             기간을 지정하면 새 인시던트 알림을 멈춥니다(지난 구간을 보는 동안 목록이 움직이지 않게).
           </p>
@@ -592,10 +656,22 @@ export function IncidentQueuePage() {
           </div>
         )}
 
-        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadQueue()} />}
+        {failed && stale && (
+          <StaleNotice
+            notice={failed}
+            loadedAt={rowsLoaded?.loadedAt ?? null}
+            loading={loading}
+            onRetry={() => void loadQueue()}
+          />
+        )}
+        {failed && !stale && (
+          <ErrorAlert message={failed.message} rateLimited={failed.rateLimited} onRetry={() => void loadQueue()} />
+        )}
 
-        {loading && !data ? (
-          <LoadingPanel label="인시던트 목록을 불러오는 중..." />
+        {/* T42: 지금 조건(요청 전체)의 성공 응답이 없으면 행·빈 목록 문구·쪽 표시를 그리지 않는다.
+            조건을 바꾼 뒤 불러오는 동안에는 앞 조건의 행 대신 불러오는 중 표시를 둔다(실패면 위 배너만). */}
+        {!data ? (
+          loading ? <LoadingPanel label="인시던트 목록을 불러오는 중..." /> : null
         ) : (
           <div className="soc-card overflow-hidden">
             {items.length === 0 ? (
@@ -711,7 +787,11 @@ function SummaryStrip({
   overdueFilter: boolean;
   onToggle: (key: 'priority' | 'reviewPending' | 'alerted' | 'overdue', value: string) => void;
 }) {
+  // T42: 지금 조건의 성공 응답이 없으면 수를 지어내지 않는다(0이 아니라 값 없음 "-"). 거르기 버튼은 그대로 누를 수 있다
+  const has = summary !== null;
   const s = summary ?? { total: 0, high: 0, medium: 0, low: 0, reviewPending: 0, alerted: 0, byStatus: {}, overdue: 0 };
+  const n = (v: number) => (has ? formatNumber(v) : formatNumber(null));
+  const countText = (v: number) => (has ? ` ${v}건` : '');
   const overdue = s.overdue ?? 0;
   const priorityDot: Record<Priority, string> = {
     high: 'bg-rose-400',
@@ -730,7 +810,7 @@ function SummaryStrip({
     >
       <div className="flex items-baseline gap-2 px-2 py-1">
         <span className="text-slate-400">전체 인시던트</span>
-        <span className="text-lg font-bold tabular-nums text-slate-100">{formatNumber(s.total)}</span>
+        <span className="text-lg font-bold tabular-nums text-slate-100">{n(s.total)}</span>
       </div>
 
       <span className="mx-1 hidden h-6 w-px bg-slate-800 sm:block" aria-hidden="true" />
@@ -740,12 +820,12 @@ function SummaryStrip({
           key={p}
           pressed={priorityFilter === p}
           onClick={() => onToggle('priority', p)}
-          ariaLabel={`우선순위 ${labelText('priority', p)} ${s[p]}건만 보기`}
+          ariaLabel={`우선순위 ${labelText('priority', p)}${countText(s[p])}만 보기`}
           title={PRIORITY_TOOLTIP}
         >
           <span className={`h-2 w-2 rounded-full ${priorityDot[p]}`} aria-hidden="true" />
           <span className="text-slate-400">{labelText('priority', p)}</span>
-          <span className={`text-base font-bold tabular-nums ${priorityNum[p]}`}>{formatNumber(s[p])}</span>
+          <span className={`text-base font-bold tabular-nums ${priorityNum[p]}`}>{n(s[p])}</span>
         </StripButton>
       ))}
 
@@ -755,13 +835,13 @@ function SummaryStrip({
         <StripButton
           pressed={reviewPendingFilter}
           onClick={() => onToggle('reviewPending', 'true')}
-          ariaLabel={`에스컬레이션 대기 ${s.reviewPending}건만 보기`}
+          ariaLabel={`에스컬레이션 대기${countText(s.reviewPending)}만 보기`}
         >
           <span className="text-slate-400">에스컬레이션 대기</span>
           <span
             className={`text-base font-bold tabular-nums ${s.reviewPending > 0 ? 'text-amber-300' : 'text-slate-300'}`}
           >
-            {formatNumber(s.reviewPending)}
+            {n(s.reviewPending)}
           </span>
         </StripButton>
         <Link to="/reviews?pendingOnly=true" className="px-1 text-[11px] text-cyan-300 hover:underline">
@@ -772,22 +852,22 @@ function SummaryStrip({
       <StripButton
         pressed={alertedFilter}
         onClick={() => onToggle('alerted', 'true')}
-        ariaLabel={`경보 발송 ${s.alerted}건만 보기`}
+        ariaLabel={`경보 발송${countText(s.alerted)}만 보기`}
       >
         <Bell className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
         <span className="text-slate-400">경보 발송</span>
-        <span className="text-base font-bold tabular-nums text-slate-100">{formatNumber(s.alerted)}</span>
+        <span className="text-base font-bold tabular-nums text-slate-100">{n(s.alerted)}</span>
       </StripButton>
 
       <StripButton
         pressed={overdueFilter}
         onClick={() => onToggle('overdue', 'true')}
-        ariaLabel={`착수 지연 ${overdue}건만 보기`}
+        ariaLabel={`착수 지연${countText(overdue)}만 보기`}
         title="실습망 신규 인시던트가 우선순위별 착수 목표 시간을 넘긴 수"
       >
         <span className="text-slate-400">착수 지연</span>
         <span className={`text-base font-bold tabular-nums ${overdue > 0 ? 'text-rose-300' : 'text-slate-300'}`}>
-          {formatNumber(overdue)}
+          {n(overdue)}
         </span>
       </StripButton>
 

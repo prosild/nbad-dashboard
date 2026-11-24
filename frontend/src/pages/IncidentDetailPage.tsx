@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react';
 import { errorNotice, type ErrorNotice } from '../api/client';
@@ -6,6 +6,7 @@ import { incidentsApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { STALE_ACTION_BLOCKED_DETAIL, StaleNotice } from '../components/StaleNotice';
 import { ActionPanel } from '../components/incident/ActionPanel';
 import { DetailHeader } from '../components/incident/DetailHeader';
 import { EvidenceSection } from '../components/incident/EvidenceSection';
@@ -102,7 +103,13 @@ export function IncidentDetailPage() {
   const { user, timeContext } = useAuth();
   const [data, setData] = useState<IncidentDetailApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  /** 마지막 상세 실패와 그 인시던트 키(T42). 같은 키의 다음 성공 때 지운다 */
+  const [failure, setFailure] = useState<{ key: string; notice: ErrorNotice } | null>(null);
+  /** data를 받은 시각(최신 값이 아닙니다 표시의 마지막 성공 시각) */
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
+  /** 늦게 온 앞 인시던트의 응답을 버리기 위한 요청 순번(T42) */
+  const detailSeq = useRef(0);
+  const detailKey = `${jobId ?? ''}|${queueRank ?? ''}`;
 
   const rawTab = searchParams.get('tab');
   const tab: DetailTab = isDetailTab(rawTab) ? rawTab : 'summary';
@@ -147,20 +154,26 @@ export function IncidentDetailPage() {
     if (numberMode && (!jobId || !queueRank)) {
       return; // 위치를 받기 전
     }
+    const key = `${jobId ?? ''}|${queueRank ?? ''}`;
+    const my = ++detailSeq.current;
     if (!jobId || !queueRank) {
-      setErrorMsg({ message: '잘못된 인시던트 경로입니다.', rateLimited: false });
+      setFailure({ key, notice: { message: '잘못된 인시던트 경로입니다.', rateLimited: false } });
       setLoading(false);
       return;
     }
     setLoading(true);
-    setErrorMsg(null);
     try {
       const res = await incidentsApi.detail(jobId, queueRank);
+      // 다른 인시던트로 옮긴 뒤 늦게 온 앞 인시던트의 응답은 버린다
+      if (my !== detailSeq.current) return;
       setData(res);
+      setLoadedAt(new Date().toISOString());
+      setFailure(null);
     } catch (err) {
-      setErrorMsg(errorNotice(err, '인시던트 정보를 불러오지 못했습니다.'));
+      if (my !== detailSeq.current) return;
+      setFailure({ key, notice: errorNotice(err, '인시던트 정보를 불러오지 못했습니다.') });
     } finally {
-      setLoading(false);
+      if (my === detailSeq.current) setLoading(false);
     }
     // T27: 번호 위치를 다시 받으면(새로 고침) 같은 위치여도 다시 부른다
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,6 +199,9 @@ export function IncidentDetailPage() {
   // 다른 인시던트로 옮겨 가는 중에는 이전 인시던트 내용을 보이지 않는다.
   const current =
     incident && String(incident.jobId) === jobId && String(incident.queueRank) === queueRank ? detail : undefined;
+  const failedNotice = failure !== null && failure.key === detailKey ? failure.notice : null;
+  /** T42: 같은 인시던트의 값을 남긴 채 다시 읽기가 실패한 상태. 이 동안 조치 버튼을 막는다 */
+  const staleDetail = failedNotice !== null && current !== undefined;
 
   const { nav, retry: retryNav } = useNeighbors(fromQuery, jobId, queueRank);
   const neighbors = nav?.result ?? null;
@@ -314,7 +330,12 @@ export function IncidentDetailPage() {
         {locateError && (
           <ErrorAlert message={locateError.message} rateLimited={locateError.rateLimited} onRetry={incidentNo !== null ? () => setLocateAttempt((n) => n + 1) : undefined} />
         )}
-        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadDetail()} />}
+        {failedNotice && staleDetail && (
+          <StaleNotice notice={failedNotice} loadedAt={loadedAt} loading={loading} onRetry={() => void loadDetail()} />
+        )}
+        {failedNotice && !staleDetail && (
+          <ErrorAlert message={failedNotice.message} rateLimited={failedNotice.rateLimited} onRetry={() => void loadDetail()} />
+        )}
 
         {loading && !current && !locateError ? (
           <LoadingPanel label="인시던트 정보를 불러오는 중..." />
@@ -334,6 +355,7 @@ export function IncidentDetailPage() {
                 assignment={data?.assignment ?? null}
                 assignmentHistory={data?.assignmentHistory ?? []}
                 canAssign={Boolean(data?.canAssign)}
+                blockedReason={staleDetail ? STALE_ACTION_BLOCKED_DETAIL : null}
                 currentUsername={user?.username ?? null}
               />
             </aside>

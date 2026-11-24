@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Edit3,
   KeyRound,
@@ -12,6 +12,7 @@ import { ApiError, errorNotice, type ErrorNotice } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { StaleNotice } from '../components/StaleNotice';
 import { SocBadge, UserRoleBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
 import type { AdminUserDto, AdminUsersListResponse, UserRole } from '../types/api';
@@ -29,7 +30,10 @@ export function AdminUsersPage() {
   const { notify } = useToast();
   const [data, setData] = useState<AdminUsersListResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  /** T42: 마지막 실패. 다음 성공 때 지운다. 앞 목록이 있으면 남기고 "최신 값이 아닙니다"를 붙인다 */
+  const [failure, setFailure] = useState<ErrorNotice | null>(null);
+  const [loadedAt, setLoadedAt] = useState<string | null>(null);
+  const seq = useRef(0);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -45,15 +49,19 @@ export function AdminUsersPage() {
   const [editPatterns, setEditPatterns] = useState('');
 
   const loadUsers = useCallback(async () => {
+    const my = ++seq.current;
     setLoading(true);
-    setErrorMsg(null);
     try {
       const res = await adminApi.listUsers();
+      if (my !== seq.current) return;
       setData(res);
+      setLoadedAt(new Date().toISOString());
+      setFailure(null);
     } catch (err) {
-      setErrorMsg(errorNotice(err, '사용자 목록을 불러오지 못했습니다.'));
+      if (my !== seq.current) return;
+      setFailure(errorNotice(err, '사용자 목록을 불러오지 못했습니다.'));
     } finally {
-      setLoading(false);
+      if (my === seq.current) setLoading(false);
     }
   }, []);
 
@@ -331,16 +339,21 @@ export function AdminUsersPage() {
           </section>
         )}
 
-        {errorMsg && <ErrorAlert message={errorMsg.message} rateLimited={errorMsg.rateLimited} onRetry={() => void loadUsers()} />}
+        {failure && data && (
+          <StaleNotice notice={failure} loadedAt={loadedAt} loading={loading} onRetry={() => void loadUsers()} />
+        )}
+        {failure && !data && (
+          <ErrorAlert message={failure.message} rateLimited={failure.rateLimited} onRetry={() => void loadUsers()} />
+        )}
 
-        {loading && !data ? (
-          <LoadingPanel label="사용자 목록을 불러오는 중..." />
+        {!data ? (
+          loading ? <LoadingPanel label="사용자 목록을 불러오는 중..." /> : null
         ) : (
           <div className="soc-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-xs text-slate-400">
               <div className="flex items-center gap-2 font-semibold text-slate-200">
                 <Users className="h-4 w-4 text-slate-400" />
-                등록 사용자 ({data?.users.length ?? 0}명)
+                등록 사용자 ({data.users.length}명)
               </div>
             </div>
             <div className="overflow-x-auto">

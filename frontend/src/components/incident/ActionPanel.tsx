@@ -52,6 +52,7 @@ export function ActionPanel({
   assignmentHistory = [],
   canAssign = false,
   currentUsername = null,
+  blockedReason = null,
 }: {
   detail: IncidentDetailView;
   /** 조회자 계정이면 true */
@@ -63,6 +64,8 @@ export function ActionPanel({
   assignmentHistory?: AssignmentHistoryItem[];
   canAssign?: boolean;
   currentUsername?: string | null;
+  /** T42: 상세 값이 최신이 아닌 동안(다시 읽기 실패) 조치를 막는 이유 */
+  blockedReason?: string | null;
 }) {
   const { notify } = useToast();
   const { incident, analystReview, currentStatus, nextAllowedStatus } = detail;
@@ -157,6 +160,17 @@ export function ActionPanel({
         </div>
       )}
 
+      {blockedReason !== null && !readOnly && (
+        <p
+          role="note"
+          data-testid="action-blocked"
+          className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" aria-hidden="true" />
+          {blockedReason}
+        </p>
+      )}
+
       <AssignmentSection
         jobId={incident.jobId}
         queueRank={incident.queueRank}
@@ -165,6 +179,7 @@ export function ActionPanel({
         closed={isClosedStatus(currentStatus)}
         currentUsername={currentUsername}
         onRefresh={onRefresh}
+        blockedReason={blockedReason}
       />
 
       {readOnly && (
@@ -275,7 +290,12 @@ export function ActionPanel({
             <FreeTextCounter id="transition-reason-count" value={reason} />
           </div>
 
-          <button type="submit" disabled={transitioning || !reason.trim()} className="soc-btn-primary w-full py-2 text-xs">
+          <button
+            type="submit"
+            disabled={transitioning || !reason.trim() || blockedReason !== null}
+            title={blockedReason ?? undefined}
+            className="soc-btn-primary w-full py-2 text-xs"
+          >
             {transitioning ? '저장 중...' : nextAllowedStatus === 'investigating' ? '분석 중으로 변경' : '종결 처리'}
           </button>
         </form>
@@ -386,6 +406,8 @@ export function ActionPanel({
                   noteInputId="detail-review-note"
                   submitting={decidingReview}
                   onDecide={(action) => void handleReviewDecision(action)}
+                  blockedReason={blockedReason}
+                  hideBlockedText
                 />
               </div>
             )}

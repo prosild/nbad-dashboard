@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, FileSearch, Filter } from 'lucide-react';
 import { errorNotice, type ErrorNotice } from '../api/client';
 import { adminApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
+import { StaleNotice } from '../components/StaleNotice';
 import { CodeLabel, SocBadge } from '../components/StatusBadge';
 import type { AdminAuditLogsResponse, AuditLog } from '../types/api';
 import { formatDateTime } from '../utils/format';
@@ -78,31 +79,58 @@ function AuditLogRow({ log }: { log: AuditLog }) {
   );
 }
 
+interface AuditQuery {
+  actionType?: string;
+  actorUsername?: string;
+  limit?: number;
+}
+
+function auditKey(q: AuditQuery): string {
+  return JSON.stringify([q.actionType ?? null, q.actorUsername ?? null, q.limit ?? null]);
+}
+
 export function AdminAuditLogsPage() {
-  const [data, setData] = useState<AdminAuditLogsResponse | null>(null);
+  /** 마지막 성공 응답과 그 조건 키(T42). 지금 조건 = [조회]로 제출한 조건(입력 칸만 고친 값이 아니다) */
+  const [loaded, setLoaded] = useState<{ condKey: string; res: AdminAuditLogsResponse; loadedAt: string } | null>(null);
+  /** 동작 유형 선택지(조건과 상관없는 값): 마지막 성공 응답의 것 */
+  const [actionTypes, setActionTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<ErrorNotice | null>(null);
+  const [failure, setFailure] = useState<{ condKey: string; notice: ErrorNotice } | null>(null);
+  const [submitted, setSubmitted] = useState<AuditQuery>({ limit: 100 });
+  const seq = useRef(0);
 
   const [actionType, setActionType] = useState('');
   const [actorUsername, setActorUsername] = useState('');
   const [limit, setLimit] = useState(100);
 
-  const loadLogs = useCallback(async (params?: { actionType?: string; actorUsername?: string; limit?: number }) => {
+  const loadLogs = useCallback(async (params: AuditQuery) => {
+    const my = ++seq.current;
+    const condKey = auditKey(params);
+    setSubmitted(params);
     setLoading(true);
-    setErrorMsg(null);
     try {
       const res = await adminApi.listAuditLogs(params);
-      setData(res);
+      if (my !== seq.current) return;
+      setLoaded({ condKey, res, loadedAt: new Date().toISOString() });
+      setActionTypes(res.actionTypes ?? []);
+      setFailure(null);
     } catch (err) {
-      setErrorMsg(errorNotice(err, '감사 로그를 불러오지 못했습니다.'));
+      if (my !== seq.current) return;
+      setFailure({ condKey, notice: errorNotice(err, '감사 로그를 불러오지 못했습니다.') });
     } finally {
-      setLoading(false);
+      if (my === seq.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadLogs({ limit: 100 });
   }, [loadLogs]);
+
+  const condKey = auditKey(submitted);
+  const current = loaded !== null && loaded.condKey === condKey ? loaded : null;
+  const data = current?.res ?? null;
+  const failed = failure !== null && failure.condKey === condKey ? failure.notice : null;
+  const stale = failed !== null && current !== null;
 
   function handleFilterSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -132,7 +160,7 @@ export function AdminAuditLogsPage() {
                 className="soc-select text-xs"
               >
                 <option value="">모든 유형</option>
-                {(data?.actionTypes ?? []).map((type) => (
+                {actionTypes.map((type) => (
                   <option key={type} value={type}>
                     {labelText('auditAction', type)}
                   </option>
@@ -178,21 +206,31 @@ export function AdminAuditLogsPage() {
           </form>
         </section>
 
-        {errorMsg && (
+        {/* T42: 다시 시도는 제출한 조건으로 다시 부른다(입력 칸만 고친 값이 아니다) */}
+        {failed && stale && (
+          <StaleNotice
+            notice={failed}
+            loadedAt={current?.loadedAt ?? null}
+            loading={loading}
+            onRetry={() => void loadLogs(submitted)}
+          />
+        )}
+        {failed && !stale && (
           <ErrorAlert
-            message={errorMsg.message} rateLimited={errorMsg.rateLimited}
-            onRetry={() => void loadLogs({ actionType, actorUsername, limit })}
+            message={failed.message}
+            rateLimited={failed.rateLimited}
+            onRetry={() => void loadLogs(submitted)}
           />
         )}
 
-        {loading && !data ? (
-          <LoadingPanel label="감사 로그를 불러오는 중..." />
+        {!data ? (
+          loading ? <LoadingPanel label="감사 로그를 불러오는 중..." /> : null
         ) : (
           <div className="soc-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-xs text-slate-400">
               <div className="flex items-center gap-2 font-semibold text-slate-200">
                 <FileSearch className="h-4 w-4 text-slate-400" />
-                감사 로그 ({data?.logs.length ?? 0}건)
+                감사 로그 ({data.logs.length}건)
               </div>
             </div>
             <div className="overflow-x-auto">
