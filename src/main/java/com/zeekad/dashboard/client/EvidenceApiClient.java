@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,7 +20,12 @@ import java.util.Set;
 
 /**
  * zeek_AD 근거 조회 FastAPI(evidence.v1) 클라이언트.
- * 연결 실패·타임아웃·4xx/5xx 시 예외를 전파하지 않고 안전한 폴백 객체를 반환한다.
+ * 연결 실패·타임아웃·4xx/5xx·깨진 응답(상태 줄, JSON 아님, 모양이 다른 JSON) 시 예외를 전파하지 않고
+ * 안전한 폴백 객체를 반환한다(T42). 바깥 시스템이므로 HTTP 주고받기와 응답 풀이에서 나는 실행 중 예외는
+ * 모두 폴백한다. Error는 잡지 않는다.
+ *
+ * <p>로그에는 경로·예외 종류·(있으면) HTTP 상태 수만 적는다. 예외 글(getMessage)에는 응답 본문 조각이
+ * 들어갈 수 있어(스프링의 4xx·5xx 예외 글, Jackson 풀이 예외 글) 적지 않는다.
  */
 @Component
 public class EvidenceApiClient {
@@ -50,6 +55,10 @@ public class EvidenceApiClient {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 지금 src/main에서 부르지 않는다. 실패와 0건을 구분하지 못하므로(둘 다 빈 목록)
+     * 화면에 쓰게 되면 실패를 따로 돌려주게 고친다.
+     */
     public List<Map<String, Object>> fetchJobs() {
         try {
             String body = restClient.get()
@@ -67,12 +76,16 @@ public class EvidenceApiClient {
                 return toListOfMaps(root.get("jobs"));
             }
             return Collections.emptyList();
-        } catch (RestClientException | java.io.IOException e) {
-            log.warn("근거 API /api/v1/jobs 호출 실패(폴백 반환): {}", e.getMessage());
+        } catch (RuntimeException | java.io.IOException e) {
+            logFallback("/api/v1/jobs", e);
             return Collections.emptyList();
         }
     }
 
+    /**
+     * 지금 src/main에서 부르지 않는다. 실패와 0건을 구분하지 못하므로(둘 다 빈 목록)
+     * 화면에 쓰게 되면 실패를 따로 돌려주게 고친다.
+     */
     public List<Map<String, Object>> fetchCaptureQueue(String captureId, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         try {
@@ -97,8 +110,8 @@ public class EvidenceApiClient {
                 return toListOfMaps(root.get("queue"));
             }
             return Collections.emptyList();
-        } catch (RestClientException | java.io.IOException e) {
-            log.warn("근거 API /api/v1/captures/{}/queue 호출 실패(폴백 반환): {}", captureId, e.getMessage());
+        } catch (RuntimeException | java.io.IOException e) {
+            logFallback("/api/v1/captures/{captureId}/queue", e);
             return Collections.emptyList();
         }
     }
@@ -116,10 +129,21 @@ public class EvidenceApiClient {
             if (root == null || !root.isObject()) {
                 return EvidenceApiResponse.unavailable();
             }
+            // 풀이 도중 예외가 나면 반쯤 채운 응답을 내보내지 않고 통째로 unavailable이다(아래 catch).
             return parseIncidentResponse(root, jobId, rank);
-        } catch (RestClientException | java.io.IOException e) {
-            log.warn("근거 API /api/v1/jobs/{}/incidents/{} 호출 실패(폴백 반환): {}", jobId, rank, e.getMessage());
+        } catch (RuntimeException | java.io.IOException e) {
+            logFallback("/api/v1/jobs/" + jobId + "/incidents/" + rank, e);
             return EvidenceApiResponse.unavailable();
+        }
+    }
+
+    /** 경로·예외 종류·(있으면) HTTP 상태 수만 적는다. 예외 글과 응답 본문은 적지 않는다. */
+    private static void logFallback(String path, Exception e) {
+        if (e instanceof RestClientResponseException responseException) {
+            log.warn("근거 API {} 호출 실패(폴백 반환): {} status={}",
+                    path, e.getClass().getName(), responseException.getStatusCode().value());
+        } else {
+            log.warn("근거 API {} 호출 실패(폴백 반환): {}", path, e.getClass().getName());
         }
     }
 

@@ -40,6 +40,8 @@ import java.util.Set;
 @Service
 public class IncidentDetailService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(IncidentDetailService.class);
+
     private static final List<String> PROTOCOL_LOG_KEYS = List.of(
             "dns", "http", "tls", "ssh", "ftp", "smb", "kerberos", "dce_rpc", "ntlm"
     );
@@ -99,7 +101,7 @@ public class IncidentDetailService {
         IncidentQueueItem displayIncident = maskingService.maskIncidentQueueItem(rawIncident, role);
 
         EvidenceApiResponse apiResponse = evidenceApiClient.fetchIncidentEvidence(jobId, queueRank);
-        IncidentDetailView.EvidenceView evidenceView = buildEvidenceView(apiResponse, role);
+        IncidentDetailView.EvidenceView evidenceView = buildEvidenceViewOrFallback(apiResponse, role, jobId, queueRank);
 
         Map<String, String> userDisplayMap = incidentQueryService.loadUserDisplayMap();
 
@@ -173,6 +175,22 @@ public class IncidentDetailService {
                 canTransition,
                 nextAllowedStatus
         );
+    }
+
+    /**
+     * 근거 API는 바깥 시스템이다(T42). 클라이언트가 정상으로 돌려준 값을 조립(마스킹·형변환)하다 예외가 나도
+     * 상세 전체를 500으로 만들지 않고 증적만 "불러오지 못함"으로 둔다. 조립하던 값은 일부라도 싣지 않는다
+     * (마스킹이 끝나지 않은 값이 조회자에게 나가지 않게). 로그는 경로·예외 종류만 적는다.
+     */
+    private IncidentDetailView.EvidenceView buildEvidenceViewOrFallback(EvidenceApiResponse apiResponse, UserRole role,
+                                                                        long jobId, int queueRank) {
+        try {
+            return buildEvidenceView(apiResponse, role);
+        } catch (RuntimeException e) {
+            log.warn("근거 API /api/v1/jobs/{}/incidents/{} 증적 조립 실패(폴백 반환): {}",
+                    jobId, queueRank, e.getClass().getName());
+            return IncidentDetailView.EvidenceView.unavailable(EvidenceData.FALLBACK_MESSAGE);
+        }
     }
 
     private IncidentDetailView.EvidenceView buildEvidenceView(EvidenceApiResponse apiResponse, UserRole role) {
