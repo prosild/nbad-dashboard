@@ -957,7 +957,9 @@ describe('기간 밖 안내(T29)', () => {
     expect(select.querySelector('option[value="cap:lab-20261119"]')?.textContent).toMatch(/ · 탐지 없음$/);
   });
 
-  it('고른 수집원의 마지막 탐지가 기간 밖이면 그 사실과 [기간: 전체로 보기]를 바로 보인다', async () => {
+  // T43: 캡처 하나를 골랐고 그 마지막 탐지가 기간 밖 가장 최근 탐지와 같은 순간이면 두 문단이 같은 말을 되풀이했으므로
+  // 한 문단(이름·건수·시각·상대 시각)으로 바뀌었다. 두 시각이 다른 경우의 둘째 문단은 t34CustomPeriod·t43AllPeriodPath 시험이 본다.
+  it('고른 수집원의 마지막 탐지가 기간 밖이면 그 사실과 [기간: 전체로 보기]를 바로 보인다(같은 순간이면 한 문단, T43)', async () => {
     const user = userEvent.setup();
     renderQueue('/incidents?captureId=cic17-wed', {
       periodFilter: labOnly,
@@ -966,9 +968,11 @@ describe('기간 밖 안내(T29)', () => {
       anchor: '2026-11-20T01:30:00Z',
       newestOutsidePeriod: '2026-11-12T03:10:00Z',
     });
-    const src = await screen.findByTestId('source-outside');
-    expect(src).toHaveTextContent('고른 수집원 CIC-IDS2017 수요일의 마지막 탐지 11-12 12:10(기준 시각 7일 전)이 선택한 기간 밖입니다.');
-    expect(screen.getByText(/이 기간에 탐지된 인시던트가 없습니다/)).toHaveTextContent('선택한 기간 밖 인시던트 30건');
+    const merged = await screen.findByTestId('empty-period-merged');
+    expect(merged).toHaveTextContent(
+      '이 기간에 CIC-IDS2017 수요일에서 탐지된 인시던트가 없습니다. 선택한 기간 밖에 30건이 있고 마지막 탐지는 2026-11-12 12:10:00(기준 시각 7일 전)입니다.',
+    );
+    expect(screen.queryByTestId('source-outside')).toBeNull();
     await user.click(screen.getByRole('button', { name: '기간: 전체로 보기' }));
     await waitFor(() => expect(params().get('period')).toBe('all'));
     expect(params().get('captureId')).toBe('cic17-wed');

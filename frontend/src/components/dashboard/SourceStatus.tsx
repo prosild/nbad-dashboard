@@ -2,11 +2,20 @@
  * 수집원 상태(T24): 센서 상태 배지(정상·지연·중단·실패·기록 없음)와 캡처 상태 배지(수집 중·지난 날짜·가져온 데이터·실패·기록 없음),
  * 현황판 패널(센서 행 + 가져온 데이터 행)과 운영 현황 표(모든 값).
  */
-import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Database, PauseCircle, Radio, XCircle } from 'lucide-react';
+import { AlertTriangle, CalendarRange, CheckCircle2, CircleDashed, Clock, Database, PauseCircle, Radio, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { CaptureRow, CaptureState, DashboardOverviewResponse, JobRef, SensorHealth, SensorRow } from '../../types/api';
+import type {
+  CaptureRow,
+  CaptureState,
+  DashboardOverviewResponse,
+  JobRef,
+  SensorHealth,
+  SensorRow,
+  UnifiedQueueResponse,
+} from '../../types/api';
 import { formatDateTime, formatNumber, formatRelativeTo, formatSeconds } from '../../utils/format';
 import { captureInfo, shortNameOf } from '../../utils/labels';
+import { isOutsidePeriod, lastDetectedText } from '../OutsidePeriodNotice';
 import { JobStatusBadge, SocBadge, type BadgeTone } from '../StatusBadge';
 
 export const SENSOR_HEALTH_LABEL: Record<SensorHealth, string> = {
@@ -129,17 +138,40 @@ function jobTitle(job: JobRef | null): string | undefined {
   return `최근 끝난 탐지 작업 ${job.jobId} · ${job.status ?? '-'} · 완료 ${formatDateTime(job.finishedAt)}${job.error ? `\n오류: ${job.error}` : ''}`;
 }
 
+/** 현황판이 지금 조건으로 받은 큐 응답에서 "전체 기간" 길 판정에 쓰는 값(T43) */
+export type AllPeriodContext = Pick<UnifiedQueueResponse, 'period' | 'periodStart' | 'periodEnd' | 'anchor' | 'snapshot' | 'sources'>;
+
+export const ALL_PERIOD_LINK_TEXT = '전체 기간 보기';
+
+/**
+ * T43 "전체 기간" 길: 기간이 전체가 아니고, 그 캡처의 기간 안 인시던트가 0건이고, 지금 조건 큐 응답의 마지막 탐지가 기간 밖이면
+ * 그 이유 글(툴팁·읽기 글)을 돌려준다. 아니면(마지막 탐지를 모름 포함) null. 기간 밖 건수는 현황판이 모르므로 적지 않는다.
+ */
+export function allPeriodReason(row: CaptureRow, ctx: AllPeriodContext | null | undefined): string | null {
+  if (!ctx || ctx.period === 'all' || row.total !== 0) return null;
+  const last = (ctx.sources ?? []).find((s) => s.captureId === row.captureId)?.lastDetectedAt ?? null;
+  if (!last || !isOutsidePeriod(last, ctx.periodStart, ctx.periodEnd)) return null;
+  return `선택한 기간에는 인시던트 0건 · ${lastDetectedText(last, ctx.anchor, ctx.snapshot)}`;
+}
+
+function allPeriodHref(captureId: string): string {
+  return `/incidents?period=all&captureId=${encodeURIComponent(captureId)}`;
+}
+
 /* ───────────────────────── 현황판 패널 ───────────────────────── */
 
 export function SourceStatusList({
   overview,
   shortNames,
   periodQuery,
+  allPeriod = null,
 }: {
   overview: DashboardOverviewResponse;
   shortNames: Map<string, string>;
   /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
   periodQuery: string;
+  /** T43 지금 조건으로 받은 큐 응답(없으면 "전체 기간" 길을 보이지 않는다) */
+  allPeriod?: AllPeriodContext | null;
 }) {
   const { sensors, captures, anchor, snapshot, staleAfterSeconds, downAfterSeconds } = overview;
   const imported = sortImportedCaptures(captures.filter((c) => c.sensorKey === null));
@@ -161,6 +193,7 @@ export function SourceStatusList({
               downSec={downAfterSeconds}
               shortNames={shortNames}
               periodQuery={periodQuery}
+              allPeriod={allPeriod}
             />
           ))}
         </ul>
@@ -170,7 +203,14 @@ export function SourceStatusList({
           <div className="mb-1 text-[11px] font-medium text-slate-400">가져온 데이터</div>
           <ul className="divide-y divide-slate-800/80" aria-label="가져온 데이터">
             {imported.map((c) => (
-              <ImportedItem key={c.captureId} row={c} anchor={anchor} shortNames={shortNames} periodQuery={periodQuery} />
+              <ImportedItem
+                key={c.captureId}
+                row={c}
+                anchor={anchor}
+                shortNames={shortNames}
+                periodQuery={periodQuery}
+                allPeriod={allPeriod}
+              />
             ))}
           </ul>
         </div>
@@ -188,6 +228,7 @@ function SensorItem({
   downSec,
   shortNames,
   periodQuery,
+  allPeriod,
 }: {
   sensor: SensorRow;
   captures: CaptureRow[];
@@ -198,6 +239,7 @@ function SensorItem({
   shortNames: Map<string, string>;
   /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
   periodQuery: string;
+  allPeriod: AllPeriodContext | null;
 }) {
   // "지난 날짜"로 접는 것은 ended뿐이다. 수집 중(active)과 실패(failed)·기록 없음(none) 캡처는 펼쳐 둔다
   // (오늘 캡처가 실패하면 서버 상태는 failed라 active로만 고르면 지난 날짜에 묻혔다, T24).
@@ -234,7 +276,7 @@ function SensorItem({
       {(active.length > 0 || others.length > 0) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
           {active.map((c) => (
-            <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} />
+            <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} allPeriod={allPeriod} />
           ))}
           {others.length > 0 && (
             <details className="group" data-ended-captures="">
@@ -243,7 +285,7 @@ function SensorItem({
               </summary>
               <div className="mt-1 flex flex-wrap gap-1.5">
                 {others.map((c) => (
-                  <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} />
+                  <CaptureChip key={c.captureId} row={c} shortNames={shortNames} periodQuery={periodQuery} allPeriod={allPeriod} />
                 ))}
               </div>
             </details>
@@ -254,15 +296,26 @@ function SensorItem({
   );
 }
 
-function CaptureChip({ row, shortNames, periodQuery }: { row: CaptureRow; shortNames: Map<string, string>; periodQuery: string }) {
+function CaptureChip({
+  row,
+  shortNames,
+  periodQuery,
+  allPeriod,
+}: {
+  row: CaptureRow;
+  shortNames: Map<string, string>;
+  periodQuery: string;
+  allPeriod: AllPeriodContext | null;
+}) {
   const info = captureInfo(row.captureId);
   const flagged = row.state === 'failed' || row.state === 'none';
-  return (
+  const reason = allPeriodReason(row, allPeriod);
+  const chip = (
     <Link
       to={`/incidents?${periodQuery}&captureId=${encodeURIComponent(row.captureId)}`}
       title={`${info.text} · 캡처 ID: ${row.captureId}\n${CAPTURE_STATE_TOOLTIP[row.state]}`}
       data-capture-chip={row.state}
-      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-slate-200 ${
+      className={`inline-flex items-center gap-1 border px-1.5 py-0.5 text-slate-200 ${reason ? 'rounded-l' : 'rounded'} ${
         row.state === 'failed' ? 'border-amber-500/60 hover:border-amber-400' : 'border-slate-700 hover:border-slate-500'
       }`}
     >
@@ -278,6 +331,22 @@ function CaptureChip({ row, shortNames, periodQuery }: { row: CaptureRow; shortN
       </span>
     </Link>
   );
+  if (!reason) return chip;
+  // T43: 표지에 붙은 작은 아이콘 링크(표지 수가 두 배로 보이지 않게). 링크 안에 링크를 넣지 않고 나란히 둔다
+  return (
+    <span className="inline-flex items-stretch" data-capture-chip-group={row.captureId}>
+      {chip}
+      <Link
+        to={allPeriodHref(row.captureId)}
+        title={`${ALL_PERIOD_LINK_TEXT}: ${reason}`}
+        aria-label={`${info.text} ${ALL_PERIOD_LINK_TEXT} (${reason})`}
+        data-all-period={row.captureId}
+        className="inline-flex items-center rounded-r border border-l-0 border-slate-700 px-1 text-cyan-300 hover:border-slate-500 hover:text-cyan-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+      >
+        <CalendarRange className="h-3 w-3" aria-hidden="true" />
+      </Link>
+    </span>
+  );
 }
 
 function ImportedItem({
@@ -285,19 +354,23 @@ function ImportedItem({
   anchor,
   shortNames,
   periodQuery,
+  allPeriod,
 }: {
   row: CaptureRow;
   anchor: string;
   shortNames: Map<string, string>;
   /** 기간 쿼리(period=… 또는 period=custom&start=…&end=…) */
   periodQuery: string;
+  allPeriod: AllPeriodContext | null;
 }) {
   const info = captureInfo(row.captureId);
+  const reason = allPeriodReason(row, allPeriod);
+  // T43: 줄 링크(기간 유지) 옆에 "전체 기간" 링크를 나란히 둔다(링크 안에 링크를 넣지 않는다)
   return (
-    <li>
+    <li className="flex items-center gap-1">
       <Link
         to={`/incidents?${periodQuery}&captureId=${encodeURIComponent(row.captureId)}`}
-        className="flex items-center gap-2 rounded px-1 py-1.5 text-xs transition hover:bg-slate-800/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1.5 text-xs transition hover:bg-slate-800/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
         title={`${info.text} · 캡처 ID: ${row.captureId}${row.latestJob?.error ? `\n오류: ${row.latestJob.error}` : ''}`}
         data-capture={row.captureId}
       >
@@ -313,6 +386,18 @@ function ImportedItem({
           {formatNumber(row.total)}
         </span>
       </Link>
+      {reason && (
+        <Link
+          to={allPeriodHref(row.captureId)}
+          title={reason}
+          aria-label={`${info.text} ${ALL_PERIOD_LINK_TEXT} (${reason})`}
+          data-all-period={row.captureId}
+          className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1 py-1.5 text-[11px] font-medium text-cyan-300 hover:bg-slate-800/40 hover:text-cyan-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+        >
+          <CalendarRange className="h-3 w-3" aria-hidden="true" />
+          전체 기간
+        </Link>
+      )}
     </li>
   );
 }

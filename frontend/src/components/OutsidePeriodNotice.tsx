@@ -68,10 +68,22 @@ export function maxIso(values: (string | null | undefined)[]): string | null {
 /** "마지막 탐지 11-12 03:10(기준 시각 7일 전)" 같은 짧은 글(수집원 선택 목록·안내가 같이 쓴다) */
 export function lastDetectedText(iso: string | null | undefined, anchor: string | null | undefined, snapshot: boolean): string {
   if (!iso) return '탐지 없음';
+  const relText = relativeToAnchorText(iso, anchor, snapshot);
+  return `마지막 탐지 ${formatCompactDateTime(iso, anchor)}${relText ? `(${relText})` : ''}`;
+}
+
+/** 기준 시각과 견준 상대 시각 글("기준 시각 10일 전", 지금 시각 기준이면 "10일 전"). 알 수 없으면 빈 글 */
+export function relativeToAnchorText(iso: string, anchor: string | null | undefined, snapshot: boolean): string {
   const rel = anchor ? formatRelativeTo(iso, anchor) : '-';
   const after = anchor ? new Date(iso).getTime() > new Date(anchor).getTime() : false;
-  const relText = after ? '기준 시각 뒤' : rel === '-' ? '' : snapshot ? `기준 시각 ${rel}` : rel;
-  return `마지막 탐지 ${formatCompactDateTime(iso, anchor)}${relText ? `(${relText})` : ''}`;
+  return after ? '기준 시각 뒤' : rel === '-' ? '' : snapshot ? `기준 시각 ${rel}` : rel;
+}
+
+/** 두 시각이 같은 순간인가(T43: 표기가 달라도 값으로 견주고 1초 안의 차이는 같다고 본다). 하나라도 못 읽으면 false */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = parseOffsetIso(a);
+  const y = parseOffsetIso(b);
+  return x !== null && y !== null && Math.abs(x - y) < 1000;
 }
 
 /**
@@ -119,13 +131,30 @@ export function OutsidePeriodNotice({
 }
 
 /**
- * 0건 안내에 덧붙일 글: 고른 수집원의 마지막 탐지가 기간 밖이면 그 사실, 아니면 기간 밖 수·가장 최근 탐지.
- * 버튼은 화면의 빈 결과 안내가 하나만 둔다.
+ * 0건 안내에 덧붙일 글: 기간 밖 수·가장 최근 탐지(지금 거르기 조건), 고른 수집원의 마지막 탐지가 기간 밖이면 그 사실.
+ * T43: 캡처 하나를 골랐고 그 마지막 탐지가 기간 밖 가장 최근 탐지와 같은 순간이면 같은 말이 두 번 되므로 한 문단으로 말한다
+ * (건수·시각은 지금 조건의 값, 이름과 상대 시각만 수집원에서 온다). 버튼은 화면의 빈 결과 안내가 하나만 둔다.
  */
 export function EmptyPeriodText({ queue, sourceValue }: { queue: UnifiedQueueResponse; sourceValue: string }) {
   const n = outsideCount(queue);
   const src = selectedSourceLastDetected(queue.sources ?? [], sourceValue);
   const srcOutside = src !== null && isOutsidePeriod(src.lastDetectedAt, queue.periodStart, queue.periodEnd);
+  const newest = queue.newestOutsidePeriod;
+  if (srcOutside && src && newest && sourceValue.startsWith('cap:') && sameInstant(src.lastDetectedAt, newest)) {
+    const rel = relativeToAnchorText(newest, queue.anchor, queue.snapshot);
+    return (
+      <p data-testid="empty-period-merged">
+        이 기간에 <span className="text-slate-100">{src.label}</span>에서 탐지된 인시던트가 없습니다.{' '}
+        {n > 0 && (
+          <>
+            선택한 기간 밖에 <span className="font-semibold tabular-nums text-slate-100">{formatNumber(n)}</span>건이 있고{' '}
+          </>
+        )}
+        마지막 탐지는 <span className="tabular-nums text-slate-100">{formatDateTime(newest)}</span>
+        {rel ? `(${rel})` : ''}입니다.
+      </p>
+    );
+  }
   return (
     <>
       <p>
@@ -136,10 +165,10 @@ export function EmptyPeriodText({ queue, sourceValue }: { queue: UnifiedQueueRes
             선택한 기간 밖 인시던트 <span className="font-semibold tabular-nums text-slate-100">{formatNumber(n)}</span>건
           </>
         )}
-        {queue.newestOutsidePeriod && (
+        {newest && (
           <>
             {n > 0 ? ' · ' : ' '}가장 최근 탐지:{' '}
-            <span className="tabular-nums text-slate-100">{formatDateTime(queue.newestOutsidePeriod)}</span>
+            <span className="tabular-nums text-slate-100">{formatDateTime(newest)}</span>
           </>
         )}
       </p>

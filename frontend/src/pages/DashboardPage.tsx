@@ -286,6 +286,7 @@ export function DashboardPage() {
                   overview={overview}
                   shortNames={shortNames}
                   periodQuery={setPeriodParams(new URLSearchParams(), cond).toString()}
+                  allPeriod={queue}
                 />
               </section>
               <AlertingPanel overview={overview} cond={cond} shortNames={shortNames} className="xl:col-span-2" />

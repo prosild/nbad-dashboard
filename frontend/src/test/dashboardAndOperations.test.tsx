@@ -1207,3 +1207,80 @@ describe('T41 현황판: 조건을 바꾼 직후 불러오는 동안', () => {
     view.unmount();
   });
 });
+
+/* ───────────────────────── T43 "전체 기간" 길 ───────────────────────── */
+
+describe('T43 현황판: 기간 안 0건이고 마지막 탐지가 기간 밖인 캡처에 "전체 기간" 링크', () => {
+  /** 큐 응답 sources의 마지막 탐지(서버처럼 조건과 무관하게 허용 캡처 전체) */
+  const LAST = {
+    'lab-20261120': minutesAgo(10),
+    'lab-20261119': minutesAgo(1200),
+    'cic17-wed': minutesAgo(3 * 1440),
+    'syn1-thu': minutesAgo(20 * 1440),
+  };
+  const withLast = (url: string) => json(fakeQueue(url, { items: ITEMS, anchor: ANCHOR, periodFilter, lastDetected: LAST }));
+  const region = () => screen.findByRole('region', { name: '수집원 상태' });
+
+  it('1시간: 가져온 데이터 두 줄과 지난 날짜 캡처 표지에만 링크, 원래 링크는 기간 유지, 센서 줄에는 없음', async () => {
+    renderAt('/?period=1h', { queue: withLast });
+    const r = await region();
+    await waitFor(() => expect(r.querySelectorAll('[data-all-period]')).toHaveLength(3));
+    for (const id of ['cic17-wed', 'syn1-thu', 'lab-20261119']) {
+      const a = r.querySelector(`[data-all-period="${id}"]`) as HTMLElement;
+      expect(a.getAttribute('href')).toBe(`/incidents?period=all&captureId=${id}`);
+    }
+    expect(hrefParams(r.querySelector('[data-capture="cic17-wed"]') as HTMLElement).get('period')).toBe('1h');
+    expect(r.querySelector('[data-all-period="lab-20261120"]')).toBeNull();
+    expect(within(r).getByRole('link', { name: '실습망 센서 인시던트 목록' }).querySelector('[data-all-period]')).toBeNull();
+    expect(r.querySelectorAll('a a')).toHaveLength(0);
+  });
+
+  it('24시간: 기간 안에 있는 실습망 캡처는 링크 없음, 가져온 데이터만', async () => {
+    renderAt('/?period=24h', { queue: withLast });
+    const r = await region();
+    await waitFor(() => expect(r.querySelectorAll('[data-all-period]')).toHaveLength(2));
+    expect(r.querySelector('[data-all-period="lab-20261119"]')).toBeNull();
+  });
+
+  it('수집원 조건(가져온 데이터)을 건 상태에서도 같다', async () => {
+    renderAt('/?period=1h&source=imported', { queue: withLast });
+    const r = await region();
+    await waitFor(() => expect(r.querySelectorAll('[data-all-period]')).toHaveLength(2));
+    expect(r.querySelector('[data-all-period="cic17-wed"]')?.getAttribute('href')).toBe('/incidents?period=all&captureId=cic17-wed');
+    expect(hrefParams(r.querySelector('[data-capture="cic17-wed"]') as HTMLElement).get('source')).toBeNull();
+  });
+
+  it('캡처 하나를 고른 상태에서도 같다', async () => {
+    renderAt('/?period=1h&captureId=syn1-thu', { queue: withLast });
+    const r = await region();
+    await waitFor(() => expect(r.querySelectorAll('[data-all-period]')).toHaveLength(1));
+    expect(r.querySelector('[data-all-period="syn1-thu"]')).not.toBeNull();
+  });
+
+  it('기간 전체면 링크가 없다', async () => {
+    renderAt('/?period=all', { queue: withLast });
+    const r = await region();
+    await within(r).findByRole('link', { name: '실습망 센서 인시던트 목록' });
+    expect(r.querySelectorAll('[data-all-period]')).toHaveLength(0);
+  });
+
+  it('큐 응답에 마지막 탐지가 없으면 링크가 없다', async () => {
+    renderAt('/?period=1h');
+    const r = await region();
+    await within(r).findByRole('link', { name: '실습망 센서 인시던트 목록' });
+    expect(r.querySelectorAll('[data-all-period]')).toHaveLength(0);
+  });
+
+  it('"전체 기간" 링크를 누르면 그 캡처의 전체 기간 목록으로 간다', async () => {
+    const user = userEvent.setup();
+    renderAt('/?period=1h', { queue: withLast });
+    const r = await region();
+    const a = await waitFor(() => {
+      const el = r.querySelector('[data-all-period="cic17-wed"]') as HTMLElement | null;
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    await user.click(a);
+    expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&captureId=cic17-wed');
+  });
+});
