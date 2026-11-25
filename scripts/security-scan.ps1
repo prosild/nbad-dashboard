@@ -134,9 +134,11 @@ if (-not $SkipTrivy) {
     #      FS 스캔 컨테이너에는 /work/.git을 빈 익명 볼륨으로 가린다. Trivy(0.76)가 대상이 git 저장소면 스캔 전에 작업 트리 상태를 계산하는데,
     #      추적하지 않는 로컬 폴더(handoff, .worktrees)가 크면 그 계산이 제한 시간(5분)을 넘겨 "context deadline exceeded"로 끝난다(T47에서 두 번).
     #      .git 안은 원래 스캔 대상이 아니고(Trivy 기본 제외) 가려도 스캔하는 파일은 같다. 가린 채로는 3초에 끝난다.
+    #      .git이 폴더일 때만 가린다. git worktree에서는 .git이 파일이라 그 자리에 볼륨(폴더)을 올리면 컨테이너를 만들지 못한다(그때는 가리지 않고 돈다).
     $fsSkipDirs = "build,.gradle,security-reports,handoff,.worktrees,frontend/node_modules,frontend/dist"
-    $fsTable = (Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "-v", "/work/.git", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "table", "/work")).Output
-    [void](Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "-v", "/work/.git", "-v", "${ReportFullDir}:/out", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "json", "-o", "/out/trivy-fs.json", "/work"))
+    $fsGitMask = @(if (Test-Path -LiteralPath (Join-Path $RepoRoot ".git") -PathType Container) { "-v", "/work/.git" })
+    $fsTable = (Invoke-NativeCapture "docker" (@("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro") + $fsGitMask + @("aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "table", "/work"))).Output
+    [void](Invoke-NativeCapture "docker" (@("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro") + $fsGitMask + @("-v", "${ReportFullDir}:/out", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "json", "-o", "/out/trivy-fs.json", "/work")))
     $fsJson = [IO.File]::ReadAllText((Join-Path $ReportFullDir "trivy-fs.json"), [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
     $fsTargets = @($fsJson.Results | ForEach-Object { "$($_.Target) ($($_.Type))" })
     $npmTarget = @($fsJson.Results | Where-Object { $_.Target -eq "frontend/package-lock.json" -and $_.Type -eq "npm" })
