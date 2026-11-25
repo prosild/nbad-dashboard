@@ -161,4 +161,99 @@ class MaskingServiceTest {
         others.put("host", null);
         assertThat(maskingService.maskEvidence(evidence, UserRole.VIEWER).getAdditionalFields()).doesNotContainKey("host");
     }
+
+    /* ───────────── T46 관측 계정 이름(zeekad_name) ───────────── */
+
+    private static AssetNameRecord assetWithExtras(Map<String, Object> extras) {
+        AssetNameRecord asset = new AssetNameRecord();
+        asset.setCaptureId("lab-x");
+        asset.setHostIp("10.20.0.15");
+        asset.setKerberosUser("admin");
+        asset.setNtlmUser("backup_op");
+        asset.setExtraAttributes(extras);
+        return asset;
+    }
+
+    @Test
+    void viewerZeekadNameIsMaskedForStringListAndMixedCaseKey() {
+        Map<String, Object> extras = new java.util.LinkedHashMap<>();
+        extras.put("zeekad_name", "alice.kim");
+        extras.put("zeekad_name_kind", "kerberos_client");
+        extras.put("source_log", "kerberos 10.20.0.15");
+        extras.put("observation_count", 14);
+        AssetNameRecord masked = maskingService.maskAssetNameRecord(assetWithExtras(extras), UserRole.VIEWER);
+        assertThat(masked.getExtraAttributes()).containsEntry("zeekad_name", "a***");
+        // 나머지 키는 지금과 같다: 글은 IPv4만 가리고 숫자는 그대로
+        assertThat(masked.getExtraAttributes()).containsEntry("zeekad_name_kind", "kerberos_client");
+        assertThat(masked.getExtraAttributes()).containsEntry("source_log", "kerberos 10.20.*.*");
+        assertThat(masked.getExtraAttributes()).containsEntry("observation_count", 14);
+        assertThat(masked.getKerberosUser()).isEqualTo("a***");
+        assertThat(masked.getNtlmUser()).isEqualTo("b***");
+        assertThat(masked.getHostIp()).isEqualTo("10.20.*.*");
+
+        // 컴퓨터 계정, 한 글자, 주소가 든 이름, 빈 글
+        assertThat(maskedName("WS-01$")).isEqualTo("W***");
+        assertThat(maskedName("x")).isEqualTo("***");
+        assertThat(maskedName("10.20.0.15")).isEqualTo("1***");
+        assertThat(maskedName("svc@10.20.0.15")).isEqualTo("s***");
+        assertThat(maskedName("")).isEqualTo("");
+
+        // 리스트 원소마다, 문자열이 아닌 원소도 글로 바꿔 가린다. null 원소는 null
+        Map<String, Object> listExtras = new java.util.LinkedHashMap<>();
+        listExtras.put("zeekad_name", java.util.Arrays.asList("bob", "WS-02$", 4711, null, List.of("carol", "dave")));
+        Object list = maskingService.maskAssetNameRecord(assetWithExtras(listExtras), UserRole.VIEWER)
+                .getExtraAttributes().get("zeekad_name");
+        assertThat(list).isEqualTo(java.util.Arrays.asList("b***", "W***", "4***", null, "[***"));
+
+        // 대소문자가 다른 키도 같은 규칙(키 글자는 그대로 둔다)
+        Map<String, Object> upper = new java.util.LinkedHashMap<>();
+        upper.put("ZeekAD_Name", "erin");
+        assertThat(maskingService.maskAssetNameRecord(assetWithExtras(upper), UserRole.VIEWER).getExtraAttributes())
+                .containsEntry("ZeekAD_Name", "e***");
+    }
+
+    @Test
+    void viewerZeekadNameOfUnknownTypeIsStringifiedAndMaskedAndNullStaysNull() {
+        // 숫자, 맵, 배열 객체처럼 모르는 타입을 그대로 내보내지 않는다
+        assertThat(maskedNameObject(90210)).isEqualTo("9***");
+        assertThat(maskedNameObject(Map.of("user", "frank"))).isEqualTo("{***");
+        Object arrayLike = new Object() {
+            @Override
+            public String toString() {
+                return "{grace,heidi}";
+            }
+        };
+        assertThat(maskedNameObject(arrayLike)).isEqualTo("{***");
+        assertThat(maskedNameObject(new String[]{"ivan"})).asString().endsWith("***").doesNotContain("ivan");
+
+        Map<String, Object> nullExtras = new java.util.LinkedHashMap<>();
+        nullExtras.put("zeekad_name", null);
+        Map<String, Object> out = maskingService.maskAssetNameRecord(assetWithExtras(nullExtras), UserRole.VIEWER)
+                .getExtraAttributes();
+        assertThat(out).containsKey("zeekad_name");
+        assertThat(out.get("zeekad_name")).isNull();
+    }
+
+    @Test
+    void analystAndAdminKeepZeekadNameAsIs() {
+        Map<String, Object> extras = new java.util.LinkedHashMap<>();
+        extras.put("zeekad_name", List.of("alice.kim", "WS-01$"));
+        AssetNameRecord raw = assetWithExtras(extras);
+        for (UserRole role : List.of(UserRole.ANALYST, UserRole.ADMIN)) {
+            AssetNameRecord same = maskingService.maskAssetNameRecord(raw, role);
+            assertThat(same).isSameAs(raw);
+            assertThat(same.getExtraAttributes().get("zeekad_name")).isEqualTo(List.of("alice.kim", "WS-01$"));
+        }
+    }
+
+    private Object maskedNameObject(Object value) {
+        Map<String, Object> extras = new java.util.LinkedHashMap<>();
+        extras.put("zeekad_name", value);
+        return maskingService.maskAssetNameRecord(assetWithExtras(extras), UserRole.VIEWER)
+                .getExtraAttributes().get("zeekad_name");
+    }
+
+    private String maskedName(String value) {
+        return (String) maskedNameObject(value);
+    }
 }

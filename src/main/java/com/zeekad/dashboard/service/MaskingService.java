@@ -242,8 +242,49 @@ public class MaskingService {
         copy.setHostIp(maskIp(asset.getHostIp()));
         copy.setKerberosUser(maskUsername(asset.getKerberosUser()));
         copy.setNtlmUser(maskUsername(asset.getNtlmUser()));
-        copy.setExtraAttributes(maskMapValues(asset.getExtraAttributes()));
+        copy.setExtraAttributes(maskAssetExtraAttributes(asset.getExtraAttributes()));
         return copy;
+    }
+
+    /** dashboard.asset_names의 관측 계정 이름 열(T46). 상세 증적 탭 '관측 계정'과 /hosts가 이 값을 먼저 보인다. */
+    public static final String ASSET_ACCOUNT_NAME_KEY = "zeekad_name";
+
+    /**
+     * 자산 이름 부가 열(T46): 키가 zeekad_name(대소문자 무시)이면 계정 이름으로 가리고, 나머지 키는 지금처럼 IPv4만 가린다.
+     * 호스트 이름(host_name)은 여기서 다루지 않는다(큐 행의 값이고 IPv4만 가린다).
+     */
+    private Map<String, Object> maskAssetExtraAttributes(Map<String, Object> map) {
+        if (map == null || map.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Object> masked = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            boolean account = entry.getKey() != null && ASSET_ACCOUNT_NAME_KEY.equalsIgnoreCase(entry.getKey());
+            masked.put(entry.getKey(), account ? maskAccountValue(entry.getValue()) : maskObjectValue(entry.getValue()));
+        }
+        return Collections.unmodifiableMap(masked);
+    }
+
+    /**
+     * 계정 이름 값: 문자열이면 그 글에, 리스트면 원소마다 maskIpsInText 다음 maskUsername을 적용한다.
+     * 문자열이 아닌 값(리스트 원소 포함)은 글로 바꿔 같은 규칙으로 가린다(이 키만은 모르는 타입을 그대로 내보내지 않는다). null은 null이다.
+     */
+    private Object maskAccountValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            for (Object elem : list) {
+                copy.add(elem == null ? null : maskAccountText(String.valueOf(elem)));
+            }
+            return Collections.unmodifiableList(copy);
+        }
+        return maskAccountText(String.valueOf(value));
+    }
+
+    private String maskAccountText(String text) {
+        return maskUsername(maskIpsInText(text));
     }
 
     public AnalystReviewItem maskAnalystReviewItem(AnalystReviewItem item, UserRole role) {

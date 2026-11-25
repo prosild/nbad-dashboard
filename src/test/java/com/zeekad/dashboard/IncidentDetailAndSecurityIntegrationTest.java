@@ -210,6 +210,9 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(containsString("admin")))
                 .andExpect(content().string(containsString("svc_ad_sync")))
                 .andExpect(content().string(containsString("source_log")))
+                // T46: 분석가는 관측 계정 이름(zeekad_name) 원문 그대로
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name").value("jdoe.admin"))
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name_kind").value("kerberos_user"))
                 .andExpect(jsonPath("$.detail.evidence.connectionCount").value(412))
                 .andExpect(content().string(containsString("203.0.113.45")))
                 .andExpect(content().string(containsString("dce_rpc")))
@@ -298,6 +301,12 @@ class IncidentDetailAndSecurityIntegrationTest {
                 .andExpect(content().string(containsString("10.20.*.*")))
                 .andExpect(jsonPath("$.detail.assetNames[0].kerberosUser").value("a***"))
                 .andExpect(jsonPath("$.detail.assetNames[0].ntlmUser").value("s***"))
+                // T46: 조회자는 관측 계정 이름(zeekad_name)도 첫 글자 + ***이고 원문이 응답 어디에도 없다. 다른 키는 지금과 같다
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name").value("j***"))
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name_kind").value("kerberos_user"))
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.source_log").value("kerberos"))
+                .andExpect(jsonPath("$.detail.incident.hostName[0]").value("dc01.corp.local"))
+                .andExpect(content().string(not(containsString("jdoe"))))
                 .andExpect(content().string(containsString("H(192.168.*.*)에서 X1(203.0.*.*)로")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))))
                 .andExpect(content().string(not(containsString("203.0.113.45"))))
@@ -310,6 +319,9 @@ class IncidentDetailAndSecurityIntegrationTest {
         mockMvc.perform(get("/api/incidents/101/rank/2").session(viewerSession))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("타 인시던트 후속 알림"))
+                // T46: 컴퓨터 계정(끝이 $)도 같은 규칙
+                .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name").value("B***"))
+                .andExpect(content().string(not(containsString("BKP-SVC01"))))
                 .andExpect(content().string(containsString("192.168.*.*")))
                 .andExpect(content().string(not(containsString("192.168.10.50"))));
 

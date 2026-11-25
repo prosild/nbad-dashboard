@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS dashboard.raw_asset_names (
     source_log VARCHAR(64),
     observation_count INTEGER,
     first_seen TIMESTAMP WITH TIME ZONE,
-    last_seen TIMESTAMP WITH TIME ZONE
+    last_seen TIMESTAMP WITH TIME ZONE,
+    -- T46: 운영 뷰의 관측 계정 이름 열(화면 '관측 계정'이 먼저 읽는 값)
+    zeekad_name VARCHAR(128),
+    zeekad_name_kind VARCHAR(64)
 );
 
 CREATE TABLE IF NOT EXISTS dashboard.raw_incident_reports (
