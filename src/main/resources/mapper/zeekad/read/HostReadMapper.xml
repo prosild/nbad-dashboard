@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zeekad.dashboard.mapper.zeekad.read.HostReadMapper">
+
+    <!-- T46 호스트 위험도·같은 호스트 인시던트. 값은 모두 바인드 변수로만 넘긴다. -->
+
+    <!-- 통합 큐 조각(ZeekadReadMapper.unifiedQueueBase) 안의 이름공간 없는 include는 include하는 쪽 이름공간에서 찾는다.
+         그래서 같은 id의 캡처 목록 조각을 여기에도 둔다(우선순위·탐지 시각 식이 아닌 캡처 목록 세 줄). 인자 이름은 c다. -->
+    <sql id="unifiedCaptureIn">
+        <foreach collection="c.captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    </sql>
+
+    <select id="findRawAssetNamesForHosts" resultType="map">
+        SELECT *
+        FROM dashboard.asset_names
+        WHERE capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+          AND host_ip = ANY(#{hostIps, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+    </select>
+
+    <select id="findDistinctLatestHostIps" resultType="string">
+        SELECT DISTINCT lq.host_ip
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+          AND lq.host_ip IS NOT NULL
+    </select>
+
+    <!-- 주소 조건은 SQL에서 건다. 큐 식은 최적화 경계 때문에 허용 캡처 전체를 한 번 계산한다(전체 기간 목록 한 번에 가까운 비용). -->
+    <select id="findLatestQueueByHostIps"
+            resultMap="com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper.unifiedQueueMap">
+        SELECT b.*
+        FROM (<include refid="com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper.unifiedQueueBase"/>) b
+        WHERE b.host_ip = ANY(#{hostIps, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        <if test="excludeIncidentId != null">
+            AND b.incident_id &lt;&gt; #{excludeIncidentId}
+        </if>
+        ORDER BY b.capture_id ASC, b.queue_rank ASC
+    </select>
+</mapper>

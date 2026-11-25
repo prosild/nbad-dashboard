@@ -235,7 +235,7 @@ class DashboardViewsIntegrationTest {
                 .andExpect(status().isOk());
 
         for (String spaRoute : new String[]{
-                "/incidents", "/operations", "/reviews", "/admin/users", "/admin/audit-logs"}) {
+                "/incidents", "/hosts", "/operations", "/reviews", "/admin/users", "/admin/audit-logs"}) {
             mockMvc.perform(get(spaRoute).session(adminSession))
                     .andExpect(status().isOk())
                     .andExpect(forwardedUrl("/index.html"));

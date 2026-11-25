@@ -106,6 +106,16 @@ class SecurityHeadersAndErrorTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
+        // T46: 호스트 위험도 화면 경로도 비인증이면 셸 200이다(302가 아니다). 하위 경로는 화면 경로가 아니다
+        mockMvc.perform(get("/hosts"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("frame-ancestors 'none'")));
+        mockMvc.perform(get("/hosts/10.0.0.1"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/login"));
+        mockMvc.perform(get("/api/hosts")).andExpect(status().isUnauthorized());
         // 화면 경로가 아닌 곳(정적 파일 아님)은 지금 동작 그대로 /login 리다이렉트
         mockMvc.perform(get("/nope"))
                 .andExpect(status().is3xxRedirection())

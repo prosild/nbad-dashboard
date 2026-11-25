@@ -19,6 +19,8 @@ public class SpaForwardController {
             "/incidents/{jobId}/rank/{queueRank}",
             // T27 인시던트 번호 고정 주소(숫자만)
             "/incidents/{incidentNo:[0-9]+}",
+            // T46 호스트 위험도(정적 파일 경로 /assets/** 와 겹치지 않는 이름)
+            "/hosts",
             "/reviews",
             "/operations",
             "/admin/users",

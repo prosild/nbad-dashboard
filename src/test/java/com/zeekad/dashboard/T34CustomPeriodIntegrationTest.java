@@ -152,7 +152,7 @@ class T34CustomPeriodIntegrationTest {
         String neighborsKey = "jobId=93404&queueRank=3&";
         for (String q : bad) {
             for (String base : List.of("/api/incidents/queue?", "/api/incidents/queue/neighbors?" + neighborsKey,
-                    "/api/dashboard/overview?", "/api/operations?")) {
+                    "/api/dashboard/overview?", "/api/operations?", "/api/hosts?")) {
                 MvcResult r = mockMvc.perform(get(URI.create(base + q)).session(s)).andExpect(status().isBadRequest()).andReturn();
                 String body = r.getResponse().getContentAsString(StandardCharsets.UTF_8);
                 JsonNode json = objectMapper.readTree(body);
@@ -183,7 +183,7 @@ class T34CustomPeriodIntegrationTest {
         for (String[] r : ok) {
             String q = "period=custom&start=" + enc(r[0]) + "&end=" + enc(r[1]);
             for (String base : List.of("/api/incidents/queue?", "/api/incidents/queue/neighbors?jobId=93404&queueRank=3&",
-                    "/api/dashboard/overview?", "/api/operations?")) {
+                    "/api/dashboard/overview?", "/api/operations?", "/api/hosts?")) {
                 mockMvc.perform(get(URI.create(base + q)).session(s)).andExpect(status().isOk());
             }
             JsonNode queue = getJson(s, "/api/incidents/queue?" + q);
@@ -267,14 +267,16 @@ class T34CustomPeriodIntegrationTest {
                 case "7d" -> 24 * 7;
                 default -> 24 * 30;
             };
-            for (String url : List.of("/api/incidents/queue?period=", "/api/dashboard/overview?period=", "/api/operations?period=")) {
+            for (String url : List.of("/api/incidents/queue?period=", "/api/dashboard/overview?period=", "/api/operations?period=",
+                    "/api/hosts?period=")) {
                 JsonNode n = getJson(s, url + period);
                 assertThat(n.get("period").asText()).isEqualTo(period);
                 assertThat(instant(n.get("periodEnd"))).as(url + period).isEqualTo(FIXED_NOW);
                 assertThat(instant(n.get("periodStart"))).as(url + period).isEqualTo(FIXED_NOW.minusSeconds(hours * 3600));
             }
         }
-        for (String url : List.of("/api/incidents/queue?period=all", "/api/dashboard/overview?period=all", "/api/operations?period=all")) {
+        for (String url : List.of("/api/incidents/queue?period=all", "/api/dashboard/overview?period=all", "/api/operations?period=all",
+                "/api/hosts?period=all")) {
             JsonNode n = getJson(s, url);
             assertThat(n.get("periodStart").isNull()).as(url).isTrue();
             assertThat(n.get("periodEnd").isNull()).as(url).isTrue();
