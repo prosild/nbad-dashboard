@@ -408,7 +408,8 @@ if (-not $SkipE2E -or -not $SkipZap) {
 
                 # T27: 화면 경로를 새로 연 비인증 GET은 302 대신 SPA 셸 200(no-store, 데이터 없음). 화면이 원래 주소를 싣고 로그인으로 보낸다.
                 #      그 경로의 API는 401 JSON 그대로, 화면 경로가 아닌 곳은 지금처럼 302 /login.
-                foreach ($pair in @(@("/", "/api/auth/me-not-public"), @("/incidents/101/rank/1", "/api/incidents/101/rank/1"), @("/incidents/1", "/api/incidents/no/1"))) {
+                #      T47: 호스트 위험도 화면 경로 /hosts(T46)도 같은 규칙이다(셸 200, 그 API는 401 JSON).
+                foreach ($pair in @(@("/", "/api/auth/me-not-public"), @("/incidents/101/rank/1", "/api/incidents/101/rank/1"), @("/incidents/1", "/api/incidents/no/1"), @("/hosts", "/api/hosts"))) {
                     $protectedPath = $pair[0]
                     $protectedRes = Invoke-Http -Url "$baseHttps$protectedPath"
                     $cc = Get-HeaderValue $protectedRes "Cache-Control"
@@ -1527,6 +1528,546 @@ FROM v GROUP BY m ORDER BY m
                 Assert-Status $nf20 403 "[20] analyst2 없는 번호 thread 403"
                 Assert-Status $b20 400 "[20] analyst2 thread 형식 오류 400"
                 Assert-True ($f20.Body -eq $nf20.Body -and $idor20After -eq $idor20Before + 1 -and $nf20Audit -ge 1) "[20] 같은 403 본문·IDOR 감사 사유 구분" $f20
+
+                # [21] E 단계 기능(T44~T46·T45b)을 PostgreSQL·nginx-waf에서 본다(T47). [14e]가 analyst2를 잠그고 [17]이 cic17-wed 최신 큐를 바꾸며
+                #      [19]가 101/1 리포트를 고치므로 [20] 바로 뒤에서 돈다. 시험 행은 이 단계가 시작할 때 검증 DB(zeekad)에 넣고 끝날 때(실패해도) 지운다:
+                #      새 캡처 cic17-t47(작업 9200, 인시던트 7건). cic17-wed의 최신 큐(작업 101)와 101/1 알림 묶음은 건드리지 않는다.
+                #        192.168.20.60 목적지 → 출발지(전환 표시 대상), 192.168.20.61(조회자에게 192.168.10.50·192.168.20.60과 같은 대역),
+                #        10.20.30.41 출발지 → 목적지(순서가 반대라 전환 아님), 172.16.5.98 목적지 → 출발지인데 출발지 쪽이 정상 종결(전환 아님).
+                #        ATT&CK 후보: 소문자·공백이 붙은 기법 ID와 글 하나짜리 tactics, 기법 ID 꼴 전술(세지 않음), ID 꼴이 아닌 attack_id(세지 않음), 빈 배열, 리포트 없음.
+                #      기대값은 숫자로 박지 않고 그 자리에서 독립 SQL(psql)로 센다. JSON 후보는 jsonb 함수로 직접 센다(앱 매퍼와 다른 길이다).
+                #      가린 주소 식(Get-MaskSql21)은 옥텟 범위(0~255)를 보지 않는다(검증 시드에는 범위 밖 옥텟이 없다).
+                #      번호 표(incident_refs)는 추가만 되는 표라 시험 인시던트의 번호 행은 남는다(뒤 단계는 번호 수를 세지 않는다).
+                $cap21 = 'cic17-t47'
+                $job21 = 9200
+                $hostT21 = '192.168.20.60'
+                $hostR21 = '192.168.20.61'
+                $hostRev21 = '10.20.30.41'
+                $hostDis21 = '172.16.5.98'
+                function Invoke-ZeekadExec21([string]$Sql) {
+                    return Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-c", $Sql)) -IgnoreExitCode
+                }
+                function Get-Lines21([string]$Text) { return @($Text -split "`r?`n" | Where-Object { $_ }) }
+                # 그 사용자의 허용 캡처 패턴(앱 DB)을 SQL LIKE 조건으로 바꾼다([18]과 같은 방법)
+                function Get-CapLike21([string]$Username, [string]$Col) {
+                    $pats = @(Get-Lines21 (Invoke-AuditSelect "SELECT a.capture_pattern FROM user_capture_access a JOIN users u ON u.id = a.user_id WHERE u.username = '$Username' ORDER BY 1"))
+                    if ($pats.Count -eq 0) { return "FALSE" }
+                    return "(" + (@($pats | ForEach-Object { "$Col LIKE '" + (($_ -replace "'", "''") -replace '\*', '%') + "'" }) -join " OR ") + ")"
+                }
+                # 조회자에게 보이는 가린 주소(A.B.*.*). IPv4 꼴이 아니면 그대로다
+                function Get-MaskSql21([string]$Col) {
+                    return ('CASE WHEN @C ~ ''^[0-9]{1,3}(\.[0-9]{1,3}){3}$'' THEN split_part(@C, ''.'', 1) || ''.'' || split_part(@C, ''.'', 2) || ''.*.*'' ELSE @C END').Replace('@C', $Col)
+                }
+                function Get-MaskedIp21([string]$Ip) { return ($Ip -replace '^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$', '$1.$2.*.*') }
+                function Get-MaskedName21([string]$Name) {
+                    $t = $Name.Trim()
+                    if ($t.Length -le 1) { return '***' }
+                    return $t.Substring(0, 1) + '***'
+                }
+                function Get-OrdinalJoin21($Values) {
+                    $arr = [string[]]@($Values | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { "$_" } | Select-Object -Unique)
+                    [Array]::Sort($arr, [StringComparer]::Ordinal)
+                    return ($arr -join ' , ')
+                }
+                function Get-AuditMax21 { return [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs") }
+                function Get-AuditCount21([string]$Action, [string]$Actor, [long]$After) {
+                    return [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $After AND action_type = '$Action' AND actor_username = '$Actor'")
+                }
+                function Get-Queue21([string]$Jar, [string]$Query, [string]$What, [string]$ProbeId = "") {
+                    $r = Invoke-Http -Url "$baseHttps/api/incidents/queue?$Query" -CookieJar $Jar -ProbeId $ProbeId
+                    Assert-Status $r 200 $What
+                    return $r
+                }
+                function Get-HostsAll21([string]$Jar, [string]$Query, [string]$What) {
+                    $items = [System.Collections.Generic.List[object]]::new()
+                    $bodies = [System.Collections.Generic.List[string]]::new()
+                    $first = Invoke-Http -Url "$baseHttps/api/hosts?$Query&size=25&page=1" -CookieJar $Jar
+                    Assert-Status $first 200 "$What page=1"
+                    $pages = [int]$first.Json.pageCount
+                    for ($pg = 1; $pg -le $pages; $pg++) {
+                        $res = if ($pg -eq 1) { $first } else { Invoke-Http -Url "$baseHttps/api/hosts?$Query&size=25&page=$pg" -CookieJar $Jar }
+                        Assert-Status $res 200 "$What page=$pg"
+                        foreach ($it in @($res.Json.items | Where-Object { $_ })) { $items.Add($it) }
+                        $bodies.Add($res.Body)
+                    }
+                    return [pscustomobject]@{ Items = $items; Total = [long]$first.Json.total; Pages = $pages; First = $first; Body = ($bodies -join "`n") }
+                }
+                # ATT&CK 후보 분포의 독립 SQL. 앱 규칙(service/AttackFilter.java)과 같은 방법으로 센다: 최신 큐 행이 가리키는 리포트의 후보만,
+                # attack_id는 앞뒤 공백을 떼고 대문자, 전술은 소문자 + [\s_]+ → '-' 뒤 슬러그 꼴·길이 2~64, 기법 ID 꼴인 전술은 세지 않는다. tactics는 글 하나일 수도 있다.
+                $attackSql21 = @'
+WITH base AS (SELECT l.incident_id, l.zeekad_report_job_id FROM dashboard.latest_incident_queue l WHERE @CAP),
+lq AS (SELECT DISTINCT b.incident_id, r.zeekad_attack_candidates::jsonb AS c
+       FROM base b
+       JOIN dashboard.incident_reports r ON r.job_id = b.zeekad_report_job_id AND r.incident_id = b.incident_id
+       WHERE jsonb_typeof(r.zeekad_attack_candidates::jsonb) = 'array'),
+el AS (SELECT lq.incident_id, e FROM lq CROSS JOIN LATERAL jsonb_array_elements(lq.c) e WHERE jsonb_typeof(e) = 'object'),
+tech AS (SELECT DISTINCT incident_id, upper(btrim(e ->> 'attack_id', E' \t\n\r')) AS v FROM el
+         WHERE jsonb_typeof(e -> 'attack_id') IN ('string', 'number', 'boolean')
+           AND btrim(e ->> 'attack_id', E' \t\n\r') ~ '^[Tt][0-9]{4}(\.[0-9]{3})?$'),
+tt AS (SELECT el.incident_id, x #>> '{}' AS t FROM el
+       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(el.e -> 'tactics') = 'array' THEN el.e -> 'tactics'
+                                                    WHEN jsonb_typeof(el.e -> 'tactics') IN ('string', 'number', 'boolean') THEN jsonb_build_array(el.e -> 'tactics')
+                                                    ELSE '[]'::jsonb END) x
+       WHERE jsonb_typeof(x) IN ('string', 'number', 'boolean')),
+ts AS (SELECT incident_id, regexp_replace(lower(btrim(t, E' \t\n\r')), '[\s_]+', '-', 'g') AS v FROM tt),
+tac AS (SELECT DISTINCT incident_id, v FROM ts
+        WHERE v ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(v) BETWEEN 2 AND 64 AND v !~ '^t[0-9]{4}(\.[0-9]{3})?$'),
+vals AS (SELECT 'technique' AS k, incident_id, v FROM tech UNION ALL SELECT 'tactic', incident_id, v FROM tac)
+SELECT vals.k, vals.v, count(*) FROM vals JOIN base b ON b.incident_id = vals.incident_id GROUP BY vals.k, vals.v
+UNION ALL
+SELECT 'any', '-', count(*) FROM base b WHERE b.incident_id IN (SELECT incident_id FROM vals)
+ORDER BY 1, 2
+'@
+                function Get-Attack21([string]$CapCond) {
+                    $out = @{ technique = @{}; tactic = @{}; any = [long]0 }
+                    foreach ($line in @(Get-Lines21 (Invoke-ZeekadSelect $attackSql21.Replace('@CAP', $CapCond)))) {
+                        $p = $line -split '\|'
+                        if ($p[0] -eq 'any') { $out.any = [long]$p[2] } else { $out[$p[0]][$p[1]] = [long]$p[2] }
+                    }
+                    return $out
+                }
+
+                $rows21 = @(
+                    @{ Rank = 1; Ip = $hostT21; Role = 'responder'; Start = 90; Picked = 'iforest'; Also = "ARRAY['autoencoder']"; Conn = 40; Name = "ARRAY['t47-ws60.corp.local']" },
+                    @{ Rank = 2; Ip = $hostT21; Role = 'originator'; Start = 60; Picked = 'hbos'; Also = "NULL"; Conn = 55; Name = "ARRAY['t47-ws60.corp.local']" },
+                    @{ Rank = 3; Ip = $hostR21; Role = 'originator'; Start = 80; Picked = 'iforest'; Also = "NULL"; Conn = 12; Name = "NULL" },
+                    @{ Rank = 4; Ip = $hostRev21; Role = 'responder'; Start = 50; Picked = 'autoencoder'; Also = "NULL"; Conn = 9; Name = "NULL" },
+                    @{ Rank = 5; Ip = $hostRev21; Role = 'originator'; Start = 70; Picked = 'iforest'; Also = "ARRAY['hbos']"; Conn = 31; Name = "NULL" },
+                    @{ Rank = 6; Ip = $hostDis21; Role = 'responder'; Start = 90; Picked = 'hbos'; Also = "NULL"; Conn = 7; Name = "NULL" },
+                    @{ Rank = 7; Ip = $hostDis21; Role = 'originator'; Start = 60; Picked = 'iforest'; Also = "NULL"; Conn = 8; Name = "NULL" }
+                )
+                $iid21 = @{}
+                foreach ($row in $rows21) { $iid21[$row.Rank] = "$cap21|$($row.Ip)|$($row.Role)|17637000$($row.Rank)0" }
+                $cands21 = @{
+                    1 = "jsonb_build_array(jsonb_build_object('attack_id', ' t1558.003 ', 'name', 'Kerberoasting', 'tactics', 'credential_access'))"
+                    2 = "jsonb_build_array(jsonb_build_object('attack_id', 'T1021', 'name', 'Remote Services', 'tactics', jsonb_build_array('Lateral Movement', 'T1021')), jsonb_build_object('attack_id', 'T1558', 'name', 'Steal or Forge Kerberos Tickets', 'tactics', jsonb_build_array('Credential  Access')))"
+                    3 = "jsonb_build_array(jsonb_build_object('attack_id', 'not-an-id', 'name', 'T47 invalid id', 'tactics', jsonb_build_array('Discovery')))"
+                    5 = "'[]'::jsonb"
+                }
+                $queueValues21 = @($rows21 | ForEach-Object {
+                    "($job21, '$cap21', 'zeekad-fusion/1', $($_.Rank), '$($iid21[$_.Rank])', '$($_.Ip)', '$($_.Role)', now() - interval '$($_.Start) minutes', now() - interval '$($_.Start - 5) minutes', '$($_.Picked)', $($_.Also), $($_.Conn), $($_.Name))"
+                }) -join ", "
+                $reportValues21 = @($cands21.Keys | Sort-Object | ForEach-Object {
+                    "($job21, '$($iid21[$_])', 'template', 'template.v1', 'evidence.v1', jsonb_build_object('observation_summary', 'T47 E2E'), TRUE, 'ok', '[]', $($cands21[$_]), 'run-$job21', now() - interval '30 minutes', '[]', '{}')"
+                }) -join ", "
+                $seedSql21 = @(
+                    "INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count) VALUES ($job21, '$cap21', 'zeekad-fusion/1', 'succeeded', now() - interval '31 minutes', now() - interval '30 minutes', NULL, $($rows21.Count));",
+                    "INSERT INTO dashboard.raw_incident_queue (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role, event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name) VALUES $queueValues21;",
+                    "INSERT INTO dashboard.raw_incident_reports (job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version, zeekad_report, zeekad_verification_passed, zeekad_verification_reason, zeekad_verification_problems, zeekad_attack_candidates, zeekad_source_run, created_at, zeekad_facts, zeekad_pseudonyms) VALUES $reportValues21;",
+                    "INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen, zeekad_name, zeekad_name_kind) VALUES ('$cap21', '$hostT21', NULL, NULL, 'kerberos', 4, now() - interval '90 minutes', now() - interval '55 minutes', 'WS60-T47`$', 'kerberos_machine'), ('$cap21', '$hostR21', 'tuser47', NULL, 'kerberos', 3, now() - interval '80 minutes', now() - interval '75 minutes', NULL, NULL);",
+                    "INSERT INTO dashboard.raw_incident_status (job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by) VALUES ($job21, '$($iid21[7])', 'closed', 'benign', now() - interval '10 minutes', 'analyst1')"
+                ) -join " "
+                $cleanSql21 = @(
+                    "DELETE FROM dashboard.raw_incident_status WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_incident_status_history WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_analyst_review_queue WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_slack_deliveries WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_send_decisions WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_asset_names WHERE capture_id = '$cap21';",
+                    "DELETE FROM dashboard.raw_incident_reports WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_incident_model_scores WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_incident_queue WHERE job_id = $job21;",
+                    "DELETE FROM dashboard.raw_scoring_jobs WHERE job_id = $job21"
+                ) -join " "
+                $leftSql21 = "SELECT (SELECT count(*) FROM dashboard.raw_scoring_jobs WHERE job_id = $job21 OR capture_id = '$cap21') + (SELECT count(*) FROM dashboard.raw_incident_queue WHERE job_id = $job21 OR capture_id = '$cap21') + (SELECT count(*) FROM dashboard.raw_incident_reports WHERE job_id = $job21) + (SELECT count(*) FROM dashboard.raw_asset_names WHERE capture_id = '$cap21') + (SELECT count(*) FROM dashboard.raw_incident_status WHERE job_id = $job21)"
+                $pre21 = [int](Invoke-ZeekadSelect $leftSql21)
+                Assert-True ($pre21 -eq 0) "[21] 시작 전 검증 DB에 시험 행(작업 $job21, 캡처 $cap21)이 없음 (실제 $pre21)"
+                $v21 = Join-Path $tmpDir "q21-viewer.cookies"
+                $a21 = Join-Path $tmpDir "q21-a1.cookies"
+                $b21 = Join-Path $tmpDir "q21-a2.cookies"
+                try {
+                    $ins21 = Invoke-ZeekadExec21 $seedSql21
+                    $e2eLogs.Add("[21] inserted test rows (job $job21, capture $cap21, $($rows21.Count) incidents, $($cands21.Count) reports, 2 asset rows, 1 closed-benign status) into verify zeekad DB: exit=$($ins21.ExitCode) $($ins21.Output.Trim() -replace "`r?`n", ' ')")
+                    Assert-True ($ins21.ExitCode -eq 0) "[21] 검증 DB에 시험 행 넣기"
+                    Assert-Status (Login-Api "viewer1" $v21) 200 "[21] viewer1 로그인"
+                    Assert-Status (Login-Api "analyst1" $a21) 200 "[21] analyst1 로그인"
+                    Assert-Status (Login-Api "analyst2" $b21) 200 "[21] analyst2 로그인"
+                    $capA21 = Get-CapLike21 'analyst1' 'l.capture_id'
+                    $capV21 = Get-CapLike21 'viewer1' 'l.capture_id'
+                    $mask21 = Get-MaskSql21 'l.host_ip'
+                    $lq21 = "dashboard.latest_incident_queue l"
+                    $e2eLogs.Add("[21] capture conditions from user_capture_access: analyst1=$capA21 viewer1=$capV21")
+                    # 조회자 쪽 기대값 일부(대역 목록 돌기, 관측 계정)는 analyst1의 독립 SQL 결과를 가려서 만든다. 두 계정의 허용 캡처가 같을 때만 맞는다
+                    Assert-True ($capA21 -eq $capV21) "[21] viewer1과 analyst1의 허용 캡처 패턴이 같음(검증 시드 전제)"
+
+                    # [21a] 큐 hostIp(T45): 분석가의 온전한 주소·대역, 조회자의 대역, 조회자의 온전한 주소(있든 없든 같은 200·0건), 형식 오류 400(감사 0건), new-count·neighbors
+                    $hostCount21 = @{}
+                    foreach ($line in @(Get-Lines21 (Invoke-ZeekadSelect "SELECT l.host_ip, count(*) FROM $lq21 WHERE $capA21 GROUP BY l.host_ip ORDER BY 1"))) { $p = $line -split '\|'; $hostCount21[$p[0]] = [long]$p[1] }
+                    $bandCountA21 = @{}
+                    foreach ($line in @(Get-Lines21 (Invoke-ZeekadSelect "SELECT $mask21, count(*) FROM $lq21 WHERE $capA21 GROUP BY 1 ORDER BY 1"))) { $p = $line -split '\|'; $bandCountA21[$p[0]] = [long]$p[1] }
+                    $bandCountV21 = @{}
+                    foreach ($line in @(Get-Lines21 (Invoke-ZeekadSelect "SELECT $mask21, count(*) FROM $lq21 WHERE $capV21 GROUP BY 1 ORDER BY 1"))) { $p = $line -split '\|'; $bandCountV21[$p[0]] = [long]$p[1] }
+                    $e2eLogs.Add("[21a] independent SQL (latest queue, period all): analyst1 hosts=[$(@($hostCount21.Keys | Sort-Object | ForEach-Object { "$_=$($hostCount21[$_])" }) -join ', ')] ranges=[$(@($bandCountA21.Keys | Sort-Object | ForEach-Object { "$_=$($bandCountA21[$_])" }) -join ', ')]; viewer1 ranges=[$(@($bandCountV21.Keys | Sort-Object | ForEach-Object { "$_=$($bandCountV21[$_])" }) -join ', ')]")
+                    foreach ($seedHost in @($hostT21, $hostR21, $hostRev21, $hostDis21)) {
+                        Assert-True ($hostCount21.ContainsKey($seedHost)) "[21a] 시험 호스트 $seedHost 가 analyst1 최신 큐에 있음"
+                    }
+                    Assert-True ($bandCountV21.Count -lt $hostCount21.Count) "[21a] 조회자 대역 수가 호스트 수보다 적음(같은 대역에 호스트 여럿)"
+                    $queueHostTotal21 = @{}
+                    foreach ($hip in @($hostCount21.Keys | Sort-Object)) {
+                        $r = Get-Queue21 $a21 "period=all&size=100&hostIp=$hip" "[21a] analyst1 queue hostIp=$hip"
+                        $other = @($r.Json.items | Where-Object { $_ -and $_.hostIp -ne $hip }).Count
+                        $queueHostTotal21[$hip] = [long]$r.Json.total
+                        $e2eLogs.Add("[21a] analyst1 queue period=all&hostIp=$hip -> total=$($r.Json.total) summary.total=$($r.Json.summary.total) otherHostRows=$other; SQL=$($hostCount21[$hip])")
+                        Assert-True ([long]$r.Json.total -eq $hostCount21[$hip] -and [long]$r.Json.summary.total -eq $hostCount21[$hip] -and $other -eq 0) "[21a] analyst1 온전한 주소 $hip = 독립 SQL" $r
+                    }
+                    $queueBandTotalV21 = @{}
+                    foreach ($band in @($bandCountA21.Keys | Sort-Object)) {
+                        $ra = Get-Queue21 $a21 "period=all&size=100&hostIp=$band" "[21a] analyst1 queue hostIp=$band"
+                        $rv = Get-Queue21 $v21 "period=all&size=100&hostIp=$band" "[21a] viewer1 queue hostIp=$band"
+                        $vIp = @(Get-UnmaskedIpv4 $rv.Body)
+                        $vOther = @($rv.Json.items | Where-Object { $_ -and $_.hostIp -ne $band }).Count
+                        $queueBandTotalV21[$band] = [long]$rv.Json.total
+                        $e2eLogs.Add("[21a] queue period=all&hostIp=$band -> analyst1 total=$($ra.Json.total) (SQL $($bandCountA21[$band])); viewer1 total=$($rv.Json.total) (SQL $($bandCountV21[$band])) otherRangeRows=$vOther unmaskedIPv4=$($vIp.Count)")
+                        Assert-True ([long]$ra.Json.total -eq $bandCountA21[$band]) "[21a] analyst1 대역 $band = 독립 SQL" $ra
+                        Assert-True ([long]$rv.Json.total -eq [long]$bandCountV21[$band] -and [long]$rv.Json.summary.total -eq [long]$bandCountV21[$band] -and $vOther -eq 0) "[21a] viewer1 대역 $band = 독립 SQL" $rv
+                        Assert-True ($vIp.Count -eq 0) "[21a] viewer1 hostIp=$band 응답에 가려지지 않은 IPv4 없음 (찾음: $($vIp -join ', '))" $rv
+                    }
+                    $ghost21 = '192.168.20.250'
+                    $ghostCount21 = [long](Invoke-ZeekadSelect "SELECT count(*) FROM dashboard.raw_incident_queue WHERE host_ip = '$ghost21'")
+                    $vReal = Get-Queue21 $v21 "period=all&hostIp=$hostT21" "[21a] viewer1 queue hostIp=$hostT21"
+                    $vGhost = Get-Queue21 $v21 "period=all&hostIp=$ghost21" "[21a] viewer1 queue hostIp=$ghost21"
+                    $aGhost = Get-Queue21 $a21 "period=all&hostIp=$ghost21" "[21a] analyst1 queue hostIp=$ghost21"
+                    $e2eLogs.Add("[21a] viewer1 full address: existing $hostT21 -> HTTP $($vReal.Status) total=$($vReal.Json.total) items=$(@($vReal.Json.items | Where-Object { $_ }).Count) outsidePeriod=$($vReal.Json.outsidePeriod); absent $ghost21 (SQL rows=$ghostCount21) -> HTTP $($vGhost.Status) total=$($vGhost.Json.total) items=$(@($vGhost.Json.items | Where-Object { $_ }).Count) outsidePeriod=$($vGhost.Json.outsidePeriod); analyst1 absent -> total=$($aGhost.Json.total)")
+                    Assert-True ($ghostCount21 -eq 0 -and [long]$aGhost.Json.total -eq 0) "[21a] 없는 호스트 $ghost21 는 DB에도 분석가 큐에도 없음"
+                    Assert-True ([long]$vReal.Json.total -eq 0 -and [long]$vGhost.Json.total -eq 0 -and [long]$vReal.Json.summary.total -eq 0 -and [long]$vGhost.Json.summary.total -eq 0 -and @($vReal.Json.items | Where-Object { $_ }).Count -eq 0 -and @($vGhost.Json.items | Where-Object { $_ }).Count -eq 0 -and "$($vReal.Json.outsidePeriod)" -eq "$($vGhost.Json.outsidePeriod)") "[21a] viewer1 온전한 주소 요청은 있는 호스트와 없는 호스트가 같은 200·0건" $vReal
+                    $auditBase21a = Get-AuditMax21
+                    foreach ($badHost in @('10.20.30', '10.20.30.256', '10.*.*.*', '10.20.30.*', '01.2.3.4')) {
+                        foreach ($ep in @("/api/incidents/queue?period=all&hostIp=$badHost", "/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&hostIp=$badHost", "/api/incidents/queue/neighbors?jobId=$job21&queueRank=1&period=all&hostIp=$badHost")) {
+                            foreach ($who in @(@{ Name = 'viewer1'; Jar = $v21 }, @{ Name = 'analyst1'; Jar = $a21 })) {
+                                $r = Invoke-Http -Url "$baseHttps$ep" -CookieJar $who.Jar
+                                Assert-ApiError $r 400 "INVALID_REQUEST" "[21a] $($who.Name) hostIp 형식 오류 $ep"
+                            }
+                        }
+                    }
+                    $audit21a = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase21a AND actor_username IN ('viewer1','analyst1')")
+                    $e2eLogs.Add("[21a] hostIp format errors (5 values x queue/new-count/neighbors x viewer1/analyst1) -> all HTTP 400 INVALID_REQUEST; audit rows for those requests = $audit21a")
+                    Assert-True ($audit21a -eq 0) "[21a] hostIp 형식 오류는 감사 로그 0건 (실제 $audit21a)"
+                    $ncA = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&hostIp=$hostT21" -CookieJar $a21
+                    $nbA = Invoke-Http -Url "$baseHttps/api/incidents/queue/neighbors?jobId=$job21&queueRank=1&period=all&hostIp=$hostT21" -CookieJar $a21
+                    $bandT21 = Get-MaskedIp21 $hostT21
+                    $ncV = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&hostIp=$bandT21" -CookieJar $v21
+                    $nbV = Invoke-Http -Url "$baseHttps/api/incidents/queue/neighbors?jobId=$job21&queueRank=1&period=all&hostIp=$bandT21" -CookieJar $v21
+                    $e2eLogs.Add("[21a] analyst1 new-count hostIp=$hostT21 -> HTTP $($ncA.Status) count=$($ncA.Json.count); neighbors($job21/1) -> HTTP $($nbA.Status) total=$($nbA.Json.total) position=$($nbA.Json.position) (SQL $($hostCount21[$hostT21])); viewer1 new-count hostIp=$bandT21 -> count=$($ncV.Json.count); neighbors -> total=$($nbV.Json.total) (SQL $($bandCountV21[$bandT21])) unmaskedIPv4=$(@(Get-UnmaskedIpv4 ($ncV.Body + $nbV.Body)).Count)")
+                    Assert-True ($ncA.Status -eq 200 -and [long]$ncA.Json.count -eq $hostCount21[$hostT21]) "[21a] analyst1 new-count가 hostIp 조건을 받음" $ncA
+                    Assert-True ($nbA.Status -eq 200 -and [long]$nbA.Json.total -eq $hostCount21[$hostT21] -and [long]$nbA.Json.current.jobId -eq $job21) "[21a] analyst1 neighbors가 hostIp 조건을 받음" $nbA
+                    Assert-True ($ncV.Status -eq 200 -and [long]$ncV.Json.count -eq [long]$bandCountV21[$bandT21]) "[21a] viewer1 new-count가 가린 hostIp 조건을 받음" $ncV
+                    Assert-True ($nbV.Status -eq 200 -and [long]$nbV.Json.total -eq [long]$bandCountV21[$bandT21] -and @(Get-UnmaskedIpv4 ($ncV.Body + $nbV.Body)).Count -eq 0) "[21a] viewer1 neighbors가 가린 hostIp 조건을 받고 IPv4를 가림" $nbV
+
+                    # [21b] 큐 attack(T45): 기법 ID(소문자로 보내도), 전술(슬러그·밑줄·제목 표기가 같은 결과), 건수 = 독립 SQL, 형식 오류 400, new-count·neighbors
+                    $attA21 = Get-Attack21 $capA21
+                    $attV21 = Get-Attack21 $capV21
+                    $e2eLogs.Add("[21b] independent SQL (jsonb): analyst1 techniques=[$(@($attA21.technique.Keys | Sort-Object | ForEach-Object { "$_=$($attA21.technique[$_])" }) -join ', ')] tactics=[$(@($attA21.tactic.Keys | Sort-Object | ForEach-Object { "$_=$($attA21.tactic[$_])" }) -join ', ')] incidentsWithCandidates=$($attA21.any); viewer1 techniques=$($attV21.technique.Count) tactics=$($attV21.tactic.Count) incidentsWithCandidates=$($attV21.any)")
+                    Assert-True ($attA21.technique.ContainsKey('T1558.003') -and $attA21.technique.ContainsKey('T1558') -and $attA21.technique.ContainsKey('T1021') -and -not $attA21.technique.ContainsKey('NOT-AN-ID')) "[21b] 독립 SQL 기법: 소문자·공백 ID는 대문자로, 서브기법은 따로, ID 꼴이 아닌 값은 세지 않음"
+                    Assert-True ($attA21.tactic.ContainsKey('credential-access') -and $attA21.tactic.ContainsKey('lateral-movement') -and $attA21.tactic.ContainsKey('discovery') -and -not $attA21.tactic.ContainsKey('t1021')) "[21b] 독립 SQL 전술: 글 하나짜리·밑줄·겹친 공백은 같은 슬러그, 기법 ID 꼴 전술은 세지 않음"
+                    foreach ($who in @(@{ Name = 'analyst1'; Jar = $a21; Att = $attA21 }, @{ Name = 'viewer1'; Jar = $v21; Att = $attV21 })) {
+                        foreach ($tech in @($who.Att.technique.Keys | Sort-Object)) {
+                            $exp = [long]$who.Att.technique[$tech]
+                            $up = Get-Queue21 $who.Jar "period=all&attack=$tech" "[21b] $($who.Name) queue attack=$tech"
+                            $low = Get-Queue21 $who.Jar "period=all&attack=$($tech.ToLowerInvariant())" "[21b] $($who.Name) queue attack=$($tech.ToLowerInvariant())"
+                            $e2eLogs.Add("[21b] $($who.Name) queue period=all&attack=$tech -> total=$($up.Json.total); attack=$($tech.ToLowerInvariant()) -> total=$($low.Json.total); SQL=$exp")
+                            Assert-True ([long]$up.Json.total -eq $exp -and [long]$low.Json.total -eq $exp -and [long]$up.Json.summary.total -eq $exp) "[21b] $($who.Name) 기법 $tech (대·소문자) = 독립 SQL" $up
+                        }
+                        foreach ($slug in @($who.Att.tactic.Keys | Sort-Object)) {
+                            $exp = [long]$who.Att.tactic[$slug]
+                            $title = (@($slug -split '-' | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) }) -join '%20')
+                            $forms = @($slug, $slug.Replace('-', '_'), $title)
+                            $totals = @($forms | ForEach-Object { [long](Get-Queue21 $who.Jar "period=all&attack=$_" "[21b] $($who.Name) queue attack=$_").Json.total })
+                            $e2eLogs.Add("[21b] $($who.Name) queue period=all&attack= [$($forms -join ' | ')] -> totals=[$($totals -join ', ')]; SQL=$exp")
+                            Assert-True (@($totals | Where-Object { $_ -ne $exp }).Count -eq 0) "[21b] $($who.Name) 전술 $slug (슬러그·밑줄·제목 표기) = 독립 SQL"
+                        }
+                    }
+                    $noTech = Get-Queue21 $a21 "period=all&attack=T9999" "[21b] analyst1 queue attack=T9999"
+                    Assert-True ([long]$noTech.Json.total -eq 0) "[21b] 후보에 없는 기법은 0건" $noTech
+                    foreach ($badAttack in @('a', 'bad.value')) {
+                        foreach ($ep in @("/api/incidents/queue?period=all&attack=$badAttack", "/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&attack=$badAttack", "/api/incidents/queue/neighbors?jobId=$job21&queueRank=1&period=all&attack=$badAttack")) {
+                            $r = Invoke-Http -Url "$baseHttps$ep" -CookieJar $a21
+                            Assert-ApiError $r 400 "INVALID_REQUEST" "[21b] analyst1 attack 형식 오류 $ep"
+                        }
+                    }
+                    $ncAtt = Invoke-Http -Url "$baseHttps/api/incidents/queue/new-count?since=2000-01-01T00:00:00Z&attack=credential-access" -CookieJar $a21
+                    $nbAtt = Invoke-Http -Url "$baseHttps/api/incidents/queue/neighbors?jobId=$job21&queueRank=1&period=all&attack=credential-access" -CookieJar $a21
+                    $e2eLogs.Add("[21b] analyst1 attack=T9999 -> total=$($noTech.Json.total); format errors (a, bad.value) x queue/new-count/neighbors -> HTTP 400; new-count attack=credential-access -> count=$($ncAtt.Json.count); neighbors($job21/1) -> HTTP $($nbAtt.Status) total=$($nbAtt.Json.total); SQL=$($attA21.tactic['credential-access'])")
+                    Assert-True ($ncAtt.Status -eq 200 -and [long]$ncAtt.Json.count -eq [long]$attA21.tactic['credential-access']) "[21b] new-count가 attack 조건을 받음" $ncAtt
+                    Assert-True ($nbAtt.Status -eq 200 -and [long]$nbAtt.Json.total -eq [long]$attA21.tactic['credential-access']) "[21b] neighbors가 attack 조건을 받음" $nbAtt
+
+                    # [21c] WAF 통과(T45·T45b가 남긴 것): '*'가 든 hostIp, 공백이 든 attack(%20과 + 둘 다), 현황판 호스트 링크(role + hostIp)가
+                    #       앱의 200을 받고 그 요청(X-E2E-Probe)의 nginx-waf 차단 기록이 0건이다([12a] 방식)
+                    $roleBand21 = [long](Invoke-ZeekadSelect "SELECT count(*) FROM $lq21 WHERE $capV21 AND $mask21 = '$bandT21' AND lower(l.zeekad_role) = 'originator'")
+                    $wafCases21 = @(
+                        @{ Id = "e2e-t47-hostip-$(New-RandomToken 6)"; Name = 'viewer1'; Jar = $v21; Q = "period=all&hostIp=$bandT21"; Expect = [long]$bandCountV21[$bandT21] },
+                        @{ Id = "e2e-t47-rolehost-$(New-RandomToken 6)"; Name = 'viewer1'; Jar = $v21; Q = "period=all&role=originator&hostIp=$bandT21"; Expect = $roleBand21 },
+                        @{ Id = "e2e-t47-attackpct-$(New-RandomToken 6)"; Name = 'analyst1'; Jar = $a21; Q = "period=all&attack=Credential%20Access"; Expect = [long]$attA21.tactic['credential-access'] },
+                        @{ Id = "e2e-t47-attackplus-$(New-RandomToken 6)"; Name = 'analyst1'; Jar = $a21; Q = "period=all&attack=Credential+Access"; Expect = [long]$attA21.tactic['credential-access'] }
+                    )
+                    foreach ($case in $wafCases21) {
+                        $case.Resp = Invoke-Http -Url "$baseHttps/api/incidents/queue?$($case.Q)" -CookieJar $case.Jar -ProbeId $case.Id
+                    }
+                    Start-Sleep -Seconds 1
+                    foreach ($case in $wafCases21) {
+                        $hits = @(Get-WafInterrupted $case.Id)
+                        $e2eLogs.Add("[21c] $($case.Name) GET /api/incidents/queue?$($case.Q) (probe $($case.Id)) -> $(Format-Resp $case.Resp 80); total=$($case.Resp.Json.total) expected(SQL)=$($case.Expect); nginx-waf interrupted lines=$($hits.Count)")
+                        Assert-Status $case.Resp 200 "[21c] WAF를 거친 $($case.Q)"
+                        Assert-True ($null -ne $case.Resp.Json -and [long]$case.Resp.Json.total -eq [long]$case.Expect -and [long]$case.Expect -gt 0) "[21c] $($case.Q) 가 앱의 200(건수 = 독립 SQL)을 받음" $case.Resp
+                        Assert-True ($hits.Count -eq 0) "[21c] $($case.Q) 가 nginx-waf(CRS)에 차단되지 않음"
+                    }
+
+                    # [21d] 큐 행 묶음 표지(T45): threadMemberCount = 큐 period=all&thread=<threadHeadNo> total = 독립 SQL(머리 ∪ 답글 가운데 허용 캡처 최신 큐에 있는 행).
+                    #       허용 캡처 밖 머리의 번호는 어느 행에도 없다(T40 교차 캡처 시드: cic17-*만 보는 계정과 syn1-*만 보는 계정).
+                    $headNos21 = @{}
+                    foreach ($who in @(@{ Name = 'analyst1'; Jar = $a21; Cap = $capA21 }, @{ Name = 'viewer1'; Jar = $v21; Cap = $capV21 }, @{ Name = 'analyst2'; Jar = $b21; Cap = (Get-CapLike21 'analyst2' 'l.capture_id') })) {
+                        $q = Get-Queue21 $who.Jar "period=all&size=100" "[21d] $($who.Name) queue period=all"
+                        $badged = @($q.Json.items | Where-Object { $_ -and $null -ne $_.threadHeadNo })
+                        $nos = @($badged | ForEach-Object { [long]$_.threadHeadNo } | Sort-Object -Unique)
+                        $headNos21[$who.Name] = $nos
+                        $e2eLogs.Add("[21d] $($who.Name) queue period=all rows=$(@($q.Json.items | Where-Object { $_ }).Count) with thread badge=$($badged.Count) [$(@($badged | ForEach-Object { "$($_.jobId)/$($_.queueRank):#$($_.threadHeadNo)x$($_.threadMemberCount)" }) -join ', ')]")
+                        foreach ($no in $nos) {
+                            $headId = (Invoke-AuditSelect "SELECT incident_id FROM incident_refs WHERE incident_no = $no").Trim()
+                            Assert-True ([bool]$headId) "[21d] $($who.Name) 표지 번호 #$no 의 번호 행이 있음"
+                            $sqlN = [long](Invoke-ZeekadSelect "SELECT count(*) FROM $lq21 WHERE $($who.Cap) AND (l.incident_id = '$headId' OR l.incident_id IN (SELECT d.incident_id FROM dashboard.slack_deliveries d WHERE btrim(d.zeekad_thread_parent) = '$headId'))")
+                            $th = Get-Queue21 $who.Jar "period=all&thread=$no" "[21d] $($who.Name) queue thread=$no"
+                            $rowCounts = @($badged | Where-Object { [long]$_.threadHeadNo -eq $no } | ForEach-Object { [long]$_.threadMemberCount } | Sort-Object -Unique)
+                            $e2eLogs.Add("[21d] $($who.Name) thread #$no -> row threadMemberCount=[$($rowCounts -join ', ')] queue period=all&thread=$no total=$($th.Json.total) independent SQL=$sqlN")
+                            Assert-True ($rowCounts.Count -eq 1 -and $rowCounts[0] -eq $sqlN -and [long]$th.Json.total -eq $sqlN -and $sqlN -ge 2) "[21d] $($who.Name) 묶음 #$no threadMemberCount = thread total = 독립 SQL" $th
+                        }
+                        if ($nos.Count -gt 0) {
+                            $refCap = (Get-CapLike21 $who.Name 'r.capture_id')
+                            $outside = [int](Invoke-AuditSelect "SELECT count(*) FROM incident_refs r WHERE r.incident_no IN ($($nos -join ', ')) AND NOT $refCap")
+                            Assert-True ($outside -eq 0) "[21d] $($who.Name) 행의 표지 번호는 모두 허용 캡처의 머리 (허용 밖 $outside)"
+                        }
+                        if ($who.Name -eq 'analyst2') {
+                            $row2111 = @($q.Json.items | Where-Object { $_ -and [long]$_.jobId -eq 211 -and [int]$_.queueRank -eq 1 })
+                            $shared = @($nos | Where-Object { $headNos21['analyst1'] -contains $_ })
+                            $e2eLogs.Add("[21d] analyst2 row 211/1 (reply to a cic17-wed head) threadHeadNo=$(if ($row2111.Count) { "$($row2111[0].threadHeadNo)" }) ; head numbers shared with analyst1=$($shared.Count)")
+                            Assert-True ($row2111.Count -eq 1 -and $null -eq $row2111[0].threadHeadNo -and $null -eq $row2111[0].threadMemberCount) "[21d] analyst2 211/1: 허용 밖 머리의 묶음 표지 없음" $q
+                            Assert-True ($shared.Count -eq 0) "[21d] analyst2 행에 cic17 머리 번호 없음"
+                        } elseif ($who.Name -eq 'analyst1') {
+                            Assert-True ($badged.Count -ge 1) "[21d] analyst1 큐에 묶음 표지가 있는 행이 있음" $q
+                        } else {
+                            Assert-True (($nos -join ',') -eq ($headNos21['analyst1'] -join ',') -and @(Get-UnmaskedIpv4 $q.Body).Count -eq 0) "[21d] viewer1 표지 번호 = analyst1 표지 번호, IPv4 가림" $q
+                        }
+                    }
+
+                    # [21e] GET /api/hosts(T46). 분석가: 줄 수 = 고유 host_ip 수, 줄들의 incidents 합 = 같은 조건 큐 summary.total, 줄 incidents = 큐 hostIp= total,
+                    #       전환 표시는 독립 SQL이 고른 호스트(시험 행의 192.168.20.60)에만, 정상 조회는 INCIDENT_VIEW_UNMASKED 0건.
+                    #       조회자: 대역 단위, 온전한 IPv4 없음, accounts[] 원소에 계정 원문 없음(원소 값으로 견준다), 전환만 보기는 빈 목록.
+                    $auditBase21e = Get-AuditMax21
+                    $ha = Get-HostsAll21 $a21 "period=all" "[21e] analyst1 /api/hosts period=all"
+                    $haCap = Get-HostsAll21 $a21 "period=all&captureId=$cap21" "[21e] analyst1 /api/hosts captureId=$cap21"
+                    $ha24 = Get-HostsAll21 $a21 "period=24h" "[21e] analyst1 /api/hosts period=24h"
+                    $haT = Get-HostsAll21 $a21 "period=all&roleTransitionOnly=true" "[21e] analyst1 /api/hosts roleTransitionOnly"
+                    $unmasked21e = Get-AuditCount21 'INCIDENT_VIEW_UNMASKED' 'analyst1' $auditBase21e
+                    $anyAudit21e = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase21e AND actor_username = 'analyst1'")
+                    $distinctHosts21 = [long](Invoke-ZeekadSelect "SELECT count(DISTINCT l.host_ip) FROM $lq21 WHERE $capA21")
+                    $distinctCap21 = [long](Invoke-ZeekadSelect "SELECT count(DISTINCT l.host_ip) FROM $lq21 WHERE $capA21 AND l.capture_id = '$cap21'")
+                    $qAll = Get-Queue21 $a21 "period=all&size=25" "[21e] analyst1 queue period=all"
+                    $qCap = Get-Queue21 $a21 "period=all&captureId=$cap21&size=25" "[21e] analyst1 queue captureId=$cap21"
+                    $q24 = Get-Queue21 $a21 "period=24h&size=25" "[21e] analyst1 queue period=24h"
+                    $sumAll = 0; foreach ($it in $ha.Items) { $sumAll += [long]$it.incidents }
+                    $sumCap = 0; foreach ($it in $haCap.Items) { $sumCap += [long]$it.incidents }
+                    $sum24 = 0; foreach ($it in $ha24.Items) { $sum24 += [long]$it.incidents }
+                    $rowMismatch = @($ha.Items | Where-Object { [long]$_.incidents -ne [long]$queueHostTotal21[$_.hostIp] -or ([long]$_.high + [long]$_.medium + [long]$_.low) -gt [long]$_.incidents })
+                    $dismissedSql = "NOT (lower(btrim(@A.zeekad_status)) = 'closed' AND lower(btrim(COALESCE(@A.zeekad_resolution, ''))) IN ('false_positive', 'benign'))"
+                    $transSql21 = "SELECT DISTINCT l.host_ip FROM $lq21 JOIN dashboard.latest_incident_queue o ON o.capture_id = l.capture_id AND o.host_ip = l.host_ip " +
+                        "WHERE $capA21 AND lower(btrim(l.zeekad_role)) = 'responder' AND lower(btrim(o.zeekad_role)) = 'originator' AND o.event_start > l.event_start " +
+                        "AND $($dismissedSql.Replace('@A', 'l')) AND $($dismissedSql.Replace('@A', 'o')) ORDER BY 1"
+                    $transExpected = Get-OrdinalJoin21 (Get-Lines21 (Invoke-ZeekadSelect $transSql21))
+                    $transApi = Get-OrdinalJoin21 @($ha.Items | Where-Object { $_.roleTransition -eq $true } | ForEach-Object { $_.hostIp })
+                    $transOnly = Get-OrdinalJoin21 @($haT.Items | ForEach-Object { $_.hostIp })
+                    $e2eLogs.Add("[21e] analyst1 GET /api/hosts?period=all -> rows=$($ha.Items.Count) total=$($ha.Total) pages=$($ha.Pages) maskedView=$($ha.First.Json.maskedView) (SQL distinct host_ip=$distinctHosts21); sum(incidents)=$sumAll queue summary.total=$($qAll.Json.summary.total); rows where incidents != queue hostIp total = $($rowMismatch.Count)`n      captureId=$cap21 -> rows=$($haCap.Items.Count) (SQL $distinctCap21) sum=$sumCap queue summary.total=$($qCap.Json.summary.total); period=24h -> rows=$($ha24.Items.Count) sum=$sum24 queue summary.total=$($q24.Json.summary.total)`n      roleTransition=true hosts: api=[$transApi] roleTransitionOnly=[$transOnly] independent SQL=[$transExpected]`n      audit rows by analyst1 during the four /api/hosts reads: INCIDENT_VIEW_UNMASKED=$unmasked21e any=$anyAudit21e")
+                    Assert-True ($ha.Items.Count -eq $distinctHosts21 -and $ha.Total -eq $distinctHosts21 -and $ha.First.Json.maskedView -eq $false) "[21e] analyst1 줄 수 = 독립 SQL의 고유 host_ip 수" $ha.First
+                    Assert-True ($sumAll -eq [long]$qAll.Json.summary.total -and $sumAll -gt 0) "[21e] analyst1 줄들의 incidents 합 = 큐 summary.total (기간 전체)"
+                    Assert-True ($haCap.Items.Count -eq $distinctCap21 -and $sumCap -eq [long]$qCap.Json.summary.total -and $sumCap -gt 0) "[21e] analyst1 captureId=$cap21 줄 수·합 = 독립 SQL·큐"
+                    Assert-True ($sum24 -eq [long]$q24.Json.summary.total -and $sum24 -gt 0) "[21e] analyst1 줄들의 incidents 합 = 큐 summary.total (24시간)"
+                    Assert-True ($rowMismatch.Count -eq 0) "[21e] analyst1 줄의 incidents = 큐 hostIp= total (어긋난 줄 $($rowMismatch.Count))"
+                    Assert-True ($transApi -eq $transExpected -and $transOnly -eq $transExpected -and $transExpected -eq $hostT21) "[21e] 전환 표시가 시험 행의 그 호스트($hostT21)에만 (api=[$transApi], SQL=[$transExpected])"
+                    Assert-True ($unmasked21e -eq 0) "[21e] analyst1 /api/hosts 정상 조회의 INCIDENT_VIEW_UNMASKED 0건 (실제 $unmasked21e)"
+                    # 관측 계정: zeekad_name이 있으면 그 값만, 없으면 kerberos_user·ntlm_user(화면 증적 탭과 같은 순서)
+                    $capOnA21 = Get-CapLike21 'analyst1' 'a.capture_id'
+                    $assetLines21 = @(Get-Lines21 (Invoke-ZeekadSelect "SELECT a.host_ip, COALESCE(a.zeekad_name, ''), COALESCE(a.kerberos_user, ''), COALESCE(a.ntlm_user, '') FROM dashboard.raw_asset_names a WHERE $capOnA21 AND EXISTS (SELECT 1 FROM dashboard.latest_incident_queue q WHERE q.capture_id = a.capture_id AND q.host_ip = a.host_ip) ORDER BY 1, 2, 3, 4"))
+                    $expectedAccounts21 = @{}
+                    $rawNames21 = [System.Collections.Generic.List[string]]::new()
+                    $withName21 = 0; $fallback21 = 0
+                    foreach ($line in $assetLines21) {
+                        $p = $line -split '\|'
+                        if (-not $expectedAccounts21.ContainsKey($p[0])) { $expectedAccounts21[$p[0]] = [System.Collections.Generic.List[string]]::new() }
+                        foreach ($n in @($p[1], $p[2], $p[3])) { if ($n -and $n.Trim()) { $rawNames21.Add($n.Trim()) } }
+                        if ($p[1].Trim()) { $expectedAccounts21[$p[0]].Add($p[1].Trim()); $withName21++ }
+                        else { foreach ($n in @($p[2], $p[3])) { if ($n -and $n.Trim()) { $expectedAccounts21[$p[0]].Add($n.Trim()) } }; $fallback21++ }
+                    }
+                    $accountMismatch = [System.Collections.Generic.List[string]]::new()
+                    foreach ($it in $ha.Items) {
+                        $exp = if ($expectedAccounts21.ContainsKey($it.hostIp)) { Get-OrdinalJoin21 $expectedAccounts21[$it.hostIp] } else { '' }
+                        $got = Get-OrdinalJoin21 @($it.accounts)
+                        if ($exp -cne $got) { $accountMismatch.Add("$($it.hostIp) api=[$got] sql=[$exp]") }
+                    }
+                    $e2eLogs.Add("[21e] analyst1 accounts[] vs asset_names (zeekad_name first, else kerberos_user/ntlm_user): asset rows=$($assetLines21.Count) with zeekad_name=$withName21 fallback=$fallback21 mismatched hosts=$($accountMismatch.Count)$(if ($accountMismatch.Count) { ' ' + ($accountMismatch -join '; ') })")
+                    Assert-True ($withName21 -ge 1 -and $fallback21 -ge 1 -and $accountMismatch.Count -eq 0) "[21e] analyst1 accounts[] = zeekad_name 우선, 없으면 kerberos_user·ntlm_user ($($accountMismatch -join '; '))"
+
+                    $hv = Get-HostsAll21 $v21 "period=all" "[21e] viewer1 /api/hosts period=all"
+                    $hvT = Get-HostsAll21 $v21 "period=all&roleTransitionOnly=true" "[21e] viewer1 /api/hosts roleTransitionOnly"
+                    $qvAll = Get-Queue21 $v21 "period=all&size=25" "[21e] viewer1 queue period=all"
+                    $distinctBands21 = [long](Invoke-ZeekadSelect "SELECT count(DISTINCT $mask21) FROM $lq21 WHERE $capV21")
+                    $sumV = 0; foreach ($it in $hv.Items) { $sumV += [long]$it.incidents }
+                    $notBand = @($hv.Items | Where-Object { $_.hostIp -notmatch '^\d{1,3}\.\d{1,3}\.\*\.\*$' })
+                    $vRowMismatch = @($hv.Items | Where-Object { [long]$_.incidents -ne [long]$queueBandTotalV21[$_.hostIp] })
+                    $vTrans = @($hv.Items | Where-Object { $_.roleTransition -eq $true })
+                    $vIpHosts = @(Get-UnmaskedIpv4 ($hv.Body + $hvT.Body))
+                    $vAccounts = @($hv.Items | ForEach-Object { $_.accounts } | Where-Object { $null -ne $_ })
+                    $vRawHits = @($vAccounts | Where-Object { $rawNames21 -ccontains "$_" })
+                    $vExpected = Get-OrdinalJoin21 @($expectedAccounts21.Values | ForEach-Object { $_ } | ForEach-Object { Get-MaskedName21 $_ })
+                    $vGot = Get-OrdinalJoin21 $vAccounts
+                    $e2eLogs.Add("[21e] viewer1 GET /api/hosts?period=all -> rows=$($hv.Items.Count) total=$($hv.Total) maskedView=$($hv.First.Json.maskedView) hostIp=[$(@($hv.Items | ForEach-Object { $_.hostIp }) -join ', ')] (SQL distinct ranges=$distinctBands21); sum(incidents)=$sumV queue summary.total=$($qvAll.Json.summary.total); rows where incidents != queue hostIp total = $($vRowMismatch.Count); roleTransition=true rows=$($vTrans.Count); unmaskedIPv4=$($vIpHosts.Count)`n      accounts[] elements=[$vGot] expected masked=[$vExpected] elements equal to a raw zeekad_name/kerberos_user/ntlm_user ($($rawNames21.Count) raw values)=$($vRawHits.Count); roleTransitionOnly=true -> rows=$($hvT.Items.Count) total=$($hvT.Total)")
+                    Assert-True ($hv.Items.Count -eq $distinctBands21 -and $hv.Total -eq $distinctBands21 -and $notBand.Count -eq 0 -and $hv.First.Json.maskedView -eq $true) "[21e] viewer1 줄은 대역(A.B.*.*) 단위이고 줄 수 = 독립 SQL" $hv.First
+                    Assert-True ($vIpHosts.Count -eq 0) "[21e] viewer1 /api/hosts 응답에 가려지지 않은 IPv4 없음 (찾음: $($vIpHosts -join ', '))"
+                    Assert-True ($sumV -eq [long]$qvAll.Json.summary.total -and $vRowMismatch.Count -eq 0) "[21e] viewer1 줄 합 = 큐 summary.total, 줄 incidents = 큐 hostIp= total"
+                    Assert-True ($vRawHits.Count -eq 0 -and $rawNames21.Count -gt 0) "[21e] viewer1 accounts[] 원소에 계정 원문 없음 (원문과 같은 원소 $($vRawHits.Count))"
+                    Assert-True ($vGot -ceq $vExpected -and $vAccounts.Count -gt 0) "[21e] viewer1 accounts[] = 첫 글자 + *** (api=[$vGot], 기대=[$vExpected])"
+                    Assert-True ($vTrans.Count -eq 0 -and $hvT.Items.Count -eq 0 -and $hvT.Total -eq 0) "[21e] viewer1 전환 표시 없음, 전환만 보기는 빈 목록" $hvT.First
+                    foreach ($badQ in @('sort=bogus', 'dir=sideways', 'roleTransitionOnly=maybe', 'period=2d')) {
+                        $r = Invoke-Http -Url "$baseHttps/api/hosts?$badQ" -CookieJar $v21
+                        $e2eLogs.Add("[21e] viewer1 GET /api/hosts?$badQ -> $(Format-Resp $r 160)")
+                        Assert-ApiError $r 400 "INVALID_REQUEST" "[21e] /api/hosts 형식 오류 $badQ"
+                    }
+                    foreach ($who in @(@{ Name = 'viewer1'; Jar = $v21 }, @{ Name = 'analyst1'; Jar = $a21 })) {
+                        $before = Get-AuditCount21 'ACCESS_DENIED_IDOR' $who.Name 0
+                        $deny = Invoke-Http -Url "$baseHttps/api/hosts?period=all&captureId=syn1-tue" -CookieJar $who.Jar
+                        $after = Get-AuditCount21 'ACCESS_DENIED_IDOR' $who.Name 0
+                        $e2eLogs.Add("[21e] $($who.Name) GET /api/hosts?period=all&captureId=syn1-tue -> $(Format-Resp $deny 120); ACCESS_DENIED_IDOR rows $before -> $after")
+                        Assert-Status $deny 403 "[21e] $($who.Name) /api/hosts 허용 밖 captureId"
+                        Assert-True (($after - $before) -eq 1) "[21e] $($who.Name) /api/hosts 허용 밖 captureId IDOR 감사 1건 (증가 $($after - $before))"
+                    }
+                    $hostsAnon = Invoke-Http -Url "$baseHttps/api/hosts?period=all"
+                    $e2eLogs.Add("[21e] unauthenticated GET /api/hosts?period=all -> $(Format-Resp $hostsAnon 120)")
+                    Assert-ApiError $hostsAnon 401 "UNAUTHENTICATED" "[21e] 비로그인 /api/hosts"
+
+                    # [21f] 같은 호스트 인시던트 API(T46): 자기 자신 없음(jobId·queueRank로 본다), total = 독립 SQL(분석가는 같은 주소, 조회자는 같은 대역),
+                    #       조회자 응답에 온전한 IPv4 없음, 허용 밖 작업은 403 + IDOR 감사 1건, 비로그인 401
+                    foreach ($t in @(@($job21, 1), @($job21, 3), @($job21, 4), @(101, 1))) {
+                        $j = [long]$t[0]; $rk = [int]$t[1]
+                        $sp = (Invoke-ZeekadSelect "SELECT host_ip, incident_id FROM dashboard.raw_incident_queue WHERE job_id = $j AND queue_rank = $rk") -split '\|', 2
+                        $selfHost = $sp[0]; $selfId = $sp[1]
+                        $selfBand = Get-MaskedIp21 $selfHost
+                        $expA = [long](Invoke-ZeekadSelect "SELECT count(*) FROM $lq21 WHERE $capA21 AND l.host_ip = '$selfHost' AND l.incident_id <> '$selfId'")
+                        $expV = [long](Invoke-ZeekadSelect "SELECT count(*) FROM $lq21 WHERE $capV21 AND $mask21 = '$selfBand' AND l.incident_id <> '$selfId'")
+                        $ra = Invoke-Http -Url "$baseHttps/api/incidents/$j/rank/$rk/related-host-incidents" -CookieJar $a21
+                        $rv = Invoke-Http -Url "$baseHttps/api/incidents/$j/rank/$rk/related-host-incidents" -CookieJar $v21
+                        Assert-Status $ra 200 "[21f] analyst1 같은 호스트 $j/$rk"
+                        Assert-Status $rv 200 "[21f] viewer1 같은 호스트 $j/$rk"
+                        $aItems = @($ra.Json.items | Where-Object { $_ })
+                        $vItems = @($rv.Json.items | Where-Object { $_ })
+                        $aSelf = @($aItems | Where-Object { [long]$_.jobId -eq $j -and [int]$_.queueRank -eq $rk }).Count
+                        $vSelf = @($vItems | Where-Object { [long]$_.jobId -eq $j -and [int]$_.queueRank -eq $rk }).Count
+                        $vIpRel = @(Get-UnmaskedIpv4 $rv.Body)
+                        $e2eLogs.Add("[21f] $j/$rk (host $selfHost): analyst1 total=$($ra.Json.total) items=$($aItems.Count) self=$aSelf hostIp=$($ra.Json.hostIp) (SQL same address=$expA); viewer1 total=$($rv.Json.total) items=$($vItems.Count) self=$vSelf hostIp=$($rv.Json.hostIp) unmaskedIPv4=$($vIpRel.Count) (SQL same range $selfBand=$expV)")
+                        Assert-True ([long]$ra.Json.total -eq $expA -and $aItems.Count -eq [Math]::Min($expA, 10) -and $aSelf -eq 0 -and $ra.Json.hostIp -eq $selfHost -and $ra.Json.maskedView -eq $false -and @($aItems | Where-Object { $_.hostIp -ne $selfHost }).Count -eq 0) "[21f] analyst1 $j/$rk total = 독립 SQL(같은 주소), 자기 자신 없음" $ra
+                        Assert-True ([long]$rv.Json.total -eq $expV -and $vItems.Count -eq [Math]::Min($expV, 10) -and $vSelf -eq 0 -and $rv.Json.hostIp -eq $selfBand -and $rv.Json.maskedView -eq $true -and @($vItems | Where-Object { $_.hostIp -ne $selfBand }).Count -eq 0) "[21f] viewer1 $j/$rk total = 독립 SQL(같은 대역), 자기 자신 없음" $rv
+                        Assert-True ($vIpRel.Count -eq 0) "[21f] viewer1 $j/$rk 응답에 가려지지 않은 IPv4 없음 (찾음: $($vIpRel -join ', '))" $rv
+                    }
+                    foreach ($who in @(@{ Name = 'viewer1'; Jar = $v21 }, @{ Name = 'analyst1'; Jar = $a21 })) {
+                        $before = Get-AuditCount21 'ACCESS_DENIED_IDOR' $who.Name 0
+                        $deny = Invoke-Http -Url "$baseHttps/api/incidents/201/rank/1/related-host-incidents" -CookieJar $who.Jar
+                        $after = Get-AuditCount21 'ACCESS_DENIED_IDOR' $who.Name 0
+                        $e2eLogs.Add("[21f] $($who.Name) GET /api/incidents/201/rank/1/related-host-incidents (syn1-tue) -> $(Format-Resp $deny 120); ACCESS_DENIED_IDOR rows $before -> $after")
+                        Assert-Status $deny 403 "[21f] $($who.Name) 같은 호스트 API 허용 밖 작업"
+                        Assert-True (($after - $before) -eq 1) "[21f] $($who.Name) 같은 호스트 API 허용 밖 작업 IDOR 감사 1건 (증가 $($after - $before))"
+                    }
+                    $relAnon = Invoke-Http -Url "$baseHttps/api/incidents/$job21/rank/1/related-host-incidents"
+                    $e2eLogs.Add("[21f] unauthenticated GET /api/incidents/$job21/rank/1/related-host-incidents -> $(Format-Resp $relAnon 120)")
+                    Assert-ApiError $relAnon 401 "UNAUTHENTICATED" "[21f] 비로그인 같은 호스트 API"
+
+                    # [21g] 상세의 zeekad_name(T46): 조회자는 첫 글자 + ***, 분석가는 원문(사용자 계정 꼴 101/1, 컴퓨터 계정 꼴 101/2·시험 행)
+                    foreach ($t in @(@(101, 1), @(101, 2), @($job21, 1))) {
+                        $j = [long]$t[0]; $rk = [int]$t[1]
+                        $rawNames = @(Get-Lines21 (Invoke-ZeekadSelect "SELECT a.zeekad_name FROM dashboard.raw_asset_names a JOIN dashboard.raw_incident_queue q ON q.capture_id = a.capture_id AND q.host_ip = a.host_ip WHERE q.job_id = $j AND q.queue_rank = $rk AND a.zeekad_name IS NOT NULL ORDER BY 1"))
+                        Assert-True ($rawNames.Count -ge 1) "[21g] $j/$rk 자산에 zeekad_name이 있음(검증 시드)"
+                        $vd = Invoke-Http -Url "$baseHttps/api/incidents/$j/rank/$rk" -CookieJar $v21
+                        $ad = Invoke-Http -Url "$baseHttps/api/incidents/$j/rank/$rk" -CookieJar $a21
+                        Assert-Status $vd 200 "[21g] viewer1 상세 $j/$rk"
+                        Assert-Status $ad 200 "[21g] analyst1 상세 $j/$rk"
+                        $vNames = Get-OrdinalJoin21 @($vd.Json.detail.assetNames | Where-Object { $_ } | ForEach-Object { $_.extraAttributes.zeekad_name })
+                        $aNames = Get-OrdinalJoin21 @($ad.Json.detail.assetNames | Where-Object { $_ } | ForEach-Object { $_.extraAttributes.zeekad_name })
+                        $expMasked = Get-OrdinalJoin21 @($rawNames | ForEach-Object { Get-MaskedName21 $_ })
+                        $expRaw = Get-OrdinalJoin21 $rawNames
+                        $leak = @($rawNames | Where-Object { $vd.Body.Contains($_) }).Count
+                        $e2eLogs.Add("[21g] $j/$rk assetNames[].extraAttributes.zeekad_name: viewer1=[$vNames] (expected [$expMasked]) raw value in viewer body=$leak; analyst1=[$aNames] (expected [$expRaw])")
+                        Assert-True ($vNames -ceq $expMasked -and $leak -eq 0) "[21g] viewer1 $j/$rk zeekad_name = 첫 글자 + ***" $vd
+                        Assert-True ($aNames -ceq $expRaw) "[21g] analyst1 $j/$rk zeekad_name 원문" $ad
+                    }
+
+                    # [21h] overview 새 필드(T45b): attack 전술·기법 count = 같은 조건 큐 attack= total, topHosts 줄 total = 큐 role=+hostIp= total,
+                    #       topThreads 줄 totalMemberCount = 큐 period=all&thread= total(periodIncidentCount = 같은 조건 큐 thread= total),
+                    #       기간 전체는 독립 SQL 분포와도 같다. 조회자 응답에 온전한 IPv4 없음.
+                    foreach ($who in @(@{ Name = 'analyst1'; Jar = $a21; Att = $attA21 }, @{ Name = 'viewer1'; Jar = $v21; Att = $attV21 })) {
+                        foreach ($cond in @('period=all', 'period=24h', "period=all&captureId=$cap21")) {
+                            $ov = Invoke-Http -Url "$baseHttps/api/dashboard/overview?$cond" -CookieJar $who.Jar
+                            Assert-Status $ov 200 "[21h] $($who.Name) overview $cond"
+                            $mis = [System.Collections.Generic.List[string]]::new()
+                            $tactics = @($ov.Json.attack.tactics | Where-Object { $_ })
+                            $techniques = @($ov.Json.attack.techniques | Where-Object { $_ })
+                            foreach ($tc in $tactics) {
+                                $qt = [long](Get-Queue21 $who.Jar "$cond&size=25&attack=$($tc.tactic)" "[21h] $($who.Name) queue $cond attack=$($tc.tactic)").Json.total
+                                if ($qt -ne [long]$tc.count) { $mis.Add("tactic $($tc.tactic) overview=$($tc.count) queue=$qt") }
+                            }
+                            foreach ($tq in $techniques) {
+                                $qt = [long](Get-Queue21 $who.Jar "$cond&size=25&attack=$($tq.attackId)" "[21h] $($who.Name) queue $cond attack=$($tq.attackId)").Json.total
+                                if ($qt -ne [long]$tq.count) { $mis.Add("technique $($tq.attackId) overview=$($tq.count) queue=$qt") }
+                            }
+                            $hostRows = 0
+                            foreach ($dir in @('originator', 'responder')) {
+                                foreach ($hr in @($ov.Json.topHosts.$dir | Where-Object { $_ })) {
+                                    $hostRows++
+                                    $qt = [long](Get-Queue21 $who.Jar "$cond&size=25&role=$dir&hostIp=$($hr.hostIp)" "[21h] $($who.Name) queue $cond role=$dir hostIp=$($hr.hostIp)").Json.total
+                                    if ($qt -ne [long]$hr.total) { $mis.Add("topHosts.$dir $($hr.hostIp) overview=$($hr.total) queue=$qt") }
+                                }
+                            }
+                            $threads = @($ov.Json.topThreads | Where-Object { $_ })
+                            foreach ($tr in $threads) {
+                                $qAllT = [long](Get-Queue21 $who.Jar "period=all&size=25&thread=$($tr.headIncidentNo)" "[21h] $($who.Name) queue period=all thread=$($tr.headIncidentNo)").Json.total
+                                $qCondT = [long](Get-Queue21 $who.Jar "$cond&size=25&thread=$($tr.headIncidentNo)" "[21h] $($who.Name) queue $cond thread=$($tr.headIncidentNo)").Json.total
+                                if ($qAllT -ne [long]$tr.totalMemberCount) { $mis.Add("topThreads #$($tr.headIncidentNo) totalMemberCount=$($tr.totalMemberCount) queue(period=all)=$qAllT") }
+                                if ($qCondT -ne [long]$tr.periodIncidentCount) { $mis.Add("topThreads #$($tr.headIncidentNo) periodIncidentCount=$($tr.periodIncidentCount) queue($cond)=$qCondT") }
+                            }
+                            if ($cond -eq 'period=all') {
+                                foreach ($tc in $tactics) { if (-not $who.Att.tactic.ContainsKey($tc.tactic) -or [long]$who.Att.tactic[$tc.tactic] -ne [long]$tc.count) { $mis.Add("tactic $($tc.tactic) overview=$($tc.count) sql=$($who.Att.tactic[$tc.tactic])") } }
+                                foreach ($tq in $techniques) { if (-not $who.Att.technique.ContainsKey($tq.attackId) -or [long]$who.Att.technique[$tq.attackId] -ne [long]$tq.count) { $mis.Add("technique $($tq.attackId) overview=$($tq.count) sql=$($who.Att.technique[$tq.attackId])") } }
+                                if ($tactics.Count -ne $who.Att.tactic.Count) { $mis.Add("tactic rows overview=$($tactics.Count) sql=$($who.Att.tactic.Count)") }
+                                if ([int]$ov.Json.attack.techniqueCount -ne $who.Att.technique.Count -or $techniques.Count -ne [Math]::Min($who.Att.technique.Count, 10)) { $mis.Add("techniqueCount overview=$($ov.Json.attack.techniqueCount) rows=$($techniques.Count) sql=$($who.Att.technique.Count)") }
+                                if ([long]$ov.Json.attack.incidentsWithCandidates -ne [long]$who.Att.any) { $mis.Add("incidentsWithCandidates overview=$($ov.Json.attack.incidentsWithCandidates) sql=$($who.Att.any)") }
+                                if ($tactics.Count -lt 1 -or $techniques.Count -lt 1 -or $hostRows -lt 1 -or $threads.Count -lt 1) { $mis.Add("empty panel: tactics=$($tactics.Count) techniques=$($techniques.Count) hostRows=$hostRows threads=$($threads.Count)") }
+                            }
+                            if ($ov.Json.topThreadsOmitted -ne $false) { $mis.Add("topThreadsOmitted=$($ov.Json.topThreadsOmitted)") }
+                            $ovIp = if ($who.Name -eq 'viewer1') { @(Get-UnmaskedIpv4 $ov.Body) } else { @() }
+                            $e2eLogs.Add("[21h] $($who.Name) overview $cond -> attack(incidentsWithCandidates=$($ov.Json.attack.incidentsWithCandidates) tactics=[$(@($tactics | ForEach-Object { "$($_.tactic)=$($_.count)" }) -join ', ')] techniques=[$(@($techniques | ForEach-Object { "$($_.attackId)=$($_.count)" }) -join ', ')] techniqueCount=$($ov.Json.attack.techniqueCount)) topHosts(originator=[$(@($ov.Json.topHosts.originator | Where-Object { $_ } | ForEach-Object { "$($_.hostIp)=$($_.total)" }) -join ', ')] responder=[$(@($ov.Json.topHosts.responder | Where-Object { $_ } | ForEach-Object { "$($_.hostIp)=$($_.total)" }) -join ', ')]) topThreads=[$(@($threads | ForEach-Object { "#$($_.headIncidentNo) period=$($_.periodIncidentCount) total=$($_.totalMemberCount)" }) -join ', ')] omitted=$($ov.Json.topThreadsOmitted); mismatches=$($mis.Count)$(if ($mis.Count) { ' ' + ($mis -join '; ') })$(if ($who.Name -eq 'viewer1') { " unmaskedIPv4=$($ovIp.Count)" })")
+                            Assert-True ($mis.Count -eq 0) "[21h] $($who.Name) overview $cond 새 집계 = 같은 조건 큐 total·독립 SQL ($($mis -join '; '))" $ov
+                            Assert-True ($ovIp.Count -eq 0) "[21h] viewer1 overview $cond 응답에 가려지지 않은 IPv4 없음 (찾음: $($ovIp -join ', '))" $ov
+                        }
+                    }
+
+                    # [21i] 응답 시간 기록(데우기 1번 + 3번, curl 포함). 새 엔드포인트의 한도는 이 단계에서 정하지 않는다(1초를 넘어도 단언하지 않고 적는다).
+                    $t21 = [System.Collections.Generic.List[string]]::new()
+                    $over21 = [System.Collections.Generic.List[string]]::new()
+                    foreach ($p in @("/api/hosts?period=all", "/api/incidents/$job21/rank/1/related-host-incidents", "/api/dashboard/overview?period=all", "/api/operations")) {
+                        $null = Invoke-Http -Url "$baseHttps$p" -CookieJar $a21
+                        $ms = @()
+                        for ($k = 0; $k -lt 3; $k++) {
+                            $sw = [Diagnostics.Stopwatch]::StartNew()
+                            $r = Invoke-Http -Url "$baseHttps$p" -CookieJar $a21
+                            $sw.Stop()
+                            Assert-Status $r 200 "[21i] $p"
+                            $ms += [int]$sw.ElapsedMilliseconds
+                        }
+                        $max = ($ms | Measure-Object -Maximum).Maximum
+                        $t21.Add("$p=[$($ms -join ', ')] max=$max ms")
+                        if ($max -gt 1000) { $over21.Add($p) }
+                    }
+                    $e2eLogs.Add("[21i] response times (analyst1, warm 1 + 3 samples, includes curl; recorded, not asserted): $($t21 -join '; '); over 1000 ms=[$($over21 -join ', ')]")
+                } finally {
+                    $del21 = Invoke-ZeekadExec21 $cleanSql21
+                    $e2eLogs.Add("[21] removed test rows (job $job21, capture $cap21) from verify zeekad DB: exit=$($del21.ExitCode) $($del21.Output.Trim() -replace "`r?`n", ' ')")
+                }
+                $left21 = [int](Invoke-ZeekadSelect $leftSql21)
+                $e2eLogs.Add("[21] test rows left in verify zeekad DB after cleanup = $left21")
+                Assert-True ($left21 -eq 0) "[21] 시험 행을 모두 지움(뒤 단계가 보지 않는다) (남은 행 $left21)"
 
                 # [14e] 기본 설정(DASHBOARD_LOCKOUT_EXEMPT_USERNAMES 비움)에서는 지금처럼 5번째 실패에 잠긴다(analyst2, 마지막 단계라 뒤 단계에 영향 없음)
                 $exempt14 = (Invoke-NativeCapture "docker" ($execPrefix + @('printf "%s" "${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES-<unset>}"')) -IgnoreExitCode).Output.Trim()
