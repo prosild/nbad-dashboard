@@ -357,12 +357,14 @@ function EmptyHosts({
   onAllPeriod: () => void;
   onClear: () => void;
 }) {
+  // 조사까지 붙인 주어("호스트가" / "대역이")
+  const subject = unit === '대역' ? '대역이' : `${unit}가`;
   return (
     <div className="space-y-2 px-4 py-12 text-center text-sm text-slate-300" data-empty={anyFilter ? 'filter' : 'none'}>
       <p>
         {anyFilter
-          ? `검색·거르기 조건에 맞는 ${unit}가 없습니다.`
-          : `${scope} 동안 인시던트가 탐지된 ${unit}가 없습니다.`}
+          ? `검색·거르기 조건에 맞는 ${subject} 없습니다.`
+          : `${scope} 동안 인시던트가 탐지된 ${subject} 없습니다.`}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
         {anyFilter && (

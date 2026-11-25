@@ -605,6 +605,14 @@ describe('T46 호스트 위험도 화면', () => {
     expect(urlParams().get('q')).toBeNull();
   });
 
+  it('조회자의 빈 목록 안내는 대역 단위로 적는다', async () => {
+    const server = hostsServer((url) => json(hostsResponse(url, [], { maskedView: true })));
+    renderApp('/hosts?q=nobody', server.handler, 'VIEWER');
+    await waitFor(() => expect(document.querySelector('[data-empty="filter"]')).not.toBeNull());
+    expect(document.querySelector('[data-empty="filter"]')).toHaveTextContent('검색·거르기 조건에 맞는 대역이 없습니다.');
+    expect(screen.getByTestId('hosts-total')).toHaveTextContent('대역 0개');
+  });
+
   it('휴대폰 카드: 줄마다 링크 하나이고 주소 꼴이 아니면 링크가 없다', async () => {
     const server = hostsServer((url) => json(hostsResponse(url, ANALYST_ROWS)));
     renderApp('/hosts', server.handler);

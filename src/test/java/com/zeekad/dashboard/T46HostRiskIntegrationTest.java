@@ -580,6 +580,13 @@ class T46HostRiskIntegrationTest {
         getJson(a, "/api/hosts?period=all&q=alice&sort=hostIp");
         assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_VIEW_UNMASKED.name(), user, 10)).isEmpty();
 
+        // 화면 경로 /hosts: 조회자·분석가 모두 셸을 받는다(관리자 전용 경로가 아니다)
+        for (UserRole role : List.of(UserRole.VIEWER, UserRole.ANALYST)) {
+            mockMvc.perform(get("/hosts").session(login(role, HOST_PATTERNS)))
+                    .andExpect(status().isOk())
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"));
+        }
+
         // 허용 캡처가 없는 사용자: 빈 목록(오류가 아니다), 매퍼를 부르지 않는다
         MockHttpSession nobody = login(UserRole.ANALYST, "t46-none-*");
         clearSpies();
