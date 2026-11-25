@@ -725,7 +725,8 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
     const sec = section();
     expect(within(sec).getByRole('heading', { name: '같은 호스트의 다른 인시던트' })).toBeInTheDocument();
     expect(sec.querySelector('[data-related-state="loading"]')).toHaveTextContent('불러오는 중...');
-    expect(server.order).toEqual(['detail', 'related']);
+    // 두 번째 요청은 상세가 뜬 뒤 효과에서 나간다. 요청이 나갈 때까지 기다린 뒤 순서를 본다(단언은 그대로)
+    await waitFor(() => expect(server.order).toEqual(['detail', 'related']));
     // 요약 탭 맨 아래 구역이다
     const panel = document.getElementById('detail-panel-summary') as HTMLElement;
     expect(panel.querySelector('section:last-of-type')).toBe(sec);
