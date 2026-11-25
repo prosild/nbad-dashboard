@@ -22,6 +22,17 @@ function ipv4Octets(ip: string): number[] | null {
   return octets.map(Number);
 }
 
+/**
+ * 큐 `hostIp` 조건이 받는 꼴(T45, 서버 HostIpFilter와 같은 규칙): 온전한 IPv4면 'exact', 가려진 IPv4(`A.B.*.*`)면 'masked'.
+ * 옥텟은 0~255이고 앞에 0을 붙인 꼴은 아니다. IPv6·포트·`A.B.C.*`·공백이 낀 글 등 그 밖은 null.
+ */
+export function hostIpKind(value: string | null | undefined): 'exact' | 'masked' | null {
+  if (typeof value !== 'string') return null;
+  const octets = ipv4Octets(value);
+  if (!octets) return null;
+  return octets.length === 4 ? 'exact' : 'masked';
+}
+
 function isIpv6(value: string): boolean {
   if (!value.includes(':') || !/^[0-9a-fA-F:.]+$/.test(value)) return false;
   try {

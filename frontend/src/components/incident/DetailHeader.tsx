@@ -18,7 +18,7 @@ import { useToast } from '../ToastContext';
 import { incidentMarkdown } from '../../utils/incidentExport';
 import { incidentShareUrl } from '../../utils/incidentLink';
 import { AckOverdueBadge, elapsedText } from './AssignmentBits';
-import { ModelPivot } from './InvestigationLinks';
+import { HostPivot, ModelPivot } from './InvestigationLinks';
 import { isTemplateReplaced, TemplateReportBadge } from './ReportSection';
 import { describeVerificationReason } from '../../utils/factLabels';
 
@@ -130,7 +130,8 @@ export function DetailHeader({
           <ResolutionBadge resolution={detail.currentResolution} />
         </span>
         <span className="inline-flex min-w-0 items-baseline gap-2">
-          <span className="font-mono text-sm font-bold text-slate-50">{incident.hostIp}</span>
+          {/* T45: 호스트 정확 일치 목록으로 가는 링크(서버가 받는 꼴일 때만) */}
+          <HostPivot ip={incident.hostIp} className="font-mono text-sm font-bold text-slate-50" />
           {incident.hostName.length > 0 && (
             <span className="max-w-[16rem] truncate font-mono text-slate-400" title={incident.hostName.join(', ')}>
               {incident.hostName.join(', ')}

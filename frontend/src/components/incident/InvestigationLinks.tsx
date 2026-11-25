@@ -3,12 +3,34 @@ import { Check, Copy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DetectionModelName, SocBadge } from '../StatusBadge';
 import { detectionModelInfo } from '../../utils/labels';
-import { IP_SCOPE_LABEL, ipScope, isIpText } from '../../utils/ipScope';
+import { hostIpKind, IP_SCOPE_LABEL, ipScope, isIpText } from '../../utils/ipScope';
 
 /**
- * 조사 동선(T44): 상세에서 한 번 눌러 옮겨 가거나 가져가는 것들.
- * 단일 호스트 정확 일치 피벗은 서버 `hostIp=` 필터(T45)와 함께 붙인다. `asset=`은 부분 일치라 다른 호스트가 섞인다.
+ * 조사 동선(T44·T45): 상세에서 한 번 눌러 옮겨 가거나 가져가는 것들.
+ * 호스트 피벗(`HostPivot`)은 서버 `hostIp=` 정확 일치 필터(T45)를 쓴다. `asset=`은 부분 일치라 다른 호스트가 섞인다.
  */
+
+/**
+ * 호스트 IP → 그 호스트의 인시던트 목록(전체 기간, `hostIp` 정확 일치).
+ * 온전한 IPv4면 그 호스트, 조회자에게 가려진 주소(`A.B.*.*`)면 같은 대역의 호스트 전부다(조회자는 원문을 모른다).
+ * 그 밖의 글(IPv6 등 서버가 받지 않는 꼴)은 링크 없이 글로 둔다.
+ */
+export function HostPivot({ ip, className }: { ip: string; className: string }) {
+  const kind = hostIpKind(ip);
+  if (!kind) return <span className={className}>{ip}</span>;
+  const label = kind === 'exact' ? `호스트 ${ip} 인시던트 보기` : `같은 대역(${ip}) 인시던트 보기`;
+  return (
+    <Link
+      to={`/incidents?period=all&hostIp=${encodeURIComponent(ip)}`}
+      title={label}
+      aria-label={label}
+      data-host-pivot={kind}
+      className={`${className} rounded underline decoration-slate-600 underline-offset-2 hover:decoration-cyan-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50`}
+    >
+      {ip}
+    </Link>
+  );
+}
 
 /** 탐지 모델 이름 → 그 모델이 탐지한 인시던트 목록(전체 기간, `pickedBy` 정확 일치) */
 export function ModelPivot({ id }: { id: string | null }) {

@@ -187,6 +187,10 @@ export interface QueueQuery {
   assignee: AssigneeFilter | null;
   /** T40 알림 묶음(최초 알림 인시던트 번호) */
   thread: number | null;
+  /** T45 호스트 정확 일치(`A.B.C.D` 또는 `A.B.*.*`). 형식이 틀려도 그대로 보낸다(서버 400, 칩으로 지운다) */
+  hostIp: string;
+  /** T45 ATT&CK 기법 ID 또는 전술. 형식이 틀려도 그대로 보낸다 */
+  attack: string;
   pickedBy: string;
   role: string;
   status: string;
@@ -218,6 +222,8 @@ export function parseQueueQuery(params: URLSearchParams): QueueQuery {
     overdue: params.get('overdue') === 'true',
     assignee: parseAssignee(params.get('assignee')),
     thread: parseThread(params.get('thread')),
+    hostIp: (params.get('hostIp') ?? '').trim(),
+    attack: (params.get('attack') ?? '').trim(),
     pickedBy: params.get('pickedBy') ?? '',
     role: params.get('role') ?? '',
     status: params.get('status') ?? '',
@@ -250,6 +256,8 @@ export function queueApiParams(
     overdue: q.overdue ? 'true' : undefined,
     assignee: q.assignee ?? undefined,
     thread: q.thread !== null ? String(q.thread) : undefined,
+    hostIp: q.hostIp || undefined,
+    attack: q.attack || undefined,
     pickedBy: q.pickedBy || undefined,
     role: q.role || undefined,
     status: q.status || undefined,

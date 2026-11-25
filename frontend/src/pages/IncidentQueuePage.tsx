@@ -56,7 +56,9 @@ import {
   formatCompactDateTime,
   formatRelativeTo,
 } from '../utils/format';
+import { attackFilterLabel } from '../utils/attackFilter';
 import { downloadQueueCsv } from '../utils/incidentExport';
+import { hostIpKind } from '../utils/ipScope';
 import { incidentPath } from '../utils/incidentLink';
 import {
   captureInfo,
@@ -374,6 +376,31 @@ export function IncidentQueuePage() {
         label: `알림 묶음 #${query.thread}`,
         title: `최초 알림 인시던트 #${query.thread}의 Slack 스레드에 묶인 인시던트만 봅니다`,
       });
+    // T45 호스트 정확 일치(상세 헤더의 호스트 링크에서 온다). 형식이 틀린 값도 칩으로 남겨 지울 수 있게 한다
+    if (query.hostIp) {
+      const kind = hostIpKind(query.hostIp);
+      list.push({
+        key: 'hostIp',
+        label: kind === 'masked' ? '호스트 대역' : '호스트',
+        raw: query.hostIp,
+        title:
+          kind === 'masked'
+            ? '호스트 IP가 이 대역인 인시던트만 봅니다'
+            : kind === 'exact'
+              ? '호스트 IP가 이 주소와 정확히 같은 인시던트만 봅니다'
+              : undefined,
+      });
+    }
+    // T45 ATT&CK 기법 ID·전술
+    if (query.attack) {
+      const attack = attackFilterLabel(query.attack);
+      const title = '리포트의 관련 ATT&CK 기법 후보(확정이 아닌 가설)에 이 값이 있는 인시던트만 봅니다';
+      list.push(
+        attack.kind === 'technique' || attack.value === query.attack
+          ? { key: 'attack', label: attack.label, raw: attack.value, title }
+          : { key: 'attack', label: `${attack.label}: ${attack.value}`, title },
+      );
+    }
     if (query.pickedBy) {
       const model = lookupLabel('detectionModel', query.pickedBy);
       list.push(
@@ -394,7 +421,7 @@ export function IncidentQueuePage() {
     if (query.alerted) list.push({ key: 'alerted', label: '경보 발송만' });
     if (query.overdue) list.push({ key: 'overdue', label: '착수 지연만' });
     return list;
-  }, [query.thread, query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted, query.overdue]);
+  }, [query.thread, query.hostIp, query.attack, query.pickedBy, query.role, query.status, query.hasReport, query.wouldSend, query.asset, query.priority, query.reviewPending, query.alerted, query.overdue]);
 
   function toggleStripFilter(key: (typeof STRIP_FILTER_KEYS)[number], value: string) {
     const current = searchParams.get(key);
@@ -1278,7 +1305,10 @@ function QueueTable({
                   <AlsoFlagged models={item.zeekadAlsoFlaggedBy} />
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
-                  <SignalChips item={item} />
+                  <div className="flex items-center gap-1">
+                    <SignalChips item={item} />
+                    <ThreadBadge item={item} />
+                  </div>
                 </td>
                 <td
                   className="soc-td-compact px-1.5 2xl:px-2"
@@ -1322,6 +1352,32 @@ function AlsoFlagged({ models }: { models: string[] | null | undefined }) {
       <span aria-hidden="true">+{list.length}</span>
       <span className="sr-only">교차 탐지 모델 {list.length}개</span>
     </span>
+  );
+}
+
+/**
+ * T45 알림 묶음 표지: 이 인시던트가 든 가장 큰 Slack 알림 묶음의 건수. 누르면 그 묶음의 인시던트 목록(전체 기간)으로 간다.
+ * 건수는 지금 조건(기간·수집원)과 무관하게 볼 수 있는 수집원 전체에서 센 값이라 가는 목록의 건수와 같다.
+ * 행 클릭(상세로 이동)과 겹치지 않게 전파를 막는다. 값이 없으면 아무것도 그리지 않는다.
+ */
+export function ThreadBadge({ item }: { item: UnifiedQueueItem }) {
+  const head = item.threadHeadNo;
+  const count = item.threadMemberCount;
+  if (typeof head !== 'number' || typeof count !== 'number') {
+    return null;
+  }
+  const label = `알림 묶음 ${formatNumber(count)}건 · 최초 알림 인시던트 #${head}`;
+  return (
+    <Link
+      to={`/incidents?period=all&thread=${head}`}
+      onClick={(e) => e.stopPropagation()}
+      title={label}
+      aria-label={label}
+      data-thread-badge=""
+      className="shrink-0 whitespace-nowrap rounded border border-slate-700 bg-slate-800/80 px-1 text-[11px] tabular-nums text-slate-300 hover:border-cyan-500/60 hover:text-cyan-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+    >
+      묶음 {formatNumber(count)}건
+    </Link>
   );
 }
 
@@ -1522,6 +1578,12 @@ function QueueMobileList({
               </span>
             </div>
           </Link>
+          {/* T45: 묶음 표지는 카드 링크 밖에 둔다(링크 안에 링크를 넣지 않는다) */}
+          {typeof item.threadHeadNo === 'number' && typeof item.threadMemberCount === 'number' && (
+            <div className="-mt-1 px-3 pb-2.5" data-mobile-thread="">
+              <ThreadBadge item={item} />
+            </div>
+          )}
         </li>
       ))}
     </ul>

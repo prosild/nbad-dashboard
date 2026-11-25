@@ -883,6 +883,24 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(listCalls).toHaveLength(2);
   });
 
+  it('T45 이전·다음: from=의 hostIp·attack을 neighbors에 그대로 넘긴다', async () => {
+    const list = [
+      listItem({ queueRank: 1, hostIp: '10.0.7.1' }),
+      listItem({ queueRank: 2, hostIp: '10.0.7.2' }),
+      listItem({ queueRank: 3, hostIp: '10.9.0.3' }),
+    ];
+    const from = 'period=all&hostIp=10.0.*.*&attack=credential_access';
+    const { listCalls } = renderDetail(`/incidents/42/rank/1?from=${encodeURIComponent(from)}`, { list });
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
+    await waitFor(() => expect(listCalls.length).toBeGreaterThan(0));
+    const sent = new URLSearchParams(listCalls[0].split('?')[1]);
+    expect(sent.get('hostIp')).toBe('10.0.*.*');
+    expect(sent.get('attack')).toBe('credential_access');
+    expect(sent.get('period')).toBe('all');
+    expect(within(nav).getByRole('link', { name: '인시던트 목록으로' })).toHaveAttribute('href', `/incidents?${from}`);
+  });
+
   it('from= 쿼리가 없으면 기본 큐(기간 24시간·우선순위 순) 조건을 쓰고 목록으로는 기본 큐(/incidents)로 간다(캡처 쿼리를 만들지 않는다)', async () => {
     const list = [listItem({ queueRank: 2 }, 'medium'), listItem({ queueRank: 1 }), listItem({ queueRank: 3 }, 'low')];
     const { listCalls } = renderDetail('/incidents/42/rank/1', { list });

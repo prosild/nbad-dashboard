@@ -104,7 +104,11 @@ describe('T44 탐지 모델 피벗', () => {
     const none = baseDetail();
     none.incident = queueItem({ zeekadPickedBy: null, zeekadAlsoFlaggedBy: [] });
     renderWithRoutes(<DetailHeader detail={none} meta={DEFAULT_META} />);
-    expect(screen.queryByRole('link', { name: /인시던트 보기/ })).toBeNull();
+    // T45: 헤더에 호스트 링크("호스트 … 인시던트 보기")가 생겨 탐지 모델 링크만 본다
+    expect(screen.queryByRole('link', { name: /^탐지 모델 .*인시던트 보기$/ })).toBeNull();
+    expect(screen.getAllByRole('link', { name: /인시던트 보기$/ }).map((a) => a.getAttribute('aria-label'))).toEqual([
+      '호스트 192.168.10.5 인시던트 보기',
+    ]);
   });
 });
 
@@ -710,7 +714,8 @@ describe('T44 큐 CSV', () => {
     expect(csv.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
     expect(lines[0]).toBe(QUEUE_CSV_HEADERS.map((h) => `"${h}"`).join(','));
     expect([...QUEUE_CSV_HEADERS]).toEqual([
-      '번호', '우선순위', '탐지 시각', '호스트 IP', '호스트 이름', '수집원', '통신 방향', '발생 시작', '발생 종료',
+      // T45: 시각 열 머리줄에 시간대를 적는다(값은 그대로)
+      '번호', '우선순위', '탐지 시각(KST)', '호스트 IP', '호스트 이름', '수집원', '통신 방향', '발생 시작(KST)', '발생 종료(KST)',
       '탐지 모델', '교차 탐지', '리포트 종류', '발송 판단', '경보 발송', '상태', '판정', '담당', '세션 수',
     ]);
   });

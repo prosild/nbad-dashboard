@@ -137,6 +137,10 @@ export interface UnifiedQueueItem extends IncidentQueueItem {
   ackOverdue?: boolean;
   /** T27 인시던트 번호(매기지 못했으면 null) */
   incidentNo?: number | null;
+  /** T45 알림 묶음 표지: 가장 큰 묶음의 최초 알림 인시던트 번호(구성원 2건 이상인 묶음이 없으면 null) */
+  threadHeadNo?: number | null;
+  /** T45 그 묶음의 구성원 수(허용 캡처 전체 기준, `period=all&thread=` 목록의 건수와 같다) */
+  threadMemberCount?: number | null;
 }
 
 export interface UnifiedQueueSummary {

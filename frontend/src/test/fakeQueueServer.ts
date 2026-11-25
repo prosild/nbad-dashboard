@@ -29,16 +29,31 @@ export interface FakeQueueOptions {
   maskedView?: boolean;
   /** T25: assignee=me가 가리킬 로그인 사용자 이름(기본 analyst1) */
   me?: string;
+  /** T45: attack 조건에 맞는 행인지(없으면 attack 조건이 오면 0건) */
+  attackMatch?: (item: UnifiedQueueItem, attack: string) => boolean;
 }
 
 export function unified(
   base: IncidentQueueItem,
   extra: Partial<
-    Pick<UnifiedQueueItem, 'detectedAt' | 'sourceType' | 'priority' | 'ongoing' | 'assignee' | 'ackDueAt' | 'ackOverdue'>
+    Pick<
+      UnifiedQueueItem,
+      | 'detectedAt'
+      | 'sourceType'
+      | 'priority'
+      | 'ongoing'
+      | 'assignee'
+      | 'ackDueAt'
+      | 'ackOverdue'
+      | 'threadHeadNo'
+      | 'threadMemberCount'
+    >
   > = {},
 ): UnifiedQueueItem {
   return {
     ...base,
+    threadHeadNo: extra.threadHeadNo ?? null,
+    threadMemberCount: extra.threadMemberCount ?? null,
     detectedAt: extra.detectedAt ?? '2026-11-20T00:00:00Z',
     sourceType: extra.sourceType ?? (base.captureId.startsWith('lab-') ? 'live' : 'imported'),
     priority: extra.priority === undefined ? 'low' : extra.priority,
@@ -124,6 +139,12 @@ function filterBase(items: UnifiedQueueItem[], p: URLSearchParams, opts: FakeQue
     // T25 담당 조건(일반 조건)
     if (p.get('assignee') === 'me' && it.assignee?.username !== (opts.me ?? 'analyst1')) return false;
     if (p.get('assignee') === 'none' && it.assignee) return false;
+    // T45 호스트 정확 일치(`A.B.*.*`면 앞 두 옥텟이 같은 행)와 ATT&CK 조건(시험이 정한 판정)
+    const hostIp = (p.get('hostIp') ?? '').trim();
+    const sameRange = hostIp.endsWith('.*.*') && it.hostIp.startsWith(hostIp.slice(0, -3));
+    if (hostIp && it.hostIp !== hostIp && !sameRange) return false;
+    const attack = (p.get('attack') ?? '').trim();
+    if (attack && !(opts.attackMatch?.(it, attack) ?? false)) return false;
     const asset = (p.get('asset') ?? '').toLowerCase();
     if (asset && !it.hostIp.toLowerCase().includes(asset) && !it.hostName.some((h) => h.toLowerCase().includes(asset)))
       return false;
