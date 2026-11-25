@@ -207,7 +207,7 @@ export function DashboardPage() {
   const stale = failed !== null && current !== null;
 
   return (
-    <AppShell title="현황판" subtitle="기간 안에 무엇이 탐지됐고 수집원이 정상인지 한 화면에서 봅니다">
+    <AppShell title="현황판">
       <div className="space-y-4">
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

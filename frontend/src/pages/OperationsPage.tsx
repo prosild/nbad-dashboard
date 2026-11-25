@@ -223,7 +223,7 @@ export function OperationsPage() {
   }
 
   return (
-    <AppShell title="운영 현황" subtitle="수집원·탐지 작업·경보가 어떻게 돌고 있는지와 누적 판정 집계를 확인합니다">
+    <AppShell title="운영 현황">
       <div className="space-y-4">
         <section className="soc-card px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

@@ -135,7 +135,6 @@ export function AdminUsersPage() {
   return (
     <AppShell
       title="사용자 관리"
-      subtitle="계정 권한, 열람 허용 캡처, 잠금 해제, 2단계 인증 초기화를 관리합니다"
       actions={
         <button
           type="button"

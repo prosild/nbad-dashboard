@@ -142,10 +142,7 @@ export function AdminAuditLogsPage() {
   }
 
   return (
-    <AppShell
-      title="감사 로그"
-      subtitle="로그인·열람·상태 변경 기록입니다. 기록은 수정하거나 지울 수 없습니다"
-    >
+    <AppShell title="감사 로그">
       <div className="space-y-5">
         <section className="soc-card p-4">
           <form onSubmit={handleFilterSubmit} className="flex flex-wrap items-end gap-3">

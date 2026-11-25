@@ -194,7 +194,7 @@ export function HostsPage() {
   const anyFilter = q !== '' || transitionOnly;
 
   return (
-    <AppShell title="호스트 위험도" subtitle="미종결 인시던트의 우선순위가 높은 호스트부터 봅니다. 줄을 누르면 그 호스트의 인시던트 목록으로 갑니다">
+    <AppShell title="호스트 위험도">
       <div className="space-y-4">
         <section className="soc-card space-y-2.5 px-3 py-2.5" aria-label="보기 조건">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

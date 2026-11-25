@@ -50,13 +50,11 @@ const NAV_ITEMS: NavItem[] = [
 
 export function AppShell({
   title,
-  subtitle,
   actions,
   stickyBar,
   children,
 }: {
   title: string;
-  subtitle?: string;
   actions?: React.ReactNode;
   /** 상단 바 아래에 붙어 스크롤해도 남는 띠(인시던트 상세의 요약 헤더 등) */
   stickyBar?: React.ReactNode;
@@ -196,7 +194,6 @@ export function AppShell({
               </button>
               <div>
                 <h1 className="text-lg font-bold tracking-tight text-slate-100 sm:text-xl">{title}</h1>
-                {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
               </div>
             </div>
 

@@ -146,10 +146,7 @@ export function ReviewsPage() {
   const canDecide = lastRes?.canDecideReview ?? false;
 
   return (
-    <AppShell
-      title="에스컬레이션"
-      subtitle="자동 판단이 엇갈려 분석가 검토로 넘어온 인시던트입니다. 승인하거나 오탐 종결하세요"
-    >
+    <AppShell title="에스컬레이션">
       <div className="space-y-5">
         {lastRes && !lastRes.canDecideReview && (
           <div className="flex items-center gap-2 text-xs text-slate-400">

@@ -435,7 +435,7 @@ export function IncidentQueuePage() {
   const items = data?.items ?? [];
 
   return (
-    <AppShell title="인시던트" subtitle="허용된 모든 수집원의 인시던트를 탐지 시각 기준으로 모아 우선순위 순으로 봅니다">
+    <AppShell title="인시던트">
       <div className="space-y-3">
         {legacyNotice && (
           <div
