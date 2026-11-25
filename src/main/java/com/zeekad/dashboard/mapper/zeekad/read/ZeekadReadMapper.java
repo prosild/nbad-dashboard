@@ -102,6 +102,14 @@ public interface ZeekadReadMapper {
             @Param("captureIds") List<String> captureIds,
             @Param("incidentIds") String[] incidentIds);
 
+    /**
+     * T45b 현황판 주요 알림 묶음: 머리 인시던트들의 최신 큐 행(incident_id·capture_id·host_ip·zeekad_picked_by만).
+     * 허용 캡처 전체 범위에서 한 번 읽는다. 빈 배열·빈 목록으로는 부르지 않는다.
+     */
+    List<com.zeekad.dashboard.model.zeekad.ThreadHeadRow> findLatestQueueHeadRows(
+            @Param("captureIds") List<String> captureIds,
+            @Param("incidentIds") String[] incidentIds);
+
     /* T45 큐 hostIp·attack 조건. captureIds가 비면 부르지 않는다. 기간·다른 거르기 조건은 넣지 않는다. */
 
     /** 캡처들의 최신 큐에 있는 host_ip 원문(중복 없이). 응답에 넣지 않고 조건 값 고르기에만 쓴다 */
@@ -165,7 +173,7 @@ public interface ZeekadReadMapper {
 
     /* ───── T24 현황판·운영 현황 ───── */
 
-    /** 통합 큐와 같은 조건(c 그대로)의 가벼운 투영 */
+    /** 통합 큐와 같은 조건(c 그대로)의 가벼운 투영. T45b: 인시던트 ID·호스트·통신 방향도 같이 읽는다 */
     List<IncidentPoint> findUnifiedQueuePoints(@Param("c") UnifiedQueueCriteria criteria);
 
     /** 캡처별 최근 끝난 작업·최근 성공 작업 ID와 (after, until] 안 실패 작업 수(finished_at, 없으면 started_at). null이면 그 쪽 시각 조건 없음 */

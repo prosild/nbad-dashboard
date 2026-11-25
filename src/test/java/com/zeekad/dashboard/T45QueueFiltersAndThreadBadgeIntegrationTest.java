@@ -36,7 +36,6 @@ import javax.sql.DataSource;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -629,36 +628,6 @@ class T45QueueFiltersAndThreadBadgeIntegrationTest {
         assertThat(nc).doesNotContain("threadHeadNo").doesNotContain("threadMemberCount");
         assertThat(nb).doesNotContain("threadHeadNo").doesNotContain("threadMemberCount");
         Mockito.verify(zeekadReadMapper, Mockito.never()).findSlackThreadLinksByIncidentIds(any());
-    }
-
-    /** 작업 보고용 측정: 표지가 있을 때와 없을 때(Slack 기록을 지운 뒤)의 큐 응답 시간(H2, 참고 값) */
-    @Test
-    void threadBadgeTimingForReport() throws Exception {
-        MockHttpSession a = login(UserRole.ANALYST, ALLOWED);
-        String url = "/api/incidents/queue?period=all&size=100";
-        for (int k = 0; k < 5; k++) {
-            getBody(a, url);
-        }
-        long with = medianMillisTimes100(a, url);
-        jdbc().update("DELETE FROM dashboard.raw_slack_deliveries WHERE job_id BETWEEN 98110 AND 98119");
-        for (int k = 0; k < 5; k++) {
-            getBody(a, url);
-        }
-        long without = medianMillisTimes100(a, url);
-        System.out.println("T45-BADGE-TIMING rows=" + (12 + FILLERS) + " withBadges_ms=" + with / 100.0
-                + " withoutSlackRows_ms=" + without / 100.0);
-        assertThat(with).isPositive();
-    }
-
-    private long medianMillisTimes100(MockHttpSession s, String url) throws Exception {
-        List<Long> nanos = new ArrayList<>();
-        for (int k = 0; k < 15; k++) {
-            long t = System.nanoTime();
-            getBody(s, url);
-            nanos.add(System.nanoTime() - t);
-        }
-        nanos.sort(Long::compare);
-        return nanos.get(nanos.size() / 2) / 10_000;
     }
 
     /* ───────────── 도우미 ───────────── */

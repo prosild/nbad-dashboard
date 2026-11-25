@@ -776,11 +776,8 @@ public class IncidentQueueService {
             return out;
         }
         Map<String, Long> headNos = new HashMap<>();
-        for (Map.Entry<String, IncidentRef> e : incidentRefService.readRefsOnly(heads).entrySet()) {
-            IncidentRef ref = e.getValue();
-            if (ref.getIncidentNo() != null && ref.getCaptureId() != null && allowed.contains(ref.getCaptureId())) {
-                headNos.put(e.getKey(), ref.getIncidentNo());
-            }
+        for (Map.Entry<String, IncidentRef> e : visibleThreadHeads(allowed, heads).entrySet()) {
+            headNos.put(e.getKey(), e.getValue().getIncidentNo());
         }
         if (headNos.isEmpty()) {
             return out;
@@ -801,6 +798,24 @@ public class IncidentQueueService {
             }
             if (best != null) {
                 out.put(e.getKey(), best);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 보이는 머리(incident_id → 번호 행): 번호 행이 있고(읽기만, readRefsOnly 한 번. 동기화·쓰기 없음) 그 캡처가 허용 캡처 안인 것.
+     * 큐 행 묶음 표지(T45)와 현황판 주요 알림 묶음(T45b)이 같은 판정을 쓴다.
+     */
+    public Map<String, IncidentRef> visibleThreadHeads(List<String> allowed, java.util.Collection<String> heads) {
+        Map<String, IncidentRef> out = new LinkedHashMap<>();
+        if (allowed == null || allowed.isEmpty() || heads == null || heads.isEmpty()) {
+            return out;
+        }
+        for (Map.Entry<String, IncidentRef> e : incidentRefService.readRefsOnly(heads).entrySet()) {
+            IncidentRef ref = e.getValue();
+            if (ref.getIncidentNo() != null && ref.getCaptureId() != null && allowed.contains(ref.getCaptureId())) {
+                out.put(e.getKey(), ref);
             }
         }
         return out;

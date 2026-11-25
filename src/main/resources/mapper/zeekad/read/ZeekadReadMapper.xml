@@ -482,6 +482,24 @@
         GROUP BY lq.incident_id
     </select>
 
+    <!-- T45b 현황판 주요 알림 묶음: 상위 묶음 머리들의 최신 큐 행에서 호스트·탐지 모델만 읽는다.
+         머리는 지금 조건(기간·수집원·고른 캡처) 밖일 수 있어 허용 캡처 전체 범위다. 우선순위·탐지 시각 식은 쓰지 않는다. -->
+    <resultMap id="threadHeadRowMap" type="com.zeekad.dashboard.model.zeekad.ThreadHeadRow">
+        <result property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="hostIp" column="host_ip"/>
+        <result property="zeekadPickedBy" column="zeekad_picked_by"/>
+    </resultMap>
+
+    <select id="findLatestQueueHeadRows" resultMap="threadHeadRowMap">
+        SELECT lq.incident_id, lq.capture_id, lq.host_ip, lq.zeekad_picked_by
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+          AND lq.incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        ORDER BY lq.capture_id ASC, lq.queue_rank ASC
+    </select>
+
     <!-- T45 hostIp 조건: 범위(허용 ∩ 수집원 ∩ 고른 캡처) 최신 큐의 host_ip 원문. 조건 값과의 비교는 Java가 한다
          (조회자는 가린 값끼리만 비교해 원문이 있는지 알 수 없다). 기간·다른 조건은 넣지 않는다. -->
     <select id="findDistinctLatestHostIps" resultType="string">
@@ -1010,6 +1028,9 @@
         <result property="detectedAt" column="detected_at"/>
         <result property="priority" column="priority"/>
         <result property="alerted" column="alerted"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="hostIp" column="host_ip"/>
+        <result property="zeekadRole" column="zeekad_role"/>
     </resultMap>
 
     <!-- T25 처리 시간 지표·담당 현황: 통합 큐와 같은 base(같은 수집원 조건이면 같은 집합)에서 인시던트별 시각만 돌려준다.
@@ -1047,7 +1068,8 @@
     </select>
 
     <select id="findUnifiedQueuePoints" resultMap="incidentPointMap">
-        SELECT b.capture_id, b.detected_at, b.priority, b.alerted
+        <!-- T45b: ATT&CK 분포·위험 호스트·알림 묶음이 같은 행을 다시 훑지 않게 세 열을 같이 읽는다 -->
+        SELECT b.capture_id, b.detected_at, b.priority, b.alerted, b.incident_id, b.host_ip, b.zeekad_role
         FROM (<include refid="unifiedQueueBase"/>) b
         <where>
             <include refid="unifiedQueueFilters"/>

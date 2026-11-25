@@ -89,4 +89,50 @@ class AttackFilterTest {
         // tactics가 배열이 아닌 글 하나여도 읽는다(상세의 extractTextArray와 같다)
         assertThat(AttackFilter.matches(tactic, JSON.readTree("[{\"attack_id\":\"T1\",\"tactics\":\"Execution\"}]"))).isTrue();
     }
+
+    /** T45b: visit이 알리는 값은 큐 attack 조건으로 갈 수 있는 값뿐이고, 알린 값은 모두 matches가 참이다 */
+    @Test
+    void visitReportsOnlyValuesTheQueueFilterCanReach() throws Exception {
+        JsonNode node = JSON.readTree("[{\"attack_id\":\" t1059.001 \",\"name\":\"  PowerShell \",\"tactics\":[\"Execution\",\"execution\"]},"
+                + "{\"attack_id\":\"T1110\",\"name\":\" \",\"tactics\":[\"credential_access\",\"t1059\",\"x\",\"Bad/Tactic\",null,{}]},"
+                + "{\"attack_id\":\"TA0001\",\"name\":\"n\",\"tactics\":\"Initial Access\"},"
+                + "{\"attack_id\":null,\"tactics\":null}, null, 1, \"T1059\", []]");
+        java.util.List<String> techniques = new java.util.ArrayList<>();
+        java.util.List<String> tactics = new java.util.ArrayList<>();
+        AttackFilter.visit(node, new AttackFilter.CandidateVisitor() {
+            @Override
+            public void technique(String attackId, String name) {
+                techniques.add(attackId + "|" + name);
+                assertThat(AttackFilter.matches(AttackFilter.parse(attackId), node)).as(attackId).isTrue();
+            }
+
+            @Override
+            public void tactic(String slug) {
+                tactics.add(slug);
+                assertThat(AttackFilter.parse(slug)).isEqualTo(new AttackFilter.Value(AttackFilter.Kind.TACTIC, slug));
+                assertThat(AttackFilter.matches(AttackFilter.parse(slug), node)).as(slug).isTrue();
+            }
+        });
+        // 이름은 다듬고 빈 글은 null. ID 꼴이 아닌 attack_id(TA0001)는 기법으로 알리지 않는다
+        assertThat(techniques).containsExactly("T1059.001|PowerShell", "T1110|null");
+        // 같은 전술이 두 번 나오면 두 번 알린다(세는 쪽이 한 번으로 묶는다). 기법 ID 꼴 전술(t1059)·슬러그가 안 되는 값은 빠진다
+        assertThat(tactics).containsExactly("execution", "execution", "credential-access", "initial-access");
+        // 큐가 기법으로 읽는 값은 전술로 맞출 수 없다(그래서 전술로 세지 않는다)
+        assertThat(AttackFilter.parse("t1059").kind()).isEqualTo(AttackFilter.Kind.TECHNIQUE);
+
+        for (String json : new String[]{"null", "{}", "\"T1059\"", "[]", "[null, 1, []]"}) {
+            AttackFilter.visit(JSON.readTree(json), new AttackFilter.CandidateVisitor() {
+                @Override
+                public void technique(String attackId, String name) {
+                    throw new AssertionError(attackId);
+                }
+
+                @Override
+                public void tactic(String slug) {
+                    throw new AssertionError(slug);
+                }
+            });
+        }
+        AttackFilter.visit(null, null);
+    }
 }

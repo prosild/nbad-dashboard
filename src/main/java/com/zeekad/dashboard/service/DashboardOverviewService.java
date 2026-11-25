@@ -48,6 +48,7 @@ import java.util.Set;
  *       구간은 표시 시간대(KST) 시계에 맞춘 고정 폭이고 (start, end]다.</li>
  *   <li>센서: live-patterns 패턴 하나가 센서 하나, 그 패턴에 맞는 허용 캡처(날짜별)가 묶음이다. 상태는 묶음 전체로 본다.</li>
  *   <li>숨긴 캡처(허용 밖)는 어떤 값에도 섞이지 않는다. VIEWER면 작업 오류 글의 IPv4를 가린다.</li>
+ *   <li>T45b: ATT&amp;CK 후보 분포·위험 호스트·주요 알림 묶음은 같은 행으로 DashboardThreatService가 센다.</li>
  * </ul>
  */
 @Service
@@ -78,13 +79,16 @@ public class DashboardOverviewService {
     private final TimeContextService timeContextService;
     private final MaskingService maskingService;
     private final HandlingMetricsService handlingMetricsService;
+    private final DashboardThreatService dashboardThreatService;
 
     public DashboardOverviewService(ZeekadReadMapper zeekadReadMapper,
                                     IncidentQueueService incidentQueueService,
                                     TimeContextService timeContextService,
                                     MaskingService maskingService,
-                                    HandlingMetricsService handlingMetricsService) {
+                                    HandlingMetricsService handlingMetricsService,
+                                    DashboardThreatService dashboardThreatService) {
         this.handlingMetricsService = handlingMetricsService;
+        this.dashboardThreatService = dashboardThreatService;
         this.zeekadReadMapper = zeekadReadMapper;
         this.incidentQueueService = incidentQueueService;
         this.timeContextService = timeContextService;
@@ -147,10 +151,13 @@ public class DashboardOverviewService {
         }
 
         Alerting alerting = alerting(cond.captureIds(), after, until);
+        // T45b: 위에서 읽은 같은 행(points)으로 ATT&CK 분포·위험 호스트·알림 묶음을 센다(큐 행을 다시 훑지 않는다)
+        DashboardThreatService.Result threat = dashboardThreatService.compute(cond, points, role);
         return new DashboardOverviewResponse(anchor, timeContextService.mode(), timeContextService.isSnapshot(),
                 cond.period(), after, until, DISPLAY_TIME_ZONE, timeContextService.staleAfter().toSeconds(),
                 timeContextService.downAfter().toSeconds(), trend, sensors, captures, alerting,
-                maskingService.shouldMask(role));
+                maskingService.shouldMask(role), threat.attack(), threat.topHosts(), threat.topThreads(),
+                threat.topThreadsOmitted());
     }
 
     /* ───────────────────────── /api/operations ───────────────────────── */

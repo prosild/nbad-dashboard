@@ -505,11 +505,13 @@ class T24DashboardOverviewIntegrationTest {
         props.setTimeAnchor("latest-data");
         TimeContextService tcs = new TimeContextService(props, zeekadReadMapper, clock);
         com.zeekad.dashboard.service.AckTargetService ack = new com.zeekad.dashboard.service.AckTargetService(props, tcs);
+        com.zeekad.dashboard.service.SlackThreadService threads =
+                new com.zeekad.dashboard.service.SlackThreadService(zeekadReadMapper);
         IncidentQueueService qs = new IncidentQueueService(zeekadReadMapper, captureAccessService, maskingService, tcs,
-                ack, incidentAssignmentService, incidentRefService,
-                new com.zeekad.dashboard.service.SlackThreadService(zeekadReadMapper));
+                ack, incidentAssignmentService, incidentRefService, threads);
         return new DashboardOverviewService(zeekadReadMapper, qs, tcs, maskingService,
-                new com.zeekad.dashboard.service.HandlingMetricsService(zeekadReadMapper, tcs, ack, incidentAssignmentService));
+                new com.zeekad.dashboard.service.HandlingMetricsService(zeekadReadMapper, tcs, ack, incidentAssignmentService),
+                new com.zeekad.dashboard.service.DashboardThreatService(zeekadReadMapper, qs, threads, maskingService));
     }
 
     private static long trendSum(DashboardOverviewResponse ov) {

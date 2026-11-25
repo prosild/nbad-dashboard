@@ -86,6 +86,54 @@ public final class AttackFilter {
         return false;
     }
 
+    /** T45b 현황판 분포: 후보 배열에서 큐 attack 조건으로 갈 수 있는 값을 받는 쪽 */
+    public interface CandidateVisitor {
+        /** attackId = 대문자 기법 ID, name = 그 후보의 이름(다듬은 글, 없으면 null) */
+        void technique(String attackId, String name);
+
+        /** slug = 전술 슬러그 */
+        void tactic(String slug);
+    }
+
+    /**
+     * T45b: 후보 배열을 돌며 큐 attack 조건으로 갈 수 있는 값만 알린다(같은 값이 여러 번 나오면 여러 번 알린다).
+     * 알린 값 v는 matches(parse(v), candidates)가 참이다. 빠지는 값: ID 꼴이 아닌 attack_id, 슬러그를 만들 수 없는 전술,
+     * 슬러그가 기법 ID 꼴인 전술(parse가 기법으로 읽어 큐에서 전술로 맞출 수 없다).
+     */
+    public static void visit(JsonNode candidates, CandidateVisitor visitor) {
+        if (candidates == null || !candidates.isArray() || visitor == null) {
+            return;
+        }
+        for (JsonNode node : candidates) {
+            if (node == null || !node.isObject()) {
+                continue;
+            }
+            String id = techniqueId(text(node.get("attack_id")));
+            if (id != null) {
+                String name = text(node.get("name"));
+                visitor.technique(id, name == null || name.isBlank() ? null : name.trim());
+            }
+            JsonNode tactics = node.get("tactics");
+            if (tactics == null || tactics.isNull()) {
+                continue;
+            }
+            if (!tactics.isArray()) {
+                visitTactic(text(tactics), visitor);
+                continue;
+            }
+            for (JsonNode t : tactics) {
+                visitTactic(text(t), visitor);
+            }
+        }
+    }
+
+    private static void visitTactic(String raw, CandidateVisitor visitor) {
+        String slug = tacticSlug(raw);
+        if (slug != null && techniqueId(slug) == null) {
+            visitor.tactic(slug);
+        }
+    }
+
     private static boolean hasTactic(JsonNode tactics, String slug) {
         if (tactics == null || tactics.isNull()) {
             return false;

@@ -102,9 +102,24 @@ public class SlackThreadService {
      * 답글 짝이 BADGE_REPLY_ROW_CAP을 넘으면 빈 결과다. 머리·허용 캡처가 비면 질의 없이 빈 결과.
      */
     public Map<String, Long> visibleMemberCounts(List<String> allowedCaptures, Collection<String> heads) {
+        return visibleThreadMembers(allowedCaptures, heads).visibleCounts();
+    }
+
+    /**
+     * T45b: 머리마다 구성원 집합(머리 포함, incident_id)과 허용 캡처 최신 큐에 있는 구성원 수.
+     * members와 visibleCounts는 같은 머리를 열쇠로 갖는다(구성원이 MEMBER_CAP을 넘는 머리는 둘 다에 없다).
+     * omitted = 답글 짝이 BADGE_REPLY_ROW_CAP을 넘어 계산 전체를 생략함(이때 두 맵은 비어 있다).
+     * 구성원 집합은 응답에 넣지 않는다.
+     */
+    public record ThreadMembers(Map<String, Set<String>> members, Map<String, Long> visibleCounts, boolean omitted) {
+    }
+
+    /** visibleMemberCounts와 같은 계산(질의 두 번)에 머리별 구성원 집합과 생략 여부를 더해 돌려준다 */
+    public ThreadMembers visibleThreadMembers(List<String> allowedCaptures, Collection<String> heads) {
         Map<String, Long> out = new HashMap<>();
+        Map<String, Set<String>> none = new LinkedHashMap<>();
         if (allowedCaptures == null || allowedCaptures.isEmpty() || heads == null || heads.isEmpty()) {
-            return out;
+            return new ThreadMembers(none, out, false);
         }
         Map<String, Set<String>> members = new LinkedHashMap<>();
         for (String head : heads) {
@@ -113,13 +128,13 @@ public class SlackThreadService {
             }
         }
         if (members.isEmpty()) {
-            return out;
+            return new ThreadMembers(none, out, false);
         }
         List<SlackThreadLink> replies = zeekadReadMapper.findThreadRepliesByHeads(
                 members.keySet().toArray(new String[0]), BADGE_REPLY_ROW_CAP + 1);
         if (replies.size() > BADGE_REPLY_ROW_CAP) {
             log.warn("알림 묶음 표지 계산의 답글 짝이 상한을 넘어 표지를 생략했습니다(상한 {}건)", BADGE_REPLY_ROW_CAP);
-            return out;
+            return new ThreadMembers(none, out, true);
         }
         for (SlackThreadLink reply : replies) {
             Set<String> set = reply.getThreadParent() == null ? null : members.get(reply.getThreadParent());
@@ -143,7 +158,7 @@ public class SlackThreadService {
             log.warn("알림 묶음 구성원이 상한을 넘는 묶음 {}개의 표지를 생략했습니다(상한 {}건)", overCap, MEMBER_CAP);
         }
         if (all.isEmpty()) {
-            return out;
+            return new ThreadMembers(none, out, false);
         }
         Map<String, Long> rows = new HashMap<>();
         for (IncidentRowCount c : zeekadReadMapper.countLatestQueueRowsByIncidentIds(allowedCaptures,
@@ -159,7 +174,7 @@ public class SlackThreadService {
             }
             out.put(e.getKey(), total);
         }
-        return out;
+        return new ThreadMembers(members, out, false);
     }
 
     /** 구성원 가운데 허용 캡처 안이고 최신 큐에 있는 수. 허용 캡처가 비면 0 */
