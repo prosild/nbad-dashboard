@@ -22,9 +22,6 @@ public interface HostReadMapper {
     List<Map<String, Object>> findRawAssetNamesForHosts(@Param("captureIds") List<String> captureIds,
                                                         @Param("hostIps") String[] hostIps);
 
-    /** 캡처 목록의 최신 큐에 나오는 호스트 주소(중복 없이) */
-    List<String> findDistinctLatestHostIps(@Param("captureIds") List<String> captureIds);
-
     /**
      * 허용 캡처(c.captureIds) 최신 큐에서 host_ip가 hostIps 안인 행. 우선순위·탐지 시각은 통합 큐와 같은 식(unifiedQueueBase)에서 읽는다.
      * excludeIncidentId가 있으면 그 incident_id 행을 뺀다. c의 다른 조건(기간·정렬·쪽)은 쓰지 않는다.

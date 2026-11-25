@@ -20,14 +20,6 @@
           AND host_ip = ANY(#{hostIps, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
     </select>
 
-    <select id="findDistinctLatestHostIps" resultType="string">
-        SELECT DISTINCT lq.host_ip
-        FROM dashboard.latest_incident_queue lq
-        WHERE lq.capture_id IN
-        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
-          AND lq.host_ip IS NOT NULL
-    </select>
-
     <!-- 주소 조건은 SQL에서 건다. 큐 식은 최적화 경계 때문에 허용 캡처 전체를 한 번 계산한다(전체 기간 목록 한 번에 가까운 비용). -->
     <select id="findLatestQueueByHostIps"
             resultMap="com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper.unifiedQueueMap">

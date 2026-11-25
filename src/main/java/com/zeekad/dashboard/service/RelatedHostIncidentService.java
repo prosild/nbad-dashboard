@@ -2,6 +2,7 @@ package com.zeekad.dashboard.service;
 
 import com.zeekad.dashboard.dto.RelatedHostIncidentsResponse;
 import com.zeekad.dashboard.mapper.zeekad.read.HostReadMapper;
+import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.model.IncidentRef;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
@@ -36,15 +37,18 @@ public class RelatedHostIncidentService {
 
     private final CaptureAccessService captureAccessService;
     private final HostReadMapper hostReadMapper;
+    private final ZeekadReadMapper zeekadReadMapper;
     private final MaskingService maskingService;
     private final IncidentRefService incidentRefService;
 
     public RelatedHostIncidentService(CaptureAccessService captureAccessService,
                                       HostReadMapper hostReadMapper,
+                                      ZeekadReadMapper zeekadReadMapper,
                                       MaskingService maskingService,
                                       IncidentRefService incidentRefService) {
         this.captureAccessService = captureAccessService;
         this.hostReadMapper = hostReadMapper;
+        this.zeekadReadMapper = zeekadReadMapper;
         this.maskingService = maskingService;
         this.incidentRefService = incidentRefService;
     }
@@ -103,12 +107,12 @@ public class RelatedHostIncidentService {
     }
 
     /**
-     * 조회자: 허용 캡처 최신 큐의 호스트 주소 가운데 가린 꼴이 같은 원문 주소들.
+     * 조회자: 허용 캡처 최신 큐의 호스트 주소(큐 hostIp 조건과 같은 조회) 가운데 가린 꼴이 같은 원문 주소들.
      * 가린 값끼리 Java에서 견준다(원문 주소를 요청 값과 SQL로 견주지 않는다).
      */
     private String[] sameRangeHosts(List<String> allowed, String maskedHost) {
         List<String> out = new ArrayList<>();
-        for (String ip : hostReadMapper.findDistinctLatestHostIps(allowed)) {
+        for (String ip : zeekadReadMapper.findDistinctLatestHostIps(allowed)) {
             if (ip != null && maskedHost.equals(maskingService.maskIp(ip))) {
                 out.add(ip);
             }

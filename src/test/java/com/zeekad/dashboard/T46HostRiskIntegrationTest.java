@@ -616,6 +616,40 @@ class T46HostRiskIntegrationTest {
         }
     }
 
+    /**
+     * T45 계약: 화면은 줄을 /incidents?&lt;지금 조건&gt;&amp;hostIp=&lt;hostIp&gt;로 잇는다.
+     * 그래서 줄의 incidents는 같은 조건 큐 hostIp= 목록의 total과 같아야 한다(분석가는 원문 주소, 조회자는 가려진 대역).
+     */
+    @Test
+    void rowIncidentsEqualQueueTotalFilteredByThatHostIpForTheSameCondition() throws Exception {
+        String custom = "period=custom&start=" + enc("2026-11-20T09:00:00Z") + "&end=" + enc("2026-11-20T10:30:00Z");
+        Map<UserRole, Integer> rowsAtAll = new HashMap<>();
+        for (UserRole role : List.of(UserRole.ANALYST, UserRole.VIEWER)) {
+            MockHttpSession s = login(role, HOST_PATTERNS);
+            for (String cond : List.of("period=all", "period=7d", "period=all&source=live", "period=all&source=imported",
+                    "period=all&captureId=" + CAP_B, "period=30d&captureId=" + CAP_A, custom)) {
+                JsonNode hosts = getJson(s, "/api/hosts?" + cond);
+                assertThat(hosts.get("pageCount").asInt()).isEqualTo(1);
+                assertThat(hosts.get("items")).as("%s %s", role, cond).isNotEmpty();
+                for (JsonNode it : hosts.get("items")) {
+                    String hostIp = it.get("hostIp").asText();
+                    JsonNode queue = getJson(s, "/api/incidents/queue?" + cond + "&hostIp=" + enc(hostIp));
+                    assertThat(queue.get("total").asLong()).as("%s %s hostIp=%s", role, cond, hostIp)
+                            .isEqualTo(it.get("incidents").asLong());
+                    assertThat(queue.at("/summary/total").asLong()).isEqualTo(it.get("incidents").asLong());
+                }
+                if ("period=all".equals(cond)) {
+                    rowsAtAll.put(role, hosts.get("items").size());
+                }
+            }
+        }
+        // 0 = 0으로 통과하지 않게: 분석가 9줄(원문 주소), 조회자 5줄(대역)을 실제로 돌았다
+        assertThat(rowsAtAll).containsEntry(UserRole.ANALYST, 9).containsEntry(UserRole.VIEWER, 5);
+        // 분석가가 조회자에게 받은 대역 링크(A.B.*.*)도 같은 건수다: H1 3 + H2 2 + H3 2
+        MockHttpSession a = login(UserRole.ANALYST, HOST_PATTERNS);
+        assertThat(getJson(a, "/api/incidents/queue?period=all&hostIp=" + enc("10.46.*.*")).get("total").asLong()).isEqualTo(7);
+    }
+
     /* ───────────── 같은 호스트 인시던트 ───────────── */
 
     @Test
@@ -701,10 +735,10 @@ class T46HostRiskIntegrationTest {
         // 조회자는 대역의 원문 주소를 고르는 조회까지 2회
         clearSpies();
         getJson(v, "/api/incidents/96061/rank/1/related-host-incidents");
-        Mockito.verify(hostReadMapper, Mockito.times(1)).findDistinctLatestHostIps(ArgumentMatchers.any());
+        Mockito.verify(zeekadReadMapper, Mockito.times(1)).findDistinctLatestHostIps(ArgumentMatchers.any());
         Mockito.verify(hostReadMapper, Mockito.times(1))
                 .findLatestQueueByHostIps(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any());
-        assertThat(Mockito.mockingDetails(hostReadMapper).getInvocations()).hasSize(2);
+        assertThat(Mockito.mockingDetails(hostReadMapper).getInvocations()).hasSize(1);
         assertThat(auditLogMapper.findFiltered(AuditActionType.INCIDENT_VIEW_UNMASKED.name(), names.get(v), 10)).isEmpty();
     }
 
@@ -721,7 +755,7 @@ class T46HostRiskIntegrationTest {
         int zeekadCalls = Mockito.mockingDetails(zeekadReadMapper).getInvocations().size();
         Mockito.verify(hostReadMapper, Mockito.times(1))
                 .findLatestQueueByHostIps(ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any());
-        Mockito.verify(hostReadMapper, Mockito.never()).findDistinctLatestHostIps(ArgumentMatchers.any());
+        Mockito.verify(zeekadReadMapper, Mockito.never()).findDistinctLatestHostIps(ArgumentMatchers.any());
         assertThat(Mockito.mockingDetails(hostReadMapper).getInvocations()).hasSize(1);
         // 큐 목록 질의를 따로 부르지 않는다(허용 캡처 최신 큐 전체를 Java로 읽어 와 거르지 않는다)
         Mockito.verify(zeekadReadMapper, Mockito.never()).findUnifiedQueue(ArgumentMatchers.any());
