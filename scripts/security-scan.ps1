@@ -130,7 +130,9 @@ if (-not $SkipTrivy) {
     $trivySummary.Add($sbomTable.Trim())
 
     Write-Host "-> Trivy FS 스캔 (저장소 설정/의존성, frontend/package-lock.json 포함)"
-    $fsSkipDirs = "build,.gradle,security-reports,handoff,frontend/node_modules,frontend/dist"
+    # T47: .worktrees는 로컬 작업용 git worktree(커밋하지 않는 폴더, 다른 commit의 사본과 그 node_modules·build)라 handoff·build처럼 뺀다.
+    #      남아 있으면 FS 스캔이 사본까지 훑다가 시간 제한에 걸린다(T47에서 worktree 셋이 있을 때 11분 뒤 "context deadline exceeded").
+    $fsSkipDirs = "build,.gradle,security-reports,handoff,.worktrees,frontend/node_modules,frontend/dist"
     $fsTable = (Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "table", "/work")).Output
     [void](Invoke-NativeCapture "docker" @("run", "--rm", "-v", "zeekad-trivy-cache:/root/.cache/", "-v", "${RepoRoot}:/work:ro", "-v", "${ReportFullDir}:/out", "aquasec/trivy:latest", "fs", "--no-progress", "--scanners", "vuln,misconfig,secret", "--exit-code", "0", "--skip-dirs", $fsSkipDirs, "--format", "json", "-o", "/out/trivy-fs.json", "/work"))
     $fsJson = [IO.File]::ReadAllText((Join-Path $ReportFullDir "trivy-fs.json"), [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
