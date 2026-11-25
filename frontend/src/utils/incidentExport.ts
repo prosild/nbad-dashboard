@@ -23,24 +23,30 @@ export function portText(row: Record<string, unknown> | null | undefined): strin
 /* ───────────── 상세 마크다운 요약 ───────────── */
 
 const OMITTED = '(식별자 생략)';
-/** 화면이 글로 보이지 않는 내부 이름. 리포트 글에 인용돼 있어도 요약에는 싣지 않는다. */
-const INTERNAL_NAME = /zeekad_[\w.]+|dashboard\.[\w.]+|evidence\.v1/gi;
+/**
+ * 화면이 글로 보이지 않는 내부 이름(`zeekad_*` 필드, `dashboard.<뷰·함수>`, `evidence.v1`). 리포트 글에 인용돼 있어도 싣지 않는다.
+ * 소문자 그대로만 본다. `dashboard.` 뒤에 점이 더 이어지는 글(`dashboard.corp.example` 같은 호스트 이름)은 내부 이름이 아니다.
+ */
+const INTERNAL_NAME = /zeekad_[\w.]+|dashboard\.[a-z][a-z0-9_]*(?!\.?[\w-])|evidence\.v1/g;
 
-/** 한 줄 값으로 만들고(줄바꿈으로 제목·목록을 만들지 못하게) 내부 식별자를 뺀다 */
+/** 한 줄 값으로 만들고(줄바꿈으로 제목·목록을 만들지 못하게) 이 인시던트의 ID·모델 버전을 뺀다 */
 function plain(value: string, hidden: string[]): string {
   let text = value;
   for (const id of hidden) {
     if (id) text = text.split(id).join(OMITTED);
   }
-  return text.replace(INTERNAL_NAME, OMITTED).replace(/\s+/g, ' ').trim();
+  return text.replace(/\s+/g, ' ').trim();
 }
 
-/** 서술 글: 마크다운 기호와 HTML 꺾쇠를 글자 그대로 보이게 한다 */
+/** 서술 글: 내부 이름을 빼고 마크다운 기호와 HTML 꺾쇠를 글자 그대로 보이게 한다 */
 function mdText(value: string, hidden: string[]): string {
-  return plain(value, hidden).replace(/[\\`*[\]<>]/g, '\\$&');
+  return plain(value, hidden).replace(INTERNAL_NAME, OMITTED).replace(/[\\`*[\]<>]/g, '\\$&');
 }
 
-/** 주소·이름·포트: 코드 표기(가려진 주소의 `*`가 강조로 읽히지 않고, 안의 글은 해석되지 않는다) */
+/**
+ * 주소·이름·포트: 코드 표기(가려진 주소의 `*`가 강조로 읽히지 않고, 안의 글은 해석되지 않는다).
+ * 관측한 값이므로 내부 이름 규칙으로 바꾸지 않는다(호스트 이름이 화면과 달라지면 안 된다).
+ */
 function mdCode(value: string, hidden: string[]): string {
   return `\`${plain(value, hidden).replace(/`/g, "'")}\``;
 }

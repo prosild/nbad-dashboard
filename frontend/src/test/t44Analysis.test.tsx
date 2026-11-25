@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { DetailHeader } from '../components/incident/DetailHeader';
+import { COPY_FEEDBACK_MS } from '../components/incident/InvestigationLinks';
 import { EvidenceSection } from '../components/incident/EvidenceSection';
 import { AllFactsTable, FactEvidence } from '../components/incident/FactEvidence';
 import { peerStrokeWidth } from '../components/incident/PeerTopologySvg';
@@ -139,9 +140,31 @@ describe('T44 상대 IP 표지·복사 버튼', () => {
     renderWithRoutes(<SummaryTab detail={baseDetail()} />);
     const card = screen.getByText('주요 상대 IP').parentElement as HTMLElement;
     expect(within(card).getByText('사설')).toHaveAttribute('title', '사설 네트워크 대역');
+    // 알림 영역은 누르기 전부터 빈 채로 있다(누를 때 새로 끼우지 않는다)
+    const live = card.querySelector('[data-copy-result]') as HTMLElement;
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live.textContent).toBe('');
     await user.click(within(card).getByRole('button', { name: '상대 IP 172.16.0.1 복사' }));
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe('172.16.0.1'));
-    expect(within(card).getByRole('status')).toHaveTextContent('주소를 복사했습니다.');
+    expect(card.querySelector('[data-copy-result]')).toBe(live);
+    expect(live).toHaveTextContent('주소를 복사했습니다.');
+  });
+
+  it('복사 알림은 잠시 뒤 처음 모양으로 돌아가고, 주요 세션 칸 글자는 누른 뒤에도 되돌아온다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<EvidenceSection evidence={baseDetail().evidence} />);
+    const table = screen.getByText('주요 세션 (최대 10건)').parentElement as HTMLElement;
+    const cell = within(within(table).getAllByRole('row')[1]).getAllByRole('cell')[1];
+    expect(cell.textContent).toBe('192.168.10.5:52974');
+    await user.click(within(cell).getByRole('button', { name: '출발지 IP 192.168.10.5 복사' }));
+    await waitFor(() => expect(cell.querySelector('[data-copy-result]')).toHaveTextContent('주소를 복사했습니다.'));
+    expect(cell.querySelector('svg')?.getAttribute('class')).toContain('lucide-check');
+    await act(async () => {
+      vi.advanceTimersByTime(COPY_FEEDBACK_MS);
+    });
+    expect(cell.textContent).toBe('192.168.10.5:52974');
+    expect(cell.querySelector('svg')?.getAttribute('class')).toContain('lucide-copy');
   });
 
   it('요약 탭: 상대 IP가 없으면 표지·버튼 줄을 만들지 않는다', () => {
@@ -209,7 +232,7 @@ describe('T44 상대 IP 표지·복사 버튼', () => {
     vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'));
     renderWithRoutes(<SummaryTab detail={baseDetail()} />);
     await user.click(screen.getByRole('button', { name: '상대 IP 172.16.0.1 복사' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('주소를 복사하지 못했습니다.');
+    await waitFor(() => expect(document.querySelector('[data-copy-result]')).toHaveTextContent('주소를 복사하지 못했습니다.'));
   });
 });
 
@@ -570,6 +593,21 @@ describe('T44 인시던트 마크다운 요약', () => {
       '### 관련 ATT&CK 기법 후보',
       '### 추가 확인 권고',
     ]);
+  });
+
+  it('내부 이름처럼 보이는 호스트 이름·도메인은 관측한 그대로 싣는다', () => {
+    const detail = baseDetail();
+    detail.incident = queueItem({ hostName: ['dashboard.corp.example', 'Dashboard.lab', 'zeekad_host'] });
+    detail.report = {
+      ...detail.report,
+      observationSummary: '호스트 dashboard.corp.example 이 Dashboard.example 과 통신했습니다. 뷰 dashboard.incident_reports. 참고',
+      claims: [{ claim: 'dashboard.latest_incident_queue', facts: [] }],
+    };
+    const md = incidentMarkdown(detail, DEFAULT_META, 7);
+    expect(md).toContain('- 호스트: `192.168.10.5` · `dashboard.corp.example` · `Dashboard.lab` · `zeekad_host`');
+    // 서술 글: 점이 더 이어지는 이름과 대문자로 시작한 글은 그대로, 소문자 `dashboard.<이름>`만 뺀다(문장 끝 마침표 포함)
+    expect(md).toContain('- 호스트 dashboard.corp.example 이 Dashboard.example 과 통신했습니다. 뷰 (식별자 생략). 참고');
+    expect(md).toContain('### 확인된 사실\n- (식별자 생략)\n');
   });
 
   it('증적이 없으면 큐의 세션 수만 쓰고 나머지는 "-"', () => {

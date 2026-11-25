@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DetectionModelName, SocBadge } from '../StatusBadge';
@@ -29,10 +29,20 @@ export function ModelPivot({ id }: { id: string | null }) {
 
 type CopyState = 'idle' | 'copied' | 'failed';
 
+/** 복사 결과(아이콘·판독기 글)를 보였다가 처음 모양으로 되돌리는 시간 */
+export const COPY_FEEDBACK_MS = 2000;
+
+const COPY_MESSAGE: Record<CopyState, string> = {
+  idle: '',
+  copied: '주소를 복사했습니다.',
+  failed: '주소를 복사하지 못했습니다.',
+};
+
 /**
  * 주소 옆 대역 표지(사설·외부)와 복사 버튼. 주소가 아니면 아무것도 그리지 않는다.
  * `iconOnly`(주요 세션 표)는 보이는 글자 없이 버튼만 두고 대역은 툴팁에 적는다(칸 글자와 표 밀도를 그대로 둔다).
- * 복사 결과는 아이콘과 화면 판독기 글로 알린다(누르기 전에는 글자를 더하지 않는다).
+ * 복사 결과는 아이콘과 화면 판독기 글로 알리고 잠시 뒤 되돌린다. 알림 영역은 처음부터 빈 채로 둔다
+ * (누를 때 새로 끼우면 판독기가 읽지 않을 수 있고, 비어 있으면 칸 글자에 더해지는 것이 없다).
  */
 export function IpActions({
   ip,
@@ -44,18 +54,31 @@ export function IpActions({
   iconOnly?: boolean;
 }) {
   const [state, setState] = useState<CopyState>('idle');
+  const resetTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    },
+    [],
+  );
   if (!isIpText(ip)) return null;
   const scope = ipScope(ip);
   const scopeLabel = scope ? IP_SCOPE_LABEL[scope] : null;
   const action = `${label} IP ${ip} 복사`;
 
+  function show(next: CopyState) {
+    setState(next);
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => setState('idle'), COPY_FEEDBACK_MS);
+  }
+
   async function copy(value: string) {
     try {
       if (!navigator.clipboard) throw new Error('clipboard');
       await navigator.clipboard.writeText(value);
-      setState('copied');
+      show('copied');
     } catch {
-      setState('failed');
+      show('failed');
     }
   }
 
@@ -75,11 +98,9 @@ export function IpActions({
           <Copy className={`h-3 w-3 ${state === 'failed' ? 'text-amber-300' : ''}`} aria-hidden="true" />
         )}
       </button>
-      {state !== 'idle' && (
-        <span role="status" className="sr-only">
-          {state === 'copied' ? '주소를 복사했습니다.' : '주소를 복사하지 못했습니다.'}
-        </span>
-      )}
+      <span aria-live="polite" className="sr-only" data-copy-result="">
+        {COPY_MESSAGE[state]}
+      </span>
     </span>
   );
 }
