@@ -62,7 +62,9 @@ CREATE TABLE dashboard.raw_asset_names (
     source_log TEXT,
     observation_count INTEGER,
     first_seen TIMESTAMPTZ,
-    last_seen TIMESTAMPTZ
+    last_seen TIMESTAMPTZ,
+    zeekad_name TEXT,
+    zeekad_name_kind TEXT
 );
 
 CREATE TABLE dashboard.raw_incident_reports (
@@ -624,18 +626,25 @@ VALUES
     (602, 'lab-fusion-v2|10.40.0.20|responder|1763514300', 'autoencoder', 0.86, 4, 8),
     (602, 'lab-fusion-v2|10.40.0.30|originator|1763514600', 'hbos', 0.81, 3, 7);
 
-INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen)
+-- T47: zeekad_name·zeekad_name_kind(T46). 사용자 계정 꼴과 컴퓨터 계정 꼴($로 끝남)을 하나씩 둔다. 값은 두 글자 이상이고
+--      호스트 이름(host_name)과 다른 글이다(호스트 이름은 IPv4만 가려 나가므로 같으면 "계정 원문 없음" 단언이 거짓으로 실패한다).
+INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen, zeekad_name, zeekad_name_kind)
 VALUES
     ('cic17-wed', '192.168.10.50', 'admin', 'svc_ad_sync', 'kerberos', 14,
-     TIMESTAMPTZ '2026-11-16 02:05:00Z', TIMESTAMPTZ '2026-11-16 02:34:00Z'),
+     TIMESTAMPTZ '2026-11-16 02:05:00Z', TIMESTAMPTZ '2026-11-16 02:34:00Z',
+     'jdoe.admin', 'kerberos_user'),
     ('cic17-wed', '10.20.30.40', 'x', 'backup_op', 'ntlm', 5,
-     TIMESTAMPTZ '2026-11-16 02:18:00Z', TIMESTAMPTZ '2026-11-16 02:29:00Z'),
+     TIMESTAMPTZ '2026-11-16 02:18:00Z', TIMESTAMPTZ '2026-11-16 02:29:00Z',
+     'BKP-SVC01$', 'kerberos_machine'),
     ('syn1-tue', '10.99.88.77', 'synadmin', NULL, 'kerberos', 9,
-     TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:54:00Z'),
+     TIMESTAMPTZ '2026-11-16 03:40:00Z', TIMESTAMPTZ '2026-11-16 03:54:00Z',
+     NULL, NULL),
     ('lab-20261118', '10.20.0.15', 'labuser1', 'lab_ntlm1', 'kerberos', 6,
-     TIMESTAMPTZ '2026-11-18 00:01:00Z', TIMESTAMPTZ '2026-11-18 00:09:00Z'),
+     TIMESTAMPTZ '2026-11-18 00:01:00Z', TIMESTAMPTZ '2026-11-18 00:09:00Z',
+     'lab.operator', 'ntlm_user'),
     ('lab-fusion-v2', '10.40.0.10', 'fusion_user', 'fusion_ntlm', 'kerberos', 18,
-     TIMESTAMPTZ '2026-11-19 01:02:00Z', TIMESTAMPTZ '2026-11-19 01:44:00Z');
+     TIMESTAMPTZ '2026-11-19 01:02:00Z', TIMESTAMPTZ '2026-11-19 01:44:00Z',
+     NULL, NULL);
 
 INSERT INTO dashboard.raw_incident_reports (
     job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version,
