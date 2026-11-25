@@ -403,7 +403,9 @@ export function IncidentDetailPage() {
                   className="p-4 focus:outline-none sm:p-5"
                 >
                   {t.key === 'summary' && <SummaryTab detail={current} />}
-                  {t.key === 'evidence' && <EvidenceSection evidence={current.evidence} assetNames={current.assetNames} />}
+                  {t.key === 'evidence' && (
+                    <EvidenceSection evidence={current.evidence} assetNames={current.assetNames} incident={current.incident} />
+                  )}
                   {t.key === 'report' && <ReportSection report={current.report} />}
                   {t.key === 'decision' && <SendDecisionSection sendDecision={current.sendDecision} />}
                   {t.key === 'slack' && <SlackThreadsSection threadGroups={current.slackThreadGroups} />}

@@ -3,7 +3,7 @@
  * 막대 높이·위치는 SVG 속성으로 준다. 폭은 상자 폭을 재서 viewBox를 맞추므로 글자가 늘어나지 않고 막대만 줄어든다.
  * 색은 우선순위 배지와 같은 체계(High 빨강, Medium 밝은 회색, Low 흐린 회색, 종결 더 흐린 색)다.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useContainerWidth } from '../../hooks/useContainerWidth';
 import type { DashboardTrend, TrendBucket, TrendBucketUnit } from '../../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatCompactDateTime, formatDateTime, formatNumber } from '../../utils/format';
 import { earlierIso, laterIso, parseOffsetIso, type PeriodRange } from '../../utils/periodRange';
@@ -27,7 +27,6 @@ const TOP = 14;
 const BOTTOM = 20;
 const LEFT = 30;
 const RIGHT = 4;
-const FALLBACK_WIDTH = 640;
 
 /** 구간 눈금 글: 5분·1시간은 시각, 6시간은 월-일 시, 일·주는 월-일(KST) */
 export function bucketTickLabel(iso: string, unit: TrendBucketUnit): string {
@@ -50,25 +49,6 @@ export function bucketRangeText(b: TrendBucket): string {
 export function bucketTitle(b: TrendBucket): string {
   const parts = SERIES.map((s) => `${s.label} ${formatNumber(b[s.key])}`).join(' · ');
   return `${bucketRangeText(b)}\n합계 ${formatNumber(b.total)}건 (${parts})${b.partial ? '\n일부 구간: 구간 일부만 기간 안입니다' : ''}`;
-}
-
-function useContainerWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(FALLBACK_WIDTH);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    const measure = () => {
-      const w = el.clientWidth;
-      if (w > 0) setWidth(w);
-    };
-    measure();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => measure());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 /**

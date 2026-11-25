@@ -1,8 +1,10 @@
 import type { IncidentDetailView } from '../../types/api';
 import { formatBytes, formatDuration, formatNumber } from '../../utils/format';
+import { portText } from '../../utils/incidentExport';
+import { isIpText } from '../../utils/ipScope';
 import { labelText } from '../../utils/labels';
-import { DetectionModelName } from '../StatusBadge';
 import { SvgProgressBar } from '../SvgProgressBar';
+import { IpActions, ModelPivot } from './InvestigationLinks';
 import { BYTES_BASIS_TOOLTIP } from './EvidenceSection';
 import {
   ReportAttack,
@@ -28,18 +30,30 @@ export function topPeerText(rows: Array<Record<string, unknown>>): string | null
 
 /** 주요 포트(상위 1건): "80/tcp" */
 export function topPortText(rows: Array<Record<string, unknown>>): string | null {
-  const top = first(rows);
-  const port = text(top?.port);
-  if (!port) return null;
-  const transport = text(top?.transport);
-  return transport ? `${port}/${transport}` : port;
+  return portText(first(rows));
 }
 
-function KeyNumber({ label, value, sub, title, mono = false }: { label: string; value: string; sub?: string; title?: string; mono?: boolean }) {
+function KeyNumber({
+  label,
+  value,
+  sub,
+  title,
+  mono = false,
+  actions,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  title?: string;
+  mono?: boolean;
+  /** 값 아래 표지·버튼 줄(T44 상대 IP 대역 표지·복사) */
+  actions?: React.ReactNode;
+}) {
   return (
     <div className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5" title={title}>
       <div className="text-[11px] text-slate-400">{label}</div>
       <div className={`mt-0.5 truncate text-base font-bold tabular-nums text-slate-100 ${mono ? 'font-mono' : ''}`}>{value}</div>
+      {actions && <div className="-ml-1 mt-0.5 flex items-center">{actions}</div>}
       {sub && <div className="text-[11px] tabular-nums text-slate-500">{sub}</div>}
     </div>
   );
@@ -101,6 +115,7 @@ export function SummaryTab({ detail }: { detail: IncidentDetailView }) {
           <KeyNumber
             label="주요 상대 IP"
             value={peer ?? '-'}
+            actions={isIpText(peer) ? <IpActions ip={peer} /> : undefined}
             sub={typeof peerCount === 'number' ? `세션 ${formatNumber(peerCount)}건` : undefined}
             mono
           />
@@ -133,7 +148,7 @@ export function SummaryTab({ detail }: { detail: IncidentDetailView }) {
                 return (
                   <li key={score.zeekadModel} className="space-y-1">
                     <div className="flex items-center justify-between gap-2 text-xs">
-                      <DetectionModelName id={score.zeekadModel} variant="detail" className="font-semibold text-slate-100" />
+                      <ModelPivot id={score.zeekadModel} />
                       <span className="font-bold tabular-nums text-slate-100">{ratioLabel}</span>
                     </div>
                     <SvgProgressBar

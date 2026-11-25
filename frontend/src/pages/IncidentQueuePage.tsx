@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ClipboardList,
   Database,
+  Download,
   FileText,
   FileX,
   Filter,
@@ -55,6 +56,7 @@ import {
   formatCompactDateTime,
   formatRelativeTo,
 } from '../utils/format';
+import { downloadQueueCsv } from '../utils/incidentExport';
 import { incidentPath } from '../utils/incidentLink';
 import {
   captureInfo,
@@ -511,7 +513,7 @@ export function IncidentQueuePage() {
               </ul>
             )}
 
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
               {barData?.snapshot && (
                 <span
                   className="inline-flex items-center gap-1 text-[11px] text-slate-400"
@@ -521,6 +523,17 @@ export function IncidentQueuePage() {
                   고정 스냅샷 · 자동 갱신 꺼짐
                 </span>
               )}
+              {/* T44: 지금 보이는 쪽만, 추가 요청 없이. 값이 없거나 최신이 아니면(T42) 내려받지 않는다 */}
+              <button
+                type="button"
+                disabled={!data || stale || items.length === 0}
+                onClick={() => downloadQueueCsv(items)}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+                title="지금 보이는 쪽의 인시던트를 CSV 파일로 내려받습니다"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                CSV 내보내기
+              </button>
               <button
                 type="button"
                 onClick={handleResetFilters}

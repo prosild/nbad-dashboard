@@ -1,11 +1,10 @@
-import { Copy, FileX, Link2 } from 'lucide-react';
+import { Copy, FileText, FileX, Link2 } from 'lucide-react';
 import type { IncidentDetailView, IncidentQueueMeta } from '../../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../../utils/format';
 import { captureInfo, detectionModelInfo } from '../../utils/labels';
 import {
   CaptureName,
   CodeLabel,
-  DetectionModelName,
   IncidentStatusBadge,
   PriorityBadge,
   ResolutionBadge,
@@ -16,8 +15,10 @@ import {
   SourceTypeBadge,
 } from '../StatusBadge';
 import { useToast } from '../ToastContext';
+import { incidentMarkdown } from '../../utils/incidentExport';
 import { incidentShareUrl } from '../../utils/incidentLink';
 import { AckOverdueBadge, elapsedText } from './AssignmentBits';
+import { ModelPivot } from './InvestigationLinks';
 import { isTemplateReplaced, TemplateReportBadge } from './ReportSection';
 import { describeVerificationReason } from '../../utils/factLabels';
 
@@ -77,6 +78,17 @@ export function DetailHeader({
     `모델 버전 ${incident.bundleId}`,
   ].join('\n');
 
+  /** T44: 지금 화면에 받은 값만으로 만든 마크다운 요약(조회자는 가려진 값 그대로). 내부 식별자는 넣지 않는다 */
+  async function copySummary() {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard');
+      await navigator.clipboard.writeText(incidentMarkdown(detail, meta, incidentNo));
+      notify('인시던트 요약을 복사했습니다.', 'success');
+    } catch {
+      notify('인시던트 요약을 복사하지 못했습니다.', 'error');
+    }
+  }
+
   async function copyId() {
     try {
       if (!navigator.clipboard) throw new Error('clipboard');
@@ -129,7 +141,7 @@ export function DetailHeader({
           <CodeLabel dict="hostRole" value={incident.zeekadRole} className="text-slate-200" />
         </Field>
         <Field label="탐지 모델">
-          <DetectionModelName id={incident.zeekadPickedBy} variant="detail" className="font-semibold text-slate-100" />
+          <ModelPivot id={incident.zeekadPickedBy} />
           {incident.zeekadAlsoFlaggedBy.length > 0 && (
             <SocBadge
               tone="neutral"
@@ -203,7 +215,18 @@ export function DetailHeader({
             </SocBadge>
           )}
         </Field>
-        <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+        {/* T44: 버튼이 셋이라 좁은 폭에서는 묶음 안에서 줄을 바꾼다(360px 가로 넘침 방지) */}
+        <span className="ml-auto inline-flex max-w-full flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void copySummary()}
+            className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-200"
+            aria-label="요약 복사"
+            title="이 인시던트의 요약을 마크다운 글로 복사합니다"
+          >
+            <FileText className="h-3 w-3" aria-hidden="true" />
+            <span className={COPY_LABEL_CLASS}>요약 복사</span>
+          </button>
           {incidentNo !== null && (
             <button
               type="button"

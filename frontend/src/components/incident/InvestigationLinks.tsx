@@ -1,0 +1,85 @@
+import { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { DetectionModelName, SocBadge } from '../StatusBadge';
+import { detectionModelInfo } from '../../utils/labels';
+import { IP_SCOPE_LABEL, ipScope, isIpText } from '../../utils/ipScope';
+
+/**
+ * 조사 동선(T44): 상세에서 한 번 눌러 옮겨 가거나 가져가는 것들.
+ * 단일 호스트 정확 일치 피벗은 서버 `hostIp=` 필터(T45)와 함께 붙인다. `asset=`은 부분 일치라 다른 호스트가 섞인다.
+ */
+
+/** 탐지 모델 이름 → 그 모델이 탐지한 인시던트 목록(전체 기간, `pickedBy` 정확 일치) */
+export function ModelPivot({ id }: { id: string | null }) {
+  const name = <DetectionModelName id={id} variant="detail" className="font-semibold text-slate-100" />;
+  if (!id) return name;
+  const label = `탐지 모델 ${detectionModelInfo(id).text} 인시던트 보기`;
+  return (
+    <Link
+      to={`/incidents?period=all&pickedBy=${encodeURIComponent(id)}`}
+      title={label}
+      aria-label={label}
+      className="min-w-0 rounded underline decoration-slate-600 underline-offset-2 hover:decoration-cyan-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+    >
+      {name}
+    </Link>
+  );
+}
+
+type CopyState = 'idle' | 'copied' | 'failed';
+
+/**
+ * 주소 옆 대역 표지(사설·외부)와 복사 버튼. 주소가 아니면 아무것도 그리지 않는다.
+ * `iconOnly`(주요 세션 표)는 보이는 글자 없이 버튼만 두고 대역은 툴팁에 적는다(칸 글자와 표 밀도를 그대로 둔다).
+ * 복사 결과는 아이콘과 화면 판독기 글로 알린다(누르기 전에는 글자를 더하지 않는다).
+ */
+export function IpActions({
+  ip,
+  label = '상대',
+  iconOnly = false,
+}: {
+  ip: unknown;
+  label?: '상대' | '출발지' | '목적지';
+  iconOnly?: boolean;
+}) {
+  const [state, setState] = useState<CopyState>('idle');
+  if (!isIpText(ip)) return null;
+  const scope = ipScope(ip);
+  const scopeLabel = scope ? IP_SCOPE_LABEL[scope] : null;
+  const action = `${label} IP ${ip} 복사`;
+
+  async function copy(value: string) {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard');
+      await navigator.clipboard.writeText(value);
+      setState('copied');
+    } catch {
+      setState('failed');
+    }
+  }
+
+  return (
+    <span className="ml-1 inline-flex items-center gap-1 align-middle">
+      {!iconOnly && scopeLabel && <SocBadge title={scopeLabel.title}>{scopeLabel.text}</SocBadge>}
+      <button
+        type="button"
+        aria-label={action}
+        title={iconOnly && scopeLabel ? `${action} · ${scopeLabel.title}` : action}
+        className="rounded p-0.5 text-slate-400 hover:text-cyan-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+        onClick={() => void copy(ip)}
+      >
+        {state === 'copied' ? (
+          <Check className="h-3 w-3 text-emerald-300" aria-hidden="true" />
+        ) : (
+          <Copy className={`h-3 w-3 ${state === 'failed' ? 'text-amber-300' : ''}`} aria-hidden="true" />
+        )}
+      </button>
+      {state !== 'idle' && (
+        <span role="status" className="sr-only">
+          {state === 'copied' ? '주소를 복사했습니다.' : '주소를 복사하지 못했습니다.'}
+        </span>
+      )}
+    </span>
+  );
+}

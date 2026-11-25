@@ -1,8 +1,10 @@
 import { AlertTriangle, Database } from 'lucide-react';
-import type { AssetNameRecord, EvidenceView, ProtocolLogEntry } from '../../types/api';
+import type { AssetNameRecord, EvidenceView, IncidentQueueItem, ProtocolLogEntry } from '../../types/api';
 import { formatBytes, formatDateTime, formatNumber, formatSessionDuration } from '../../utils/format';
 import { lookupLabel, unregisteredTitle, type LabelDictionaryName } from '../../utils/labels';
 import { CodeLabel, LookupText } from '../StatusBadge';
+import { IpActions } from './InvestigationLinks';
+import { PeerTopologySvg } from './PeerTopologySvg';
 import { SvgProgressBar } from '../SvgProgressBar';
 
 /** 증적에 키가 없어 null인 값. 0(관측했는데 0)과 구분해 보여 준다. */
@@ -171,10 +173,13 @@ function DynamicRecordTable({
   title,
   rows,
   emptyLabel,
+  peerActions = false,
 }: {
   title: string;
   rows: Array<Record<string, unknown>>;
   emptyLabel: string;
+  /** T44: `ip` 칸에 대역 표지(사설·외부)와 복사 버튼을 붙인다(많이 통신한 상대 IP 표) */
+  peerActions?: boolean;
 }) {
   if (!rows || rows.length === 0) {
     return (
@@ -222,6 +227,14 @@ function DynamicRecordTable({
               <tr key={idx} className="hover:bg-slate-800/30">
                 {columns.map((col) => {
                   const val = row[col];
+                  if (peerActions && col === 'ip' && typeof val === 'string') {
+                    return (
+                      <td key={col} className="soc-td whitespace-nowrap font-mono text-xs">
+                        {val}
+                        <IpActions ip={val} />
+                      </td>
+                    );
+                  }
                   if (val === null || val === undefined) {
                     return (
                       <td key={col} className="soc-td text-xs text-slate-500">
@@ -356,9 +369,11 @@ export function SessionTable({ rows }: { rows: Array<Record<string, unknown>> })
                     <td className="soc-td-compact whitespace-nowrap tabular-nums text-slate-200">{formatDateTime(row.start)}</td>
                     <td className="soc-td-compact whitespace-nowrap font-mono text-slate-100">
                       {endpoint(row.sourceIp, row.sourcePort)}
+                      <IpActions ip={row.sourceIp} label="출발지" iconOnly />
                     </td>
                     <td className="soc-td-compact whitespace-nowrap font-mono text-slate-100">
                       {endpoint(row.destinationIp, row.destinationPort)}
+                      <IpActions ip={row.destinationIp} label="목적지" iconOnly />
                     </td>
                     <td className="soc-td-compact whitespace-nowrap text-slate-300">
                       {service ? (service.known ? service.text : row.protocol) : '-'}
@@ -452,9 +467,12 @@ export function ObservedAccounts({ assetNames }: { assetNames: AssetNameRecord[]
 export function EvidenceSection({
   evidence,
   assetNames = [],
+  incident,
 }: {
   evidence: EvidenceView;
   assetNames?: AssetNameRecord[];
+  /** T44 주요 통신 구조의 대상 호스트·방향. 없으면 그 패널을 그리지 않는다 */
+  incident?: IncidentQueueItem;
 }) {
   const additionalEntries = Object.entries(evidence.additionalFields ?? {});
 
@@ -480,6 +498,8 @@ export function EvidenceSection({
             <StatCard label="페이로드 바이트가 부푼 세션 수" value={displayCount(evidence.payloadBytesInflated)} />
           </div>
 
+          {incident && <PeerTopologySvg incident={incident} evidence={evidence} />}
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <DistributionList title="전송 계층 분포" counts={evidence.transportCounts} tone="cyan" />
             <DistributionList
@@ -493,7 +513,12 @@ export function EvidenceSection({
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <DynamicRecordTable title="많이 통신한 상대 IP" rows={evidence.topPeers} emptyLabel="상대 IP 정보 없음" />
+            <DynamicRecordTable
+              title="많이 통신한 상대 IP"
+              rows={evidence.topPeers}
+              emptyLabel="상대 IP 정보 없음"
+              peerActions
+            />
             <DynamicRecordTable title="많이 쓴 목적지 포트" rows={evidence.topPorts} emptyLabel="목적지 포트 정보 없음" />
           </div>
 

@@ -1,6 +1,15 @@
 import { useId, useState } from 'react';
 import type { FactItem, ReportView } from '../../types/api';
-import { describeFact, FACT_GROUPS, type FactView, type Pseudonyms } from '../../utils/factLabels';
+import {
+  describeFact,
+  extractBaselineComparison,
+  FACT_GROUPS,
+  formatTimes,
+  type BaselineComparison,
+  type FactView,
+  type Pseudonyms,
+} from '../../utils/factLabels';
+import { SocBadge } from '../StatusBadge';
 
 /**
  * AI 리포트 문장 아래 근거(T37). 한 항목은 "항목 이름 + 값"이고 사실 번호는 끝에 작게 붙인다(접근성 이름에도 넣는다).
@@ -51,8 +60,59 @@ function FactNumber({ id }: { id: string }) {
   );
 }
 
+/** 평소 p95의 이 배수부터 주의(주황)로 강조한다. 그 아래는 중립색 */
+const BASELINE_ATTENTION_TIMES = 2;
+
+/**
+ * T44 평소 대비 강조: "p95 대비 N배" 표지와 비교 막대(이번 인시던트 최대 = 막대, 평소 p95 = 세로 눈금).
+ * 막대 눈금의 끝은 이번 인시던트 최대·평소 p95·평소 최대 가운데 큰 값이다. 수치는 바로 위 값 글에 있고 읽는 법은 툴팁에 둔다.
+ * 인라인 style 없이 SVG 기하 속성으로만 그린다.
+ */
+function BaselineBar({ comparison }: { comparison: BaselineComparison }) {
+  const { incidentMax, baselineP95, baselineMax, ratioOverP95 } = comparison;
+  const scale = Math.max(incidentMax, baselineMax ?? 0, baselineP95);
+  const pos = (v: number) => Number(((v / scale) * 100).toFixed(2));
+  const strong = ratioOverP95 >= BASELINE_ATTENTION_TIMES;
+  const times = formatTimes(ratioOverP95);
+  return (
+    <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-baseline-comparison="">
+      <SocBadge tone={strong ? 'attention' : 'neutral'}>p95 대비 {times}</SocBadge>
+      <svg
+        viewBox="0 0 100 10"
+        preserveAspectRatio="none"
+        className="h-2.5 w-40 max-w-full shrink"
+        role="img"
+        aria-label={`이번 인시던트 최대가 평소 p95의 ${times}`}
+      >
+        <title>막대: 이번 인시던트 최대 · 세로 눈금: 평소 p95</title>
+        <rect x={0} y={2} width={100} height={6} rx={1} className="fill-slate-800" />
+        <rect
+          data-baseline-bar=""
+          x={0}
+          y={2}
+          width={pos(incidentMax)}
+          height={6}
+          rx={1}
+          className={strong ? 'fill-amber-400' : 'fill-slate-400'}
+        />
+        <line
+          data-baseline-p95=""
+          x1={pos(baselineP95)}
+          x2={pos(baselineP95)}
+          y1={0}
+          y2={10}
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+          className="stroke-slate-50"
+        />
+      </svg>
+    </span>
+  );
+}
+
 function FactRow({ fact, pseudonyms }: { fact: FactItem; pseudonyms: Pseudonyms }) {
   const view = describeFact(fact, pseudonyms);
+  const comparison = view.missing ? null : extractBaselineComparison(fact.name, fact.valueJson);
   if (view.missing) {
     return (
       <li className="flex flex-wrap items-baseline gap-x-2 text-xs" title={rawTooltip(fact, view)} data-fact-id={view.id}>
@@ -77,6 +137,7 @@ function FactRow({ fact, pseudonyms }: { fact: FactItem; pseudonyms: Pseudonyms 
           </span>
           <span className="block min-w-0 basis-full pl-2">
             <FactValue view={view} />
+            {comparison && <BaselineBar comparison={comparison} />}
           </span>
         </>
       ) : (

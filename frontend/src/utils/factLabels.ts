@@ -216,6 +216,44 @@ function timesOverP95(max: Json, p95: Json): string | null {
   return `평소 p95의 ${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(r)}배`;
 }
 
+/** 평소 p95를 넘은 `baseline.<지표>` 값의 비교 수치(T44 강조 표지·비교 막대) */
+export interface BaselineComparison {
+  incidentMax: number;
+  baselineP95: number;
+  /** 평소 최대(값이 없으면 null) */
+  baselineMax: number | null;
+  /** 이번 인시던트 최대 ÷ 평소 p95 (항상 1보다 크다) */
+  ratioOverP95: number;
+}
+
+/**
+ * `baseline.<지표>` 구조 값에서 "평소 p95의 몇 배"를 뽑는다. 글 값(describeFact)이 배수를 적는 조건과 같게,
+ * 사전에 있는 지표이고 비율 지표가 아니며 값 모양이 맞을 때만 돌려준다. 평소 p95가 0 이하이거나
+ * 이번 인시던트 최대가 평소 p95 이하면 null이다(강조하지 않는다). 값을 다시 판정하지는 않는다.
+ */
+export function extractBaselineComparison(name: string, value: unknown): BaselineComparison | null {
+  const m = /^baseline\.([a-z0-9_]+)$/.exec(name);
+  if (!m || !hasOwn(BASELINE_METRICS, m[1]) || baselineMetricUnit(m[1]) === 'ratio') return null;
+  if (!hasExactKeys(value, BASELINE_KEYS)) return null;
+  if (BASELINE_KEYS.some((k) => value[k] !== null && !isFiniteNumber(value[k]))) return null;
+  const incidentMax = value.incident_max;
+  const baselineP95 = value.baseline_p95;
+  if (!isFiniteNumber(incidentMax) || !isFiniteNumber(baselineP95)) return null;
+  if (baselineP95 <= 0 || incidentMax <= baselineP95) return null;
+  return {
+    incidentMax,
+    baselineP95,
+    baselineMax: isFiniteNumber(value.baseline_max) ? value.baseline_max : null,
+    ratioOverP95: incidentMax / baselineP95,
+  };
+}
+
+/** 배수 글: 소수 한 자리까지("3배", "2.5배"). 한 자리로는 1배로 보이는 값은 둘째 자리까지("1.04배") */
+export function formatTimes(ratio: number): string {
+  const digits = ratio > 1 && ratio < 1.05 ? 2 : 1;
+  return `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: digits }).format(ratio)}배`;
+}
+
 function renderBaseline(metric: string) {
   const unit = baselineMetricUnit(metric);
   return (v: Json): string | null => {
