@@ -151,7 +151,8 @@ describe('T44 상대 IP 표지·복사 버튼', () => {
     await user.click(within(card).getByRole('button', { name: '상대 IP 172.16.0.1 복사' }));
     await waitFor(async () => expect(await navigator.clipboard.readText()).toBe('172.16.0.1'));
     expect(card.querySelector('[data-copy-result]')).toBe(live);
-    expect(live).toHaveTextContent('주소를 복사했습니다.');
+    // 안내 글은 클립보드 쓰기가 끝난 뒤의 상태 갱신으로 나온다. 클립보드 값과 따로 기다린다(T47)
+    await waitFor(() => expect(live).toHaveTextContent('주소를 복사했습니다.'));
   });
 
   it('알림 영역(.sr-only)은 기준 상자(relative) 안에 둔다: 가로 스크롤 표에서 페이지를 넓히지 않게', () => {
