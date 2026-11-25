@@ -87,6 +87,30 @@ public interface ZeekadReadMapper {
     long countLatestQueueByIncidentIds(@Param("captureIds") List<String> captureIds,
                                        @Param("incidentIds") String[] incidentIds);
 
+    /* T45 큐 묶음 표지(쪽 행 수와 무관하게 한 번씩). 빈 배열·빈 목록으로는 부르지 않는다. */
+
+    /** 인시던트들의 Slack 기록에서 (incident_id, zeekad_thread_parent 원문) 짝(중복 없이) */
+    List<com.zeekad.dashboard.model.zeekad.SlackThreadLink> findSlackThreadLinksByIncidentIds(
+            @Param("incidentIds") String[] incidentIds);
+
+    /** 머리들의 답글 짝: TRIM(zeekad_thread_parent)이 heads 안인 행의 (incident_id, 그 머리)(중복 없이, 상한 limit건) */
+    List<com.zeekad.dashboard.model.zeekad.SlackThreadLink> findThreadRepliesByHeads(@Param("heads") String[] heads,
+                                                                                    @Param("limit") int limit);
+
+    /** incident_id별 허용 캡처 안 최신 큐 행 수(countLatestQueueByIncidentIds와 같은 행 집합을 incident_id로 나눈 것) */
+    List<com.zeekad.dashboard.model.zeekad.IncidentRowCount> countLatestQueueRowsByIncidentIds(
+            @Param("captureIds") List<String> captureIds,
+            @Param("incidentIds") String[] incidentIds);
+
+    /* T45 큐 hostIp·attack 조건. captureIds가 비면 부르지 않는다. 기간·다른 거르기 조건은 넣지 않는다. */
+
+    /** 캡처들의 최신 큐에 있는 host_ip 원문(중복 없이). 응답에 넣지 않고 조건 값 고르기에만 쓴다 */
+    List<String> findDistinctLatestHostIps(@Param("captureIds") List<String> captureIds);
+
+    /** 캡처들의 최신 큐 행이 가리키는 리포트(zeekad_report_job_id)의 ATT&amp;CK 후보(값이 없는 행은 뺀다) */
+    List<com.zeekad.dashboard.model.zeekad.IncidentAttackCandidates> findLatestAttackCandidates(
+            @Param("captureIds") List<String> captureIds);
+
     List<SlackSummary> findSlackSummaries(@Param("captureId") String captureId);
 
     IncidentStatus findIncidentStatus(@Param("incidentId") String incidentId);

@@ -49,6 +49,8 @@ public class IncidentQueueApiController {
             @RequestParam(name = "assignee", required = false) String assignee,
             @RequestParam(name = "overdue", required = false) String overdue,
             @RequestParam(name = "thread", required = false) String thread,
+            @RequestParam(name = "hostIp", required = false) String hostIp,
+            @RequestParam(name = "attack", required = false) String attack,
             @RequestParam(name = "sort", required = false) String sort,
             @RequestParam(name = "dir", required = false) String dir,
             @RequestParam(name = "page", required = false) String page,
@@ -57,7 +59,8 @@ public class IncidentQueueApiController {
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
-                pickedBy, role, hasReport, wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, thread);
+                pickedBy, role, hasReport, wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, thread,
+                hostIp, attack);
         return ResponseEntity.ok(incidentQueueService.loadQueue(principal, params, clientIpResolver.resolve(request)));
     }
 
@@ -78,12 +81,15 @@ public class IncidentQueueApiController {
             @RequestParam(name = "assignee", required = false) String assignee,
             @RequestParam(name = "overdue", required = false) String overdue,
             @RequestParam(name = "thread", required = false) String thread,
+            @RequestParam(name = "hostIp", required = false) String hostIp,
+            @RequestParam(name = "attack", required = false) String attack,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         // 기간 조건 없이 since 이후만 센다(period는 받지 않는다). 정렬은 수에 영향이 없다.
         QueueParams params = new QueueParams("all", source, captureId, priority, status, reviewPending, alerted,
-                pickedBy, role, hasReport, wouldSend, asset, null, null, null, null, assignee, overdue, null, null, thread);
+                pickedBy, role, hasReport, wouldSend, asset, null, null, null, null, assignee, overdue, null, null, thread,
+                hostIp, attack);
         return ResponseEntity.ok(incidentQueueService.countNew(principal, params, since, clientIpResolver.resolve(request)));
     }
 
@@ -108,13 +114,16 @@ public class IncidentQueueApiController {
             @RequestParam(name = "assignee", required = false) String assignee,
             @RequestParam(name = "overdue", required = false) String overdue,
             @RequestParam(name = "thread", required = false) String thread,
+            @RequestParam(name = "hostIp", required = false) String hostIp,
+            @RequestParam(name = "attack", required = false) String attack,
             @RequestParam(name = "sort", required = false) String sort,
             @RequestParam(name = "dir", required = false) String dir,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
-                pickedBy, role, hasReport, wouldSend, asset, sort, dir, null, null, assignee, overdue, start, end, thread);
+                pickedBy, role, hasReport, wouldSend, asset, sort, dir, null, null, assignee, overdue, start, end, thread,
+                hostIp, attack);
         return ResponseEntity.ok(incidentQueueService.neighbors(
                 principal, jobId, queueRank, params, clientIpResolver.resolve(request)));
     }

@@ -33,6 +33,10 @@ public class UnifiedQueueCriteria {
     private String[] assigneeIncidentIds;
     /** T40 알림 묶음 조건: 머리 ∪ 답글 incident_id(배열 바인드 하나). null이면 조건 없음. 비는 경우는 없다(머리가 늘 든다) */
     private String[] threadIncidentIds;
+    /** T45 호스트 조건: 고른 host_ip 원문(배열 바인드 하나). null이면 조건 없음. 빈 배열로는 부르지 않는다(서비스가 0건으로 끝낸다) */
+    private String[] hostIps;
+    /** T45 ATT&amp;CK 조건: 리포트 후보가 맞는 incident_id(배열 바인드 하나). null이면 조건 없음. 빈 배열로는 부르지 않는다 */
+    private String[] attackIncidentIds;
     /** T25 착수 지연 식: 실습망 캡처(captureIds 안)와 우선순위별 경계(기준 시각 − 목표). 하나라도 없으면 지연 0 */
     private List<String> liveCaptureIds = List.of();
     private OffsetDateTime ackHighBefore;
@@ -62,6 +66,8 @@ public class UnifiedQueueCriteria {
         c.assigneeMode = assigneeMode;
         c.assigneeIncidentIds = assigneeIncidentIds;
         c.threadIncidentIds = threadIncidentIds;
+        c.hostIps = hostIps;
+        c.attackIncidentIds = attackIncidentIds;
         c.liveCaptureIds = liveCaptureIds;
         c.ackHighBefore = ackHighBefore;
         c.ackMediumBefore = ackMediumBefore;
@@ -105,6 +111,10 @@ public class UnifiedQueueCriteria {
     public void setAssigneeIncidentIds(String[] assigneeIncidentIds) { this.assigneeIncidentIds = assigneeIncidentIds; }
     public String[] getThreadIncidentIds() { return threadIncidentIds; }
     public void setThreadIncidentIds(String[] threadIncidentIds) { this.threadIncidentIds = threadIncidentIds; }
+    public String[] getHostIps() { return hostIps; }
+    public void setHostIps(String[] hostIps) { this.hostIps = hostIps; }
+    public String[] getAttackIncidentIds() { return attackIncidentIds; }
+    public void setAttackIncidentIds(String[] attackIncidentIds) { this.attackIncidentIds = attackIncidentIds; }
     public boolean isHasAssigneeIds() { return assigneeIncidentIds != null && assigneeIncidentIds.length > 0; }
     public List<String> getLiveCaptureIds() { return liveCaptureIds; }
     public void setLiveCaptureIds(List<String> liveCaptureIds) { this.liveCaptureIds = liveCaptureIds; }

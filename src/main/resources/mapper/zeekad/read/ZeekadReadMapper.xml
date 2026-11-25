@@ -447,6 +447,69 @@
           AND lq.incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
     </select>
 
+    <!-- T45 큐 묶음 표지: 쪽의 행 수와 무관하게 한 번씩 읽는다. 부모는 원문 그대로 주고 Java가 상세와 같게 trim()한다. -->
+    <resultMap id="slackThreadLinkMap" type="com.zeekad.dashboard.model.zeekad.SlackThreadLink">
+        <result property="incidentId" column="incident_id"/>
+        <result property="threadParent" column="zeekad_thread_parent"/>
+    </resultMap>
+
+    <select id="findSlackThreadLinksByIncidentIds" resultMap="slackThreadLinkMap">
+        SELECT DISTINCT incident_id, zeekad_thread_parent
+        FROM dashboard.slack_deliveries
+        WHERE incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+    </select>
+
+    <!-- 머리들의 답글 짝(findThreadReplyIncidentIds와 같은 정의를 머리 여럿에 한 번에). 상한은 서비스가 준다. -->
+    <select id="findThreadRepliesByHeads" resultMap="slackThreadLinkMap">
+        SELECT DISTINCT incident_id, TRIM(zeekad_thread_parent) AS zeekad_thread_parent
+        FROM dashboard.slack_deliveries
+        WHERE TRIM(zeekad_thread_parent) = ANY(#{heads, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        LIMIT #{limit}
+    </select>
+
+    <resultMap id="incidentRowCountMap" type="com.zeekad.dashboard.model.zeekad.IncidentRowCount">
+        <result property="incidentId" column="incident_id"/>
+        <result property="rowCount" column="row_count" javaType="long"/>
+    </resultMap>
+
+    <!-- countLatestQueueByIncidentIds와 같은 행 집합을 incident_id별로 센다(머리마다 더하면 그 값과 같다) -->
+    <select id="countLatestQueueRowsByIncidentIds" resultMap="incidentRowCountMap">
+        SELECT lq.incident_id, COUNT(*) AS row_count
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.capture_id IN
+        <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+          AND lq.incident_id = ANY(#{incidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        GROUP BY lq.incident_id
+    </select>
+
+    <!-- T45 hostIp 조건: 범위(허용 ∩ 수집원 ∩ 고른 캡처) 최신 큐의 host_ip 원문. 조건 값과의 비교는 Java가 한다
+         (조회자는 가린 값끼리만 비교해 원문이 있는지 알 수 없다). 기간·다른 조건은 넣지 않는다. -->
+    <select id="findDistinctLatestHostIps" resultType="string">
+        SELECT DISTINCT lq.host_ip
+        FROM dashboard.latest_incident_queue lq
+        WHERE lq.host_ip IS NOT NULL
+          AND lq.capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    </select>
+
+    <!-- T45 attack 조건: 최신 큐 행이 가리키는 리포트(큐 기반 질의의 r 조인과 같은 행)의 ATT&CK 후보.
+         JSON은 그대로 읽어 Java가 파싱한다(H2와 PostgreSQL이 같은 SQL을 돈다). -->
+    <resultMap id="incidentAttackCandidatesMap" type="com.zeekad.dashboard.model.zeekad.IncidentAttackCandidates">
+        <result property="incidentId" column="incident_id"/>
+        <result property="candidates" column="zeekad_attack_candidates"
+                typeHandler="com.zeekad.dashboard.mybatis.JsonNodeTypeHandler"/>
+    </resultMap>
+
+    <select id="findLatestAttackCandidates" resultMap="incidentAttackCandidatesMap">
+        SELECT lq.incident_id, r.zeekad_attack_candidates
+        FROM dashboard.latest_incident_queue lq
+        JOIN dashboard.incident_reports r
+          ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
+        WHERE r.zeekad_attack_candidates IS NOT NULL
+          AND lq.capture_id IN
+          <foreach collection="captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
+    </select>
+
     <select id="findSlackSummaries" resultMap="slackSummaryMap">
         SELECT job_id, capture_id, zeekad_message_version, zeekad_delivery_mode,
                zeekad_delivery_status, slack_payload, slack_ts, delivered_at, created_at
@@ -688,6 +751,14 @@
         <!-- T40 알림 묶음 조건(일반 조건): 머리 ∪ 답글 incident_id 배열 하나. 권한 경계는 base의 허용 캡처다. -->
         <if test="c.threadIncidentIds != null">
             AND b.incident_id = ANY(#{c.threadIncidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        </if>
+        <!-- T45 호스트 조건(일반 조건): 서버가 고른 host_ip 원문 배열 하나. 요청 값을 여기서 비교하지 않는다. -->
+        <if test="c.hostIps != null">
+            AND b.host_ip = ANY(#{c.hostIps, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+        </if>
+        <!-- T45 ATT&CK 조건(일반 조건): 리포트 후보가 맞는 incident_id 배열 하나. 권한 경계는 base의 허용 캡처다. -->
+        <if test="c.attackIncidentIds != null">
+            AND b.incident_id = ANY(#{c.attackIncidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
         </if>
         <if test="c.detectedAfter != null">
             AND b.detected_at &gt; #{c.detectedAfter}

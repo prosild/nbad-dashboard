@@ -8,9 +8,11 @@ import com.zeekad.dashboard.dto.TimeContextResponse;
 import com.zeekad.dashboard.dto.UnifiedQueueResponse;
 import com.zeekad.dashboard.dto.UnifiedQueueRow;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
+import com.zeekad.dashboard.model.IncidentRef;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.CaptureLastDetected;
 import com.zeekad.dashboard.model.zeekad.CaptureQueueStat;
+import com.zeekad.dashboard.model.zeekad.IncidentAttackCandidates;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord;
@@ -28,6 +30,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -123,14 +126,26 @@ public class IncidentQueueService {
                               String start,
                               String end,
                               /* T40: 알림 묶음 조건(인시던트 번호) */
-                              String thread) {
+                              String thread,
+                              /* T45: 호스트 정확 일치(A.B.C.D 또는 A.B.*.*), ATT&CK 기법 ID·전술 */
+                              String hostIp,
+                              String attack) {
+        /** T45 앞 호출 호환(호스트·ATT&amp;CK 조건 없음) */
+        public QueueParams(String period, String source, String captureId, String priority, String status,
+                           String reviewPending, String alerted, String pickedBy, String role, String hasReport,
+                           String wouldSend, String asset, String sort, String dir, String page, String size,
+                           String assignee, String overdue, String start, String end, String thread) {
+            this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, thread, null, null);
+        }
+
         /** T40 앞 호출 호환(알림 묶음 조건 없음) */
         public QueueParams(String period, String source, String captureId, String priority, String status,
                            String reviewPending, String alerted, String pickedBy, String role, String hasReport,
                            String wouldSend, String asset, String sort, String dir, String page, String size,
                            String assignee, String overdue, String start, String end) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, null);
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, null, null, null);
         }
 
         /** T34 앞 호출 호환(지정 기간 없음) */
@@ -139,7 +154,7 @@ public class IncidentQueueService {
                            String wouldSend, String asset, String sort, String dir, String page, String size,
                            String assignee, String overdue) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, assignee, overdue, null, null, null);
+                    wouldSend, asset, sort, dir, page, size, assignee, overdue, null, null, null, null, null);
         }
 
         /** T25 앞 호출 호환(담당·착수 지연 조건 없음) */
@@ -147,7 +162,7 @@ public class IncidentQueueService {
                            String reviewPending, String alerted, String pickedBy, String role, String hasReport,
                            String wouldSend, String asset, String sort, String dir, String page, String size) {
             this(period, source, captureId, priority, status, reviewPending, alerted, pickedBy, role, hasReport,
-                    wouldSend, asset, sort, dir, page, size, null, null, null, null, null);
+                    wouldSend, asset, sort, dir, page, size, null, null, null, null, null, null, null);
         }
     }
 
@@ -291,11 +306,14 @@ public class IncidentQueueService {
         Map<String, AssignmentDtos.Assignee> assignees = incidentAssignmentService.assigneesFor(pageIds);
         // T27 인시던트 번호: 이 쪽의 incident_id들로 한 번 읽는다(없으면 동기화, 실패해도 null)
         Map<String, Long> numbers = incidentRefService.numbersFor(pageIds);
+        // T45 알림 묶음 표지: 쪽의 행 수와 무관한 횟수로 읽는다(쪽이 비면 부르지 않는다)
+        Map<String, ThreadBadge> badges = threadBadges(scope.allowed(), pageIds);
         List<UnifiedQueueRow> items = new ArrayList<>(pageRecords.size());
         for (int i = 0; i < pageRecords.size(); i++) {
             UnifiedQueueRecord record = pageRecords.get(i);
             OffsetDateTime due = ackTargetService.dueAt(record.getCaptureId(), record.getZeekadStatus(),
                     record.getPriority(), record.getDetectedAt());
+            ThreadBadge badge = badges.get(record.getIncidentId());
             items.add(new UnifiedQueueRow(
                     pageMasked.get(i),
                     record.getDetectedAt(),
@@ -305,7 +323,9 @@ public class IncidentQueueService {
                     assignees.get(record.getIncidentId()),
                     due,
                     AckTargetService.isOverdue(due, scope.anchor()),
-                    numbers.get(record.getIncidentId())));
+                    numbers.get(record.getIncidentId()),
+                    badge == null ? null : badge.headNo(),
+                    badge == null ? null : badge.memberCount()));
         }
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
@@ -495,9 +515,9 @@ public class IncidentQueueService {
     /** T34: 지정 기간(period=custom, start·end)까지 받는다 */
     public Condition resolveCondition(DashboardUserPrincipal principal, String period, String start, String end,
                                       String source, String captureId, String clientIp) {
-        // 현황판·운영 현황은 알림 묶음 조건(thread)을 받지 않는다
+        // 현황판·운영 현황은 알림 묶음(thread)·호스트(hostIp)·ATT&CK(attack) 조건을 받지 않는다
         QueueParams p = new QueueParams(period, source, captureId, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, start, end, null);
+                null, null, null, null, null, null, null, start, end, null, null, null);
         Scope scope = resolveScope(principal, p, clientIp, true);
         return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
                 scope.criteria().getDetectedAfter(), scope.criteria().getDetectedUntil(), scope.criteria());
@@ -603,6 +623,17 @@ public class IncidentQueueService {
         // T40 알림 묶음 조건: 형식 오류는 400(감사 없음). 번호 해석은 다른 값 검사가 끝난 뒤에 한다
         String threadRaw = trimToNull(p.thread());
         Long threadNo = threadRaw == null ? null : IncidentNoLocationService.parseThreadNo(threadRaw);
+        // T45 호스트·ATT&CK 조건: 형식 오류는 400(감사 없음, 문장에 입력 값을 넣지 않는다). 값 고르기는 캡처 범위가 정해진 뒤에 한다
+        String hostIp = trimToNull(p.hostIp());
+        HostIpFilter.Kind hostKind = hostIp == null ? null : HostIpFilter.kindOf(hostIp);
+        if (hostIp != null && hostKind == null) {
+            throw invalid("호스트 IP 값이 올바르지 않습니다.");
+        }
+        String attackRaw = trimToNull(p.attack());
+        AttackFilter.Value attack = attackRaw == null ? null : AttackFilter.parse(attackRaw);
+        if (attackRaw != null && attack == null) {
+            throw invalid("ATT&CK 값이 올바르지 않습니다.");
+        }
 
         List<String> captureIds = new ArrayList<>();
         for (String cap : allowed) {
@@ -633,6 +664,25 @@ public class IncidentQueueService {
             }
             c.setAssigneeMode(assignee);
             c.setAssigneeIncidentIds(ids.toArray(new String[0]));
+        }
+        UserRole role = principal != null ? principal.getRole() : UserRole.VIEWER;
+        // T45 호스트 조건: 범위 최신 큐의 host_ip 원문에서 맞는 것만 골라 배열로 넘긴다. 고른 것이 없으면 0건(담당 me와 같은 방법)
+        if (hostIp != null && !captureIds.isEmpty()) {
+            String[] hosts = resolveHostIps(captureIds, hostIp, hostKind, role);
+            if (hosts.length == 0) {
+                captureIds = new ArrayList<>();
+            } else {
+                c.setHostIps(hosts);
+            }
+        }
+        // T45 ATT&CK 조건: 범위 최신 큐 행이 가리키는 리포트의 후보가 맞는 incident_id. 없으면 0건
+        if (attack != null && !captureIds.isEmpty()) {
+            String[] ids = resolveAttackIncidentIds(captureIds, attack);
+            if (ids.length == 0) {
+                captureIds = new ArrayList<>();
+            } else {
+                c.setAttackIncidentIds(ids);
+            }
         }
         c.setCaptureIds(List.copyOf(captureIds));
         // T25 착수 지연 식(큐 행·요약·띠 축이 같은 경계를 쓴다)
@@ -667,9 +717,93 @@ public class IncidentQueueService {
         c.setSortKey(sortKey);
         c.setSortAsc(asc);
 
-        UserRole role = principal != null ? principal.getRole() : UserRole.VIEWER;
         return new Scope(allowed, c.getCaptureIds(), anchor, period, periodStart, periodEnd, c,
                 trimToNull(p.asset()), role);
+    }
+
+    /**
+     * T45 hostIp 조건에 맞는 host_ip 원문. 범위(허용 ∩ 수집원 ∩ 고른 캡처) 최신 큐의 원문 집합을 한 번 읽어 Java에서 고른다
+     * (기간·다른 조건은 넣지 않는다. 넣으면 기간 밖에만 있는 호스트의 "기간 밖 N건" 안내가 사라진다).
+     * 조회자: 가린 값이 요청 값과 같은 원문만. 그래서 A.B.*.*는 그 대역 전부이고 원문 A.B.C.D는 있든 없든 0건이다
+     * (요청 값을 원문과 직접 비교하지 않는다 = 원문이 있는지 알려 주지 않는다).
+     * 분석가·관리자: A.B.C.D는 원문이 같은 것, A.B.*.*는 가린 값이 같은 것(조회자가 만든 링크를 그대로 연다).
+     */
+    private String[] resolveHostIps(List<String> captureIds, String hostIp, HostIpFilter.Kind kind, UserRole role) {
+        boolean byMasked = maskingService.shouldMask(role) || kind == HostIpFilter.Kind.MASKED;
+        List<String> picked = new ArrayList<>();
+        for (String raw : zeekadReadMapper.findDistinctLatestHostIps(captureIds)) {
+            if (raw == null) {
+                continue;
+            }
+            if (byMasked ? hostIp.equals(maskingService.maskIp(raw)) : hostIp.equals(raw)) {
+                picked.add(raw);
+            }
+        }
+        return picked.toArray(new String[0]);
+    }
+
+    /** T45 attack 조건에 맞는 incident_id: 리포트의 ATT&amp;CK 후보를 한 번 읽어 Java에서 맞춘다(AttackFilter) */
+    private String[] resolveAttackIncidentIds(List<String> captureIds, AttackFilter.Value attack) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (IncidentAttackCandidates row : zeekadReadMapper.findLatestAttackCandidates(captureIds)) {
+            if (row != null && row.getIncidentId() != null && AttackFilter.matches(attack, row.getCandidates())) {
+                ids.add(row.getIncidentId());
+            }
+        }
+        return ids.toArray(new String[0]);
+    }
+
+    /** T45 큐 행 묶음 표지: 최초 알림 인시던트 번호와 구성원 수 */
+    private record ThreadBadge(long headNo, long memberCount) {
+    }
+
+    /**
+     * T45 쪽 행들의 묶음 표지(incident_id → 표지). 정의는 상세 Slack 탭의 묶음과 같다:
+     * 후보 머리(Slack 기록의 부모, 없으면 자기 자신) 가운데 번호 행(읽기만)이 있고 그 캡처가 허용 캡처 안인 머리만 보고,
+     * 구성원 수(허용 캡처 전체의 최신 큐, 기간·수집원 조건과 무관)가 2 이상인 것 중 구성원 수 → 번호가 큰 것을 고른다.
+     * 읽기는 쪽의 행 수와 무관하다: Slack 짝 1번 → 번호 행 읽기(readRefsOnly, 동기화·쓰기 없음) → 답글 짝 1번 → 최신 큐 소속 1번.
+     * 쪽이 비면 아무것도 부르지 않고, 후보 머리가 없거나 보이는 머리가 없으면 답글·소속 질의를 부르지 않는다.
+     */
+    private Map<String, ThreadBadge> threadBadges(List<String> allowed, List<String> pageIds) {
+        Map<String, ThreadBadge> out = new HashMap<>();
+        if (pageIds.isEmpty() || allowed.isEmpty()) {
+            return out;
+        }
+        Map<String, Set<String>> headsByIncident = slackThreadService.candidateHeads(pageIds);
+        Set<String> heads = new LinkedHashSet<>();
+        headsByIncident.values().forEach(heads::addAll);
+        if (heads.isEmpty()) {
+            return out;
+        }
+        Map<String, Long> headNos = new HashMap<>();
+        for (Map.Entry<String, IncidentRef> e : incidentRefService.readRefsOnly(heads).entrySet()) {
+            IncidentRef ref = e.getValue();
+            if (ref.getIncidentNo() != null && ref.getCaptureId() != null && allowed.contains(ref.getCaptureId())) {
+                headNos.put(e.getKey(), ref.getIncidentNo());
+            }
+        }
+        if (headNos.isEmpty()) {
+            return out;
+        }
+        Map<String, Long> counts = slackThreadService.visibleMemberCounts(allowed, headNos.keySet());
+        for (Map.Entry<String, Set<String>> e : headsByIncident.entrySet()) {
+            ThreadBadge best = null;
+            for (String head : e.getValue()) {
+                Long no = headNos.get(head);
+                Long count = counts.get(head);
+                if (no == null || count == null || count < 2) {
+                    continue;
+                }
+                if (best == null || count > best.memberCount()
+                        || (count == best.memberCount() && no > best.headNo())) {
+                    best = new ThreadBadge(no, count);
+                }
+            }
+            if (best != null) {
+                out.put(e.getKey(), best);
+            }
+        }
+        return out;
     }
 
     /**
@@ -679,7 +813,7 @@ public class IncidentQueueService {
      */
     private String[] resolveThreadMembers(DashboardUserPrincipal principal, List<String> allowed, long threadNo,
                                           String clientIp) {
-        com.zeekad.dashboard.model.IncidentRef ref = incidentRefService.findByNo(threadNo);
+        IncidentRef ref = incidentRefService.findByNo(threadNo);
         if (ref == null) {
             captureAccessService.denyIncidentNo(principal, null, threadNo, "thread_no_not_found", clientIp);
         }
