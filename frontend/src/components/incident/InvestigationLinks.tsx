@@ -82,8 +82,10 @@ export function IpActions({
     }
   }
 
+  // relative: 알림 영역(.sr-only, 절대 위치)의 기준 상자를 여기로 잡는다. 없으면 가로 스크롤 표(주요 세션) 안에서
+  // 스크롤 상자 밖 조상을 기준으로 놓여 휴대폰 폭에서 페이지를 넓힌다(360px에서 152px 넘침으로 측정됨).
   return (
-    <span className="ml-1 inline-flex items-center gap-1 align-middle">
+    <span className="relative ml-1 inline-flex items-center gap-1 align-middle" data-ip-actions="">
       {!iconOnly && scopeLabel && <SocBadge title={scopeLabel.title}>{scopeLabel.text}</SocBadge>}
       <button
         type="button"

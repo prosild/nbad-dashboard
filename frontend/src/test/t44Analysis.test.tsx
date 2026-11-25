@@ -150,6 +150,18 @@ describe('T44 상대 IP 표지·복사 버튼', () => {
     expect(live).toHaveTextContent('주소를 복사했습니다.');
   });
 
+  it('알림 영역(.sr-only)은 기준 상자(relative) 안에 둔다: 가로 스크롤 표에서 페이지를 넓히지 않게', () => {
+    render(<EvidenceSection evidence={baseDetail().evidence} />);
+    const regions = Array.from(document.querySelectorAll('[data-copy-result]'));
+    expect(regions.length).toBeGreaterThan(0);
+    for (const region of regions) {
+      expect(region).toHaveClass('sr-only');
+      // jsdom은 배치를 계산하지 않아 클래스만 본다. 실제 넘침은 handoff/T44/tools/layout-check.js가 잰다.
+      expect(region.parentElement).toHaveClass('relative');
+      expect(region.parentElement).toHaveAttribute('data-ip-actions');
+    }
+  });
+
   it('복사 알림은 잠시 뒤 처음 모양으로 돌아가고, 주요 세션 칸 글자는 누른 뒤에도 되돌아온다', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
