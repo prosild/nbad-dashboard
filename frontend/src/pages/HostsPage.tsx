@@ -5,7 +5,7 @@ import { errorNotice, type ErrorNotice } from '../api/client';
 import { hostsApi, type HostListParams } from '../api/hosts';
 import { useAuth } from '../auth/AuthContext';
 import { AppShell } from '../components/AppShell';
-import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
+import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue, withoutLastDetected } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
 import { DetectionModelName, SocBadge, type BadgeTone } from '../components/StatusBadge';
@@ -207,7 +207,7 @@ export function HostsPage() {
             />
             <SourceField
               id="hosts-source"
-              sources={barSources}
+              sources={withoutLastDetected(barSources)}
               value={sourceSelectValue(source, captureId)}
               onChange={(v) => updateParams(sourceSelectChanges(v))}
             />

@@ -747,6 +747,24 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expect(within(table).queryByText('통신 관계 이상')).not.toBeInTheDocument();
   });
 
+  // T47: /api/operations도 수집원의 마지막 탐지를 주지 않고 sources의 lastDetectedAt·latestJobId를 null로 보낸다(서버가 실제로 보내는 꼴).
+  //      큐 sources의 null("탐지 없음")과 뜻이 달라 이 화면의 목록에는 마지막 탐지 글을 붙이지 않는다
+  it('수집원 선택 목록에 마지막 탐지 글("탐지 없음"·"마지막 탐지")을 붙이지 않는다(서버가 보내는 null 꼴)', async () => {
+    const serverSources = SOURCES.map((s) => ({ captureId: s.captureId, sourceType: s.sourceType, latestJobId: null, lastDetectedAt: null }));
+    renderAt('/operations', { operations: (url) => json({ ...fakeOperations(url), sources: serverSources }) });
+    await screen.findByRole('region', { name: '상태 요약' });
+    const select = screen.getByLabelText('수집원') as HTMLSelectElement;
+    const texts = Array.from(select.querySelectorAll('option')).map((o) => o.textContent ?? '');
+    expect(texts).toHaveLength(7);
+    for (const text of texts) {
+      expect(text).not.toContain('탐지 없음');
+      expect(text).not.toContain('마지막 탐지');
+    }
+    expect(select.querySelector('option[value="src:imported"]')?.textContent).toBe('가져온 데이터 전체');
+    expect(select.querySelector('option[value="src:live"]')?.textContent).toBe('실습망 센서 전체');
+    expect(select.querySelector('option[value="cap:cic17-wed"]')?.textContent).toBe('CIC-IDS2017 수요일');
+  });
+
   it('탐지 작업·모델 버전·Slack 일일 요약은 접힌 영역이고 수집원 선택은 표시 이름', async () => {
     renderAt('/operations');
     await screen.findByRole('region', { name: '상태 요약' });

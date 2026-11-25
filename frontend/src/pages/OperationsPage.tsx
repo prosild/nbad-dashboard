@@ -4,7 +4,7 @@ import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers
 import { errorNotice, type ErrorNotice } from '../api/client';
 import { dashboardApi, operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
-import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } from '../components/ConditionBar';
+import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue, withoutLastDetected } from '../components/ConditionBar';
 import { SensorHealthBadge, SourceStatusTable, sensorHealthTooltip } from '../components/dashboard/SourceStatus';
 import { HandlingTimesPanel, WorkloadPanel } from '../components/dashboard/HandlingPanels';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
@@ -240,7 +240,7 @@ export function OperationsPage() {
             />
             <SourceField
               id="ops-source"
-              sources={barSources}
+              sources={withoutLastDetected(barSources)}
               value={sourceSelectValue(source, captureId)}
               onChange={(v) => updateParams(sourceSelectChanges(v))}
             />

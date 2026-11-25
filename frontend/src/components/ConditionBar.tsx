@@ -25,6 +25,15 @@ export interface SourceOption {
   lastDetectedAt?: string | null;
 }
 
+/**
+ * 마지막 탐지를 주지 않는 API(/api/hosts, /api/operations)의 sources용(T47).
+ * 그 응답은 큐와 같은 모양이라 lastDetectedAt 칸이 있지만 값은 늘 null이다. 큐 sources의 null은 "그 수집원에 탐지가 없다"는 뜻이라
+ * 그대로 넘기면 목록에 "탐지 없음"이 붙는다. 칸을 떼어 "값이 없으면 붙이지 않는다" 규칙(lastDetectedSuffix)에 맡긴다.
+ */
+export function withoutLastDetected(sources: SourceOption[]): SourceOption[] {
+  return sources.map(({ captureId, sourceType }) => ({ captureId, sourceType }));
+}
+
 /** URL의 source·captureId → 선택 값('' = 전체, 'src:live|imported', 'cap:<id>') */
 export function sourceSelectValue(source: string | null | undefined, captureId: string | null | undefined): string {
   if (captureId) return `cap:${captureId}`;

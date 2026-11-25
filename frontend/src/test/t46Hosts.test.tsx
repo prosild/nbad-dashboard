@@ -354,6 +354,25 @@ describe('T46 호스트 위험도 화면', () => {
     await waitFor(() => expect(loc()).toBe('/incidents?period=7d&hostIp=10.46.1.20'));
   });
 
+  // T47: /api/hosts는 수집원의 마지막 탐지를 주지 않는다(서버가 sources의 lastDetectedAt·latestJobId를 null로 보낸다).
+  //      큐 sources의 null은 "탐지 없음"이라는 뜻이지만 이 화면에서는 값이 없다는 뜻이라 목록에 마지막 탐지 글을 붙이지 않는다
+  it('수집원 선택 목록에 마지막 탐지 글("탐지 없음"·"마지막 탐지")을 붙이지 않는다', async () => {
+    const server = hostsServer((url) => json(hostsResponse(url, ANALYST_ROWS)));
+    renderApp('/hosts', server.handler);
+    await waitFor(() => expect(tableRows()).toHaveLength(4));
+    expect(SOURCES.every((s) => s.lastDetectedAt === null && s.latestJobId === null)).toBe(true);
+    const select = screen.getByLabelText('수집원') as HTMLSelectElement;
+    const texts = Array.from(select.querySelectorAll('option')).map((o) => o.textContent ?? '');
+    expect(texts).toHaveLength(5);
+    for (const text of texts) {
+      expect(text).not.toContain('탐지 없음');
+      expect(text).not.toContain('마지막 탐지');
+    }
+    expect(select.querySelector('option[value="src:imported"]')?.textContent).toBe('가져온 데이터 전체');
+    expect(select.querySelector('option[value="src:live"]')?.textContent).toBe('실습망 센서 전체');
+    expect(select.querySelector('option[value="cap:cic17-wed"]')?.textContent).toBe('CIC-IDS2017 수요일');
+  });
+
   it('조건 줄: 기간·수집원·검색·전환 거르기가 URL과 요청에 남고 줄 링크에도 이어진다', async () => {
     const server = hostsServer((url) => json(hostsResponse(url, ANALYST_ROWS)));
     const user = userEvent.setup();
