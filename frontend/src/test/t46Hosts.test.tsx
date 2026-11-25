@@ -327,9 +327,14 @@ describe('T46 호스트 위험도 화면', () => {
     expect(accounts).toHaveTextContent('u1.one외 5');
     expect(accounts).toHaveAttribute('title', 'u1.one, u2.two, u3.three, u4.four, u5.five 외 1개');
     // 탐지 모델은 표시 이름으로 보인다(식별자 원문이 아니다)
-    expect(h1).toHaveTextContent('기준선 이탈');
-    expect(h1).toHaveTextContent('통신 관계 이상');
+    expect(h1).toHaveTextContent('기준선 이탈외 1');
+    expect(within(h1).getByTitle('통신 관계 이상')).toHaveTextContent('외 1');
     expect(h1).not.toHaveTextContent('tail_rarity_v2');
+    // 좁은 폭에서 숨기는 열(세션 수·탐지 모델)의 값은 줄 툴팁에 있다
+    expect(h1).toHaveAttribute('title', '세션 157건 · 탐지 모델 기준선 이탈, 통신 관계 이상');
+    expect(screen.getByRole('columnheader', { name: /세션 수/ })).toHaveClass('hidden', '2xl:table-cell');
+    expect(screen.getByRole('columnheader', { name: '탐지 모델' })).toHaveClass('hidden', '2xl:table-cell');
+    expect(within(h1).getByTitle('마지막 탐지 2026-11-20 20:00:00')).toHaveTextContent('11-20 20:00');
     // 전환 표지와 뜻(툴팁)
     const badge = within(h1).getByText(ROLE_TRANSITION_LABEL);
     expect(badge.closest('[title]')).toHaveAttribute('title', ROLE_TRANSITION_TOOLTIP);
@@ -409,6 +414,11 @@ describe('T46 호스트 위험도 화면', () => {
     await waitFor(() => expect(server.last().get('dir')).toBe('asc'));
     expect(Object.fromEntries(urlParams())).toEqual({ sort: 'incidents', dir: 'asc' });
     expect(screen.getByRole('columnheader', { name: /인시던트/ })).toHaveAttribute('aria-sort', 'ascending');
+
+    // 세션 수로 정렬하면 그 열을 숨기지 않는다
+    await user.click(screen.getByRole('button', { name: '세션 수 기준 정렬' }));
+    await waitFor(() => expect(server.last().get('sort')).toBe('connections'));
+    expect(screen.getByRole('columnheader', { name: /세션 수/ })).not.toHaveClass('hidden');
 
     await user.click(screen.getByRole('button', { name: '호스트 주소 기준 정렬' }));
     await waitFor(() => expect(server.last().get('sort')).toBe('hostIp'));

@@ -11,7 +11,13 @@ import { StaleNotice } from '../components/StaleNotice';
 import { DetectionModelName, SocBadge, type BadgeTone } from '../components/StatusBadge';
 import type { QueueSource } from '../types/api';
 import type { HostRiskItem, HostRiskResponse } from '../types/hosts';
-import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber, formatRelativeTo } from '../utils/format';
+import {
+  DISPLAY_TIME_ZONE_LABEL,
+  formatCompactDateTime,
+  formatDateTime,
+  formatNumber,
+  formatRelativeTo,
+} from '../utils/format';
 import {
   HOSTS_DEFAULT_PERIOD,
   HOST_DEFAULT_DIR,
@@ -310,6 +316,7 @@ export function HostsPage() {
                 <HostTable
                   rows={data.items}
                   masked={masked}
+                  anchor={data.anchor}
                   cond={linkCond}
                   sortKey={sortKey}
                   sortDir={sortDir}
@@ -427,24 +434,34 @@ function FirstAndMore({
   );
 }
 
-function ModelList({ models }: { models: string[] }) {
+/** 탐지 모델 표시 이름(건수 많은 순). 표(compact)는 한 줄에 첫 모델과 "외 N", 카드는 둘까지 보인다 */
+function ModelList({ models, compact = false }: { models: string[]; compact?: boolean }) {
   if (models.length === 0) {
     return <span className="text-slate-600">-</span>;
   }
-  const shown = models.slice(0, 2);
-  const more = models.length - shown.length;
+  const shown = models.slice(0, compact ? 1 : 2);
+  const rest = models.slice(shown.length);
   return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+    <span className={`inline-flex items-baseline gap-x-1.5 gap-y-0.5 ${compact ? 'whitespace-nowrap' : 'flex-wrap'}`}>
       {shown.map((id) => (
         <DetectionModelName key={id} id={id} />
       ))}
-      {more > 0 && (
-        <span className="text-slate-500" title={models.slice(2).map((id) => labelText('detectionModel', id)).join(', ')}>
-          외 {formatNumber(more)}
+      {rest.length > 0 && (
+        <span className="text-slate-500" title={modelNames(rest)}>
+          외 {formatNumber(rest.length)}
         </span>
       )}
     </span>
   );
+}
+
+function modelNames(ids: string[]): string {
+  return ids.map((id) => labelText('detectionModel', id)).join(', ');
+}
+
+/** 좁은 폭에서 숨긴 열(세션 수·탐지 모델)의 값을 줄 툴팁에 둔다 */
+function hiddenInfoTitle(item: HostRiskItem): string {
+  return `세션 ${formatNumber(item.connections)}건 · 탐지 모델 ${item.models.length > 0 ? modelNames(item.models) : '-'}`;
 }
 
 function TransitionBadge() {
@@ -469,6 +486,7 @@ function HostSortHeader({
   sortDir,
   onSort,
   align = 'left',
+  className = '',
 }: {
   column: HostSortKey;
   label: string;
@@ -476,6 +494,7 @@ function HostSortHeader({
   sortDir: HostSortDir;
   onSort: (key: HostSortKey) => void;
   align?: 'left' | 'right';
+  className?: string;
 }) {
   const active = column === sortKey;
   const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
@@ -484,7 +503,7 @@ function HostSortHeader({
     <th
       scope="col"
       aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      className={`soc-th-compact ${align === 'right' ? 'text-right' : ''}`}
+      className={`soc-th-compact ${align === 'right' ? 'text-right' : ''} ${className}`}
     >
       <button
         type="button"
@@ -502,6 +521,7 @@ function HostSortHeader({
 function HostTable({
   rows,
   masked,
+  anchor,
   cond,
   sortKey,
   sortDir,
@@ -509,6 +529,7 @@ function HostTable({
 }: {
   rows: HostRiskItem[];
   masked: boolean;
+  anchor: string | null;
   cond: LinkCond;
   sortKey: HostSortKey;
   sortDir: HostSortDir;
@@ -528,6 +549,10 @@ function HostTable({
   }
 
   const headerProps = { sortKey, sortDir, onSort };
+  // 1536px(2xl) 미만에서는 세션 수·탐지 모델 열을 숨겨 1280px에서 표가 한 화면에 들어오게 한다(값은 줄 툴팁과 인시던트 목록에 있다).
+  // 지금 정렬 기준인 열은 숨기지 않는다(인시던트 목록 표와 같은 규칙).
+  const connectionsCell = sortKey === 'connections' ? '' : 'hidden 2xl:table-cell';
+  const modelsCell = 'hidden 2xl:table-cell';
   return (
     <div className="hidden overflow-x-auto md:block" data-hosts-table-wrap="">
       <table className="w-full border-collapse text-left">
@@ -538,20 +563,21 @@ function HostTable({
           <tr>
             <HostSortHeader column="hostIp" label={masked ? '호스트 대역' : '호스트'} {...headerProps} />
             <HostSortHeader column="risk" label="미종결 우선순위" {...headerProps} />
+            {/* 먼저 볼 호스트 표시라 우선순위 바로 옆에 둔다(좁은 폭에서도 가려지지 않게) */}
+            {!masked && (
+              <th scope="col" className="soc-th-compact" title={ROLE_TRANSITION_TOOLTIP}>
+                방향 전환
+              </th>
+            )}
             <HostSortHeader column="incidents" label="인시던트" align="right" {...headerProps} />
-            <HostSortHeader column="connections" label="세션 수" align="right" {...headerProps} />
-            <th scope="col" className="soc-th-compact">
+            <HostSortHeader column="connections" label="세션 수" align="right" className={connectionsCell} {...headerProps} />
+            <th scope="col" className={`soc-th-compact ${modelsCell}`}>
               탐지 모델
             </th>
             <th scope="col" className="soc-th-compact">
               관측 계정
             </th>
             <HostSortHeader column="lastDetected" label="마지막 탐지" {...headerProps} />
-            {!masked && (
-              <th scope="col" className="soc-th-compact" title={ROLE_TRANSITION_TOOLTIP}>
-                방향 전환
-              </th>
-            )}
           </tr>
         </thead>
         <tbody>
@@ -560,6 +586,7 @@ function HostTable({
             return (
               <tr
                 key={item.hostIp}
+                title={hiddenInfoTitle(item)}
                 tabIndex={url ? 0 : undefined}
                 onClick={url ? (e) => open(e, url) : undefined}
                 onKeyDown={
@@ -579,7 +606,8 @@ function HostTable({
                 }`}
               >
                 <td className="soc-td-compact">
-                  <div className="flex max-w-[22rem] items-baseline gap-1.5">
+                  {/* 주소는 줄이지 않는다(긴 IPv6도 그대로). 폭 제한은 호스트 이름에만 둔다 */}
+                  <div className="flex items-baseline gap-1.5">
                     {url ? (
                       <Link
                         to={url}
@@ -594,24 +622,31 @@ function HostTable({
                         {item.hostIp}
                       </span>
                     )}
-                    <FirstAndMore
-                      values={item.hostNames}
-                      total={item.hostNameCount}
-                      className="text-[11px] text-slate-400"
-                      testAttr="names"
-                    />
+                    <span className="inline-flex min-w-0 max-w-[5.5rem] 2xl:max-w-[13rem]">
+                      <FirstAndMore
+                        values={item.hostNames}
+                        total={item.hostNameCount}
+                        className="text-[11px] text-slate-400"
+                        testAttr="names"
+                      />
+                    </span>
                   </div>
                 </td>
                 <td className="soc-td-compact">
                   <PriorityCounts item={item} />
                 </td>
+                {!masked && (
+                  <td className="soc-td-compact">
+                    {item.roleTransition ? <TransitionBadge /> : <span className="text-slate-600">-</span>}
+                  </td>
+                )}
                 <td className="soc-td-compact soc-num text-slate-100">{formatNumber(item.incidents)}</td>
-                <td className="soc-td-compact soc-num text-slate-300">{formatNumber(item.connections)}</td>
-                <td className="soc-td-compact text-slate-300">
-                  <ModelList models={item.models} />
+                <td className={`soc-td-compact soc-num text-slate-300 ${connectionsCell}`}>{formatNumber(item.connections)}</td>
+                <td className={`soc-td-compact text-slate-300 ${modelsCell}`}>
+                  <ModelList models={item.models} compact />
                 </td>
                 <td className="soc-td-compact">
-                  <div className="max-w-[12rem]">
+                  <div className="max-w-[8rem] 2xl:max-w-[12rem]">
                     <FirstAndMore
                       values={item.accounts}
                       total={item.accountCount}
@@ -621,13 +656,12 @@ function HostTable({
                   </div>
                 </td>
                 <td className="soc-td-compact tabular-nums text-slate-300" title={`마지막 탐지 ${formatDateTime(item.lastDetectedAt)}`}>
-                  {item.lastDetectedAt ? formatDateTime(item.lastDetectedAt) : <span className="text-slate-600">-</span>}
+                  {item.lastDetectedAt ? (
+                    formatCompactDateTime(item.lastDetectedAt, anchor)
+                  ) : (
+                    <span className="text-slate-600">-</span>
+                  )}
                 </td>
-                {!masked && (
-                  <td className="soc-td-compact">
-                    {item.roleTransition ? <TransitionBadge /> : <span className="text-slate-600">-</span>}
-                  </td>
-                )}
               </tr>
             );
           })}
