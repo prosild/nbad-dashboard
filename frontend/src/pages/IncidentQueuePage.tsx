@@ -1603,7 +1603,7 @@ function pageList(page: number, pageCount: number): (number | 'gap')[] {
   return out;
 }
 
-function Pagination({
+export function Pagination({
   total,
   page,
   pageCount,

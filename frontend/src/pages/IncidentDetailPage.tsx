@@ -14,6 +14,7 @@ import { buildTimeline, HistoryTimeline } from '../components/incident/HistoryTi
 import { ReportSection } from '../components/incident/ReportSection';
 import { SendDecisionSection } from '../components/incident/SendDecisionSection';
 import { SlackThreadsSection } from '../components/incident/SlackThreadsSection';
+import { RelatedHostIncidents } from '../components/incident/RelatedHostIncidents';
 import { SummaryTab } from '../components/incident/SummaryTab';
 import type { IncidentDetailApiResponse, IncidentNoLocation, QueueNeighborKey, QueueNeighborsResponse } from '../types/api';
 import { incidentPath, parseIncidentNo } from '../utils/incidentLink';
@@ -402,7 +403,22 @@ export function IncidentDetailPage() {
                   tabIndex={0}
                   className="p-4 focus:outline-none sm:p-5"
                 >
-                  {t.key === 'summary' && <SummaryTab detail={current} />}
+                  {t.key === 'summary' && (
+                    <SummaryTab
+                      detail={current}
+                      related={
+                        // T46: 상세가 뜬 뒤 따로 부른다. 상세를 다시 불러오면(loadedAt) 함께 다시 부른다
+                        <RelatedHostIncidents
+                          jobId={current.incident.jobId}
+                          queueRank={current.incident.queueRank}
+                          hostIp={current.incident.hostIp}
+                          eventStart={current.incident.eventStart}
+                          maskedView={Boolean(data?.maskedView)}
+                          reloadKey={loadedAt}
+                        />
+                      }
+                    />
+                  )}
                   {t.key === 'evidence' && (
                     <EvidenceSection evidence={current.evidence} assetNames={current.assetNames} incident={current.incident} />
                   )}

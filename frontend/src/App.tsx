@@ -9,6 +9,7 @@ import { ToastProvider } from './components/ToastContext';
 import { AdminAuditLogsPage } from './pages/AdminAuditLogsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { HostsPage } from './pages/HostsPage';
 import { IncidentDetailPage } from './pages/IncidentDetailPage';
 import { IncidentQueuePage } from './pages/IncidentQueuePage';
 import { LoginPage } from './pages/LoginPage';
@@ -66,6 +67,15 @@ export function AppRoutes() {
         element={
           <RequireAuth>
             <IncidentDetailPage />
+          </RequireAuth>
+        }
+      />
+      {/* T46 호스트 위험도(모든 역할) */}
+      <Route
+        path="/hosts"
+        element={
+          <RequireAuth>
+            <HostsPage />
           </RequireAuth>
         }
       />

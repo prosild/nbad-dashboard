@@ -66,8 +66,16 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 /**
  * 요약 탭(T19): "무슨 일인가 → 왜 의심스러운가 → 다음에 할 일".
  * 리포트가 없으면 증적 정형 칸으로 만든 자동 요약 한 줄을 보인다. 빈 칸은 한 줄로만 보인다(V-13).
+ * T46: 맨 아래에 같은 호스트의 다른 인시던트 구역(related)을 둔다.
  */
-export function SummaryTab({ detail }: { detail: IncidentDetailView }) {
+export function SummaryTab({
+  detail,
+  related,
+}: {
+  detail: IncidentDetailView;
+  /** 맨 아래 구역(T46 같은 호스트의 다른 인시던트). 상세와 따로 불러 오므로 밖에서 받는다 */
+  related?: React.ReactNode;
+}) {
   const { incident, evidence, report } = detail;
   const sessions = evidence.available && evidence.connectionCount !== null ? evidence.connectionCount : incident.connectionCount;
   const peer = evidence.available ? topPeerText(evidence.topPeers) : null;
@@ -189,6 +197,8 @@ export function SummaryTab({ detail }: { detail: IncidentDetailView }) {
           <p className="text-xs text-slate-400">리포트에 추가 확인 권고가 없습니다. 증적 탭에서 세션과 상대 IP를 확인하세요.</p>
         )}
       </section>
+
+      {related}
     </div>
   );
 }

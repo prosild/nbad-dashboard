@@ -11,6 +11,7 @@ import {
   Lock,
   LogOut,
   Menu,
+  Network,
   Radar,
   Shield,
   Users,
@@ -40,6 +41,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: '현황판', icon: LayoutDashboard, matchPrefix: '/' },
   { to: '/incidents', label: '인시던트', icon: Radar, matchPrefix: '/incidents' },
+  { to: '/hosts', label: '호스트 위험도', icon: Network, matchPrefix: '/hosts' },
   { to: '/reviews', label: '에스컬레이션', icon: ClipboardCheck, matchPrefix: '/reviews' },
   { to: '/operations', label: '운영 현황', icon: Activity, matchPrefix: '/operations' },
   { to: '/admin/users', label: '사용자 관리', icon: Users, matchPrefix: '/admin/users', adminOnly: true },

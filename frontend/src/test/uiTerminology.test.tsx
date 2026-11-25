@@ -636,6 +636,83 @@ const auditResponse = {
   selectedLimit: 100,
 };
 
+/** T46 호스트 위험도 목록(조회자면 가려진 대역 한 줄) */
+function hostRiskResponse(masked: boolean) {
+  return {
+    items: [
+      {
+        hostIp: masked ? '192.168.*.*' : '192.168.10.50',
+        hostNames: ['dc01.corp.local', 'ad-primary'],
+        hostNameCount: 2,
+        accounts: masked ? ['j***'] : ['jdoe.admin'],
+        accountCount: 1,
+        high: 1,
+        medium: 0,
+        low: 2,
+        incidents: 4,
+        connections: 512,
+        models: ['tgn_recon', 'tail_rarity_v2'],
+        lastDetectedAt: '2026-11-16T03:08:00Z',
+        roleTransition: !masked,
+      },
+    ],
+    total: 1,
+    page: 1,
+    size: 50,
+    pageCount: 1,
+    anchor: '2026-11-20T01:30:00Z',
+    anchorMode: 'latest-data',
+    snapshot: true,
+    period: '7d',
+    periodStart: '2026-11-13T01:30:00Z',
+    periodEnd: '2026-11-20T01:30:00Z',
+    sources: [{ captureId: 'cic17-wed', sourceType: 'imported', latestJobId: null, lastDetectedAt: null }],
+    maskedView: masked,
+  };
+}
+
+/** T46 상세 요약 탭의 같은 호스트 인시던트(10건을 넘어 "전체 보기"가 보이는 경우) */
+function relatedHostResponse(masked: boolean) {
+  const hostIp = masked ? '192.168.*.*' : '192.168.10.50';
+  return {
+    hostIp,
+    total: 12,
+    maskedView: masked,
+    items: [
+      {
+        incidentNo: 1042,
+        jobId: 2,
+        queueRank: 5,
+        captureId: 'cic17-wed',
+        hostIp,
+        zeekadRole: 'responder',
+        eventStart: '2017-07-05T10:15:00Z',
+        detectedAt: '2026-11-16T03:08:00Z',
+        priority: null,
+        zeekadStatus: 'closed',
+        zeekadResolution: 'false_positive',
+        zeekadPickedBy: 'transformer_v2',
+        connectionCount: 85,
+      },
+      {
+        incidentNo: null,
+        jobId: 2,
+        queueRank: 6,
+        captureId: 'lab-20261119',
+        hostIp,
+        zeekadRole: 'originator',
+        eventStart: '2017-07-05T16:15:00Z',
+        detectedAt: '2026-11-16T03:08:00Z',
+        priority: 'medium',
+        zeekadStatus: 'investigating',
+        zeekadResolution: null,
+        zeekadPickedBy: 'tgn_recon',
+        connectionCount: 12,
+      },
+    ],
+  };
+}
+
 function renderAt(path: string, user: unknown, overrides: { queue?: unknown } = {}) {
   document.cookie = 'XSRF-TOKEN=terminology-test-token; path=/';
   const masked = (user as { maskedView?: boolean } | null)?.maskedView ?? false;
@@ -644,6 +721,9 @@ function renderAt(path: string, user: unknown, overrides: { queue?: unknown } = 
     vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url === '/api/auth/me') return json({ authenticated: user !== null, user });
+      // T46: 상세 주소로 시작하므로 상세 분기보다 먼저 본다
+      if (url.startsWith('/api/incidents/2/rank/1/related-host-incidents')) return json(relatedHostResponse(masked));
+      if (url.startsWith('/api/hosts')) return json(hostRiskResponse(masked));
       if (url.startsWith('/api/incidents/2/rank/1')) return json(detailResponse(masked));
       if (url.startsWith('/api/incidents/queue/neighbors'))
         return json({ current: null, position: null, total: 0, prev: null, next: null });
@@ -1013,6 +1093,53 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     // 지표 이름에 평균을 쓰지 않는다(중앙값·p90)
     for (const th of within(handling).getAllByRole('rowheader')) expect(th.textContent).not.toContain('평균');
     expectCleanText(container);
+  });
+
+  it('T46 호스트 위험도(분석가·조회자)', async () => {
+    const analyst = renderAt('/hosts', analystUser);
+    expect(await screen.findByRole('heading', { name: '호스트 위험도' })).toBeInTheDocument();
+    const table = await screen.findByRole('table');
+    for (const term of ['미종결 우선순위', '인시던트', '세션 수', '탐지 모델', '관측 계정', '마지막 탐지', '방향 전환']) {
+      expect(table, term).toHaveTextContent(term);
+    }
+    // 화면 글은 "전환"이다("전이"는 T17에서 화면 용어에서 뺐다). 탐지 모델은 표시 이름이다
+    expect(screen.getAllByText('목적지 → 출발지 전환').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('통신 관계 이상').length).toBeGreaterThanOrEqual(1);
+    expect(analyst.container.textContent).not.toContain('전이');
+    for (const title of Array.from(analyst.container.querySelectorAll('[title]')).map((el) => el.getAttribute('title') ?? '')) {
+      expect(title).not.toContain('전이');
+    }
+    expectCleanText(analyst.container);
+    analyst.unmount();
+
+    const viewer = renderAt('/hosts', viewerUser);
+    expect(await screen.findByText(/같은 대역\(A\.B\.\*\.\*\)의 호스트 전부입니다/)).toBeInTheDocument();
+    await screen.findByRole('table');
+    expect(screen.getAllByText('192.168.*.*').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('목적지 → 출발지 전환')).toBeNull();
+    // 마스킹 안내는 상단 바 한 곳뿐이다
+    expect(screen.getAllByText(/마스킹/)).toHaveLength(1);
+    expectCleanText(viewer.container);
+  });
+
+  it('T46 상세 요약 탭의 같은 호스트 인시던트(분석가·조회자)', async () => {
+    const analyst = renderAt('/incidents/2/rank/1', analystUser);
+    const heading = await screen.findByRole('heading', { name: '같은 호스트의 다른 인시던트' });
+    const section = heading.closest('section') as HTMLElement;
+    await within(section).findByText('#1042');
+    for (const term of ['이 인시던트 말고 12건', '가까운 2건', '전체 보기', '목적지', '출발지', '종결', '분석 중', '오탐', '행위 패턴 이탈', '상세 보기']) {
+      expect(section, term).toHaveTextContent(term);
+    }
+    expect(section).toHaveTextContent(/\d+(분|시간|일) (전|뒤)/);
+    expectCleanText(analyst.container);
+    analyst.unmount();
+
+    const viewer = renderAt('/incidents/2/rank/1', viewerUser);
+    const masked = await screen.findByRole('heading', { name: '같은 대역(192.168.*.*) 인시던트' });
+    await within(masked.closest('section') as HTMLElement).findByText('#1042');
+    expect(screen.queryByRole('heading', { name: '같은 호스트의 다른 인시던트' })).toBeNull();
+    expect(screen.getAllByText(/마스킹/)).toHaveLength(1);
+    expectCleanText(viewer.container);
   });
 
   it('관리자 사용자 관리·감사 로그', async () => {
