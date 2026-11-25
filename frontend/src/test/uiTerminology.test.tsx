@@ -5,10 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
-import type { IncidentQueueItem, QueuePriority } from '../types/api';
+import type { DashboardOverviewResponse, IncidentQueueItem, QueuePriority } from '../types/api';
 import { fakeQueue, unified } from './fakeQueueServer';
 import { EmptyPeriodText, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import { SourceSelect } from '../components/ConditionBar';
+import { ThreatPanels } from '../components/dashboard/ThreatPanels';
 
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
@@ -1184,6 +1185,53 @@ describe('T29 기간 밖 안내·수집원 목록 문구', () => {
     );
     expect(container.textContent).toContain('선택한 기간 밖 인시던트 1건');
     expect(container.textContent).toContain('마지막 탐지 11-12 12:10(기준 시각 7일 전)');
+    expectCleanText(container);
+  });
+});
+
+describe('T45b 현황판 위협 가시성 패널 문구', () => {
+  it('ATT&CK 후보·위험 호스트·주요 알림 묶음(조회자, 값이 있을 때와 계산 생략·빈 값)에 내부 이름·영어 병기가 없다', () => {
+    const base = {
+      anchor: '2026-11-21T00:00:00Z',
+      maskedView: true,
+    } as DashboardOverviewResponse;
+    const full: DashboardOverviewResponse = {
+      ...base,
+      attack: {
+        incidentsWithCandidates: 3,
+        tactics: [
+          { tactic: 'credential-access', count: 2 },
+          { tactic: 'custom-stage', count: 1 },
+        ],
+        techniques: [
+          { attackId: 'T1059', name: 'Command and Scripting Interpreter', count: 2 },
+          { attackId: 'T1110', name: null, count: 1 },
+        ],
+        techniqueCount: 12,
+      },
+      topHosts: {
+        originator: [{ hostIp: '10.50.*.*', high: 2, medium: 1, low: 0, total: 4, lastDetectedAt: '2026-11-20T10:00:00Z' }],
+        responder: [],
+      },
+      topThreads: [
+        { headIncidentNo: 41, headHostIp: '10.80.*.*', headPickedBy: 'tgn_recon', periodIncidentCount: 2, totalMemberCount: 3, latestDetectedAt: '2026-11-20T10:00:00Z' },
+        { headIncidentNo: 7, headHostIp: null, headPickedBy: null, periodIncidentCount: 2, totalMemberCount: 2, latestDetectedAt: null },
+      ],
+      topThreadsOmitted: false,
+    };
+    const { container } = render(
+      <MemoryRouter>
+        <ThreatPanels overview={full} listQuery={(extra) => new URLSearchParams({ period: '24h', ...extra }).toString()} />
+        <ThreatPanels overview={{ ...base, topThreads: [], topThreadsOmitted: true }} listQuery={() => 'period=24h'} />
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toContain('확정이 아닌 가설 · 후보가 있는 인시던트 3건');
+    expect(container.textContent).toContain('기간 내 2건 · 전체 3건');
+    expect(container.textContent).toContain('묶음 2건');
+    expect(container.textContent).toContain('외 10개');
+    expect(container.textContent).toContain('알림 묶음이 많아 묶음 계산을 생략했습니다.');
+    // 화면 이름은 "주요 알림 묶음"이다(Slack 스레드로 묶인 알림이지 공격으로 확정된 묶음이 아니다)
+    expect(container.textContent).not.toContain('공격 묶음');
     expectCleanText(container);
   });
 });

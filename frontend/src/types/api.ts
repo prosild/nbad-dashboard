@@ -718,6 +718,58 @@ export interface DashboardOverviewResponse {
   captures: CaptureRow[];
   alerting: DashboardAlerting;
   maskedView: boolean;
+  /** T45b 위협 가시성. 옛 응답에는 없을 수 있어 선택 필드다(없으면 빈 값으로 그린다) */
+  attack?: DashboardAttack;
+  topHosts?: DashboardTopHosts;
+  topThreads?: TopThreadRow[];
+  /** 알림 묶음이 많아 서버가 묶음 계산을 생략했다(topThreads는 빈 목록) */
+  topThreadsOmitted?: boolean;
+}
+
+/** T45b ATT&CK 전술 한 줄. tactic = 슬러그, count = 같은 조건 큐 attack=슬러그의 total */
+export interface AttackTacticCount {
+  tactic: string;
+  count: number;
+}
+
+/** T45b ATT&CK 기법 한 줄. attackId = 대문자 ID, count = 같은 조건 큐 attack=ID의 total */
+export interface AttackTechniqueCount {
+  attackId: string;
+  name: string | null;
+  count: number;
+}
+
+/** T45b 리포트의 ATT&CK 후보 분포. techniques는 상위 10개, techniqueCount는 고유 기법 수 전체 */
+export interface DashboardAttack {
+  incidentsWithCandidates: number;
+  tactics: AttackTacticCount[];
+  techniques: AttackTechniqueCount[];
+  techniqueCount: number;
+}
+
+/** T45b 위험 호스트 한 줄. hostIp는 조회자면 가려진 값(A.B.*.*)이고 그 대역을 묶은 줄이다 */
+export interface TopHostRow {
+  hostIp: string;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+  lastDetectedAt: string | null;
+}
+
+export interface DashboardTopHosts {
+  originator: TopHostRow[];
+  responder: TopHostRow[];
+}
+
+/** T45b 알림 묶음 한 줄. periodIncidentCount = 지금 조건 안 구성원 수, totalMemberCount = 묶음 전체 구성원 수 */
+export interface TopThreadRow {
+  headIncidentNo: number;
+  headHostIp: string | null;
+  headPickedBy: string | null;
+  periodIncidentCount: number;
+  totalMemberCount: number;
+  latestDetectedAt: string | null;
 }
 
 export interface AdminUserDto {

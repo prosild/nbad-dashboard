@@ -9,7 +9,9 @@ import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../compo
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
 import { CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, SocBadge } from '../components/StatusBadge';
+import { PanelHeader } from '../components/dashboard/PanelHeader';
 import { SourceStatusList } from '../components/dashboard/SourceStatus';
+import { ThreatPanels } from '../components/dashboard/ThreatPanels';
 import { TrendChart } from '../components/dashboard/TrendChart';
 import type { DashboardOverviewResponse, UnifiedQueueItem, UnifiedQueueResponse } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber, formatRelativeTo } from '../utils/format';
@@ -275,6 +277,9 @@ export function DashboardPage() {
               <RecentPanel cond={cond} queue={queue} shortNames={shortNames} className="xl:col-span-2" />
             </div>
 
+            {/* T45b: 같은 overview 응답의 위협 가시성 세 패널. 링크는 지금 조건을 유지한다(알림 묶음만 묶음 전체) */}
+            <ThreatPanels overview={overview} listQuery={(extra) => conditionQuery(cond, extra)} />
+
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
               <section className="soc-card min-w-0 space-y-3 p-4 xl:col-span-3" aria-label="수집원 상태">
                 <PanelHeader
@@ -320,18 +325,6 @@ function AnchorText({ overview }: { overview: DashboardOverviewResponse | null }
       기준 시각{' '}
       <span className="font-semibold tabular-nums text-slate-100">{formatDateTime(overview.anchor)}</span> {DISPLAY_TIME_ZONE_LABEL}
     </span>
-  );
-}
-
-function PanelHeader({ icon: Icon, title, note }: { icon: React.ComponentType<{ className?: string }>; title: string; note?: string }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-        <Icon className="h-4 w-4 text-slate-400" />
-        {title}
-      </h2>
-      {note && <span className="text-[11px] text-slate-400">{note}</span>}
-    </div>
   );
 }
 
