@@ -11,6 +11,8 @@
     [string]$ExpectedRefsFile = "",
     # T36 빠른 사람 사용 흉내·429 회복 확인 도구(handoff/T36/tools/read-usage.js, playwright-core). 주면 [T36d]를 돌린다.
     [string]$UsageScript = "",
+    # T47 응답 시간 비교의 앞 이미지(지금 공개 중인 앱 이미지). 로컬에 없거나 시험 이미지와 같으면 새 이미지 값만 적는다.
+    [string]$BaselineAppImage = "zeek-ad-dashboard-app:t43",
     [switch]$SkipZap
 )
 
@@ -393,9 +395,14 @@ function Invoke-T33Exposure($TrialClient) {
     $reqs.Add(@("operations-all", "/api/operations?period=all"))
     $reqs.Add(@("reviews-all", "/api/reviews"))
     $reqs.Add(@("overview-all", "/api/dashboard/overview?period=all"))
+    # T47: 호스트 위험도(T46). 조회자는 대역 단위 줄이라 분석가와 줄 수·순서가 다르다(차이가 곧 분석가에게만 보이는 값이다)
+    $reqs.Add(@("hosts", "/api/hosts?period=all&captureId=$exposureLabCapture&size=100"))
+    $reqs.Add(@("hosts-all", "/api/hosts?period=all&size=100"))
     foreach ($it in $items) {
         $reqs.Add(@("detail", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)"))
         $reqs.Add(@("assignees", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)/assignees"))
+        # T47: 상세의 같은 호스트 인시던트(T46)
+        $reqs.Add(@("related-host", "/api/incidents/$($it.jobId)/rank/$($it.queueRank)/related-host-incidents"))
     }
     # T39: 공개 전 내용 목록(ㄴ)용으로 demo 응답 원문을 남긴다(실제 값, -ExposureDir 안에만. 커밋하지 않는다).
     $demoRawDir = Join-Path $ExposureFullDir "demo-responses"
@@ -409,7 +416,7 @@ function Invoke-T33Exposure($TrialClient) {
         $dRes = Invoke-Http -Path $r[1] -Client $dc
         $rawSeq++
         [IO.File]::WriteAllText((Join-Path $demoRawDir ("{0:D4}-{1}.json" -f $rawSeq, $r[0])), ("// GET $($r[1]) -> HTTP $($dRes.Status)`n" + [string]$dRes.Body), $utf8NoBom)
-        if ($r[0] -ne 'detail' -and $r[0] -ne 'assignees') { $statusLines.Add("$($r[0]) $($r[1]): $trialUser HTTP $($tRes.Status), demo HTTP $($dRes.Status)") }
+        if ($r[0] -ne 'detail' -and $r[0] -ne 'assignees' -and $r[0] -ne 'related-host') { $statusLines.Add("$($r[0]) $($r[1]): $trialUser HTTP $($tRes.Status), demo HTTP $($dRes.Status)") }
         Assert-Status $tRes 200 "[T33x] $trialUser $($r[1])"
         $tLeaves = [ordered]@{}; Get-JsonLeaves $tRes.Json "" $tLeaves
         $dLeaves = @{}
@@ -426,7 +433,7 @@ function Invoke-T33Exposure($TrialClient) {
             [void]$fields[$key].Demo.Add($(if ($dRes.Status -ne 200) { "demo HTTP $($dRes.Status)" } elseif ($null -eq $dv) { '(없음)' } else { Get-ValueShape $dv }))
         }
     }
-    $detailStatus = "detail·assignees: $($items.Count)건씩(모두 $trialUser 200), demo assignees HTTP $((Invoke-Http -Path "/api/incidents/$($items[0].jobId)/rank/$($items[0].queueRank)/assignees" -Client $dc).Status)"
+    $detailStatus = "detail·assignees·related-host: $($items.Count)건씩(모두 $trialUser 200), demo assignees HTTP $((Invoke-Http -Path "/api/incidents/$($items[0].jobId)/rank/$($items[0].queueRank)/assignees" -Client $dc).Status)"
     $md = [System.Collections.Generic.List[string]]::new()
     $md.Add("# T33 노출 확인: $exposureLabCapture, demo(VIEWER) vs $trialUser(ANALYST)")
     $md.Add("")
@@ -1761,7 +1768,19 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     }
     # [T39d] 숨김 캡처 ID(lab-20261123 포함)가 demo의 현황판·운영 현황·검토 목록 응답 본문에 없다
     $t39dLeaks = @(); $t39dIp = [System.Collections.Generic.List[string]]::new(); $t39dLines = @()
-    foreach ($pth in @("/api/dashboard/overview", "/api/dashboard/overview?period=all", "/api/operations", "/api/operations?period=all", "/api/reviews", "/api/reviews?pendingOnly=true", "/api/incidents/queue?period=all&size=100")) {
+    # T47: 호스트 위험도, 같은 호스트 인시던트 한 건, 큐 hostIp=·attack= 한 건씩도 같은 검사를 받는다(T45·T46).
+    #      hostIp는 조회자 큐의 첫 가린 주소(A.B.*.*), attack은 현황판 분포의 첫 전술(없으면 credential-access. 0건이어도 본문 검사는 한다)
+    $ov39 = Invoke-Http -Path "/api/dashboard/overview?period=all" -Client $t39
+    Assert-Status $ov39 200 "[T39d] demo overview(조건 값 고르기)"
+    $tac39 = @($ov39.Json.attack.tactics | Where-Object { $_ })
+    $attack39 = if ($tac39.Count) { [string]$tac39[0].tactic } else { "credential-access" }
+    $q39 = Invoke-Http -Path "/api/incidents/queue?period=all&size=100" -Client $t39
+    Assert-Status $q39 200 "[T39d] demo 큐(조건 값 고르기)"
+    $first39 = @($q39.Json.items | Where-Object { $_ -and [string]$_.hostIp -match '^\d{1,3}\.\d{1,3}\.\*\.\*$' }) | Select-Object -First 1
+    Assert-True ($null -ne $first39) "[T39d] demo 큐에 가린 IPv4 주소 행이 있음"
+    $t47Paths39 = @("/api/hosts?period=all&size=100", "/api/incidents/$($first39.jobId)/rank/$($first39.queueRank)/related-host-incidents",
+        "/api/incidents/queue?period=all&size=100&hostIp=$($first39.hostIp)", "/api/incidents/queue?period=all&size=100&attack=$attack39")
+    foreach ($pth in (@("/api/dashboard/overview", "/api/dashboard/overview?period=all", "/api/operations", "/api/operations?period=all", "/api/reviews", "/api/reviews?pendingOnly=true", "/api/incidents/queue?period=all&size=100") + $t47Paths39)) {
         $r39 = Invoke-Http -Path $pth -Client $t39
         Assert-Status $r39 200 "[T39d] demo $pth"
         Find-UnmaskedIpv4 $r39.Json "t39d[$pth]" $t39dIp
@@ -2228,6 +2247,438 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($direct32 -match '(?m)^csrf 200 hsts=False') "[T32d] api -> 앱 직접 X-Forwarded-Proto: https는 https 판정 아님"
     Assert-True ($direct32 -match 'location=http://dashboard-app:8080/login') "[T32d] api -> 앱 직접 Location은 연결 값"
 
+    # ───────── [T47] E 단계 기능(T44~T46·T45b)을 실제 스냅샷에서 ─────────
+    # 덮어쓴 조회 한도(분당 6,000회)가 유효한 [T36] 앞에서 돈다. demo(조회자)와 trial-analyst(분석가)로 큐 hostIp·attack, 묶음 표지,
+    # 호스트 위험도, 같은 호스트 인시던트, overview 새 집계를 같은 조건 큐 total과 독립 SQL에 맞춰 본다.
+    # 값(주소·호스트 이름·계정 이름·incident_id)은 기록하지 않는다. 수와 가린 값(A.B.*.*), 전술 슬러그·기법 ID, 인시던트 번호만 쓴다.
+    # 조건에 맞는 자료가 스냅샷에 없으면 FAIL이 아니라 "자료 없음"으로 적는다.
+    Write-Host "=== [T47] 큐 hostIp·attack, 묶음 표지, 호스트 위험도, 같은 호스트 인시던트, overview 새 집계, 응답 시간 비교 ==="
+    $t47d = New-Client "198.51.100.147"
+    Assert-Status (Login-Api $t47d "demo" $env:DEMO_PASSWORD) 200 "[T47] demo 로그인"
+    $t47t = New-Client "198.51.100.148"
+    Assert-Status (Login-Api $t47t $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T47] $trialUser 로그인"
+    $t47Ip = [System.Collections.Generic.List[string]]::new()
+    $t47Leaks = [System.Collections.Generic.List[string]]::new()
+    $t47NoData = [System.Collections.Generic.List[string]]::new()
+    $t47Pairs = @(@{ Name = "demo"; Client = $t47d; Masked = $true }, @{ Name = $trialUser; Client = $t47t; Masked = $false })
+    # 요청 하나: 200 확인, 조회자 응답이면 가리지 않은 IPv4 경로를 모으고, 두 계정 모두 숨김 캡처 ID가 본문에 있는지 본다. $Label에는 값을 넣지 않는다
+    $get47 = {
+        param([string]$P, $Who, [string]$Label)
+        $r = & $get40 $P $Who.Client
+        Assert-Status $r 200 "[T47] $($Who.Name) $Label"
+        if ($Who.Masked) { Find-UnmaskedIpv4 $r.Json "t47[$Label]" $t47Ip }
+        foreach ($hc in $demoHiddenCaptures) { if ($r.Body.Contains($hc)) { $t47Leaks.Add("$($Who.Name) $Label -> $hc") } }
+        return $r
+    }
+    $sql47 = {
+        param([string]$S, [string]$What)
+        $o = Invoke-Psql "zeekad" $S
+        # 이 단계의 SQL 글에는 주소·계정 값이 없다(캡처 ID와 작업·순위 번호만). 오류 글 앞부분만 싣는다
+        if ($o.ExitCode -ne 0) { throw "[T47] 독립 SQL 실패($What, exit=$($o.ExitCode)): $(($o.Output -replace '\s+', ' ').Trim().Substring(0, [Math]::Min(300, ($o.Output -replace '\s+', ' ').Trim().Length)))" }
+        return $o.Output.Trim()
+    }
+    $lines47 = { param([string]$T) return @($T -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    $pub47 = "l.capture_id IN ($publicIn39)"
+    $lq47 = "dashboard.latest_incident_queue l"
+    $ipv4Sql47 = '''^[0-9]{1,3}(\.[0-9]{1,3}){3}$'''
+    # 조회자에게 보이는 가린 주소(A.B.*.*). IPv4 꼴이 아니면 그대로다(옥텟 범위는 보지 않는다)
+    $mask47 = "CASE WHEN l.host_ip ~ $ipv4Sql47 THEN split_part(l.host_ip, '.', 1) || '.' || split_part(l.host_ip, '.', 2) || '.*.*' ELSE l.host_ip END"
+    $bandRe47 = '^\d{1,3}\.\d{1,3}\.\*\.\*$'
+    $base47 = (& $sql47 "SELECT count(*) || '|' || count(DISTINCT l.host_ip) || '|' || count(DISTINCT $mask47) || '|' || count(DISTINCT l.host_ip) FILTER (WHERE l.host_ip !~ $ipv4Sql47) FROM $lq47 WHERE $pub47" "기준 수") -split '\|'
+    $rows47 = [long]$base47[0]; $hosts47 = [long]$base47[1]; $bands47 = [long]$base47[2]; $nonV4Hosts47 = [long]$base47[3]
+    $e2eLogs.Add("[T47] public latest queue (independent SQL): rows=$rows47 distinct host_ip=$hosts47 distinct masked ranges=$bands47 distinct non-IPv4 host values=$nonV4Hosts47; public captures=[$($demoVisibleCaptures -join ', ')]")
+
+    # [T47i] IPv6 호스트 주소 조사(읽기만, 수만). 조회자에게 IPv6 주소는 지금 원문으로 나간다(maskIp가 IPv4만 가린다). 가리기 규칙은 여기서 바꾸지 않는다
+    $v6 = (& $sql47 "SELECT count(*) FILTER (WHERE l.host_ip LIKE '%:%') || '|' || count(DISTINCT l.host_ip) FILTER (WHERE l.host_ip LIKE '%:%') || '|' || count(*) FILTER (WHERE l.host_ip NOT LIKE '%:%' AND l.host_ip !~ $ipv4Sql47) FROM $lq47 WHERE $pub47" "IPv6 호스트 수") -split '\|'
+    $v6ByCap = (& $sql47 "SELECT l.capture_id || '=' || count(*) FROM $lq47 WHERE $pub47 AND l.host_ip LIKE '%:%' GROUP BY l.capture_id ORDER BY 1" "IPv6 호스트 캡처별 수") -replace "`r?`n", ', '
+    $v6Text = "# T47 IPv6 host address survey (public captures, latest queue; counts only, no address values)`nlatest queue rows (public)=$rows47`nrows whose host_ip is IPv6 (contains ':')=$($v6[0])`ndistinct IPv6 host_ip values=$($v6[1])`nrows whose host_ip is neither IPv4-shaped nor IPv6=$($v6[2])`nIPv6 rows per capture=[$v6ByCap]`n"
+    Save-Evidence "t47-ipv6-hosts.txt" $v6Text
+    $e2eLogs.Add("[T47i] IPv6 host_ip in public latest queue: rows=$($v6[0]) distinct=$($v6[1]) per capture=[$v6ByCap]; neither IPv4 nor IPv6 rows=$($v6[2]) (counts only; t47-ipv6-hosts.txt)")
+
+    # [T47a] 큐 hostIp: 분석가의 온전한 주소 = 독립 SQL의 그 호스트 건수, 대역 = 그 대역 건수(두 계정), 조회자의 온전한 주소 요청은 0건, 형식 오류 400
+    $hostTop47 = @(& $lines47 (& $sql47 "SELECT l.host_ip || '|' || count(*) FROM $lq47 WHERE $pub47 AND l.host_ip ~ $ipv4Sql47 GROUP BY l.host_ip ORDER BY count(*) DESC, l.host_ip LIMIT 3" "상위 호스트"))
+    $bandTop47 = @(& $lines47 (& $sql47 "SELECT x.m || '|' || count(*) FROM (SELECT $mask47 AS m FROM $lq47 WHERE $pub47 AND l.host_ip ~ $ipv4Sql47) x GROUP BY x.m ORDER BY count(*) DESC, x.m LIMIT 3" "상위 대역"))
+    $t47aBad = @(); $t47aLines = @(); $hi = 0
+    foreach ($ln in $hostTop47) {
+        $hi++
+        $hp = $ln -split '\|'
+        $exp = [long]$hp[1]
+        $range = $hp[0] -replace '^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$', '$1.$2.*.*'
+        $rt = & $get47 "/api/incidents/queue?period=all&size=25&hostIp=$($hp[0])" $t47Pairs[1] "queue hostIp=<host #$hi>"
+        $rd = & $get47 "/api/incidents/queue?period=all&size=25&hostIp=$($hp[0])" $t47Pairs[0] "queue hostIp=<host #$hi full address>"
+        if ([long]$rt.Json.total -ne $exp -or [long]$rt.Json.summary.total -ne $exp) { $t47aBad += "$trialUser host #$hi total=$($rt.Json.total) expected=$exp" }
+        if ([long]$rd.Json.total -ne 0 -or @($rd.Json.items | Where-Object { $_ }).Count -ne 0) { $t47aBad += "demo host #$hi full address total=$($rd.Json.total) (expected 0)" }
+        $t47aLines += "host #$hi (range $range): $trialUser total=$($rt.Json.total) SQL=$exp; demo with the full address total=$($rd.Json.total)"
+    }
+    foreach ($ln in $bandTop47) {
+        $bp = $ln -split '\|'
+        $exp = [long]$bp[1]
+        $totals = @()
+        foreach ($who in $t47Pairs) {
+            $r = & $get47 "/api/incidents/queue?period=all&size=25&hostIp=$($bp[0])" $who "queue hostIp=$($bp[0])"
+            $totals += "$($who.Name)=$($r.Json.total)"
+            if ([long]$r.Json.total -ne $exp -or [long]$r.Json.summary.total -ne $exp) { $t47aBad += "$($who.Name) range $($bp[0]) total=$($r.Json.total) expected=$exp" }
+            if ($who.Masked -and @($r.Json.items | Where-Object { $_ -and $_.hostIp -ne $bp[0] }).Count) { $t47aBad += "demo range $($bp[0]) has rows of another range" }
+        }
+        $t47aLines += "range $($bp[0]): $($totals -join ' ') SQL=$exp"
+    }
+    $bad47 = & $get40 "/api/incidents/queue?period=all&hostIp=10.0.0" $t47d
+    $t47aLines += "demo hostIp=10.0.0 (format error) -> HTTP $($bad47.Status)"
+    $e2eLogs.Add("[T47a] queue hostIp (top $($hostTop47.Count) hosts, top $($bandTop47.Count) ranges):`n       $($t47aLines -join "`n       ")`n       mismatches=$($t47aBad.Count)$(if ($t47aBad.Count) { ' ' + ($t47aBad -join '; ') })")
+    Assert-True ($hostTop47.Count -ge 1 -and $bandTop47.Count -ge 1 -and $t47aBad.Count -eq 0) "[T47a] 큐 hostIp 건수 = 독립 SQL(demo·$trialUser), 조회자의 온전한 주소는 0건"
+    Assert-ApiError $bad47 400 "INVALID_REQUEST" "[T47a] hostIp 형식 오류"
+
+    # [T47b] 큐 attack: 기법 ID·전술 건수 = 독립 SQL(JSON 후보를 jsonb 함수로 직접 센다. 앱 규칙 service/AttackFilter.java와 같은 방법:
+    #        최신 큐 행이 가리키는 리포트의 후보만, attack_id는 앞뒤 공백을 떼고 대문자, 전술은 소문자 + [\s_]+ → '-' 뒤 슬러그 꼴·길이 2~64, 기법 ID 꼴 전술은 세지 않음)
+    $attackSql47 = @'
+WITH base AS (SELECT l.incident_id, l.zeekad_report_job_id FROM dashboard.latest_incident_queue l WHERE @CAP),
+lq AS (SELECT DISTINCT b.incident_id, r.zeekad_attack_candidates::jsonb AS c
+       FROM base b
+       JOIN dashboard.incident_reports r ON r.job_id = b.zeekad_report_job_id AND r.incident_id = b.incident_id
+       WHERE jsonb_typeof(r.zeekad_attack_candidates::jsonb) = 'array'),
+el AS (SELECT lq.incident_id, e FROM lq CROSS JOIN LATERAL jsonb_array_elements(lq.c) e WHERE jsonb_typeof(e) = 'object'),
+tech AS (SELECT DISTINCT incident_id, upper(btrim(e ->> 'attack_id', E' \t\n\r')) AS v FROM el
+         WHERE jsonb_typeof(e -> 'attack_id') IN ('string', 'number', 'boolean')
+           AND btrim(e ->> 'attack_id', E' \t\n\r') ~ '^[Tt][0-9]{4}(\.[0-9]{3})?$'),
+tt AS (SELECT el.incident_id, x #>> '{}' AS t FROM el
+       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(el.e -> 'tactics') = 'array' THEN el.e -> 'tactics'
+                                                    WHEN jsonb_typeof(el.e -> 'tactics') IN ('string', 'number', 'boolean') THEN jsonb_build_array(el.e -> 'tactics')
+                                                    ELSE '[]'::jsonb END) x
+       WHERE jsonb_typeof(x) IN ('string', 'number', 'boolean')),
+ts AS (SELECT incident_id, regexp_replace(lower(btrim(t, E' \t\n\r')), '[\s_]+', '-', 'g') AS v FROM tt),
+tac AS (SELECT DISTINCT incident_id, v FROM ts
+        WHERE v ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(v) BETWEEN 2 AND 64 AND v !~ '^t[0-9]{4}(\.[0-9]{3})?$'),
+vals AS (SELECT 'technique' AS k, incident_id, v FROM tech UNION ALL SELECT 'tactic', incident_id, v FROM tac)
+SELECT vals.k || '|' || vals.v || '|' || count(*) FROM vals JOIN base b ON b.incident_id = vals.incident_id GROUP BY vals.k, vals.v
+UNION ALL
+SELECT 'any|-|' || count(*) FROM base b WHERE b.incident_id IN (SELECT incident_id FROM vals)
+ORDER BY 1
+'@
+    $att47 = @{ technique = @{}; tactic = @{}; any = [long]0 }
+    foreach ($ln in @(& $lines47 (& $sql47 $attackSql47.Replace('@CAP', $pub47) "ATT&CK 후보 분포"))) {
+        $ap = $ln -split '\|'
+        if ($ap[0] -eq 'any') { $att47.any = [long]$ap[2] } else { $att47[$ap[0]][$ap[1]] = [long]$ap[2] }
+    }
+    $techTop47 = @($att47.technique.GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Key } } | Select-Object -First 3)
+    $tacTop47 = @($att47.tactic.GetEnumerator() | Sort-Object @{ Expression = { $_.Value }; Descending = $true }, @{ Expression = { $_.Key } } | Select-Object -First 3)
+    $t47bBad = @(); $t47bLines = @()
+    if ($att47.technique.Count -eq 0 -and $att47.tactic.Count -eq 0) {
+        $t47NoData.Add("[T47b] 공개 캡처 최신 큐의 리포트에 ATT&CK 후보가 없음")
+    } else {
+        foreach ($entry in ($techTop47 + $tacTop47)) {
+            $totals = @()
+            foreach ($who in $t47Pairs) {
+                $r = & $get47 "/api/incidents/queue?period=all&size=25&attack=$($entry.Key)" $who "queue attack=$($entry.Key)"
+                $totals += "$($who.Name)=$($r.Json.total)"
+                if ([long]$r.Json.total -ne [long]$entry.Value) { $t47bBad += "$($who.Name) attack=$($entry.Key) total=$($r.Json.total) expected=$($entry.Value)" }
+            }
+            $t47bLines += "attack=$($entry.Key): $($totals -join ' ') SQL=$($entry.Value)"
+        }
+        if ($tacTop47.Count) {
+            $slug47 = [string]$tacTop47[0].Key
+            $title47 = (@($slug47 -split '-' | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) }) -join '%20')
+            $r = & $get47 "/api/incidents/queue?period=all&size=25&attack=$title47" $t47Pairs[0] "queue attack=$title47"
+            if ([long]$r.Json.total -ne [long]$tacTop47[0].Value) { $t47bBad += "demo attack=$title47 total=$($r.Json.total) expected=$($tacTop47[0].Value)" }
+            $t47bLines += "attack=$title47 (title form of $slug47): demo=$($r.Json.total) SQL=$($tacTop47[0].Value)"
+        }
+    }
+    $badAttack47 = & $get40 "/api/incidents/queue?period=all&attack=bad.value" $t47d
+    $e2eLogs.Add("[T47b] ATT&CK candidates in public latest queue (independent SQL, jsonb): techniques=$($att47.technique.Count) tactics=$($att47.tactic.Count) rows with candidates=$($att47.any)`n       $($t47bLines -join "`n       ")`n       demo attack=bad.value (format error) -> HTTP $($badAttack47.Status); mismatches=$($t47bBad.Count)$(if ($t47bBad.Count) { ' ' + ($t47bBad -join '; ') })")
+    Assert-True ($t47bBad.Count -eq 0) "[T47b] 큐 attack 건수 = 독립 SQL(demo·$trialUser)"
+    Assert-ApiError $badAttack47 400 "INVALID_REQUEST" "[T47b] attack 형식 오류"
+
+    # [T47c] 큐 행 묶음 표지: 표지가 있는 행을 골라(묶음 5개까지) threadMemberCount = 큐 period=all&thread=<threadHeadNo> total = 독립 SQL([T40]의 $exp40).
+    #        머리는 sha256(incident_id)로만 맞춘다. 표지 번호의 캡처는 모두 공개 캡처다
+    $noToHash47 = @{}
+    foreach ($hk in $refs40.Keys) { $noToHash47[[long]$refs40[$hk].No] = $hk }
+    $t47cBad = @(); $t47cLines = @()
+    foreach ($who in $t47Pairs) {
+        $badged = [System.Collections.Generic.List[object]]::new()
+        $scanned = 0
+        for ($pg = 1; $pg -le 5; $pg++) {
+            $q = & $get47 "/api/incidents/queue?period=all&size=100&page=$pg" $who "queue period=all page=$pg"
+            foreach ($it in @($q.Json.items | Where-Object { $_ })) { $scanned++; if ($null -ne $it.threadHeadNo) { $badged.Add($it) } }
+            if (@($badged | ForEach-Object { [long]$_.threadHeadNo } | Sort-Object -Unique).Count -ge 5 -or $pg -ge [int]$q.Json.pageCount) { break }
+        }
+        $nos = @($badged | ForEach-Object { [long]$_.threadHeadNo } | Sort-Object -Unique | Select-Object -First 5)
+        if ($nos.Count -eq 0) { $t47NoData.Add("[T47c] $($who.Name) 큐 앞 $scanned행에 묶음 표지가 붙는 행이 없음"); continue }
+        foreach ($no in $nos) {
+            $hk = $noToHash47[$no]
+            $e = if ($hk) { $exp40[$hk] } else { $null }
+            $ref = if ($hk) { $refs40[$hk] } else { $null }
+            $th = & $get47 "/api/incidents/queue?period=all&size=25&thread=$no" $who "queue thread=$no"
+            $rowCounts = @($badged | Where-Object { [long]$_.threadHeadNo -eq $no } | ForEach-Object { [long]$_.threadMemberCount } | Sort-Object -Unique)
+            $expN = if ($e) { [long]$e.Public } else { -1 }
+            if ($rowCounts.Count -ne 1 -or $rowCounts[0] -ne $expN -or [long]$th.Json.total -ne $expN -or $expN -lt 2) { $t47cBad += "$($who.Name) #$no rows=[$($rowCounts -join ',')] thread total=$($th.Json.total) expected=$expN" }
+            if ($null -eq $ref -or -not ($demoVisibleCaptures -contains $ref.Capture)) { $t47cBad += "$($who.Name) #$no head capture is not public" }
+            $t47cLines += "$($who.Name) #${no}: row threadMemberCount=[$($rowCounts -join ',')] queue thread total=$($th.Json.total) SQL=$expN"
+        }
+        $t47cLines += "$($who.Name): scanned rows=$scanned with badge=$($badged.Count) heads checked=$($nos.Count)"
+    }
+    $e2eLogs.Add("[T47c] queue row thread badges:`n       $($t47cLines -join "`n       ")`n       mismatches=$($t47cBad.Count)$(if ($t47cBad.Count) { ' ' + ($t47cBad -join '; ') })")
+    Assert-True ($t47cBad.Count -eq 0) "[T47c] 묶음 표지 threadMemberCount = thread total = 독립 SQL"
+
+    # [T47d] GET /api/hosts(period=all): 줄 수 = 독립 SQL(분석가는 고유 host_ip, 조회자는 고유 가린 주소), 줄들의 incidents 합 = 큐 summary.total = 최신 큐 행 수,
+    #        상위 3줄 incidents = 큐 hostIp= total, 전환 표시 수 = 독립 SQL(조회자는 0, 전환만 보기는 빈 목록), 조회자 accounts[] 원소에 계정 원문 없음(원소 값으로 견준다)
+    # 계정 이름 열은 뷰에 있는 것만 읽는다(앱도 SELECT *로 읽어 있는 열만 쓴다: zeekad_name, 없으면 kerberos_user·ntlm_user). 값이 배열이어도 원소로 편다
+    $nameCols47 = @(& $lines47 (& $sql47 "SELECT column_name FROM information_schema.columns WHERE table_schema = 'dashboard' AND table_name = 'asset_names' AND column_name IN ('zeekad_name', 'kerberos_user', 'ntlm_user') ORDER BY 1" "asset_names 열"))
+    $hasName47 = [int]($nameCols47 -contains 'zeekad_name')
+    $rawNames47 = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($nameCols47.Count -gt 0) {
+        $nameParts47 = @($nameCols47 | ForEach-Object { "SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(to_jsonb(a.$_)) = 'array' THEN to_jsonb(a.$_) WHEN a.$_ IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(to_jsonb(a.$_)) END) AS v FROM dashboard.asset_names a WHERE a.capture_id IN ($publicIn39)" })
+        $rawNameSql47 = "SELECT DISTINCT btrim(s.v) FROM (" + ($nameParts47 -join " UNION ALL ") + ") s WHERE s.v IS NOT NULL AND btrim(s.v) <> ''"
+        foreach ($ln in @((& $sql47 $rawNameSql47 "계정 원문") -split "`r?`n")) { $n = $ln.Trim(); if ($n) { [void]$rawNames47.Add($n) } }
+    }
+    $dismissed47 = "NOT (lower(btrim(@A.zeekad_status)) = 'closed' AND lower(btrim(COALESCE(@A.zeekad_resolution, ''))) IN ('false_positive', 'benign'))"
+    $transCount47 = [long](& $sql47 ("SELECT count(DISTINCT l.host_ip) FROM $lq47 JOIN dashboard.latest_incident_queue o ON o.capture_id = l.capture_id AND o.host_ip = l.host_ip " +
+        "WHERE $pub47 AND lower(btrim(l.zeekad_role)) = 'responder' AND lower(btrim(o.zeekad_role)) = 'originator' AND o.event_start > l.event_start " +
+        "AND $($dismissed47.Replace('@A', 'l')) AND $($dismissed47.Replace('@A', 'o'))") "전환 호스트 수")
+    $t47dBad = @(); $t47dLines = @()
+    foreach ($who in $t47Pairs) {
+        $items = [System.Collections.Generic.List[object]]::new()
+        $first = & $get47 "/api/hosts?period=all&size=100&page=1" $who "hosts period=all page=1"
+        $pages = [int]$first.Json.pageCount
+        for ($pg = 1; $pg -le $pages; $pg++) {
+            $res = if ($pg -eq 1) { $first } else { & $get47 "/api/hosts?period=all&size=100&page=$pg" $who "hosts period=all page=$pg" }
+            foreach ($it in @($res.Json.items | Where-Object { $_ })) { $items.Add($it) }
+        }
+        $sum = 0; foreach ($it in $items) { $sum += [long]$it.incidents }
+        $qAll = & $get47 "/api/incidents/queue?period=all&size=25" $who "queue period=all"
+        $expRows = if ($who.Masked) { $bands47 } else { $hosts47 }
+        if ($items.Count -ne $expRows -or [long]$first.Json.total -ne $expRows) { $t47dBad += "$($who.Name) rows=$($items.Count) total=$($first.Json.total) expected=$expRows" }
+        if ($sum -ne [long]$qAll.Json.summary.total -or $sum -ne $rows47) { $t47dBad += "$($who.Name) sum(incidents)=$sum queue summary.total=$($qAll.Json.summary.total) SQL rows=$rows47" }
+        if ($first.Json.maskedView -ne $who.Masked) { $t47dBad += "$($who.Name) maskedView=$($first.Json.maskedView)" }
+        $topChecked = 0
+        foreach ($it in @($items | Where-Object { [string]$_.hostIp -match '^\d{1,3}\.\d{1,3}\.(\*\.\*|\d{1,3}\.\d{1,3})$' } | Select-Object -First 3)) {
+            $topChecked++
+            $qh = & $get47 "/api/incidents/queue?period=all&size=25&hostIp=$($it.hostIp)" $who "queue hostIp=<hosts row #$topChecked>"
+            if ([long]$qh.Json.total -ne [long]$it.incidents) { $t47dBad += "$($who.Name) hosts row #$topChecked incidents=$($it.incidents) queue hostIp total=$($qh.Json.total)" }
+        }
+        $transRows = @($items | Where-Object { $_.roleTransition -eq $true }).Count
+        $only = & $get47 "/api/hosts?period=all&size=25&roleTransitionOnly=true" $who "hosts roleTransitionOnly"
+        if ($who.Masked) {
+            $notBand = @($items | Where-Object { [string]$_.hostIp -notmatch $bandRe47 }).Count
+            $accounts = @($items | ForEach-Object { $_.accounts } | Where-Object { $null -ne $_ })
+            $rawHits = @($accounts | Where-Object { $rawNames47.Contains([string]$_) }).Count
+            $notMasked = @($accounts | Where-Object { [string]$_ -notmatch '^(.\*\*\*|\*\*\*)$' }).Count
+            if ($notBand -ne $nonV4Hosts47) { $t47dBad += "demo rows not shaped A.B.*.*=$notBand (non-IPv4 host values in SQL=$nonV4Hosts47)" }
+            if ($rawHits -ne 0 -or $notMasked -ne 0) { $t47dBad += "demo accounts[] elements equal to a raw account name=$rawHits, not shaped as first letter + ***=$notMasked" }
+            if ($transRows -ne 0 -or [long]$only.Json.total -ne 0 -or @($only.Json.items | Where-Object { $_ }).Count -ne 0) { $t47dBad += "demo roleTransition rows=$transRows roleTransitionOnly total=$($only.Json.total)" }
+            $t47dLines += "demo: rows=$($items.Count) (SQL distinct masked=$bands47) pages=$pages sum(incidents)=$sum queue summary.total=$($qAll.Json.summary.total) top rows checked against queue hostIp=$topChecked; rows not shaped A.B.*.*=$notBand; accounts[] elements=$($accounts.Count) equal to a raw name ($($rawNames47.Count) raw values from asset_names columns [$($nameCols47 -join ', ')])=$rawHits not first letter + ***=$notMasked; roleTransition rows=$transRows roleTransitionOnly total=$($only.Json.total)"
+        } else {
+            if ($transRows -ne $transCount47 -or [long]$only.Json.total -ne $transCount47) { $t47dBad += "$($who.Name) roleTransition rows=$transRows roleTransitionOnly total=$($only.Json.total) SQL=$transCount47" }
+            $t47dLines += "$($who.Name): rows=$($items.Count) (SQL distinct host_ip=$hosts47) pages=$pages sum(incidents)=$sum queue summary.total=$($qAll.Json.summary.total) top rows checked against queue hostIp=$topChecked; roleTransition rows=$transRows roleTransitionOnly total=$($only.Json.total) (SQL $transCount47)"
+        }
+    }
+    $e2eLogs.Add("[T47d] /api/hosts period=all:`n       $($t47dLines -join "`n       ")`n       mismatches=$($t47dBad.Count)$(if ($t47dBad.Count) { ' ' + ($t47dBad -join '; ') })")
+    Assert-True ($t47dBad.Count -eq 0) "[T47d] /api/hosts 줄 수·합·줄 건수·전환 표시 = 큐·독립 SQL, 조회자 계정 원문 없음"
+    if ($transCount47 -eq 0) { $t47NoData.Add("[T47d] 공개 캡처 최신 큐에 전환 표시가 붙는 호스트가 없음(독립 SQL 0)") }
+
+    # [T47e] 같은 호스트 인시던트 API: 자기 자신 없음, total = 독립 SQL(분석가는 같은 주소, 조회자는 같은 대역), 숨김 캡처 인시던트는 403(두 계정)
+    $rel47Targets = @(& $lines47 (& $sql47 ("(SELECT l.job_id || '/' || l.queue_rank FROM $lq47 WHERE $pub47 AND l.host_ip = (SELECT l2.host_ip FROM dashboard.latest_incident_queue l2 WHERE l2.capture_id IN ($publicIn39) GROUP BY l2.host_ip ORDER BY count(*) DESC, l2.host_ip LIMIT 1) ORDER BY l.capture_id, l.queue_rank LIMIT 1) " +
+        "UNION (SELECT l.job_id || '/' || l.queue_rank FROM $lq47 WHERE l.capture_id = '$exposureLabCapture' ORDER BY l.queue_rank LIMIT 1) " +
+        "UNION (SELECT l.job_id || '/' || l.queue_rank FROM $lq47 WHERE $pub47 AND l.capture_id LIKE 'cic17-%' ORDER BY l.capture_id, l.queue_rank LIMIT 1)") "같은 호스트 대상") | Where-Object { $_ -match '^\d+/\d+$' })
+    $t47eBad = @(); $t47eLines = @()
+    foreach ($row in $rel47Targets) {
+        $j47, $r47 = $row -split '/'
+        $selfCte = "WITH s AS (SELECT q.incident_id, q.host_ip FROM dashboard.latest_incident_queue q WHERE q.job_id = $j47 AND q.queue_rank = $r47 LIMIT 1) "
+        $expRel = (& $sql47 ($selfCte + "SELECT (SELECT count(*) FROM $lq47, s WHERE $pub47 AND l.host_ip = s.host_ip AND l.incident_id <> s.incident_id) || '|' || " +
+            "(SELECT count(*) FROM $lq47, s WHERE $pub47 AND $mask47 = (SELECT $($mask47.Replace('l.host_ip', 's.host_ip'))) AND l.incident_id <> s.incident_id)") "같은 호스트 건수") -split '\|'
+        foreach ($who in $t47Pairs) {
+            $rr = & $get47 "/api/incidents/$j47/rank/$r47/related-host-incidents" $who "related-host $row"
+            $relItems = @($rr.Json.items | Where-Object { $_ })
+            $expN = if ($who.Masked) { [long]$expRel[1] } else { [long]$expRel[0] }
+            $self = @($relItems | Where-Object { "$($_.jobId)" -eq "$j47" -and "$($_.queueRank)" -eq "$r47" }).Count
+            $shape = if ($who.Masked) { [string]$rr.Json.hostIp -match $bandRe47 -or [string]$rr.Json.hostIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$' } else { $true }
+            if ([long]$rr.Json.total -ne $expN -or $relItems.Count -ne [Math]::Min($expN, 10) -or $self -ne 0 -or -not $shape -or $rr.Json.maskedView -ne $who.Masked) { $t47eBad += "$($who.Name) $row total=$($rr.Json.total) items=$($relItems.Count) self=$self expected=$expN" }
+            $t47eLines += "$($who.Name) ${row}: total=$($rr.Json.total) items=$($relItems.Count) self=$self SQL=$expN"
+        }
+    }
+    $hiddenRow47 = if ($hiddenIn39) { (& $sql47 "SELECT l.job_id || '/' || l.queue_rank FROM $lq47 WHERE l.capture_id IN ($hiddenIn39) ORDER BY l.job_id, l.queue_rank LIMIT 1" "숨김 캡처 인시던트") } else { "" }
+    if ($hiddenRow47 -match '^\d+/\d+$') {
+        $hj47, $hr47 = $hiddenRow47 -split '/'
+        foreach ($who in $t47Pairs) {
+            $deny = & $get40 "/api/incidents/$hj47/rank/$hr47/related-host-incidents" $who.Client
+            if ($deny.Status -ne 403) { $t47eBad += "$($who.Name) hidden capture incident -> HTTP $($deny.Status)" }
+            $t47eLines += "$($who.Name) hidden capture incident -> HTTP $($deny.Status)"
+        }
+    } else { $t47NoData.Add("[T47e] 숨김 캡처의 최신 큐 인시던트가 없어 403 확인을 건너뜀") }
+    $e2eLogs.Add("[T47e] related-host-incidents (targets=[$($rel47Targets -join ', ')]):`n       $($t47eLines -join "`n       ")`n       mismatches=$($t47eBad.Count)$(if ($t47eBad.Count) { ' ' + ($t47eBad -join '; ') })")
+    Assert-True ($rel47Targets.Count -ge 1 -and $t47eBad.Count -eq 0) "[T47e] 같은 호스트 인시던트 total = 독립 SQL, 자기 자신 없음, 숨김 캡처 403"
+
+    # [T47f] overview 새 집계(period=all·24h): attack 전술·기법 count = 같은 조건 큐 attack= total, topHosts 줄 total = 큐 role=+hostIp= total,
+    #        topThreads 줄 totalMemberCount = 큐 period=all&thread= total, periodIncidentCount = 같은 조건 큐 thread= total. 기간 전체의 분포 = [T47b] 독립 SQL
+    $t47fBad = @(); $t47fLines = @()
+    foreach ($who in $t47Pairs) {
+        foreach ($cond in @('period=all', 'period=24h')) {
+            $ov = & $get47 "/api/dashboard/overview?$cond" $who "overview $cond"
+            $tactics = @($ov.Json.attack.tactics | Where-Object { $_ })
+            $techniques = @($ov.Json.attack.techniques | Where-Object { $_ })
+            $before = $t47fBad.Count
+            foreach ($tc in $tactics) {
+                $qt = [long](& $get47 "/api/incidents/queue?$cond&size=25&attack=$($tc.tactic)" $who "queue $cond attack=$($tc.tactic)").Json.total
+                if ($qt -ne [long]$tc.count) { $t47fBad += "$($who.Name) $cond tactic $($tc.tactic) overview=$($tc.count) queue=$qt" }
+            }
+            foreach ($tq in $techniques) {
+                $qt = [long](& $get47 "/api/incidents/queue?$cond&size=25&attack=$($tq.attackId)" $who "queue $cond attack=$($tq.attackId)").Json.total
+                if ($qt -ne [long]$tq.count) { $t47fBad += "$($who.Name) $cond technique $($tq.attackId) overview=$($tq.count) queue=$qt" }
+            }
+            $hostRows = 0; $hostSkipped = 0
+            foreach ($dir in @('originator', 'responder')) {
+                foreach ($hr in @($ov.Json.topHosts.$dir | Where-Object { $_ })) {
+                    # IPv4(온전하거나 가린 꼴)가 아닌 호스트 값은 큐 hostIp 조건으로 갈 수 없다(형식 오류 400). 수만 센다
+                    if ([string]$hr.hostIp -notmatch '^\d{1,3}\.\d{1,3}\.(\*\.\*|\d{1,3}\.\d{1,3})$') { $hostSkipped++; continue }
+                    $hostRows++
+                    $qt = [long](& $get47 "/api/incidents/queue?$cond&size=25&role=$dir&hostIp=$($hr.hostIp)" $who "queue $cond role=$dir hostIp=<topHosts row #$hostRows>").Json.total
+                    if ($qt -ne [long]$hr.total) { $t47fBad += "$($who.Name) $cond topHosts.$dir row #$hostRows overview=$($hr.total) queue=$qt" }
+                }
+            }
+            $threads = @($ov.Json.topThreads | Where-Object { $_ })
+            foreach ($tr in $threads) {
+                $qAllT = [long](& $get47 "/api/incidents/queue?period=all&size=25&thread=$($tr.headIncidentNo)" $who "queue period=all thread=$($tr.headIncidentNo)").Json.total
+                $qCondT = [long](& $get47 "/api/incidents/queue?$cond&size=25&thread=$($tr.headIncidentNo)" $who "queue $cond thread=$($tr.headIncidentNo)").Json.total
+                if ($qAllT -ne [long]$tr.totalMemberCount) { $t47fBad += "$($who.Name) $cond topThreads #$($tr.headIncidentNo) totalMemberCount=$($tr.totalMemberCount) queue(period=all)=$qAllT" }
+                if ($qCondT -ne [long]$tr.periodIncidentCount) { $t47fBad += "$($who.Name) $cond topThreads #$($tr.headIncidentNo) periodIncidentCount=$($tr.periodIncidentCount) queue=$qCondT" }
+            }
+            if ($cond -eq 'period=all') {
+                foreach ($tc in $tactics) { if ([long]$att47.tactic[[string]$tc.tactic] -ne [long]$tc.count) { $t47fBad += "$($who.Name) tactic $($tc.tactic) overview=$($tc.count) sql=$($att47.tactic[[string]$tc.tactic])" } }
+                foreach ($tq in $techniques) { if ([long]$att47.technique[[string]$tq.attackId] -ne [long]$tq.count) { $t47fBad += "$($who.Name) technique $($tq.attackId) overview=$($tq.count) sql=$($att47.technique[[string]$tq.attackId])" } }
+                if ($tactics.Count -ne $att47.tactic.Count -or [int]$ov.Json.attack.techniqueCount -ne $att47.technique.Count -or $techniques.Count -ne [Math]::Min($att47.technique.Count, 10) -or [long]$ov.Json.attack.incidentsWithCandidates -ne [long]$att47.any) {
+                    $t47fBad += "$($who.Name) attack totals overview(tactics=$($tactics.Count) techniqueCount=$($ov.Json.attack.techniqueCount) rows=$($techniques.Count) incidentsWithCandidates=$($ov.Json.attack.incidentsWithCandidates)) sql(tactics=$($att47.tactic.Count) techniques=$($att47.technique.Count) any=$($att47.any))"
+                }
+            }
+            if ($ov.Json.topThreadsOmitted -ne $false) { $t47fBad += "$($who.Name) $cond topThreadsOmitted=$($ov.Json.topThreadsOmitted)" }
+            $t47fLines += "$($who.Name) ${cond}: incidentsWithCandidates=$($ov.Json.attack.incidentsWithCandidates) tactics=[$(@($tactics | ForEach-Object { "$($_.tactic)=$($_.count)" }) -join ', ')] techniques(top $($techniques.Count) of $($ov.Json.attack.techniqueCount))=[$(@($techniques | ForEach-Object { "$($_.attackId)=$($_.count)" }) -join ', ')] topHosts rows checked=$hostRows (non-IPv4 skipped=$hostSkipped) topThreads=[$(@($threads | ForEach-Object { "#$($_.headIncidentNo) period=$($_.periodIncidentCount) total=$($_.totalMemberCount)" }) -join ', ')] new mismatches=$($t47fBad.Count - $before)"
+        }
+    }
+    $e2eLogs.Add("[T47f] overview new aggregates vs queue totals:`n       $($t47fLines -join "`n       ")`n       mismatches=$($t47fBad.Count)$(if ($t47fBad.Count) { ' ' + (($t47fBad | Select-Object -First 15) -join '; ') })")
+    Assert-True ($t47fBad.Count -eq 0) "[T47f] overview 새 집계 = 같은 조건 큐 total·독립 SQL"
+
+    # [T47g] 조회자 상세의 zeekad_name: 스냅샷에서 zeekad_name이 있는 자산의 인시던트를 독립 SQL로 골라 조회자는 첫 글자 + ***, 분석가는 원문인지 본다(값은 적지 않는다)
+    if (-not $hasName47) {
+        $t47NoData.Add("[T47g] 스냅샷의 dashboard.asset_names에 zeekad_name 열이 없음")
+        $e2eLogs.Add("[T47g] dashboard.asset_names has no zeekad_name column in this snapshot (no data)")
+    } else {
+        $nameRows47 = @(& $lines47 (& $sql47 "SELECT DISTINCT l.job_id || '/' || l.queue_rank FROM $lq47 JOIN dashboard.asset_names a ON a.capture_id = l.capture_id AND a.host_ip = l.host_ip WHERE $pub47 AND a.zeekad_name IS NOT NULL AND btrim(a.zeekad_name::text) NOT IN ('', '{}', '[]') ORDER BY 1 LIMIT 3" "zeekad_name이 있는 인시던트") | Where-Object { $_ -match '^\d+/\d+$' })
+        if ($nameRows47.Count -eq 0) {
+            $t47NoData.Add("[T47g] 공개 캡처 최신 큐의 호스트 가운데 zeekad_name이 있는 자산이 없음")
+            $e2eLogs.Add("[T47g] no public latest-queue host has an asset row with zeekad_name (no data)")
+        } else {
+            $t47gBad = @(); $t47gLines = @()
+            $flat47 = { param($Detail) return @($Detail.Json.detail.assetNames | Where-Object { $_ } | ForEach-Object { $_.extraAttributes.zeekad_name } | ForEach-Object { $_ } | Where-Object { $null -ne $_ } | ForEach-Object { ([string]$_).Trim() }) }
+            foreach ($row in $nameRows47) {
+                $nj, $nr = $row -split '/'
+                $rawOf = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                $rawSql = "SELECT DISTINCT btrim(x.n) FROM (SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(to_jsonb(a.zeekad_name)) = 'array' THEN to_jsonb(a.zeekad_name) ELSE jsonb_build_array(to_jsonb(a.zeekad_name)) END) AS n FROM dashboard.asset_names a JOIN dashboard.latest_incident_queue q ON q.capture_id = a.capture_id AND q.host_ip = a.host_ip WHERE q.job_id = $nj AND q.queue_rank = $nr AND a.zeekad_name IS NOT NULL) x WHERE x.n IS NOT NULL AND btrim(x.n) <> ''"
+                foreach ($ln in @((& $sql47 $rawSql "zeekad_name 원문") -split "`r?`n")) { $n = $ln.Trim(); if ($n) { [void]$rawOf.Add($n) } }
+                $dv = @(& $flat47 (& $get47 "/api/incidents/$nj/rank/$nr" $t47Pairs[0] "detail $row"))
+                $tv = @(& $flat47 (& $get47 "/api/incidents/$nj/rank/$nr" $t47Pairs[1] "detail $row"))
+                $dRaw = @($dv | Where-Object { $rawOf.Contains($_) }).Count
+                $dShape = @($dv | Where-Object { $_ -notmatch '^(.\*\*\*|\*\*\*)$' }).Count
+                $tMissing = @($rawOf | Where-Object { $tv -cnotcontains $_ }).Count
+                if ($dv.Count -eq 0 -or $dRaw -ne 0 -or $dShape -ne 0) { $t47gBad += "demo $row zeekad_name values=$($dv.Count) equal to raw=$dRaw not first letter + ***=$dShape" }
+                if ($tMissing -ne 0) { $t47gBad += "$trialUser $row raw zeekad_name values missing from response=$tMissing" }
+                $t47gLines += "${row}: raw zeekad_name values (SQL)=$($rawOf.Count); demo values=$($dv.Count) equal to raw=$dRaw not first letter + ***=$dShape; $trialUser values=$($tv.Count) raw values missing=$tMissing"
+            }
+            $e2eLogs.Add("[T47g] detail assetNames[].extraAttributes.zeekad_name (incidents=[$($nameRows47 -join ', ')], values not logged):`n       $($t47gLines -join "`n       ")`n       mismatches=$($t47gBad.Count)$(if ($t47gBad.Count) { ' ' + ($t47gBad -join '; ') })")
+            Assert-True ($t47gBad.Count -eq 0) "[T47g] 조회자 상세의 zeekad_name은 첫 글자 + ***, 분석가는 원문"
+        }
+    }
+
+    # [T47h] 새 요청 전체: demo 응답에 가려지지 않은 IPv4 0, 두 계정 응답에 숨김 캡처 ID 0
+    $e2eLogs.Add("[T47h] demo unmasked IPv4 JSON paths=$($t47Ip.Count)$(if ($t47Ip.Count) { ' ' + (($t47Ip | Select-Object -First 10) -join ', ') }); hidden capture traces=$($t47Leaks.Count)$(if ($t47Leaks.Count) { ' ' + (($t47Leaks | Select-Object -First 10) -join ', ') }); no-data notes=$($t47NoData.Count)$(if ($t47NoData.Count) { ' ' + ($t47NoData -join ' / ') })")
+    Assert-True ($t47Ip.Count -eq 0) "[T47h] demo 가려지지 않은 IPv4 0"
+    Assert-True ($t47Leaks.Count -eq 0) "[T47h] demo·$trialUser 응답에 숨김 캡처 ID 0"
+
+    # [T47j] 응답 시간 기록(데우기 1번 + 3번, curl 포함): 새 엔드포인트와 그 읽기가 더해진 현황판·운영 현황. 한도는 여기서 정하지 않는다(단언하지 않고 적는다)
+    $timing47 = [System.Collections.Generic.List[string]]::new()
+    $timing47.Add("# T47 rehearsal timing (local Docker stack + real snapshot; includes curl). head=$((Invoke-NativeCapture 'git' @('rev-parse', 'HEAD') -IgnoreExitCode).Output.Trim())")
+    $relPath47 = if ($rel47Targets.Count) { "/api/incidents/$(($rel47Targets[0] -split '/')[0])/rank/$(($rel47Targets[0] -split '/')[1])/related-host-incidents" } else { $null }
+    foreach ($who in $t47Pairs) {
+        foreach ($pth in @("/api/hosts?period=all", $relPath47, "/api/dashboard/overview?period=all", "/api/dashboard/overview?period=24h", "/api/operations") | Where-Object { $_ }) {
+            $warm = & $get40 $pth $who.Client
+            Assert-Status $warm 200 "[T47j] $($who.Name) $pth (데우기)"
+            $ms = @()
+            for ($n = 0; $n -lt 3; $n++) {
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                $r = Invoke-Http -Path $pth -Client $who.Client
+                $sw.Stop()
+                Assert-Status $r 200 "[T47j] $($who.Name) $pth"
+                $ms += [int]$sw.ElapsedMilliseconds
+            }
+            $timing47.Add("T47TIMING new-image account=$($who.Name) path=$pth ms=[$($ms -join ', ')] median=$(($ms | Sort-Object)[1]) max=$(($ms | Measure-Object -Maximum).Maximum)")
+        }
+    }
+    $e2eLogs.Add("[T47j] response times (warm 1 + 3 samples, includes curl; recorded, not asserted):`n       $(@($timing47 | Select-Object -Skip 1) -join "`n       ")")
+
+    # [T47k] 큐 전체 기간 목록(/api/incidents/queue?period=all&size=50)의 중앙값을 지금 공개 중인 이미지와 새 이미지로 같은 스택에서 잰다([T27g]의 옛 이미지 방식).
+    #        두 쪽 모두 앱을 새로 띄운 뒤 demo로 데우기 3번 + 5번. 새 값이 옛 값의 1.5배를 넘으면 실패다(NAS 반영 전에 멈춘다).
+    $queuePath47 = "/api/incidents/queue?period=all&size=50"
+    $measure47 = {
+        param([string]$Ip, [string]$Label)
+        $c = New-Client $Ip
+        Assert-Status (Login-Api $c "demo" $env:DEMO_PASSWORD) 200 "[T47k] demo 로그인($Label)"
+        for ($w = 0; $w -lt 3; $w++) { Assert-Status (Invoke-Http -Path $queuePath47 -Client $c) 200 "[T47k] $Label 데우기" }
+        $ms = @(); $total = $null
+        for ($n = 0; $n -lt 5; $n++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $r = Invoke-Http -Path $queuePath47 -Client $c
+            $sw.Stop()
+            Assert-Status $r 200 "[T47k] $Label"
+            $ms += [int]$sw.ElapsedMilliseconds
+            $total = $r.Json.total
+        }
+        return [pscustomobject]@{ Ms = $ms; Median = [int](($ms | Sort-Object)[2]); Max = [int](($ms | Measure-Object -Maximum).Maximum); Total = $total }
+    }
+    $appImageOf = { (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.Image}}", (Get-ServiceContainer "dashboard-app"))).Output.Trim() }
+    $swapApp47 = {
+        $up = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "dashboard-app")) -IgnoreExitCode
+        [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+        [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+        return $up.ExitCode
+    }
+    $newId47 = (Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", "zeek-ad-dashboard-app:local")).Output.Trim()
+    $baseInspect47 = Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", $BaselineAppImage) -IgnoreExitCode
+    $baseId47 = if ($baseInspect47.ExitCode -eq 0) { $baseInspect47.Output.Trim() } else { "" }
+    $old47 = $null
+    if (-not $baseId47) {
+        $timing47.Add("T47QUEUE old-image=$BaselineAppImage not found locally; only the new image is measured")
+    } elseif ($baseId47 -eq $newId47) {
+        $timing47.Add("T47QUEUE old-image=$BaselineAppImage is the same image as the tested one ($newId47); only the new image is measured")
+    } else {
+        $env:PORTFOLIO_APP_IMAGE = $BaselineAppImage
+        try {
+            $oldUp47 = & $swapApp47
+            $oldRunning47 = & $appImageOf
+            Assert-True ($oldUp47 -eq 0 -and $oldRunning47 -eq $baseId47) "[T47k] 앞 이미지($BaselineAppImage)로 앱을 띄움 (exit=$oldUp47)"
+            $old47 = & $measure47 "198.51.100.149" "old image"
+        } finally {
+            Remove-Item env:PORTFOLIO_APP_IMAGE -ErrorAction SilentlyContinue
+            $backUp47 = & $swapApp47
+        }
+        Assert-True ($backUp47 -eq 0) "[T47k] 새 이미지로 복귀 (exit=$backUp47)"
+        $timing47.Add("T47QUEUE old-image=$BaselineAppImage ($baseId47) path=$queuePath47 total=$($old47.Total) ms=[$($old47.Ms -join ', ')] median=$($old47.Median) max=$($old47.Max)")
+    }
+    if ($null -eq $old47) {
+        # 앞 이미지를 재지 않은 경우에도 새 이미지를 같은 조건(앱을 새로 띄운 뒤)으로 잰다
+        $freshUp47 = Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "--force-recreate", "dashboard-app")) -IgnoreExitCode
+        [void](Invoke-NativeCapture "docker" ($composeArgs + @("restart", "nginx-waf")) -IgnoreExitCode)
+        [void](Invoke-NativeCapture "docker" ($composeArgs + @("up", "-d", "--wait", "nginx-waf")) -IgnoreExitCode)
+        Assert-True ($freshUp47.ExitCode -eq 0) "[T47k] 새 이미지 앱 다시 띄움"
+    }
+    $newRunning47 = & $appImageOf
+    Assert-True ($newRunning47 -eq $newId47) "[T47k] 앱 컨테이너가 새 이미지($newId47)로 돈다"
+    $new47 = & $measure47 "198.51.100.151" "new image"
+    $ratio47 = if ($old47 -and $old47.Median -gt 0) { [Math]::Round($new47.Median / $old47.Median, 2) } else { $null }
+    $timing47.Add("T47QUEUE new-image=zeek-ad-dashboard-app:local ($newId47) path=$queuePath47 total=$($new47.Total) ms=[$($new47.Ms -join ', ')] median=$($new47.Median) max=$($new47.Max)")
+    $timing47.Add("T47QUEUE ratio new/old median=$(if ($null -ne $ratio47) { $ratio47 } else { 'n/a' }) (stop rule: > 1.5)")
+    Save-Evidence "t47-timing.txt" (($timing47 -join "`n") + "`n")
+    $e2eLogs.Add("[T47k] queue period=all&size=50 median (fresh app, warm 3 + 5 samples, demo): old image $BaselineAppImage=$(if ($old47) { "$($old47.Median) ms [$($old47.Ms -join ', ')]" } else { 'not measured' }); new image=$($new47.Median) ms [$($new47.Ms -join ', ')]; ratio=$(if ($null -ne $ratio47) { $ratio47 } else { 'n/a' }) (t47-timing.txt)")
+    if ($old47) {
+        Assert-True ([long]$old47.Total -eq [long]$new47.Total) "[T47k] 두 이미지의 큐 total이 같다 (old=$($old47.Total), new=$($new47.Total))"
+        Assert-True ($new47.Median -le [Math]::Ceiling($old47.Median * 1.5)) "[T47k] 새 이미지 큐 중앙값이 앞 이미지의 1.5배 이하 (old=$($old47.Median) ms, new=$($new47.Median) ms)"
+    }
+
     # ───────── [T36] 운영 정리: 익명 볼륨·조회 한도·HSTS ─────────
     Write-Host "=== [T36] 익명 볼륨 재현·조회 한도·HSTS ==="
     # [T36a] NAS 재현: tmpfs 없는 판(옛 compose)으로 sandbox-reset을 띄워 익명 볼륨을 만든 뒤, 지금 판으로
@@ -2370,7 +2821,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
 
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T39]·[T40]·[T29]·[T32]·[T36] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T39]·[T40]·[T29]·[T32]·[T47]·[T36] 통과"
 
     if (-not $SkipZap) {
         Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="
