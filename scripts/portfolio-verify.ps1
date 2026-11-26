@@ -1288,6 +1288,24 @@ try {
     Assert-True ($fnPriv -match 'reset_role_exec=true dashboard_rw_exec=false public_exec=false secdef=true config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_pipeline: 전용 역할만 EXECUTE, SECURITY DEFINER, search_path 고정 ($fnPriv)"
     Assert-True ($fnPrivD -match 'reset_role_exec=true app_owner=dashboard_app public_exec=false config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_assignments: 전용 역할만 EXECUTE ($fnPrivD)"
 
+    # [T58a] 감사 로그 삭제 함수(앱 migration V4가 만들고 sandbox-setup은 EXECUTE만 준다): 소유 dashboard_app, SECURITY DEFINER,
+    #        search_path·lock_timeout 고정, 초기화 계정은 실행 가능, PUBLIC은 실행 불가. audit_logs의 트리거는 둘(행 수준 UPDATE·DELETE, 문장 수준 TRUNCATE).
+    $fnPrivP = (Invoke-Psql "zeekad_dashboard" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'public.purge_expired_audit_logs(integer)', 'EXECUTE') || ' app_owner=' || (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure) || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'public.purge_expired_audit_logs(integer)'::regprocedure AND x.grantee = 0) || ' secdef=' || (SELECT prosecdef FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure)").Output.Trim()
+    $auditTriggers = (Invoke-Psql "zeekad_dashboard" "SELECT string_agg(tgname || ':' || pg_get_triggerdef(oid), ' ; ' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'public.audit_logs'::regclass AND NOT tgisinternal").Output.Trim()
+    $resetTableGrants = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset'").Output.Trim()
+    $setupPurgeLines = @($setup1.Output -split "`r?`n" | Where-Object { $_ -match 'purge_expired_audit_logs|purge_public_execute' })
+    $e2eLogs.Add("[T58a] purge_expired_audit_logs(integer): $fnPrivP; audit_logs triggers: $auditTriggers; table grants of zeekad_sandbox_reset in zeekad_dashboard=$resetTableGrants`n       sandbox-setup: $($setupPurgeLines -join ' / ')")
+    Assert-True ($fnPrivP -match 'reset_role_exec=true app_owner=dashboard_app public_exec=false secdef=true config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T58a] purge_expired_audit_logs: 소유 dashboard_app, SECURITY DEFINER, search_path·lock_timeout 고정, 초기화 계정만 EXECUTE(PUBLIC 불가) ($fnPrivP)"
+    Assert-True ($auditTriggers -match 'trg_audit_logs_immutable:.*BEFORE DELETE OR UPDATE ON public\.audit_logs FOR EACH ROW' -and $auditTriggers -match 'trg_audit_logs_no_truncate:.*BEFORE TRUNCATE ON public\.audit_logs FOR EACH STATEMENT') "[T58a] audit_logs 트리거 둘(UPDATE·DELETE 행 수준, TRUNCATE 문장 수준) ($auditTriggers)"
+    Assert-True ($resetTableGrants -eq '0') "[T58a] 초기화 계정의 앱 DB 표 권한 0 ($resetTableGrants)"
+    Assert-True ($setup1.Output -match 'EXECUTE on public\.purge_expired_audit_logs\(integer\) granted to zeekad_sandbox_reset' -and $setup1.Output -match 'purge_public_execute=false') "[T58a] sandbox-setup이 삭제 함수 EXECUTE를 주고 PUBLIC 실행 불가를 점검함"
+    # 컨테이너 로그 크기 한도(json-file 10MB x 5): 상주 서비스 다섯의 컨테이너에 걸려 있다.
+    $logCfg = @(foreach ($svc in @("postgres", "api", "dashboard-app", "nginx-waf", "sandbox-reset")) {
+            "$svc=" + (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .HostConfig.LogConfig}}", (Get-ServiceContainer $svc))).Output.Trim()
+        })
+    $e2eLogs.Add("[T58a] container log config: $($logCfg -join ' ')")
+    Assert-True ($logCfg.Count -eq 5 -and @($logCfg | Where-Object { $_ -notmatch '"Type":"json-file"' -or $_ -notmatch '"max-size":"10m"' -or $_ -notmatch '"max-file":"5"' }).Count -eq 0) "[T58a] 상주 서비스 다섯에 로그 크기 한도 json-file 10m x 5 ($($logCfg -join ' '))"
+
     # [T33c] 초기화 전용 계정으로 실제 시도: 세 표 SELECT, 기준선 UPDATE, sandbox·public CREATE, 앱 DB 담당 표 SELECT는 모두 거부
     $denyProbes = @(
         @("zeekad", "SELECT count(*) FROM zeekad.incident_status"),
@@ -1301,6 +1319,9 @@ try {
         @("zeekad", "SELECT dashboard.transition_incident(1, 'x', 'investigating', 'x', 'x')"),
         @("zeekad_dashboard", "SELECT count(*) FROM public.incident_assignments"),
         @("zeekad_dashboard", "SELECT count(*) FROM public.audit_logs"),
+        @("zeekad_dashboard", "DELETE FROM public.audit_logs"),
+        @("zeekad_dashboard", "TRUNCATE public.audit_logs"),
+        @("zeekad_dashboard", "UPDATE public.audit_logs SET action_type = action_type"),
         @("zeekad_dashboard", "CREATE TABLE public.t33_probe (id int)"),
         @("zeekad_dashboard", "CREATE TABLE sandbox.t33_probe (id int)")
     )
@@ -1314,6 +1335,14 @@ try {
     $okCall = Invoke-Psql "zeekad" "SELECT count(*) FROM sandbox.reset_pipeline()" -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
     $denyLines.Add("(대조) zeekad: SELECT count(*) FROM sandbox.reset_pipeline() -> exit=$($okCall.ExitCode) $($okCall.Output.Trim())")
     Assert-True ($okCall.ExitCode -eq 0) "[T33c] zeekad_sandbox_reset은 초기화 함수는 부른다"
+    # T58: 삭제 함수는 부를 수 있지만(기한 90일, 지울 행 없음) 바닥값(30일)보다 짧은 기한은 예외다. 표는 위에서 본 대로 읽지도 지우지도 못한다.
+    $okPurge = Invoke-Psql "zeekad_dashboard" "SELECT deleted FROM public.purge_expired_audit_logs(90)" -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
+    $lowPurge = Invoke-Psql "zeekad_dashboard" "SELECT deleted FROM public.purge_expired_audit_logs(29)" -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
+    $lowPurgeErr = [regex]::Match($lowPurge.Output, 'ERROR:[^\r\n]*').Value.Trim()
+    $denyLines.Add("(대조) zeekad_dashboard: SELECT deleted FROM public.purge_expired_audit_logs(90) -> exit=$($okPurge.ExitCode) $($okPurge.Output.Trim())")
+    $denyLines.Add("zeekad_dashboard: SELECT deleted FROM public.purge_expired_audit_logs(29) -> exit=$($lowPurge.ExitCode) $lowPurgeErr")
+    Assert-True ($okPurge.ExitCode -eq 0 -and $okPurge.Output.Trim() -match '^\d+$') "[T33c] zeekad_sandbox_reset은 감사 로그 삭제 함수는 부른다 ($($okPurge.Output.Trim()))"
+    Assert-True ($lowPurge.ExitCode -ne 0 -and $lowPurgeErr -match 'audit retention must be at least 30 days') "[T33c] 삭제 함수는 30일보다 짧은 기한을 거부한다 ($lowPurgeErr)"
     Save-Evidence "t33-deny-probes.txt" (($denyLines -join "`n") + "`n")
     $e2eLogs.Add("[T33c] zeekad_sandbox_reset attempts:`n       $($denyLines -join "`n       ")")
 
@@ -1363,7 +1392,7 @@ try {
     if ($other0 -ne $other1) { $e2eLogs.Add("[T33e] other zeekad tables changed: $(& $otherChanged $other0 $other1)") }
     Assert-True ($other0 -eq $other1) "[T33e] 쓰기 직후 세 표 밖 zeekad 표(행 수·내용 해시) 그대로"
 
-    # [T33f] 다음 주기(1분) 초기화 뒤: 세 표 = 기준선, 담당 해제 + 이력 sandbox-reset, 감사 로그 줄지 않음. 검토 결정 2분 뒤 세 표 밖 표 그대로.
+    # [T33f] 다음 주기(1분) 초기화 뒤: 세 표 = 기준선, 담당 해제 + 이력 sandbox-reset, 기한 안의 감사 로그는 줄지 않음(T58). 검토 결정 2분 뒤 세 표 밖 표 그대로.
     $deadline = $writeAt.AddSeconds(150)
     while ((Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
     $logs33 = & $resetLogs
@@ -1381,7 +1410,24 @@ try {
     Assert-True (& $isBaseline $final33) "[T33f] 초기화 뒤 세 표 = 기준선 ($final33)"
     Assert-True ($assignNow -match '^0/') "[T33f] 담당 해제 ($assignNow)"
     Assert-True ($resetHist -eq '2:2' -and $ahist1 -eq $ahist0 + 4) "[T33f] 담당 이력에 sandbox-reset 해제 2행(자동·직접 지정 2행 + 해제 2행) ($resetHist, $ahist0 -> $ahist1)"
-    Assert-True ($audit1 -ge $audit0 + 4) "[T33f] 감사 로그는 줄지 않음($audit0 -> $audit1)"
+    Assert-True ($audit1 -ge $audit0 + 4) "[T33f] 기한 안의 감사 로그는 줄지 않음($audit0 -> $audit1)"
+    # [T58b] 초기화 줄마다 끝에 감사 칸이 있다. 삭제 함수는 UTC 날짜마다 한 번만 OK로 끝나고(audit[OK] purged=N cutoff=<UTC>) 그 뒤는 audit[SKIP]이다.
+    #        설정 전·설정 도중의 줄은 audit[NOT_CONFIGURED]이고 그것만으로는 줄이 ERROR가 되지 않는다(ERROR 줄 0은 위에서 봤다).
+    $cellLines = @($logs33 | Where-Object { $_ -match ' pipeline\[' })
+    $noAuditCell = @($cellLines | Where-Object { $_ -notmatch '; audit\[(OK|SKIP|NOT_CONFIGURED)\]' })
+    $auditOk = @($cellLines | Where-Object { $_ -match '; audit\[OK\] purged=\d+ cutoff=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$' })
+    $auditOrderBad = [System.Collections.Generic.List[string]]::new()
+    foreach ($day in @($cellLines | ForEach-Object { $_.Substring(0, 10) } | Select-Object -Unique)) {
+        $seenOk = $false
+        foreach ($l in @($cellLines | Where-Object { $_.StartsWith($day) })) {
+            if ($seenOk -and $l -notmatch '; audit\[SKIP\]$') { $auditOrderBad.Add($l) }
+            if ($l -match '; audit\[OK\] ') { $seenOk = $true }
+        }
+    }
+    $e2eLogs.Add("[T58b] reset log lines with cells=$($cellLines.Count): without an audit cell=$($noAuditCell.Count), audit[OK]=$($auditOk.Count), audit[SKIP]=$(@($cellLines | Where-Object { $_ -match '; audit\[SKIP\]$' }).Count), audit[NOT_CONFIGURED]=$(@($cellLines | Where-Object { $_ -match '; audit\[NOT_CONFIGURED\]' }).Count); lines after the day's audit[OK] that are not SKIP=$($auditOrderBad.Count)`n       first audit[OK]: $($auditOk | Select-Object -First 1)`n       last line: $($cellLines | Select-Object -Last 1)")
+    Assert-True ($cellLines.Count -ge 2 -and $noAuditCell.Count -eq 0) "[T58b] 초기화 로그 줄마다 audit[ 칸이 있음(없는 줄 $($noAuditCell.Count))"
+    Assert-True ($auditOk.Count -ge 1) "[T58b] audit[OK] purged=N cutoff=<UTC> 줄이 한 번 이상"
+    Assert-True ($auditOrderBad.Count -eq 0 -and @($cellLines | Where-Object { $_ -match '; audit\[SKIP\]$' }).Count -ge 1) "[T58b] 그날 OK 뒤의 주기는 audit[SKIP](하루에 한 번만 부름)`n$($auditOrderBad -join "`n")"
     if ($other0 -ne $other2) { $e2eLogs.Add("[T33f] other zeekad tables changed: $(& $otherChanged $other0 $other2)") }
     Assert-True ($other0 -eq $other2) "[T33f] 검토 결정 뒤 2분 넘게 세 표 밖 zeekad 표 그대로(후속 쓰기 없음)"
 
@@ -1403,6 +1449,27 @@ try {
     $e2eLogs.Add("[T33g] tampered marker: reset --once exit=$($gRun.ExitCode) $(($gRun.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')`n       three tables before=$gBefore after=$gAfter`n       restored marker: exit=$($gRun2.ExitCode) $(($gRun2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' '); now $gFinal")
     Assert-True ($gRun.ExitCode -ne 0 -and $gRun.Output -match 'ERROR pipeline\[ERROR\].*does not match the current snapshot' -and $gBefore -eq $gAfter -and -not (& $isBaseline $gAfter)) "[T33g] 옛 기준선이면 초기화 거부·아무것도 안 바뀜"
     Assert-True ($gRun2.ExitCode -eq 0 -and (& $isBaseline $gFinal)) "[T33g] 표지를 되돌리면 초기화되어 기준선과 일치"
+
+    # [T58c] 보관 기한(compose의 90일): 100일 전 행은 다음 초기화에서 지워지고(--once는 늘 삭제 함수를 부른다) 89일 전 행과 그 밖의 행은 그대로다.
+    #        지운 사실은 감사 행 하나(행위자 audit-retention, 역할 SYSTEM, 접속 주소 없음)로 남는다. 상주 서비스는 위에서 멈췄다.
+    $retSql = "SELECT count(*) FILTER (WHERE occurred_at >= now() - interval '90 days') || '|' || count(*) FILTER (WHERE occurred_at < now() - interval '90 days') || '|' || count(*) FILTER (WHERE action_type = 'AUDIT_RETENTION_PURGE') FROM audit_logs"
+    $ret0 = @((Invoke-Psql "zeekad_dashboard" $retSql).Output.Trim() -split '\|')
+    $retIns = Invoke-Psql "zeekad_dashboard" "INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type, client_ip) VALUES (now() - interval '100 days', 't58-rehearsal-old', 'VIEWER', 'LOGIN_SUCCESS', '198.51.100.58'), (now() - interval '89 days', 't58-rehearsal-keep', 'VIEWER', 'LOGIN_SUCCESS', '198.51.100.58')"
+    $retRun = & $runResetOnce
+    $ret1 = @((Invoke-Psql "zeekad_dashboard" $retSql).Output.Trim() -split '\|')
+    $retRows = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(string_agg(actor_username, ',' ORDER BY actor_username), '(none)') FROM audit_logs WHERE actor_username LIKE 't58-rehearsal-%'").Output.Trim()
+    $retPurgeRow = (Invoke-Psql "zeekad_dashboard" "SELECT actor_username || ' ' || actor_role || ' ip=' || COALESCE(client_ip, '(null)') || ' ' || detail_json FROM audit_logs WHERE action_type = 'AUDIT_RETENTION_PURGE' ORDER BY id DESC LIMIT 1").Output.Trim()
+    $retRun2 = & $runResetOnce
+    $ret2 = @((Invoke-Psql "zeekad_dashboard" $retSql).Output.Trim() -split '\|')
+    $retLine = (($retRun.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')
+    $retLine2 = (($retRun2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')
+    $e2eLogs.Add("[T58c] audit_logs (inside 90 days|older than 90 days|purge audit rows): before=$($ret0 -join '|') after insert+reset=$($ret1 -join '|') after second reset=$($ret2 -join '|'); insert exit=$($retIns.ExitCode)`n       reset --once exit=$($retRun.ExitCode) $retLine`n       rows left: $retRows; purge audit row: $retPurgeRow`n       second reset --once exit=$($retRun2.ExitCode) $retLine2")
+    Assert-True ($retIns.ExitCode -eq 0 -and $ret0.Count -eq 3 -and $ret0[1] -eq '0') "[T58c] 시험 전 90일 넘은 감사 행 0, 시험 행 둘을 넣음 ($($ret0 -join '|'))"
+    Assert-True ($retRun.ExitCode -eq 0 -and $retLine -match ' sandbox-reset: OK pipeline\[OK\].*; audit\[OK\] purged=1 cutoff=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') "[T58c] 초기화 한 번에 기한 지난 행 하나를 지움 ($retLine)"
+    Assert-True ($retRows -eq 't58-rehearsal-keep' -and $ret1[1] -eq '0') "[T58c] 100일 전 행만 지워지고 89일 전 행은 남음 ($retRows, 90일 넘은 행 $($ret1[1]))"
+    Assert-True ([long]$ret1[0] -ge [long]$ret0[0] + 2 -and [long]$ret1[2] -eq [long]$ret0[2] + 1) "[T58c] 기한 안의 감사 로그는 줄지 않음(89일 전 행과 삭제 기록 행만 늘어남: $($ret0[0]) -> $($ret1[0]), 삭제 기록 $($ret0[2]) -> $($ret1[2]))"
+    Assert-True ($retPurgeRow -match '^audit-retention SYSTEM ip=\(null\) \{"deleted" : 1, "cutoff" : "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", "retentionDays" : 90\}$') "[T58c] 삭제 기록 행: 행위자 audit-retention, 역할 SYSTEM, 접속 주소 없음, 지운 수·기준 시각·기한 ($retPurgeRow)"
+    Assert-True ($retRun2.ExitCode -eq 0 -and $retLine2 -match '; audit\[OK\] purged=0 cutoff=' -and ($ret2 -join '|') -eq ($ret1 -join '|')) "[T58c] 다시 돌리면 지운 것이 없고 삭제 기록 행이 늘지 않음 ($retLine2)"
 
     # [T33h] 초기화 중 쓰기: 다른 연결이 세 표 중 하나를 잡고 있으면 기다렸다가 끝내고(4초 잡음), 잠금 시간(5초)을 넘기면(15초 잡음) 아무것도 바꾸지 않고 오류
     $pgC = Get-ServiceContainer "postgres"

@@ -751,6 +751,37 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $e2eLogs.Add("[8] PostgreSQL audit_logs immutable trigger check:`n$($immutableCheck.Trim())")
                 Assert-True ($immutableCheck -match "audit_logs is append-only") "PostgreSQL audit_logs 불변 트리거"
 
+                # [8b] (T58) 감사 로그 보관 기한: 기한 안의 행은 표식을 켜도 지워지지 않고 TRUNCATE는 거부된다.
+                #      기한이 지난 행만 삭제 함수가 지우고 그 사실을 감사 행 하나로 남긴다. 바닥값(30일)보다 짧은 기한은 예외다.
+                #      슈퍼유저로 시도한다(트리거와 함수가 막는 것이지 권한이 막는 것이 아님을 본다). SQL에 큰따옴표를 쓰지 않는다.
+                function Invoke-RetentionSql([string]$Sql) {
+                    return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-U", "postgres", "-d", "zeekad_dashboard", "-At", "-c", $Sql)) -IgnoreExitCode).Output.Trim()
+                }
+                $retCount0 = [long](Invoke-RetentionSql "SELECT count(*) FROM audit_logs")
+                $retDelete = Invoke-RetentionSql "DELETE FROM audit_logs WHERE id = (SELECT MAX(id) FROM audit_logs);"
+                $retDeleteMarked = Invoke-RetentionSql "SET dashboard.audit_retention_purge = 'on'; DELETE FROM audit_logs WHERE id = (SELECT MAX(id) FROM audit_logs);"
+                $retUpdateMarked = Invoke-RetentionSql "SET dashboard.audit_retention_purge = 'on'; UPDATE audit_logs SET action_type = 'TAMPERED' WHERE id = (SELECT MIN(id) FROM audit_logs);"
+                $retTruncate = Invoke-RetentionSql "TRUNCATE audit_logs;"
+                $retTooShort = Invoke-RetentionSql "SELECT * FROM public.purge_expired_audit_logs(29);"
+                $retCount1 = [long](Invoke-RetentionSql "SELECT count(*) FROM audit_logs")
+                $e2eLogs.Add("[8b] audit retention, rows inside the retention period (audit_logs $retCount0 -> $retCount1):`n     DELETE latest row: $retDelete`n     marker on + DELETE latest row: $retDeleteMarked`n     marker on + UPDATE: $retUpdateMarked`n     TRUNCATE: $retTruncate`n     purge_expired_audit_logs(29): $retTooShort")
+                Assert-True ($retDelete -match "audit_logs is append-only: DELETE is forbidden") "[8b] 최근 감사 행 DELETE 거부"
+                Assert-True ($retDeleteMarked -match "audit_logs is append-only: DELETE is forbidden") "[8b] 표식을 켜도 30일 안의 감사 행 DELETE 거부"
+                Assert-True ($retUpdateMarked -match "audit_logs is append-only: UPDATE is forbidden") "[8b] 표식을 켜도 감사 행 UPDATE 거부"
+                Assert-True ($retTruncate -match "audit_logs is append-only: TRUNCATE is forbidden") "[8b] 감사 로그 TRUNCATE 거부"
+                Assert-True ($retTooShort -match "audit retention must be at least 30 days") "[8b] purge_expired_audit_logs(29)는 예외(바닥값 30일)"
+                Assert-True ($retCount1 -eq $retCount0 -and $retCount0 -gt 0) "[8b] 거부된 시도 뒤 감사 로그 행 수 그대로($retCount0 -> $retCount1)"
+                $retInsert = Invoke-RetentionSql "INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VALUES (now() - interval '100 days', 'e2e-retention-old', 'VIEWER', 'LOGIN_SUCCESS') RETURNING 'inserted';"
+                $retPurged = Invoke-RetentionSql "SELECT deleted FROM public.purge_expired_audit_logs(90);"
+                $retAfter = Invoke-RetentionSql "SELECT (SELECT count(*) FROM audit_logs WHERE actor_username = 'e2e-retention-old') || '|' || (SELECT count(*) FROM audit_logs WHERE action_type = 'AUDIT_RETENTION_PURGE' AND actor_username = 'audit-retention' AND actor_role = 'SYSTEM' AND client_ip IS NULL) || '|' || (SELECT count(*) FROM audit_logs WHERE occurred_at < now() - interval '90 days') || '|' || (SELECT count(*) FROM audit_logs)"
+                $retPurgedAgain = Invoke-RetentionSql "SELECT deleted FROM public.purge_expired_audit_logs(90);"
+                $retAfterAgain = Invoke-RetentionSql "SELECT count(*) FROM audit_logs WHERE action_type = 'AUDIT_RETENTION_PURGE'"
+                $e2eLogs.Add("[8b] audit retention purge: insert a 100-day-old row: $retInsert; purge_expired_audit_logs(90) deleted=$retPurged; after (old row|purge audit rows|rows older than 90 days|all rows)=$retAfter; second call deleted=$retPurgedAgain purge audit rows=$retAfterAgain")
+                Assert-True ($retInsert -match "inserted" -and $retPurged -match '^[1-9]\d*$') "[8b] 100일 전 행을 넣으면 purge_expired_audit_logs(90)이 지운다(deleted=$retPurged)"
+                $retParts = @($retAfter -split '\|')
+                Assert-True ($retParts.Count -eq 4 -and $retParts[0] -eq '0' -and $retParts[1] -eq '1' -and $retParts[2] -eq '0' -and [long]$retParts[3] -ge $retCount0 + 1) "[8b] 기한 지난 행만 지워지고 삭제 기록 행 하나가 남음, 기한 안의 행은 줄지 않음($retAfter, 앞 $retCount0)"
+                Assert-True ($retPurgedAgain -eq '0' -and $retAfterAgain -eq '1') "[8b] 다시 부르면 0이고 삭제 기록 행이 늘지 않음(deleted=$retPurgedAgain, rows=$retAfterAgain)"
+
                 # [9] 클라이언트 IP·전달 헤더 위조(T14): 방문자가 붙인 X-Real-IP·X-Forwarded-For·Forwarded·X-Forwarded-Host/Prefix가
                 #     감사 로그 client_ip, 리다이렉트 Location, ModSecurity 기록 IP를 바꾸지 못해야 한다.
                 #     감사 로그는 verify-postgres에서 읽기 전용 SELECT로 보고, 기준 id 뒤의 viewer1 행을 id 순으로 각 요청과 짝짓는다.
