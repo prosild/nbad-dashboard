@@ -1,7 +1,7 @@
-import { ArrowRight, CheckCircle2, ClipboardCheck, GitPullRequestArrow, AlertTriangle, UserCheck } from 'lucide-react';
-import type { AnalystReviewView, AssignmentHistoryItem, StatusHistoryItem } from '../../types/api';
+import { ArrowRight, CheckCircle2, ClipboardCheck, GitPullRequestArrow, AlertTriangle, ShieldCheck, UserCheck } from 'lucide-react';
+import type { AnalystReviewView, AssignmentHistoryItem, ResponseActionItem, StatusHistoryItem } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
-import { reviewReasonText } from '../../utils/labels';
+import { labelText, reviewReasonText } from '../../utils/labels';
 import { CodeLabel, LookupText, ResolutionBadge, ReviewActionBadge } from '../StatusBadge';
 
 export type TimelineEvent =
@@ -10,7 +10,8 @@ export type TimelineEvent =
   | { kind: 'reviewDecided'; at: string | null; action: string | null; analyst: string | null }
   | { kind: 'reviewResumed'; at: string | null }
   | { kind: 'reviewResumeFailed'; at: string | null }
-  | { kind: 'assignment'; at: string | null; item: AssignmentHistoryItem };
+  | { kind: 'assignment'; at: string | null; item: AssignmentHistoryItem }
+  | { kind: 'response'; at: string | null; item: ResponseActionItem };
 
 /** 담당 변경 종류(T25): 미배정 → 사람 = 지정, 사람 → 미배정 = 해제, 사람 → 사람 = 변경 */
 export function assignmentKindLabel(item: AssignmentHistoryItem): string {
@@ -27,13 +28,15 @@ function timeOf(iso: string | null): number {
 
 /**
  * 상태 변경 이력과 에스컬레이션 요청·결정·반영을 시간 순서 하나로 합친다(T19). 오래된 것이 위.
- * 시각이 없는 항목은 맨 뒤, 같은 시각은 원래 순서(상태 이력 → 요청 → 결정 → 반영 → 담당 변경)를 지킨다.
+ * 시각이 없는 항목은 맨 뒤, 같은 시각은 원래 순서(상태 이력 → 요청 → 결정 → 반영 → 담당 변경 → 대응 조치)를 지킨다.
  * 반영 실패는 시각이 없어 결정 시각에 붙인다. T25: 담당 변경 이력도 같은 줄에 종류 표지로 넣는다.
+ * T56: 대응 조치 기록(서버는 시간 역순으로 준다)은 기록한 시각으로 넣는다. 같은 시각의 기록끼리는 먼저 기록한 것이 위다.
  */
 export function buildTimeline(
   statusHistory: StatusHistoryItem[],
   review: AnalystReviewView,
   assignmentHistory: AssignmentHistoryItem[] = [],
+  responseActions: ResponseActionItem[] = [],
 ): TimelineEvent[] {
   const events: TimelineEvent[] = statusHistory.map((item) => ({ kind: 'status', at: item.changedAt, item }));
   if (review.present) {
@@ -54,6 +57,9 @@ export function buildTimeline(
   }
   for (const item of assignmentHistory) {
     events.push({ kind: 'assignment', at: item.changedAt, item });
+  }
+  for (const item of [...responseActions].reverse()) {
+    events.push({ kind: 'response', at: item.recordedAt, item });
   }
   return events
     .map((ev, idx) => ({ ev, idx }))
@@ -132,6 +138,24 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
           </div>
         </>
       );
+    case 'response':
+      return (
+        <>
+          <div className="font-semibold text-slate-100">대응 조치 · {labelText('responseAction', ev.item.action)}</div>
+          {/* 메모는 분석가·관리자에게만 온다(조회자 응답에는 없다) */}
+          {ev.item.note && (
+            <div className="mt-1 text-slate-200">
+              <span className="mr-1.5 text-[11px] text-slate-500">메모</span>
+              <span className="whitespace-pre-line break-words" data-raw="">
+                {ev.item.note}
+              </span>
+            </div>
+          )}
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            기록자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+          </div>
+        </>
+      );
     default:
       return null;
   }
@@ -144,6 +168,7 @@ const ICONS = {
   reviewResumed: CheckCircle2,
   reviewResumeFailed: AlertTriangle,
   assignment: UserCheck,
+  response: ShieldCheck,
 } as const;
 
 export function HistoryTimeline({

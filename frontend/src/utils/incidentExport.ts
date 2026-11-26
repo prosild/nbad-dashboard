@@ -4,7 +4,7 @@
  * 값은 호스트 이름처럼 관측 대상이 정할 수 있는 글이라, 붙여 넣는 쪽에서 뜻이 바뀌지 않게 막는다
  * (마크다운은 코드 표기·기호 이스케이프, CSV는 수식 시작 문자 앞 작은따옴표).
  */
-import type { IncidentDetailView, IncidentQueueMeta, UnifiedQueueItem } from '../types/api';
+import type { IncidentDetailView, IncidentQueueMeta, ResponseActionItem, UnifiedQueueItem } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatBytes, formatDateTime, formatDateTimeRange, formatNumber } from './format';
 import { captureText, labelText } from './labels';
 
@@ -62,11 +62,16 @@ function sessionSuffix(row: Record<string, unknown>): string {
 const SUMMARY_PEERS = 5;
 const SUMMARY_PORTS = 3;
 
-/** 인시던트 한 건의 한국어 마크다운 요약. 인시던트 ID·모델 버전 같은 내부 식별자는 넣지 않는다. */
+/**
+ * 인시던트 한 건의 한국어 마크다운 요약. 인시던트 ID·모델 버전 같은 내부 식별자는 넣지 않는다.
+ * T56: responseActions(상세 응답의 바깥 값, 시간 역순)가 있으면 끝에 "대응 조치" 항목을 시각순으로 싣는다.
+ * 화면이 받은 값만 쓴다(조회자는 메모가 없다). 값이 없으면(옛 응답) 항목을 싣지 않는다.
+ */
 export function incidentMarkdown(
   detail: IncidentDetailView,
   meta: IncidentQueueMeta | null,
   incidentNo: number | null,
+  responseActions?: ResponseActionItem[],
 ): string {
   const { incident, evidence, report } = detail;
   const hidden = [incident.incidentId, incident.bundleId];
@@ -129,6 +134,16 @@ export function incidentMarkdown(
     for (const [label, values] of sections) {
       const items = values.map(text).filter((value) => value !== '');
       if (items.length > 0) lines.push('', `### ${label}`, ...items.map((value) => `- ${value}`));
+    }
+  }
+  if (responseActions !== undefined) {
+    lines.push('', '## 대응 조치');
+    if (responseActions.length === 0) lines.push('- 기록 없음');
+    for (const item of [...responseActions].reverse()) {
+      const note = item.note ? text(item.note) : '';
+      lines.push(
+        `- ${text(labelText('responseAction', item.action))} (기록 ${withZone(formatDateTime(item.recordedAt))})${note ? `: ${note}` : ''}`,
+      );
     }
   }
   return `${lines.join('\n')}\n`;

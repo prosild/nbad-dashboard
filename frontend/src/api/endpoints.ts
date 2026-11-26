@@ -121,6 +121,12 @@ export const incidentsApi = {
       method: 'POST',
       body,
     }),
+  /** T56 대응 조치 기록(기록만 한다). note는 조치 없음·기타일 때 필수 */
+  recordResponseAction: (jobId: number | string, queueRank: number | string, body: { action: string; note: string | null }) =>
+    apiRequest<ActionResultResponse>(`/api/incidents/${jobId}/rank/${queueRank}/response-actions`, {
+      method: 'POST',
+      body,
+    }),
   /** T25 담당 지정·변경·해제. assignee null = 해제, expected = 화면이 본 담당자 */
   assign: (jobId: number | string, queueRank: number | string, body: { assignee: string | null; expected: string | null }) =>
     apiRequest<{ assignment: IncidentAssignment }>(`/api/incidents/${jobId}/rank/${queueRank}/assignment`, {

@@ -262,6 +262,15 @@ export interface AssignmentHistoryItem {
   changedAt: string | null;
 }
 
+/** T56 대응 조치 기록 한 행. recordedAt은 조치한 시각이 아니라 기록한 시각이다. note는 조회자에게 오지 않는다(null) */
+export interface ResponseActionItem {
+  /** block_ip · isolate_host · lock_account · handover · monitor · none · other */
+  action: string;
+  note: string | null;
+  actorDisplay: string | null;
+  recordedAt: string | null;
+}
+
 export interface AssigneeCandidate {
   username: string;
   displayName: string;
@@ -481,6 +490,9 @@ export interface IncidentDetailApiResponse {
   canAssign?: boolean;
   /** T27 인시던트 번호(매기지 못했으면 null) */
   incidentNo?: number | null;
+  /** T56: 대응 조치 기록(시간 역순), 기록할 수 있는지(분석가·관리자이고 신규가 아님) */
+  responseActions?: ResponseActionItem[];
+  canRecordResponse?: boolean;
 }
 
 export interface AnalystReviewItem {

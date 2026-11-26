@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, ClipboardCheck, History, Info, RefreshCw, Wrench } from 'lucide-react';
 import { ApiError } from '../../api/client';
 import { incidentsApi } from '../../api/endpoints';
-import type { AssignmentHistoryItem, IncidentAssignment, IncidentDetailView } from '../../types/api';
+import type { AssignmentHistoryItem, IncidentAssignment, IncidentDetailView, ResponseActionItem } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { labelText, reviewReasonText } from '../../utils/labels';
 import {
@@ -16,6 +16,7 @@ import {
   REVIEW_STATUS_RELATION,
   useNowMs,
 } from '../../utils/reviewResume';
+import { RESPONSE_ACTION_REQUIRED_TEXT } from '../../utils/responseActions';
 import { isClosedStatus } from '../../utils/triage';
 import {
   IncidentStatusBadge,
@@ -29,6 +30,7 @@ import { AssignmentSection } from './AssignmentSection';
 import { FREE_TEXT_MAX } from '../../utils/freeText';
 import { FreeTextCounter } from './FreeTextCounter';
 import { buildTimeline, HistoryTimeline } from './HistoryTimeline';
+import { ResponseActionSection } from './ResponseActionSection';
 import { ReviewDecisionButtons } from './ReviewDecisionButtons';
 
 type Resolution = 'true_positive' | 'false_positive' | 'benign';
@@ -53,6 +55,8 @@ export function ActionPanel({
   canAssign = false,
   currentUsername = null,
   blockedReason = null,
+  responseActions,
+  canRecordResponse = false,
 }: {
   detail: IncidentDetailView;
   /** 조회자 계정이면 true */
@@ -66,6 +70,10 @@ export function ActionPanel({
   currentUsername?: string | null;
   /** T42: 상세 값이 최신이 아닌 동안(다시 읽기 실패) 조치를 막는 이유 */
   blockedReason?: string | null;
+  /** T56 대응 조치 기록(시간 역순, 서버 값). 응답에 없으면(옛 응답) undefined: 정탐 종결을 화면에서 막지 않는다 */
+  responseActions?: ResponseActionItem[];
+  /** T56 기록할 수 있는지(분석가·관리자이고 신규가 아님, 서버 값) */
+  canRecordResponse?: boolean;
 }) {
   const { notify } = useToast();
   const { incident, analystReview, currentStatus, nextAllowedStatus } = detail;
@@ -132,7 +140,13 @@ export function ActionPanel({
     }
   }
 
-  const statusEvents = buildTimeline(detail.statusHistory, analystReview, assignmentHistory);
+  const statusEvents = buildTimeline(detail.statusHistory, analystReview, assignmentHistory, responseActions ?? []);
+  /**
+   * T56: 정탐으로 종결하려면 대응 조치 기록이 하나 이상 있어야 한다(서버 409 RESPONSE_ACTION_REQUIRED와 같은 규칙).
+   * 응답에 기록 목록이 없으면(옛 응답) 모르는 것으로 보고 막지 않는다. 빈 목록일 때만 막는다.
+   */
+  const needsResponseAction =
+    nextAllowedStatus === 'closed' && resolution === 'true_positive' && responseActions !== undefined && responseActions.length === 0;
   /** T25: 조사를 시작하면 미배정일 때 시작한 사람이 담당자가 된다 */
   const autoAssignHint = nextAllowedStatus === 'investigating' && !assignment?.assignee;
   const recent = statusEvents.slice(-RECENT_HISTORY).reverse();
@@ -185,9 +199,19 @@ export function ActionPanel({
       {readOnly && (
         <p className="flex items-start gap-1.5 text-xs text-slate-400">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          읽기 전용 계정입니다. 담당 지정·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.
+          읽기 전용 계정입니다. 담당 지정·대응 조치 기록·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.
         </p>
       )}
+
+      <ResponseActionSection
+        jobId={incident.jobId}
+        queueRank={incident.queueRank}
+        actions={responseActions ?? []}
+        canRecord={!readOnly && canRecordResponse}
+        notStarted={!readOnly && currentStatus === 'open'}
+        onRefresh={onRefresh}
+        blockedReason={blockedReason}
+      />
 
       {/* 상태 변경 */}
       {canTransition && nextAllowedStatus && (
@@ -290,9 +314,20 @@ export function ActionPanel({
             <FreeTextCounter id="transition-reason-count" value={reason} />
           </div>
 
+          {needsResponseAction && (
+            <p
+              role="note"
+              aria-label="정탐 종결 안내"
+              className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+            >
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-300" aria-hidden="true" />
+              {RESPONSE_ACTION_REQUIRED_TEXT}
+            </p>
+          )}
+
           <button
             type="submit"
-            disabled={transitioning || !reason.trim() || blockedReason !== null}
+            disabled={transitioning || !reason.trim() || blockedReason !== null || needsResponseAction}
             title={blockedReason ?? undefined}
             className="soc-btn-primary w-full py-2 text-xs"
           >

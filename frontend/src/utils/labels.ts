@@ -33,6 +33,16 @@ export const LABEL_DICTIONARIES = {
     false_positive: '오탐',
     benign: '정상',
   },
+  /** 대응 조치 종류 (T56, 대시보드 자체 값) */
+  responseAction: {
+    block_ip: 'IP 차단',
+    isolate_host: '호스트 격리',
+    lock_account: '사용자 계정 잠금·비밀번호 초기화',
+    handover: '침해사고 대응팀 이관',
+    monitor: '모니터링 강화',
+    none: '조치 없음',
+    other: '기타',
+  },
   /** 통신 방향 (zeek_AD zeekad_role) */
   hostRole: {
     originator: '출발지',
@@ -135,6 +145,7 @@ export const LABEL_DICTIONARIES = {
     INCIDENT_STATUS_TRANSITION: '인시던트 상태 변경',
     ANALYST_REVIEW_DECISION: '에스컬레이션 결정',
     INCIDENT_ASSIGNMENT: '담당 지정',
+    INCIDENT_RESPONSE_ACTION: '대응 조치 기록',
     USER_ADMIN_CHANGE: '사용자 계정 변경',
     AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',
   },

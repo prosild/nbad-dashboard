@@ -485,8 +485,10 @@ describe('인시던트 상세 화면(T19)', () => {
     await screen.findByRole('tab', { name: '요약', selected: true });
     const a = actions();
     expect(within(a).getAllByText('분석 중').length).toBeGreaterThanOrEqual(1);
-    // T25: 담당 지정도 분석가 계정에서 한다
-    expect(within(a).getByText('읽기 전용 계정입니다. 담당 지정·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.')).toBeInTheDocument();
+    // T25: 담당 지정도 분석가 계정에서 한다. T56: 대응 조치 기록도 분석가 계정에서 한다(설계 변경으로 문장이 바뀌었다)
+    expect(
+      within(a).getByText('읽기 전용 계정입니다. 담당 지정·대응 조치 기록·상태 변경·에스컬레이션 결정은 분석가 계정에서 할 수 있습니다.'),
+    ).toBeInTheDocument();
     expect(within(a).queryByRole('textbox')).toBeNull();
     expect(within(a).queryByRole('combobox')).toBeNull();
     expect(within(a).queryByRole('button', { name: '종결 처리' })).toBeNull();

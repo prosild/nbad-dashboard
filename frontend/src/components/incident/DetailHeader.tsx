@@ -1,5 +1,5 @@
 import { Copy, FileText, FileX, Link2 } from 'lucide-react';
-import type { IncidentDetailView, IncidentQueueMeta } from '../../types/api';
+import type { IncidentDetailView, IncidentQueueMeta, ResponseActionItem } from '../../types/api';
 import { formatDateTime, formatDateTimeRange, formatDuration, formatNumber } from '../../utils/format';
 import { captureInfo, detectionModelInfo } from '../../utils/labels';
 import {
@@ -55,12 +55,15 @@ export function DetailHeader({
   meta = null,
   snapshot = false,
   incidentNo = null,
+  responseActions,
 }: {
   detail: IncidentDetailView;
   meta?: IncidentQueueMeta | null;
   snapshot?: boolean;
   /** T27 인시던트 번호(없으면 번호와 링크 복사를 보이지 않는다) */
   incidentNo?: number | null;
+  /** T56 대응 조치 기록(요약 복사에 싣는다. 응답에 없으면 undefined) */
+  responseActions?: ResponseActionItem[];
 }) {
   const { notify } = useToast();
   const incident = detail.incident;
@@ -82,7 +85,7 @@ export function DetailHeader({
   async function copySummary() {
     try {
       if (!navigator.clipboard) throw new Error('clipboard');
-      await navigator.clipboard.writeText(incidentMarkdown(detail, meta, incidentNo));
+      await navigator.clipboard.writeText(incidentMarkdown(detail, meta, incidentNo, responseActions));
       notify('인시던트 요약을 복사했습니다.', 'success');
     } catch {
       notify('인시던트 요약을 복사하지 못했습니다.', 'error');

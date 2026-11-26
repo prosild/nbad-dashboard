@@ -276,7 +276,7 @@ export function IncidentDetailPage() {
 
   const readOnly = user?.role === 'VIEWER';
   const timeline = current
-    ? buildTimeline(current.statusHistory, current.analystReview, data?.assignmentHistory ?? [])
+    ? buildTimeline(current.statusHistory, current.analystReview, data?.assignmentHistory ?? [], data?.responseActions ?? [])
     : [];
 
   return (
@@ -290,6 +290,7 @@ export function IncidentDetailPage() {
             meta={data?.queueMeta ?? null}
             snapshot={Boolean(timeContext?.snapshot)}
             incidentNo={data?.incidentNo ?? null}
+            responseActions={data?.responseActions}
           />
         ) : undefined
       }
@@ -307,6 +308,8 @@ export function IncidentDetailPage() {
             assignment={data?.assignment ?? null}
             assignmentHistory={data?.assignmentHistory ?? []}
             canAssign={Boolean(data?.canAssign)}
+            responseActions={data?.responseActions}
+            canRecordResponse={Boolean(data?.canRecordResponse)}
             blockedReason={staleDetail ? STALE_ACTION_BLOCKED_DETAIL : null}
             currentUsername={user?.username ?? null}
           />
@@ -429,7 +432,7 @@ export function IncidentDetailPage() {
                   {t.key === 'decision' && <SendDecisionSection sendDecision={current.sendDecision} />}
                   {t.key === 'slack' && <SlackThreadsSection threadGroups={current.slackThreadGroups} />}
                   {t.key === 'history' && (
-                    <HistoryTimeline events={timeline} emptyText="아직 상태 변경·에스컬레이션·담당 이력이 없습니다." />
+                    <HistoryTimeline events={timeline} emptyText="아직 상태 변경·에스컬레이션·담당·대응 조치 이력이 없습니다." />
                   )}
                 </div>
               ))}
