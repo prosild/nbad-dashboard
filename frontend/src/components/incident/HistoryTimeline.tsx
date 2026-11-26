@@ -2,6 +2,7 @@ import { ArrowRight, CheckCircle2, ClipboardCheck, GitPullRequestArrow, AlertTri
 import type { AnalystReviewView, AssignmentHistoryItem, ResponseActionItem, StatusHistoryItem } from '../../types/api';
 import { formatDateTime } from '../../utils/format';
 import { labelText, reviewReasonText } from '../../utils/labels';
+import { isReopenTransition, REOPENED_LABEL } from '../../utils/reopen';
 import { CodeLabel, LookupText, ResolutionBadge, ReviewActionBadge } from '../StatusBadge';
 
 export type TimelineEvent =
@@ -80,6 +81,10 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
             <span className="font-semibold text-slate-100">
               <CodeLabel dict="incidentStatus" value={ev.item.toStatus} />
             </span>
+            {/* T53: 종결 → 분석 중은 다시 연 것이다(판정은 비워져 배지가 없다) */}
+            {isReopenTransition(ev.item) && (
+              <span className="rounded border border-cyan-500/40 px-1.5 text-[11px] text-cyan-200">{REOPENED_LABEL}</span>
+            )}
             {ev.item.resolution && <ResolutionBadge resolution={ev.item.resolution} />}
           </div>
           {/* T21: 각 항목은 그 변경의 변경자·사유다. 결정 반영으로 생긴 항목의 사유는 결정 메모다(서버가 VIEWER에게 IPv4를 가린다). */}

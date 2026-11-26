@@ -112,6 +112,12 @@ export const incidentsApi = {
       method: 'POST',
       body,
     }),
+  /** T53 종결한 인시던트 다시 열기. expectedResolution = 화면이 보고 있는 판정(그사이 바뀌었으면 서버가 409) */
+  reopen: (jobId: number | string, queueRank: number | string, body: { reason: string; expectedResolution: string }) =>
+    apiRequest<ActionResultResponse>(`/api/incidents/${jobId}/rank/${queueRank}/reopen`, {
+      method: 'POST',
+      body,
+    }),
   reviewDecision: (
     jobId: number | string,
     queueRank: number | string,

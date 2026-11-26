@@ -493,6 +493,8 @@ export interface IncidentDetailApiResponse {
   /** T56: 대응 조치 기록(시간 역순), 기록할 수 있는지(분석가·관리자이고 신규가 아님) */
   responseActions?: ResponseActionItem[];
   canRecordResponse?: boolean;
+  /** T53: 다시 열 수 있는지(분석가·관리자이고 지금 종결). 없으면(옛 응답) 폼을 보이지 않는다 */
+  canReopen?: boolean;
 }
 
 export interface AnalystReviewItem {

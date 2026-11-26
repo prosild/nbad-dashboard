@@ -453,7 +453,7 @@ describe('인시던트 상세 화면(T19)', () => {
     await screen.findByRole('tab', { name: '요약', selected: true });
     expect(within(header()).getByText('우선순위 없음')).toBeInTheDocument();
     expect(within(header()).queryByText('High')).toBeNull();
-    expect(within(actions()).getByText('종결된 인시던트입니다. 더 바꿀 상태가 없습니다.')).toBeInTheDocument();
+    expect(within(actions()).getByText('종결된 인시던트입니다.')).toBeInTheDocument();
     first.unmount();
 
     // 발송 판단 "발송"인 행이어도 서버가 Low를 주면 Low를 보인다

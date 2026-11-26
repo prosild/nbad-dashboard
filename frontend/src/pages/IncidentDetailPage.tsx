@@ -310,6 +310,7 @@ export function IncidentDetailPage() {
             canAssign={Boolean(data?.canAssign)}
             responseActions={data?.responseActions}
             canRecordResponse={Boolean(data?.canRecordResponse)}
+            canReopen={Boolean(data?.canReopen)}
             blockedReason={staleDetail ? STALE_ACTION_BLOCKED_DETAIL : null}
             currentUsername={user?.username ?? null}
           />

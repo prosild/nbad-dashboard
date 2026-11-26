@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, ClipboardCheck, History, Info, RefreshCw, Wrench } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, History, Info, RefreshCw, RotateCcw, Wrench } from 'lucide-react';
 import { ApiError } from '../../api/client';
 import { incidentsApi } from '../../api/endpoints';
 import type { AssignmentHistoryItem, IncidentAssignment, IncidentDetailView, ResponseActionItem } from '../../types/api';
@@ -16,6 +16,7 @@ import {
   REVIEW_STATUS_RELATION,
   useNowMs,
 } from '../../utils/reviewResume';
+import { CLOSED_INCIDENT_TEXT, REOPEN_ASSIGN_NOTE, REOPEN_EFFECT_NOTE, reopenedAfter } from '../../utils/reopen';
 import { RESPONSE_ACTION_REQUIRED_TEXT } from '../../utils/responseActions';
 import { isClosedStatus } from '../../utils/triage';
 import {
@@ -57,6 +58,7 @@ export function ActionPanel({
   blockedReason = null,
   responseActions,
   canRecordResponse = false,
+  canReopen = false,
 }: {
   detail: IncidentDetailView;
   /** 조회자 계정이면 true */
@@ -74,6 +76,8 @@ export function ActionPanel({
   responseActions?: ResponseActionItem[];
   /** T56 기록할 수 있는지(분석가·관리자이고 신규가 아님, 서버 값) */
   canRecordResponse?: boolean;
+  /** T53 다시 열 수 있는지(분석가·관리자이고 지금 종결, 서버 값) */
+  canReopen?: boolean;
 }) {
   const { notify } = useToast();
   const { incident, analystReview, currentStatus, nextAllowedStatus } = detail;
@@ -84,14 +88,25 @@ export function ActionPanel({
   const nowMs = useNowMs();
   const phase = resumePhase(analystReview, nowMs);
   const stuck = isResumeStuck(phase);
+  const closed = isClosedStatus(currentStatus);
+  // T53: 결정 시각보다 늦게 사람이 종결 건을 다시 열었으면(종결 → 분석 중) 그 사람은 판정을 의심해 연 것이다.
+  // 반영 상태(반영됨·실패·지연)와 상관없이 "직접 종결" 안내와 오탐 미리 채움을 띄우지 않는다(서버 규칙은 그대로, 화면 안의 판단).
+  const reopenedAfterDecision = reopenedAfter(detail.statusHistory, analystReview.decidedAt);
   // 오탐 미리 채움(T21): 오탐 종결 결정이 자동 반영되지 않았을 때(반영 실패·반영 지연)만. 상태 ≠ 종결.
-  const dismissed = analystReview.reviewAction === 'dismiss' && !isClosedStatus(currentStatus) && stuck;
+  const dismissed = analystReview.reviewAction === 'dismiss' && !closed && stuck && !reopenedAfterDecision;
+  // T53 다시 열기: 서버 값(canReopen)이고 지금 종결일 때만
+  const showReopen = !readOnly && canReopen && closed;
   const defaultResolution: Resolution = dismissed ? 'false_positive' : 'true_positive';
 
   const [resolution, setResolution] = useState<Resolution>(defaultResolution);
   const [reason, setReason] = useState('');
   const [transitioning, setTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
+
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopening, setReopening] = useState(false);
+  /** 다시 불러오기로 풀릴 수 있는 오류인지(501 기능 없음은 아니다) */
+  const [reopenError, setReopenError] = useState<{ message: string; retryable: boolean } | null>(null);
 
   const [reviewNote, setReviewNote] = useState('');
   const [decidingReview, setDecidingReview] = useState(false);
@@ -119,6 +134,30 @@ export function ActionPanel({
       setTransitionError(err instanceof ApiError ? err.message : '상태 변경 요청을 처리하지 못했습니다.');
     } finally {
       setTransitioning(false);
+    }
+  }
+
+  async function handleReopen(e: React.FormEvent) {
+    e.preventDefault();
+    setReopenError(null);
+    setReopening(true);
+    try {
+      const res = await incidentsApi.reopen(incident.jobId, incident.queueRank, {
+        reason: reopenReason.trim(),
+        // 화면이 보고 있는 판정. 그사이 다른 사람이 다시 열어 다른 판정으로 종결했으면 서버가 409로 거부한다.
+        expectedResolution: detail.currentResolution ?? '',
+      });
+      notify(res.message || '인시던트를 다시 열었습니다.', 'success');
+      setReopenReason('');
+      await onRefresh();
+    } catch (err) {
+      setReopenError(
+        err instanceof ApiError
+          ? { message: err.message, retryable: err.status !== 501 }
+          : { message: '다시 열기 요청을 처리하지 못했습니다.', retryable: true },
+      );
+    } finally {
+      setReopening(false);
     }
   }
 
@@ -336,10 +375,72 @@ export function ActionPanel({
         </form>
       )}
 
-      {!readOnly && !canTransition && (
-        <p className="text-xs text-slate-400">
-          {isClosedStatus(currentStatus) ? '종결된 인시던트입니다. 더 바꿀 상태가 없습니다.' : '지금 바꿀 수 있는 상태가 없습니다.'}
-        </p>
+      {closed && !canTransition && <p className="text-xs text-slate-400">{CLOSED_INCIDENT_TEXT}</p>}
+      {!closed && !readOnly && !canTransition && <p className="text-xs text-slate-400">지금 바꿀 수 있는 상태가 없습니다.</p>}
+
+      {/* T53 다시 열기: 확인 단계는 두지 않는다(상태 변경과 같다. 되돌릴 수 있는 동작이다) */}
+      {showReopen && (
+        <form onSubmit={(e) => void handleReopen(e)} className="space-y-2.5" aria-label="다시 열기">
+          <h3 className="soc-subhead">다시 열기</h3>
+
+          <div
+            role="note"
+            aria-label="다시 열기 안내"
+            className="flex items-start gap-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-300"
+          >
+            <Info className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
+            <div className="space-y-0.5">
+              <p>{REOPEN_EFFECT_NOTE}</p>
+              <p>{REOPEN_ASSIGN_NOTE}</p>
+            </div>
+          </div>
+
+          {reopenError && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+            >
+              <span className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                {reopenError.message}
+              </span>
+              {reopenError.retryable && (
+                <button type="button" onClick={() => void onRefresh()} className="soc-btn-secondary py-1 text-[11px]">
+                  <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                  다시 불러오기
+                </button>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="reopen-reason" className="mb-1 block text-xs font-medium text-slate-300">
+              다시 여는 사유 (필수)
+            </label>
+            <textarea
+              id="reopen-reason"
+              rows={2}
+              required
+              maxLength={FREE_TEXT_MAX}
+              aria-describedby="reopen-reason-count"
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder="다시 여는 까닭과 새로 본 근거를 입력하세요."
+              className="soc-input text-xs"
+            />
+            <FreeTextCounter id="reopen-reason-count" value={reopenReason} />
+          </div>
+
+          <button
+            type="submit"
+            disabled={reopening || !reopenReason.trim() || blockedReason !== null}
+            title={blockedReason ?? undefined}
+            className="soc-btn-secondary w-full py-2 text-xs"
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+            {reopening ? '저장 중...' : '다시 열기'}
+          </button>
+        </form>
       )}
 
       {/* 에스컬레이션 */}
