@@ -130,7 +130,7 @@ flowchart LR
 | 공개 스택 리허설 | 공개 데모와 같은 구성에 스냅샷을 복원해 E2E와 ZAP을 돌린 뒤 지운다 (`scripts/portfolio-verify.ps1`) |
 | 공개 주소 확인 | 배포 뒤 공개 주소에서 로그인·마스킹·숨김 캡처 `403`·속도 제한 등을 확인 |
 
-최근 결과(2026-11-26, commit `c59de00`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과, 공개 주소 확인 248항목 통과. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
+최근 결과(2026-11-26, commit `d3e3fe9`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과, 공개 주소 확인 248항목 통과, 1항목(전체 기간 인시던트 목록 응답 최댓값 1,009ms, 기준 1초)은 넘음. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
 
 ## AI와 일한 방식
 
@@ -168,7 +168,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 
 ## 아쉬운 점과 다음에 할 것
 
-- 공개 데모의 전체 기간 인시던트 목록 응답이 최대 979ms입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다.
+- 공개 데모의 전체 기간 인시던트 목록 응답이 최대 1,009ms로 목표 1초를 넘습니다(공개 주소 측정). 나눠 재면 대부분 앱·DB 처리 시간입니다.
 - 호스트 위험도의 "목적지 → 출발지 전환" 표지는 같은 캡처 안에서 순서만 보고 시간 간격을 보지 않습니다. 공개 데이터셋에서는 호스트 14개 모두에 붙어 먼저 볼 호스트를 가려내는 데 도움이 되지 않습니다.
 - 앱은 WAF 고정 주소에서 온 전달 헤더만 믿지만, 같은 Docker 네트워크에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격까지는 막지 못합니다.
 - Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.
