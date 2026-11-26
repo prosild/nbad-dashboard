@@ -487,6 +487,68 @@ class T60TotpFailureLimitIntegrationTest {
         assertThat(userMapper.findByUsername(name).getFailedAttempts()).isZero();
     }
 
+    @Test
+    void limitReachedWithoutLockIsLockedOnNextTotpAttemptAndCodeIsNotJudged() throws Exception {
+        String name = "t60_stucklimit";
+        String secret = createEnrolledAdmin(name);
+        MockHttpSession session = loginSession(name);
+        // 횟수는 한도에 닿았는데 잠금이 없는 행(시도를 차지한 뒤 잠그기 전에 프로세스가 죽었거나 한도 설정을 낮춘 경우)
+        Long id = userMapper.findByUsername(name).getId();
+        userMapper.updateLoginFailure(id, 5, null, OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
+
+        // 차지하지 못하므로 맞는 코드도 보지 않고 423이다. 이 요청이 잠금을 건다(풀리지 않는 상태로 남지 않는다)
+        verify(session, validCode(secret)).andExpect(status().isLocked())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_LOCKED"));
+
+        DashboardUser after = userMapper.findByUsername(name);
+        assertThat(after.getFailedAttempts()).isEqualTo(5);
+        assertThat(after.getLockedUntil()).isNotNull();
+        assertThat(after.getLockedUntil().toInstant()).isEqualTo(BASE_NOW.plusSeconds(15 * 60L));
+        assertThat(audits(ACCOUNT_LOCKED, name)).hasSize(1);
+        assertThat(audits(TOTP_VERIFIED, name)).isEmpty();
+        List<AuditLog> failures = audits(TOTP_FAILURE, name);
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).getDetailJson()).contains("account_locked").contains("lockedUntil")
+                .doesNotContain("invalid_code");
+        assertThat(session.isInvalid()).isTrue();
+        mockMvc.perform(get("/api/admin/users").session(session)).andExpect(status().isUnauthorized());
+
+        // 잠금 시간이 지나면 1부터 다시 세고 맞는 코드로 통과한다
+        clock.set(BASE_NOW.plusSeconds(16 * 60L));
+        MockHttpSession afterExpiry = loginSession(name);
+        verify(afterExpiry, validCode(secret)).andExpect(status().isOk());
+        assertThat(userMapper.findByUsername(name).getFailedAttempts()).isZero();
+    }
+
+    @Test
+    void lockSetDuringPasswordCheckMakesWrongPassword423WithAccountLockedReason() throws Exception {
+        String name = "t60_lockrace";
+        createEnrolledAdmin(name);
+        Long id = userMapper.findByUsername(name).getId();
+        OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+        OffsetDateTime lockedUntil = now.plusMinutes(15);
+
+        // 비밀번호 비교(BCrypt)가 도는 사이에 다른 요청이 계정을 잠근 상황을 만든다
+        doAnswer(invocation -> {
+            userMapper.updateLoginFailure(id, 5, lockedUntil, now);
+            return invocation.callRealMethod();
+        }).when(passwordEncoder).matches(any(), any());
+
+        login(name, "Wrong-Pass").andExpect(status().isLocked())
+                .andExpect(jsonPath("$.status").value(423))
+                .andExpect(jsonPath("$.code").value("ACCOUNT_LOCKED"));
+
+        // 시도를 차지하지 못했다: 횟수와 잠금은 그대로이고 실패 감사의 reason은 account_locked다. 이 요청이 잠근 것이 아니라 잠금 감사는 없다
+        DashboardUser after = userMapper.findByUsername(name);
+        assertThat(after.getFailedAttempts()).isEqualTo(5);
+        assertThat(after.getLockedUntil().toInstant()).isEqualTo(lockedUntil.toInstant());
+        List<AuditLog> failures = audits(LOGIN_FAILURE, name);
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).getDetailJson()).contains("account_locked").contains("lockedUntil")
+                .doesNotContain("invalid_credentials").doesNotContain("failedAttempts");
+        assertThat(audits(ACCOUNT_LOCKED, name)).isEmpty();
+    }
+
     /** 관리자 계정을 만들고 TOTP를 등록된 상태로 둔다. 비밀키를 돌려준다. */
     private String createEnrolledAdmin(String username) {
         userAdminService.createUser(username, username, PASS, UserRole.ADMIN, "*", "seed", "ADMIN", "127.0.0.1");
