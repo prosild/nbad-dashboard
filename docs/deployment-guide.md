@@ -44,7 +44,7 @@
 - **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/incidents/{인시던트 번호}`(`T27`, 숫자만), `/hosts`(`T46`), `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다(목록은 `SpaForwardController`). `T27`부터 이 화면 경로의 GET·HEAD는 인증이 없거나 세션이 끝났거나 `ADMIN` TOTP를 마치지 않았어도 `302` 대신 데이터 없는 SPA 셸을 `200`(`Cache-Control: no-store`)으로 줍니다(`SpaShell`). 화면이 원래 주소를 들고 로그인·TOTP 화면으로 보냅니다. 데이터는 `/api/**`가 막으므로 셸에는 업무 정보가 없습니다. `/admin/**` 화면의 데이터는 `ADMIN`만 받습니다.
 - **없는 주소**(`T50`): 위 목록에 없는 경로를 로그인한 사용자가 브라우저로 열면(`GET`이고 `Accept`에서 `text/html`이 `application/json`보다 앞) 서버가 같은 SPA 셸을 `404`(`Cache-Control: no-store`)로 주고 화면이 "페이지를 찾을 수 없습니다"를 그립니다. 그 밖의 요청(`/api/**`·`/assets/**`·`/actuator/**` 경로, JSON을 앞세우거나 `Accept`가 없는 요청, `GET`이 아닌 요청)은 지금처럼 `404` JSON(`code: NOT_FOUND`)입니다. 두 응답 모두 `Vary: Accept`를 붙입니다. 로그인하지 않은 요청도 지금과 같습니다(위 목록에 없는 경로는 `302`로 `/login`, `/api/**`는 `401` JSON, 인증 없이 받는 `/assets/**`의 없는 파일은 `404` JSON).
 - **정적 자산**: `/assets/*.js`·`/assets/*.css`·`/index.html`은 인증 없이 받습니다(`Content-Type` `text/javascript`·`text/css`, `X-Content-Type-Options: nosniff`). CSP는 `script-src 'self'; style-src 'self'`로 인라인 스크립트·스타일을 허용하지 않습니다.
-- **JSON API (`/api/**`)**: SPA 폴백 대상이 아닙니다. 비인증 요청은 `401` JSON(`code: UNAUTHENTICATED`), 인증된 세션의 없는 경로는 `404` JSON(`code: NOT_FOUND`)이며 `index.html`을 돌려주지 않습니다. 관리자는 1차 로그인 뒤 TOTP 검증 전까지 업무 API가 `403`(`TOTP_VERIFICATION_REQUIRED`)입니다.
+- **JSON API (`/api/**`)**: SPA 폴백 대상이 아닙니다. 비인증 요청은 `401` JSON(`code: UNAUTHENTICATED`), 인증된 세션의 없는 경로는 `404` JSON(`code: NOT_FOUND`)이며 `index.html`을 돌려주지 않습니다. 관리자는 1차 로그인 뒤 TOTP 검증 전까지 업무 API가 `403`(`TOTP_VERIFICATION_REQUIRED`)입니다. TOTP 확인(`POST /api/auth/totp/verify`)의 틀린 코드는 `400`(`INVALID_TOTP_CODE`)이고 비밀번호 실패와 같은 횟수에 더해집니다(`T60`). 한도에 닿거나 계정이 잠겨 있으면 `423`(`ACCOUNT_LOCKED`)을 주고 그 세션을 끝냅니다. 잠긴 계정은 코드를 보지 않습니다. 이 구성(`compose.yml`)에는 IP당 속도 제한이 없어 계정 잠금만 시도 수를 묶습니다. 공개 스택은 로그인과 TOTP 확인을 같은 속도 제한에 둡니다([`docs/portfolio-deployment.md`](portfolio-deployment.md)).
 - **CSRF**: SPA는 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키(`Secure; SameSite=Lax`, JS가 읽도록 HttpOnly 아님)를 받고 쓰기 요청마다 그 값을 `X-XSRF-TOKEN` 헤더로 보냅니다(이중 제출). 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다. 로그인·TOTP 뒤에는 토큰이 바뀌므로 클라이언트는 요청마다 최신 쿠키 값을 씁니다.
 
 ---
@@ -127,8 +127,8 @@ cp .env.example .env
 | `ZEEKAD_EVIDENCE_API_URL` | FastAPI 근거 API 주소 | `http://api:8000` | `http://127.0.0.1:8000` / `http://host.docker.internal:8000` |
 | `DASHBOARD_COOKIE_SECURE` | 세션 쿠키 `Secure` 속성 (HTTPS 앞단 WAF 필수 `true`) | `true` | `true` (HTTP 단독 테스트 시만 `false`) |
 | `DASHBOARD_SESSION_IDLE_TIMEOUT` | Spring 세션 유휴 만료 | `30m` | `30m` |
-| `DASHBOARD_MAX_FAILED_ATTEMPTS` | 로그인 연속 실패 잠금 횟수 | `5` | `5` |
-| `DASHBOARD_LOCKOUT_MINUTES` | 계정 잠금 유지 시간(분) | `15` | `15` |
+| `DASHBOARD_MAX_FAILED_ATTEMPTS` | 연속 실패 잠금 횟수. 비밀번호 실패와 관리자 TOTP 확인 실패를 합쳐 센다(`T60`). 관리자가 아닌 계정은 비밀번호가 맞으면 횟수가 되돌아가고 관리자는 TOTP 확인(처음이면 등록 완료)까지 성공해야 되돌아간다 | `5` | `5` |
+| `DASHBOARD_LOCKOUT_MINUTES` | 계정 잠금 유지 시간(분). 잠긴 동안에는 맞는 비밀번호와 맞는 TOTP 코드도 `423`이다 | `15` | `15` |
 | `DASHBOARD_LOCKOUT_EXEMPT_USERNAMES` | 계정 잠금 제외 공유 계정(T29, T33에서 넓힘). 쉼표 목록, 대소문자·앞뒤 공백 무시. 로그인 때 DB 역할이 VIEWER 또는 ANALYST인 계정만 빠진다(ADMIN은 목록에 있어도 잠긴다). 빠진 계정은 틀려도 실패 수·잠금을 바꾸지 않는다(실패 감사 `LOGIN_FAILURE`는 `lockoutExempt: true`로 남는다). **비밀번호를 공개한 공유 계정만 넣는다**: 실제 분석가 이름을 넣으면 그 계정도 잠기지 않아 여러 IP에서 대입할 때 막을 것이 IP당 로그인 속도 제한뿐이다. 목록의 계정이 없거나 VIEWER·ANALYST가 아니면 시작할 때 경고 로그(이름만)를 남기고 시작은 막지 않는다 | 비움 | 비움 |
 | `DASHBOARD_IDLE_TIMEOUT_MINUTES` | 필터 유휴 만료(분) | `30` | `30` |
 | `DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES` | 필터 절대 만료(분) | `480` | `480` |
@@ -214,7 +214,7 @@ docker compose ps
 
 ### 4.3 초기 접속 및 `lab-*` 접근 패턴 부여
 1. Windows 브라우저에서 `https://<배포_VM_IP>`로 접속합니다.
-2. `admin` 계정으로 로그인하면 SPA가 `/login/totp/setup`(최초, QR 등록) 또는 `/login/totp`(등록 후)로 이동합니다. TOTP를 마친 뒤 `/admin/users`에서 계정을 관리합니다.
+2. `admin` 계정으로 로그인하면 SPA가 `/login/totp/setup`(최초, QR 등록) 또는 `/login/totp`(등록 후)로 이동합니다. TOTP를 마친 뒤 `/admin/users`에서 계정을 관리합니다. TOTP 코드를 비밀번호 실패와 합쳐 5번 틀리면 계정이 15분 잠기고 화면이 로그인 화면으로 돌아갑니다(`T60`). 다른 관리자가 `/admin/users`에서 잠금을 풀거나 15분 뒤 다시 로그인합니다.
 3. 기본 시드 계정의 허용 패턴(`viewer1`/`analyst1`: `cic17-*`, `analyst2`: `syn1-*`, `admin`: `*`) 외에 실습망 캡처(`lab-YYYYMMDD`)를 볼 분석가·조회자는 `/admin/users`에서 해당 계정의 허용 캡처 패턴에 `lab-*`(또는 `cic17-*,lab-*`)를 추가·저장합니다.
 4. 계정 설정을 마치면 `.env`에서 `DASHBOARD_BOOTSTRAP_PASSWORD` 등 부트스트랩 변수를 비우고 `docker compose up -d`로 다시 적용하기를 권장합니다.
 
