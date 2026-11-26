@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- T56 대응 조치 기록. #{}만 쓴다. 넣기와 읽기만 있다. -->
+<mapper namespace="com.zeekad.dashboard.mapper.app.IncidentResponseActionMapper">
+
+    <resultMap id="actionMap" type="com.zeekad.dashboard.model.IncidentResponseAction">
+        <id property="id" column="id"/>
+        <result property="incidentId" column="incident_id"/>
+        <result property="captureId" column="capture_id"/>
+        <result property="jobId" column="job_id"/>
+        <result property="actionType" column="action_type"/>
+        <result property="note" column="note"/>
+        <result property="actorUsername" column="actor_username"/>
+        <result property="recordedAt" column="recorded_at"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.zeekad.dashboard.model.IncidentResponseAction"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO incident_response_actions (
+            incident_id, capture_id, job_id, action_type, note, actor_username, recorded_at
+        ) VALUES (
+            #{incidentId}, #{captureId}, #{jobId}, #{actionType}, #{note}, #{actorUsername}, #{recordedAt}
+        )
+    </insert>
+
+    <select id="findByIncidentId" resultMap="actionMap">
+        SELECT r.id, r.incident_id, r.capture_id, r.job_id, r.action_type, r.note, r.actor_username, r.recorded_at
+        FROM incident_response_actions r
+        WHERE r.incident_id = #{incidentId}
+        ORDER BY r.recorded_at DESC, r.id DESC
+    </select>
+
+    <select id="countByIncidentId" resultType="int">
+        SELECT COUNT(*) FROM incident_response_actions r WHERE r.incident_id = #{incidentId}
+    </select>
+</mapper>

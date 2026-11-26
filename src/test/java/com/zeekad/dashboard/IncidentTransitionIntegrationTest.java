@@ -241,6 +241,15 @@ class IncidentTransitionIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
 
+        // T56: 분석 중인 인시던트를 정탐으로 종결하려면 대응 조치 기록이 하나 이상 있어야 한다. 종결 앞에 기록을 넣는다.
+        mockMvc.perform(post("/api/incidents/{jobId}/rank/1/response-actions", TEST_JOB_ID)
+                        .session(session)
+                        .with(xsrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("action", "block_ip", "note", "출발지 차단 요청"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(true));
+
         // 5. investigating -> closed 정방향 완료
         mockMvc.perform(post("/api/incidents/{jobId}/rank/1/transition", TEST_JOB_ID)
                         .session(session)

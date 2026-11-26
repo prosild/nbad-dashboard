@@ -14,6 +14,8 @@ public enum AuditActionType {
     ANALYST_REVIEW_DECISION,
     /** T25 담당자 지정·변경·해제(조사 시작 때 자동 지정 포함) */
     INCIDENT_ASSIGNMENT,
+    /** T56 대응 조치 기록(상세 {action, note}) */
+    INCIDENT_RESPONSE_ACTION,
     USER_ADMIN_CHANGE,
     /**
      * T58 보관 기한이 지난 감사 행 삭제. 앱은 이 값을 쓰지 않는다(조회와 화면 필터에만 쓴다).

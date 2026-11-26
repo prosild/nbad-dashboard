@@ -32,16 +32,22 @@ public class IncidentTransitionService {
     private final CaptureAccessService captureAccessService;
     private final AuditService auditService;
     private final IncidentAssignmentService incidentAssignmentService;
+    private final IncidentResponseActionService incidentResponseActionService;
 
     public IncidentTransitionService(ZeekadWriteMapper zeekadWriteMapper,
                                      CaptureAccessService captureAccessService,
                                      AuditService auditService,
-                                     IncidentAssignmentService incidentAssignmentService) {
+                                     IncidentAssignmentService incidentAssignmentService,
+                                     IncidentResponseActionService incidentResponseActionService) {
+        this.incidentResponseActionService = incidentResponseActionService;
         this.zeekadWriteMapper = zeekadWriteMapper;
         this.captureAccessService = captureAccessService;
         this.auditService = auditService;
         this.incidentAssignmentService = incidentAssignmentService;
     }
+
+    /** 정탐 종결에 대응 조치 기록이 없을 때의 오류 코드(T56) */
+    public static final String RESPONSE_ACTION_REQUIRED = "RESPONSE_ACTION_REQUIRED";
 
     /** 자동 지정이 실패했을 때 성공 메시지에 덧붙이는 문장(T25) */
     public static final String AUTO_ASSIGN_FAILED_NOTE = " 담당자 자동 지정은 실패했습니다.";
@@ -84,6 +90,16 @@ public class IncidentTransitionService {
                         "인시던트를 종결하려면 판정(정탐·오탐·정상)을 선택해야 합니다.");
             }
             effectiveResolution = normalizedResolution;
+        }
+
+        // T56: 분석 중인 인시던트를 정탐으로 종결하려면 대응 조치 기록이 하나 이상 있어야 한다(조치가 없었다면 "조치 없음"과 사유).
+        // 지금 상태가 분석 중이 아니면(신규에서 바로 종결, 이미 종결) 이 규칙을 적용하지 않고 zeek_AD 함수가 전이 오류를 내게 둔다.
+        // 두 DB에 걸친 검사라 원자적이지 않다(기록 수를 본 뒤 전이한다). 기록은 초기화 말고는 지워지지 않으므로 받아들인다.
+        if ("true_positive".equals(effectiveResolution)
+                && "investigating".equals(incidentResponseActionService.currentStatus(item))
+                && incidentResponseActionService.countFor(item.getIncidentId()) == 0) {
+            return TransitionResult.failure(409, RESPONSE_ACTION_REQUIRED,
+                    IncidentResponseActionService.REQUIRED_FOR_TRUE_POSITIVE_MESSAGE);
         }
 
         String actorUsername = principal.getUsername();

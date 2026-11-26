@@ -7,6 +7,7 @@ import com.zeekad.dashboard.dto.IncidentDetailApiResponse;
 import com.zeekad.dashboard.dto.IncidentQueueResponse;
 import com.zeekad.dashboard.dto.IncidentReviewDecisionRequest;
 import com.zeekad.dashboard.dto.IncidentTransitionRequest;
+import com.zeekad.dashboard.dto.ResponseActionDtos;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
@@ -18,6 +19,7 @@ import com.zeekad.dashboard.service.IncidentQueryService;
 import com.zeekad.dashboard.service.IncidentNoLocationService;
 import com.zeekad.dashboard.service.IncidentQueueService;
 import com.zeekad.dashboard.service.IncidentRefService;
+import com.zeekad.dashboard.service.IncidentResponseActionService;
 import com.zeekad.dashboard.service.IncidentTransitionService;
 import com.zeekad.dashboard.service.MaskingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,6 +50,7 @@ public class IncidentApiController {
     private final IncidentAssignmentService incidentAssignmentService;
     private final IncidentRefService incidentRefService;
     private final IncidentNoLocationService incidentNoLocationService;
+    private final IncidentResponseActionService incidentResponseActionService;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
@@ -58,7 +61,9 @@ public class IncidentApiController {
                                  IncidentQueueService incidentQueueService,
                                  IncidentAssignmentService incidentAssignmentService,
                                  IncidentRefService incidentRefService,
-                                 IncidentNoLocationService incidentNoLocationService) {
+                                 IncidentNoLocationService incidentNoLocationService,
+                                 IncidentResponseActionService incidentResponseActionService) {
+        this.incidentResponseActionService = incidentResponseActionService;
         this.incidentRefService = incidentRefService;
         this.incidentNoLocationService = incidentNoLocationService;
         this.incidentAssignmentService = incidentAssignmentService;
@@ -132,12 +137,16 @@ public class IncidentApiController {
         String incidentId = incidentQueueService.rawIncidentId(jobId, queueRank);
         java.util.Map<String, String> displayMap = incidentQueryService.loadUserDisplayMap();
         boolean closed = "closed".equals(detail.currentStatus());
+        boolean canRecordRole = IncidentResponseActionService.canRecord(principal.getRole());
         return ResponseEntity.ok(new IncidentDetailApiResponse(maskedView, canDecideReview, detail,
                 incidentQueueService.metaFor(principal, jobId, queueRank),
                 incidentAssignmentService.currentView(incidentId, displayMap),
                 incidentAssignmentService.historyView(incidentId, displayMap),
                 canDecideReview && !closed,
-                incidentRefService.numberFor(incidentId)));
+                incidentRefService.numberFor(incidentId),
+                // T56 대응 조치: 조회자에게는 메모를 내리지 않는다(종류·기록자·시각만). 기록은 ANALYST·ADMIN이고 신규가 아닐 때만.
+                incidentResponseActionService.listView(incidentId, displayMap, canRecordRole),
+                canRecordRole && IncidentResponseActionService.statusAllowsRecord(detail.currentStatus())));
     }
 
     /** T25 담당자 지정·변경·해제. 본문 { assignee: username|null, expected: username|null }. CSRF 필요 */
@@ -173,6 +182,26 @@ public class IncidentApiController {
         String clientIp = clientIpResolver.resolve(request);
         return ResponseEntity.ok(new AssignmentDtos.CandidatesResponse(
                 incidentAssignmentService.candidates(principal, jobId, queueRank, clientIp)));
+    }
+
+    /**
+     * T56 대응 조치 기록. 본문 { action, note }. CSRF 필요. 기록만 한다(차단·격리를 실행하지 않는다).
+     * 고치거나 지우는 API는 없다.
+     */
+    @PostMapping("/{jobId}/rank/{queueRank}/response-actions")
+    public ResponseEntity<ActionResultResponse> recordResponseAction(
+            @PathVariable("jobId") Long jobId,
+            @PathVariable("queueRank") Integer queueRank,
+            @RequestBody ResponseActionDtos.RecordRequest body,
+            Authentication authentication,
+            HttpServletRequest request) {
+        DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+        // 본문이 JSON null이어도 접근·역할·상태 검사를 같은 순서로 거치게 빈 값으로 넘긴다(종류 검사에서 400).
+        IncidentResponseActionService.RecordResult result = incidentResponseActionService.record(
+                principal, jobId, queueRank, body == null ? null : body.action(), body == null ? null : body.note(), clientIp);
+        return ResponseEntity.status(result.httpStatus())
+                .body(new ActionResultResponse(result.succeeded(), result.code(), result.message()));
     }
 
     @PostMapping("/{jobId}/rank/{queueRank}/transition")

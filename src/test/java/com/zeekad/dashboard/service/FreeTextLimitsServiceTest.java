@@ -34,6 +34,7 @@ class FreeTextLimitsServiceTest {
     private final CaptureAccessService access = Mockito.mock(CaptureAccessService.class);
     private final AuditService audit = Mockito.mock(AuditService.class);
     private final IncidentAssignmentService assignment = Mockito.mock(IncidentAssignmentService.class);
+    private final IncidentResponseActionService responseActions = Mockito.mock(IncidentResponseActionService.class);
     private final DashboardUserPrincipal analyst = principal();
 
     @Test
@@ -50,7 +51,7 @@ class FreeTextLimitsServiceTest {
     @Test
     void transitionReasonOverLimitNeverCallsDbFunctionOrAudit() {
         when(access.requireIncidentAccessByRank(any(), anyLong(), anyInt(), any())).thenReturn(item());
-        IncidentTransitionService service = new IncidentTransitionService(writeMapper, access, audit, assignment);
+        IncidentTransitionService service = new IncidentTransitionService(writeMapper, access, audit, assignment, responseActions);
 
         var rejected = service.transition(analyst, 1L, 1, "investigating", null, " " + "x".repeat(501) + " ", "127.0.0.1");
         assertThat(rejected.succeeded()).isFalse();
