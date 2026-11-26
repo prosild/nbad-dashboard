@@ -6,9 +6,10 @@
   이미 있으면 다른 계정처럼 비활성으로 둔다(T33 이전 공개 스택과 같다). 이 계정이 바꾼 것은 sandbox-reset이 매시 정각에 되돌린다.
 두 계정의 허용 캡처는 같다.
 
-허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119,lab-20261122
-(Kali 실습망 캡처 lab-20261119·lab-20261122만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·첫 VM 실행 lab-20261118·
-시험 뒤 유휴 구간 lab-20261123 같은 나머지 실습망 캡처는 시연 화면에서 숨긴다, 2026-11-21·2026-11-23 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
+허용 캡처는 환경 변수 DEMO_CAPTURE_PATTERNS(쉼표 구분)로 정한다. 비어 있으면 cic17-*,syn1-*,lab-20261119,lab-20261122,lab-20261126
+(Kali 실습망 캡처 lab-20261119·lab-20261122와 오탐 규칙 뒤 재실행 lab-20261126만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·
+첫 VM 실행 lab-20261118·시험 뒤 유휴 구간 lab-20261123·규칙 전 유휴 날 lab-20261124·lab-20261125 같은 나머지 실습망 캡처는
+시연 화면에서 숨긴다, 2026-11-21·2026-11-23·2026-11-26 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
 
 T54 분석이 끝난 예시: 자료 파일(SEED_EXAMPLES_FILE, 기본 /seed/demo_examples.json)의 인시던트를 시연 분석가 계정
 demo-analyst(ANALYST, 평소 비활성)로 앱 API를 불러 착수 → (정탐이면) 대응 조치 → 담당 해제 → 종결까지 기록한다.
@@ -62,7 +63,7 @@ DEMO_ROLE = "VIEWER"
 ANALYST_USERNAME = "trial-analyst"
 ANALYST_ROLE = "ANALYST"
 DEFAULT_ANALYST_DISPLAY_NAME = "포트폴리오 방문자 (분석가 체험)"
-DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119,lab-20261122"
+DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119,lab-20261122,lab-20261126"
 ADMIN_USERNAME = "admin"
 SEED_ACTOR = "portfolio-seed"
 # T54 시연 분석가: 예시를 기록하는 동안만 켠다. 잠금 제외 목록에 넣지 않는다.

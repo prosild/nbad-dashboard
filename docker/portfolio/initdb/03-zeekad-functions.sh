@@ -1,6 +1,7 @@
 #!/bin/bash
 # 포트폴리오 스택 PostgreSQL 초기화 3단계(T53): 대시보드가 부르는 zeek_AD 함수 가운데 스냅샷(2단계가 복원한 zeekad DB)에 없는 것을 넣는다.
-# - 지금은 zeek_AD migration 018 하나다(dashboard.reopen_incident, 종결한 사건 다시 열기). 2026-11-23 스냅샷에는 이 함수가 없다.
+# - 지금은 zeek_AD migration 018 하나다(dashboard.reopen_incident, 종결한 사건 다시 열기). 2026-11-23 스냅샷에는 이 함수가 없었다.
+#   2026-11-26 스냅샷(T66)에는 있으므로 이 스크립트는 아래 "already exists" 줄을 남기고 건너뛴다. 사본과 이 스크립트를 지우는 것은 다음 작업에서 정한다.
 #   zeek_AD는 스냅샷 복원 DB에 이 파일 하나만 실행하면 된다고 적었다(다시 실행해도 결과가 같다).
 # - 사본은 하위 폴더 zeekad-sql/에 바이트 그대로 둔다. 이 폴더 맨 위의 *.sql은 공식 이미지가 postgres DB에 자동 실행하기 때문이다
 #   (하위 폴더는 보지 않는다). 출처(zeek_AD commit)와 sha256은 zeekad-sql/SOURCE.md에 있다.

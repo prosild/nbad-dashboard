@@ -97,9 +97,11 @@ foreach ($p in $manifest.captureIncidentCounts.PSObject.Properties) { $expectedC
 #      시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 등 나머지는 숨김, 2026-11-21 결정). 정확한 ID는 그 캡처만, 접두사*는 접두사 일치.
 # T39: lab-20261122(Kali 공격 6종 + 타깃 VM)를 더하고 시험 뒤 유휴 구간 lab-20261123은 숨긴다(2026-11-23 결정).
 #      실습망 단언은 공개 실습망 캡처 목록 전체를 본다. 노출 확인(-ExposureDir)은 처음 공개하는 lab-20261122를 본다(lab-20261119는 T33에서 봤다).
-$demoPatterns = @("cic17-*", "syn1-*", "lab-20261119", "lab-20261122")
-$demoLabCaptures = @("lab-20261119", "lab-20261122")
-$exposureLabCapture = "lab-20261122"
+# T66: lab-20261126(오탐 규칙 뒤 재실행)을 더하고 규칙 전 유휴 날 lab-20261124·lab-20261125는 숨긴다(2026-11-26 결정, 2026-11-26 스냅샷).
+#      노출 확인(-ExposureDir)은 처음 공개하는 lab-20261126을 본다(lab-20261122는 T39에서 봤다).
+$demoPatterns = @("cic17-*", "syn1-*", "lab-20261119", "lab-20261122", "lab-20261126")
+$demoLabCaptures = @("lab-20261119", "lab-20261122", "lab-20261126")
+$exposureLabCapture = "lab-20261126"
 function Test-DemoPattern([string]$CaptureId) {
     foreach ($p in $demoPatterns) {
         if ($p.EndsWith('*')) { if ($CaptureId.StartsWith($p.Substring(0, $p.Length - 1), [StringComparison]::Ordinal)) { return $true } }

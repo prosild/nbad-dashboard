@@ -244,7 +244,7 @@ services:
       # T33 체험용 분석가 계정 trial-analyst. 비어 있으면 시드가 만들지 않고(이미 있으면 비활성) 알린다.
       TRIAL_ANALYST_PASSWORD: ${TRIAL_ANALYST_PASSWORD:-}
       TRIAL_ANALYST_DISPLAY_NAME: ${TRIAL_ANALYST_DISPLAY_NAME:-포트폴리오 방문자 (분석가 체험)}
-      # 공개 계정(demo, trial-analyst) 허용 캡처(쉼표 구분). 비어 있으면 시드 스크립트 기본값 cic17-*,syn1-*,lab-20261119,lab-20261122.
+      # 공개 계정(demo, trial-analyst) 허용 캡처(쉼표 구분). 비어 있으면 시드 스크립트 기본값 cic17-*,syn1-*,lab-20261119,lab-20261122,lab-20261126.
       DEMO_CAPTURE_PATTERNS: ${DEMO_CAPTURE_PATTERNS:-}
       BOOTSTRAP_VIEWER1_PASSWORD: ${BOOTSTRAP_VIEWER1_PASSWORD:-}
       BOOTSTRAP_ANALYST1_PASSWORD: ${BOOTSTRAP_ANALYST1_PASSWORD:-}
