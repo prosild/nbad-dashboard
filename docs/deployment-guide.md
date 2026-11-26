@@ -39,7 +39,8 @@
   - 프로덕션 `bootJar`에는 H2 드라이버와 `application-test.yml`이 들어가지 않습니다.
 
 ### 1.3 SPA 라우팅과 `/api/**` 경계
-- **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/incidents/{인시던트 번호}`(`T27`, 숫자만), `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다(목록은 `SpaForwardController`). `T27`부터 이 화면 경로의 GET·HEAD는 인증이 없거나 세션이 끝났거나 `ADMIN` TOTP를 마치지 않았어도 `302` 대신 데이터 없는 SPA 셸을 `200`(`Cache-Control: no-store`)으로 줍니다(`SpaShell`). 화면이 원래 주소를 들고 로그인·TOTP 화면으로 보냅니다. 데이터는 `/api/**`가 막으므로 셸에는 업무 정보가 없습니다. `/admin/**` 화면의 데이터는 `ADMIN`만 받습니다.
+- **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/incidents/{인시던트 번호}`(`T27`, 숫자만), `/hosts`(`T46`), `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다(목록은 `SpaForwardController`). `T27`부터 이 화면 경로의 GET·HEAD는 인증이 없거나 세션이 끝났거나 `ADMIN` TOTP를 마치지 않았어도 `302` 대신 데이터 없는 SPA 셸을 `200`(`Cache-Control: no-store`)으로 줍니다(`SpaShell`). 화면이 원래 주소를 들고 로그인·TOTP 화면으로 보냅니다. 데이터는 `/api/**`가 막으므로 셸에는 업무 정보가 없습니다. `/admin/**` 화면의 데이터는 `ADMIN`만 받습니다.
+- **없는 주소**(`T50`): 위 목록에 없는 경로를 로그인한 사용자가 브라우저로 열면(`GET`이고 `Accept`에서 `text/html`이 `application/json`보다 앞) 서버가 같은 SPA 셸을 `404`(`Cache-Control: no-store`)로 주고 화면이 "페이지를 찾을 수 없습니다"를 그립니다. 그 밖의 요청(`/api/**`·`/assets/**`·`/actuator/**` 경로, JSON을 앞세우거나 `Accept`가 없는 요청, `GET`이 아닌 요청)은 지금처럼 `404` JSON(`code: NOT_FOUND`)입니다. 두 응답 모두 `Vary: Accept`를 붙입니다. 로그인하지 않은 요청은 지금처럼 `302`로 `/login`에 갑니다.
 - **정적 자산**: `/assets/*.js`·`/assets/*.css`·`/index.html`은 인증 없이 받습니다(`Content-Type` `text/javascript`·`text/css`, `X-Content-Type-Options: nosniff`). CSP는 `script-src 'self'; style-src 'self'`로 인라인 스크립트·스타일을 허용하지 않습니다.
 - **JSON API (`/api/**`)**: SPA 폴백 대상이 아닙니다. 비인증 요청은 `401` JSON(`code: UNAUTHENTICATED`), 인증된 세션의 없는 경로는 `404` JSON(`code: NOT_FOUND`)이며 `index.html`을 돌려주지 않습니다. 관리자는 1차 로그인 뒤 TOTP 검증 전까지 업무 API가 `403`(`TOTP_VERIFICATION_REQUIRED`)입니다.
 - **CSRF**: SPA는 `GET /api/auth/csrf`로 `XSRF-TOKEN` 쿠키(`Secure; SameSite=Lax`, JS가 읽도록 HttpOnly 아님)를 받고 쓰기 요청마다 그 값을 `X-XSRF-TOKEN` 헤더로 보냅니다(이중 제출). 세션 쿠키 `ZEEKAD_SESSION`은 `Secure; HttpOnly; SameSite=Lax`입니다. 로그인·TOTP 뒤에는 토큰이 바뀌므로 클라이언트는 요청마다 최신 쿠키 값을 씁니다.
@@ -125,6 +126,9 @@ cp .env.example .env
 | `DASHBOARD_LIVE_CAPTURE_PATTERNS` | 수집원 분류(T23). 맞는 캡처는 "실습망 센서", 나머지는 "가져온 데이터". 쉼표 목록, 패턴 문법은 허용 캡처와 같다(`접두어*`). 잘못된 패턴이면 시작하지 않는다 | `lab-*` | `lab-*` |
 | `DASHBOARD_SENSOR_STALE_AFTER`, `DASHBOARD_SENSOR_DOWN_AFTER` | 센서 상태(T24). 기준 시각 − 센서의 마지막 채점이 stale 이하면 정상, down 이하면 지연, 넘으면 중단(가장 최근 끝난 작업이 실패면 실패). Spring Duration(`15m`, `PT15M`). 0 이하이거나 stale ≥ down이면 시작하지 않는다. `compose.yml`은 넘기지 않아 기본값을 쓴다(바꾸려면 `dashboard-app` environment에 더한다) | `15m`, `1h` | `15m`, `1h` |
 | `DASHBOARD_SLA_ACK_HIGH`, `DASHBOARD_SLA_ACK_MEDIUM`, `DASHBOARD_SLA_ACK_LOW` | 착수 목표(T25). 실습망 신규 인시던트가 탐지 뒤 지금 우선순위의 목표를 넘기면 "착수 지연"(가져온 데이터는 따지지 않는다). Spring Duration(`30m`, `4h`). 0 이하이거나 high ≤ medium ≤ low가 아니면 시작하지 않는다. `compose.yml`은 넘기지 않아 기본값을 쓴다 | `30m`, `4h`, `24h` | `30m`, `4h`, `24h` |
+| `DASHBOARD_LOGIN_NOTICE` | 로그인 화면 안내 문구(T21). 일반 텍스트이고 줄바꿈을 그대로 보인다. 300자를 넘으면 시작하지 않는다. 비밀번호는 넣지 않는다 | 비움(안내 없음) | 비움 |
+| `DASHBOARD_LOGIN_NOTICE_LINK_URL` | 안내 문구 아래에 붙는 링크의 주소(T50). `https` 주소만 받는다(호스트가 있고 `user@`가 없어야 한다, 200자 이하, 공백·제어 문자·양방향 문자 없음). 라벨과 안내 문구가 함께 있을 때만 보인다. 검사에 걸리면 링크만 내리지 않고 시작 로그에 이유를 남긴다(값은 남기지 않는다) | 비움(링크 없음) | 비움 |
+| `DASHBOARD_LOGIN_NOTICE_LINK_LABEL` | 그 링크의 글(T50). 일반 텍스트 40자 이하, 제어 문자·양방향 문자 없음. 링크는 새 창으로 열린다 | 비움 | 비움 |
 | `DASHBOARD_BOOTSTRAP_PASSWORD` | `users` 테이블이 비어 있을 때 4계정 시드용 공통 비밀번호 | 초기 기동 후 비움 권장 | 초기 기동 후 비움 권장 |
 | `BOOTSTRAP_VIEWER1_PASSWORD` ~ `BOOTSTRAP_ADMIN_PASSWORD` | 계정별 개별 부트스트랩 비밀번호(선택) | 선택 | 선택 |
 | `BOOTSTRAP_ADMIN_TOTP_SECRET` | `admin` TOTP Base32 시크릿(비우면 `/login/totp/setup`에서 등록) | 선택 | 선택 |

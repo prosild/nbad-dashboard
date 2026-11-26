@@ -525,6 +525,15 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 - 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(예: T20 `demo` 허용 캡처 `*` → `cic17-*,syn1-*`. 데이터도 함께 바꾸는 T22 `cic17-*,syn1-*,lab-20261119`는 3.9)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
 - 스크립트로 실행할 때는 위 1·2단계를 스크립트 파일(`nas-step1.sh`·`nas-step2.sh`)로 저장한다. 스크립트를 표준 입력으로 bash에 넘기면(`echo <base64> | base64 -d | bash`, `ssh ... 'bash -s' < 파일`) `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버려 뒤 단계가 실행되지 않은 채 exit 0으로 끝날 수 있다(T22에서 확인). 그래서 NAS의 확인 폴더에 파일로 풀고 표준 입력을 닫아 실행한다: `ssh ... "echo <base64> | base64 -d > ~/zeekad-portfolio-check/<ID>-step1.sh && bash ~/zeekad-portfolio-check/<ID>-step1.sh < /dev/null"`. 출력은 `build/portfolio-evidence/<작업 ID>/nas-update.txt`처럼 Git 제외 경로에 남긴다.
 
+#### 로그인 안내문과 링크를 바꾸는 갱신(`T50`)
+
+로그인 안내문(`DASHBOARD_LOGIN_NOTICE`)과 그 아래 링크(`DASHBOARD_LOGIN_NOTICE_LINK_URL`, `DASHBOARD_LOGIN_NOTICE_LINK_LABEL`)는 앱 이미지가 아니라 `compose.portfolio.yml`의 `dashboard-app` 환경 값이다. 앱 이미지만 바꾸는 위 절차로는 안내문이 바뀌지 않는다. 안내문이나 링크 값이 바뀌면 NAS의 `compose.portfolio.yml`도 함께 바꾼다.
+
+- **1단계**: `SVC=dashboard-app`, `IMG=zeek-ad-dashboard-app`, `FILES="compose.portfolio.yml"`. `.env`는 바꾸지 않는다(세 값은 compose 파일에 직접 적혀 있다).
+- **2단계**: `up -d --wait --no-deps dashboard-app`. 링크 설정 둘은 `T50` 이후의 앱 이미지가 읽는다. 옛 이미지에 새 compose만 올리면 줄바꿈은 보이지만 링크는 보이지 않는다.
+- **확인**: `curl`로 `GET /api/auth/login-notice`를 받아 `notice`가 네 줄이고 `link.url`이 compose 값과 같은지 본다. 링크 값이 앱의 검사(`https` 주소, 호스트 있음, `user@` 없음, 길이)에 걸리면 앱은 뜨고 `link`만 빠진다. 이때 `docker logs`의 시작 구간에 "로그인 안내 링크를 내리지 않습니다: <이유>" 경고가 한 줄 남는다.
+- **롤백**: `compose.portfolio.yml`을 `*.pre-<ID>`로 되돌리고 `dashboard-app`을 다시 만든다.
+
 #### 앱 이미지와 compose·WAF 템플릿을 함께 바꾸는 갱신(`T32`)
 
 `T32`는 앱 이미지 하나와 파일 둘(`compose.portfolio.yml`, `docker/portfolio/nginx/zeekad-portfolio-http.conf.template`)을 바꾼다. WAF 이미지는 그대로지만 `nginx-waf`도 고정 주소·신뢰 범위가 바뀌어 다시 만들어진다. 위 서비스 하나 절차에서 다음만 다르다.
