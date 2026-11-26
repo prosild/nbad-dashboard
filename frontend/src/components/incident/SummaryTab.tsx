@@ -11,6 +11,7 @@ import {
   ReportClaims,
   ReportExplanations,
   ReportFollowUp,
+  ReportKindBadge,
   ReportLimitations,
   ReportVerificationProblems,
 } from './ReportSection';
@@ -67,6 +68,8 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
  * 요약 탭(T19): "무슨 일인가 → 왜 의심스러운가 → 다음에 할 일".
  * 리포트가 없으면 증적 정형 칸으로 만든 자동 요약 한 줄을 보인다. 빈 칸은 한 줄로만 보인다(V-13).
  * T46: 맨 아래에 같은 호스트의 다른 인시던트 구역(related)을 둔다.
+ * T64: 리포트에서 온 칸(관측 요약·확인된 사실·가능한 해석·추가 확인 권고)마다 AI 리포트 탭과 같은 규칙의 종류 표지를 붙인다
+ * (LLM이면 "AI 작성", 템플릿으로 바꾼 리포트면 템플릿 표지). ATT&CK 후보는 검색 자료라 붙이지 않는다.
  */
 export function SummaryTab({
   detail,
@@ -109,7 +112,14 @@ export function SummaryTab({
           <span id="summary-what">무슨 일인가</span>
         </SectionTitle>
         {report.present && report.observationSummary ? (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{report.observationSummary}</p>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <ReportKindBadge report={report} />
+            </div>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere]">
+              {report.observationSummary}
+            </p>
+          </div>
         ) : (
           <p className="text-sm text-slate-200">
             <span className="mr-1.5 rounded border border-slate-700 px-1 text-[11px] text-slate-400">자동 요약</span>
@@ -173,8 +183,8 @@ export function SummaryTab({
         </div>
         {hasWhy ? (
           <>
-            <ReportClaims report={report} />
-            <ReportExplanations report={report} />
+            <ReportClaims report={report} kindBadge />
+            <ReportExplanations report={report} kindBadge />
             <ReportAttack report={report} />
           </>
         ) : (
@@ -190,7 +200,7 @@ export function SummaryTab({
         </SectionTitle>
         {hasNext ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <ReportFollowUp report={report} idPrefix="summary-tab" />
+            <ReportFollowUp report={report} idPrefix="summary-tab" kindBadge />
             <ReportLimitations report={report} />
           </div>
         ) : (

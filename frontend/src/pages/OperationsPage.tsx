@@ -597,11 +597,12 @@ export function OperationsPage() {
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400">
-                        채널 <span className="font-mono text-slate-300">{summary.payloadChannel ?? '-'}</span> · 전송 결과{' '}
+                        채널 <span className="break-all font-mono text-slate-300">{summary.payloadChannel ?? '-'}</span> · 전송 결과{' '}
                         <CodeLabel dict="slackDeliveryStatus" value={summary.zeekadDeliveryStatus} className="text-slate-300" />
                       </div>
+                      {/* T64: 미리보기는 페이로드 글 전체(서버 상한 4,000자)라 높이를 정하고 상자 안에서 스크롤한다 */}
                       {summary.payloadTextPreview && (
-                        <p className="whitespace-pre-wrap rounded border border-slate-800 bg-[#090f1d] p-3 text-xs text-slate-200">
+                        <p className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-slate-800 bg-[#090f1d] p-3 text-xs text-slate-200 [overflow-wrap:anywhere]">
                           {summary.payloadTextPreview}
                         </p>
                       )}

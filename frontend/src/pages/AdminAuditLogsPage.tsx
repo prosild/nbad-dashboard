@@ -26,8 +26,9 @@ function AuditLogRow({ log }: { log: AuditLog }) {
         <td className="soc-td whitespace-nowrap text-xs tabular-nums text-slate-300">
           {formatDateTime(log.occurredAt)}
         </td>
+        {/* T64: 행위자(로그인 실패의 입력값 포함)·대상 캡처(IDOR 요청값)는 바깥 글이라 칸 폭을 정하고 줄을 바꾼다 */}
         <td className="soc-td text-xs">
-          <div className="font-mono font-semibold text-slate-100">{log.actorUsername ?? '-'}</div>
+          <div className="max-w-[16rem] font-mono font-semibold text-slate-100 [overflow-wrap:anywhere]">{log.actorUsername ?? '-'}</div>
           {log.actorRole && (
             <div className="text-[11px] text-slate-400">
               <CodeLabel dict="userRole" value={log.actorRole} />
@@ -40,9 +41,9 @@ function AuditLogRow({ log }: { log: AuditLog }) {
           </SocBadge>
         </td>
         <td className="soc-td text-xs text-slate-300">
-          <div className="font-mono">{log.targetCaptureId ?? '-'}</div>
+          <div className="max-w-[16rem] break-all font-mono">{log.targetCaptureId ?? '-'}</div>
           {log.targetIncidentId && (
-            <div className="mt-0.5 break-all font-mono text-[11px] text-slate-400" data-raw="">
+            <div className="mt-0.5 max-w-[16rem] break-all font-mono text-[11px] text-slate-400" data-raw="">
               {log.targetIncidentId}
             </div>
           )}

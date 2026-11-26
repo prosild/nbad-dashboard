@@ -1,5 +1,6 @@
 import { AlertTriangle, ClipboardList } from 'lucide-react';
 import type { ReportView } from '../../types/api';
+import { splitAttackCandidates, type AttackCandidateEntry } from '../../utils/attackCandidates';
 import { formatDateTime } from '../../utils/format';
 import { CodeLabel, SocBadge, VerificationBadge } from '../StatusBadge';
 import { describeProblem, describeVerificationReason, templateReplacedText } from '../../utils/factLabels';
@@ -9,20 +10,49 @@ import { AllFactsTable, FactEvidence } from './FactEvidence';
 /**
  * AI 리포트 조각들. 요약 탭과 AI 리포트 탭이 같은 조각을 쓴다.
  * 생성 정보(요청·응답 모델, 토큰, 소요 시간, 리포트·입력 버전, 실행 ID)와 가명 대응표는 화면에 두지 않는다(2026-11-21 결정).
+ * T64: 리포트 글은 바깥 글(최대 4,000자, 띄어쓰기 없는 긴 글 포함)이라 글 요소마다 `[overflow-wrap:anywhere]`로 줄을 넘지 않게 한다.
  */
 
-export function ReportClaims({ report }: { report: ReportView }) {
+/** AI 리포트 탭 머리의 안내 한 줄(T64). LLM이 쓴 리포트일 때만 */
+export const AI_WRITTEN_NOTE =
+  'AI(LLM)가 쓴 글입니다. 근거 사실과 대조했지만 해석이 맞다는 뜻은 아닙니다. 판단은 증적으로 확인하세요.';
+
+/** LLM이 쓴 리포트인가(kind `llm`). 템플릿 리포트·종류 없음은 아니다 */
+export function isLlmReport(report: Pick<ReportView, 'present' | 'reportKind'>): boolean {
+  return report.present && (report.reportKind ?? '').trim().toLowerCase() === 'llm';
+}
+
+/**
+ * 리포트 종류 표지. AI 리포트 탭 머리와 요약 탭의 리포트 글 칸(T64)이 같은 규칙을 쓴다:
+ * 템플릿으로 바꾼 리포트면 "템플릿 리포트" 표지, 아니면 종류 사전 값("AI 작성" 등).
+ */
+export function ReportKindBadge({ report }: { report: ReportView }) {
+  if (isTemplateReplaced(report)) return <TemplateReportBadge title={REPORT_KIND_DESCRIPTION.template} />;
+  return (
+    <SocBadge tone="neutral">
+      <CodeLabel dict="reportKind" value={report.reportKind} />
+    </SocBadge>
+  );
+}
+
+/** 조각 머리줄의 종류 표지. 요약 탭은 리포트 글 칸마다 붙이고, AI 리포트 탭은 탭 머리에 한 번만 둔다 */
+function KindBadgeSlot({ report, show }: { report: ReportView; show: boolean }) {
+  return show ? <ReportKindBadge report={report} /> : null;
+}
+
+export function ReportClaims({ report, kindBadge = false }: { report: ReportView; kindBadge?: boolean }) {
   if (report.claims.length === 0) return null;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-2">
         <h4 className="soc-subhead">확인된 사실</h4>
+        <KindBadgeSlot report={report} show={kindBadge} />
         <span className="text-[11px] text-slate-500">문장 아래는 리포트가 인용한 근거 사실입니다. 끝의 번호는 근거 번호입니다</span>
       </div>
       <ul className="space-y-1.5">
         {report.claims.map((item, idx) => (
           <li key={idx} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5">
-            <p className="text-sm text-slate-100">{item.claim}</p>
+            <p className="text-sm text-slate-100 [overflow-wrap:anywhere]">{item.claim}</p>
             <FactEvidence facts={item.facts} pseudonyms={report.pseudonyms} />
           </li>
         ))}
@@ -31,15 +61,18 @@ export function ReportClaims({ report }: { report: ReportView }) {
   );
 }
 
-export function ReportExplanations({ report }: { report: ReportView }) {
+export function ReportExplanations({ report, kindBadge = false }: { report: ReportView; kindBadge?: boolean }) {
   if (report.possibleExplanations.length === 0) return null;
   return (
     <div className="space-y-2">
-      <h4 className="soc-subhead">가능한 해석</h4>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h4 className="soc-subhead">가능한 해석</h4>
+        <KindBadgeSlot report={report} show={kindBadge} />
+      </div>
       <ul className="space-y-1.5">
         {report.possibleExplanations.map((item, idx) => (
           <li key={idx} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2.5">
-            <p className="text-sm text-slate-100">{item.explanation}</p>
+            <p className="text-sm text-slate-100 [overflow-wrap:anywhere]">{item.explanation}</p>
             {item.attackIds.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {item.attackIds.map((aid) => (
@@ -57,44 +90,72 @@ export function ReportExplanations({ report }: { report: ReportView }) {
   );
 }
 
+function AttackCandidateList({ entries }: { entries: AttackCandidateEntry[] }) {
+  return (
+    <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+      {entries.map(({ candidate: cand, index }) => (
+        <li key={`${cand.attackId}-${index}`} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono font-bold text-slate-100">{cand.attackId}</span>
+            <span className="min-w-0 text-right text-slate-200 [overflow-wrap:anywhere]">{cand.name}</span>
+          </div>
+          {cand.tactics.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {cand.tactics.map((tac) => (
+                <SocBadge key={tac} tone="muted">
+                  <CodeLabel dict="attackTactic" value={tac} />
+                </SocBadge>
+              ))}
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * ATT&CK 후보: LLM 글이 아니라 검색으로 찾은 MITRE 자료라 "AI 작성" 표지를 붙이지 않는다("확정이 아닌 가설" 표지).
+ * T64: 받은 순서(순위)대로 앞 3개와 가능한 해석이 인용한 후보는 늘 보이고 나머지는 접는다.
+ */
 export function ReportAttack({ report }: { report: ReportView }) {
   if (report.attackCandidates.length === 0) return null;
+  const { shown, folded } = splitAttackCandidates(report);
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-attack-candidates="">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="soc-subhead">관련 ATT&amp;CK 기법 후보</h4>
         <SocBadge tone="neutral">확정이 아닌 가설</SocBadge>
       </div>
-      <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-        {report.attackCandidates.map((cand, idx) => (
-          <li key={`${cand.attackId}-${idx}`} className="rounded-lg border border-slate-800 bg-[#090f1d] px-3 py-2 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-mono font-bold text-slate-100">{cand.attackId}</span>
-              <span className="text-right text-slate-200">{cand.name}</span>
-            </div>
-            {cand.tactics.length > 0 && (
-              <div className="mt-1 flex flex-wrap gap-1">
-                {cand.tactics.map((tac) => (
-                  <SocBadge key={tac} tone="muted">
-                    <CodeLabel dict="attackTactic" value={tac} />
-                  </SocBadge>
-                ))}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+      <AttackCandidateList entries={shown} />
+      {folded.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[11px] text-cyan-300 hover:text-cyan-200">나머지 후보 {folded.length}개</summary>
+          <div className="mt-1.5">
+            <AttackCandidateList entries={folded} />
+          </div>
+        </details>
+      )}
     </div>
   );
 }
 
 /** 추가 확인 권고: 체크 목록처럼 보인다. 표시는 이 화면에서만 유지되고 저장되지 않는다. */
-export function ReportFollowUp({ report, idPrefix }: { report: ReportView; idPrefix: string }) {
+export function ReportFollowUp({
+  report,
+  idPrefix,
+  kindBadge = false,
+}: {
+  report: ReportView;
+  idPrefix: string;
+  kindBadge?: boolean;
+}) {
   if (report.followUp.length === 0) return null;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-2">
         <h4 className="soc-subhead">추가 확인 권고</h4>
+        <KindBadgeSlot report={report} show={kindBadge} />
         <span className="text-[11px] text-slate-500">확인 표시는 저장되지 않습니다</span>
       </div>
       <ul className="space-y-1">
@@ -107,7 +168,9 @@ export function ReportFollowUp({ report, idPrefix }: { report: ReportView; idPre
                 type="checkbox"
                 className="mt-1 h-3.5 w-3.5 shrink-0 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-500/30"
               />
-              <label htmlFor={id}>{item}</label>
+              <label htmlFor={id} className="min-w-0 [overflow-wrap:anywhere]">
+                {item}
+              </label>
             </li>
           );
         })}
@@ -121,7 +184,7 @@ export function ReportLimitations({ report }: { report: ReportView }) {
   return (
     <div className="space-y-1.5">
       <h4 className="soc-subhead">리포트의 한계</h4>
-      <ul className="list-disc space-y-0.5 pl-4 text-xs text-slate-300">
+      <ul className="list-disc space-y-0.5 pl-4 text-xs text-slate-300 [overflow-wrap:anywhere]">
         {report.limitations.map((item, idx) => (
           <li key={idx}>{item}</li>
         ))}
@@ -222,16 +285,8 @@ export function ReportSection({ report }: { report: ReportView }) {
     <div className="space-y-5">
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {template ? (
-            <TemplateReportBadge title={REPORT_KIND_DESCRIPTION.template} />
-          ) : (
-            <>
-              <SocBadge tone="neutral">
-                <CodeLabel dict="reportKind" value={report.reportKind} />
-              </SocBadge>
-              <VerificationBadge passed={report.verificationPassed} />
-            </>
-          )}
+          <ReportKindBadge report={report} />
+          {!template && <VerificationBadge passed={report.verificationPassed} />}
           <span className="text-slate-400">
             작성 시각 <span className="tabular-nums text-slate-300">{formatDateTime(report.createdAt)}</span>
           </span>
@@ -241,10 +296,15 @@ export function ReportSection({ report }: { report: ReportView }) {
             {templateReplacedText(report.verificationReason)}
           </p>
         )}
+        {isLlmReport(report) && (
+          <p className="text-xs text-slate-300" data-testid="ai-written-note">
+            {AI_WRITTEN_NOTE}
+          </p>
+        )}
       </div>
 
       {report.llmError && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200">
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200 [overflow-wrap:anywhere]">
           <span className="font-semibold">AI 작성 오류: </span>
           {report.llmError}
         </div>
@@ -255,7 +315,9 @@ export function ReportSection({ report }: { report: ReportView }) {
       {report.observationSummary && (
         <div className="space-y-1.5">
           <h4 className="soc-subhead">관측 요약</h4>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{report.observationSummary}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100 [overflow-wrap:anywhere]">
+            {report.observationSummary}
+          </p>
         </div>
       )}
 
@@ -273,7 +335,9 @@ export function ReportSection({ report }: { report: ReportView }) {
               </SocBadge>
             )}
           </div>
-          {report.sendRecommendation.reason && <p className="text-sm text-slate-200">{report.sendRecommendation.reason}</p>}
+          {report.sendRecommendation.reason && (
+            <p className="text-sm text-slate-200 [overflow-wrap:anywhere]">{report.sendRecommendation.reason}</p>
+          )}
           <FactEvidence facts={report.sendRecommendation.facts} pseudonyms={report.pseudonyms} />
         </div>
       )}

@@ -1574,7 +1574,13 @@ function QueueMobileList({
               {isNewRow(item, highlightAfter) && <NewRowBadge />}
               <span className="shrink-0 font-mono text-sm font-semibold text-slate-100">{item.hostIp}</span>
               {item.hostName[0] !== undefined && (
-                <span className="min-w-0 truncate font-mono text-[11px] text-slate-400">{item.hostName[0]}</span>
+                <span
+                  className="min-w-0 truncate font-mono text-[11px] text-slate-400"
+                  title={item.hostName.join(', ')}
+                  data-card-host-name=""
+                >
+                  {item.hostName[0]}
+                </span>
               )}
               <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-400" title={`탐지 시각 ${formatDateTime(item.detectedAt)}`}>
                 탐지 {formatRelativeTo(item.detectedAt, anchor)}

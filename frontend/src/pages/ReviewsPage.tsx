@@ -303,7 +303,7 @@ export function ReviewsPage() {
                                 </span>
                               )}
                               {item.analystDisplay && (
-                                <span className="text-[11px] text-slate-400" data-raw="">
+                                <span className="min-w-0 text-[11px] text-slate-400 [overflow-wrap:anywhere]" data-raw="">
                                   {item.analystDisplay}
                                 </span>
                               )}

@@ -207,7 +207,7 @@ export function ActionPanel({
         <div className="text-[11px] text-slate-400">
           최근 변경 <span className="tabular-nums text-slate-300">{formatDateTime(detail.statusUpdatedAt)}</span> · 마지막
           변경자{' '}
-          <span className="text-slate-300" data-raw="">
+          <span className="text-slate-300 [overflow-wrap:anywhere]" data-raw="">
             {detail.statusUpdatedByDisplay ?? '-'}
           </span>
         </div>
@@ -470,7 +470,7 @@ export function ActionPanel({
               {analystReview.analystDisplay && (
                 <div className="text-[11px] text-slate-400">
                   결정자{' '}
-                  <span className="text-slate-300" data-raw="">
+                  <span className="text-slate-300 [overflow-wrap:anywhere]" data-raw="">
                     {analystReview.analystDisplay}
                   </span>
                 </div>

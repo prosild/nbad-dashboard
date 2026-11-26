@@ -106,7 +106,7 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
                   {mode === 'setup' ? '관리자 TOTP 최초 등록' : '관리자 TOTP 2단계 인증'}
                 </h1>
                 <p className="text-xs text-slate-400">
-                  계정 <span className="font-mono text-slate-200">{user?.username}</span>
+                  계정 <span className="break-all font-mono text-slate-200">{user?.username}</span>
                 </p>
               </div>
             </div>

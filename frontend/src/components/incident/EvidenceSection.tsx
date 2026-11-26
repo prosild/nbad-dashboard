@@ -435,6 +435,7 @@ export function ObservedAccounts({ assetNames }: { assetNames: AssetNameRecord[]
         <p className="px-4 py-3 text-xs text-slate-500">관측된 Kerberos·NTLM 계정 이름이 없습니다.</p>
       ) : (
         // T26: 패널의 overflow-hidden(둥근 모서리)은 두고, 긴 계정 이름이 잘리지 않게 표만 가로 스크롤 상자로 감싼다.
+        // T64: 계정 이름은 관측 대상이 정한 글(서버 상한 256자 + 표지)이라 칸 폭을 정하고 줄을 바꿔 전체를 보인다.
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
@@ -447,7 +448,9 @@ export function ObservedAccounts({ assetNames }: { assetNames: AssetNameRecord[]
             <tbody>
               {rows.map((row, idx) => (
                 <tr key={`${row.name}-${idx}`}>
-                  <td className="soc-td-compact font-mono text-slate-100">{row.name}</td>
+                  <td className="soc-td-compact font-mono text-slate-100">
+                    <span className="block max-w-[24rem] [overflow-wrap:anywhere]">{row.name}</span>
+                  </td>
                   <td className="soc-td-compact text-slate-300">
                     {row.kind ? <CodeLabel dict="assetNameKind" value={row.kind} /> : (row.fallbackKind ?? '-')}
                   </td>

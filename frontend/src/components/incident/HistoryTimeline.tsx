@@ -93,7 +93,7 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
             <span className="whitespace-pre-line break-words">{ev.item.reason || '-'}</span>
           </div>
           <div className="mt-0.5 text-[11px] text-slate-400">
-            변경자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+            변경자 <span className="[overflow-wrap:anywhere]" data-raw="">{ev.item.actorDisplay ?? '-'}</span>
           </div>
         </>
       );
@@ -112,8 +112,8 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
           <span className="font-semibold text-slate-100">에스컬레이션 결정</span>
           <ReviewActionBadge action={ev.action} pending={false} />
           {ev.analyst && (
-            <span className="text-[11px] text-slate-400">
-              결정자 <span data-raw="">{ev.analyst}</span>
+            <span className="min-w-0 text-[11px] text-slate-400">
+              결정자 <span className="[overflow-wrap:anywhere]" data-raw="">{ev.analyst}</span>
             </span>
           )}
         </div>
@@ -127,11 +127,11 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
         <>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="rounded border border-slate-700 px-1.5 text-[11px] text-slate-300">{assignmentKindLabel(ev.item)}</span>
-            <span className="text-slate-400" data-raw="">
+            <span className="min-w-0 text-slate-400 [overflow-wrap:anywhere]" data-raw="">
               {ev.item.from ? ev.item.from.displayName : '미배정'}
             </span>
             <ArrowRight className="h-3 w-3 text-slate-600" aria-hidden="true" />
-            <span className="font-semibold text-slate-100" data-raw="">
+            <span className="min-w-0 font-semibold text-slate-100 [overflow-wrap:anywhere]" data-raw="">
               {ev.item.to ? ev.item.to.displayName : '미배정'}
             </span>
             {ev.item.reason === 'auto_on_start' && (
@@ -139,7 +139,7 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
             )}
           </div>
           <div className="mt-0.5 text-[11px] text-slate-400">
-            변경자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+            변경자 <span className="[overflow-wrap:anywhere]" data-raw="">{ev.item.actorDisplay ?? '-'}</span>
           </div>
         </>
       );
@@ -157,7 +157,7 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
             </div>
           )}
           <div className="mt-0.5 text-[11px] text-slate-400">
-            기록자 <span data-raw="">{ev.item.actorDisplay ?? '-'}</span>
+            기록자 <span className="[overflow-wrap:anywhere]" data-raw="">{ev.item.actorDisplay ?? '-'}</span>
           </div>
         </>
       );

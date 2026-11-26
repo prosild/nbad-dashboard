@@ -136,10 +136,14 @@ export function AppShell({
         <div className="border-t border-slate-800/90 p-4 text-xs">
           <div className="rounded-lg border border-slate-800 bg-[#090f1d] p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-semibold text-slate-100">{user.displayName}</span>
+              <span className="truncate font-semibold text-slate-100" title={user.displayName}>
+                {user.displayName}
+              </span>
               <UserRoleBadge role={user.role} />
             </div>
-            <div className="mt-1 font-mono text-[11px] text-slate-400">@{user.username}</div>
+            <div className="mt-1 truncate font-mono text-[11px] text-slate-400" title={user.username}>
+              @{user.username}
+            </div>
             <div className="mt-2 text-[11px] text-slate-400">열람 허용 캡처</div>
             <div className="mt-1 flex flex-wrap gap-1">
               {user.allowedCapturePatterns.map((pattern) => (

@@ -155,7 +155,7 @@ export function WorkloadPanel({ workload, overdueLink }: { workload: Workload; o
               {workload.byAssignee.map((l) => (
                 <tr key={l.username}>
                   <th scope="row" className="soc-td font-normal">
-                    <AssigneeName assignee={l} className="text-xs" />
+                    <AssigneeName assignee={l} className="max-w-[12rem] text-xs" />
                   </th>
                   <td className="soc-td soc-num tabular-nums text-slate-200">{formatNumber(l.open)}</td>
                   <td className="soc-td soc-num tabular-nums text-slate-200">{formatNumber(l.investigating)}</td>

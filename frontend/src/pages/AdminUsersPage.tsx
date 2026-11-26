@@ -371,8 +371,8 @@ export function AdminUsersPage() {
                   {(data?.users ?? []).map((u) => (
                     <tr key={u.id} className="hover:bg-slate-800/35">
                       <td className="soc-td text-xs">
-                        <div className="font-mono font-semibold text-slate-100">{u.username}</div>
-                        <div className="mt-0.5 text-slate-400">{u.displayName}</div>
+                        <div className="max-w-[16rem] font-mono font-semibold text-slate-100 [overflow-wrap:anywhere]">{u.username}</div>
+                        <div className="mt-0.5 max-w-[16rem] text-slate-400 [overflow-wrap:anywhere]">{u.displayName}</div>
                       </td>
                       <td className="soc-td">
                         <UserRoleBadge role={u.role} />
