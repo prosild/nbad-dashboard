@@ -342,12 +342,20 @@ export function AdminCriticalAssetsPage() {
                     {items.map((item) => (
                       <tr key={item.id} className="align-top hover:bg-slate-800/35">
                         <td className="soc-td whitespace-nowrap font-mono text-xs font-semibold text-slate-100">{item.hostIp}</td>
-                        <td className="soc-td text-xs text-slate-100">{item.name}</td>
+                        {/* T64: 이름·설명·고친 사람은 사람이 정한 글이라 칸 폭을 정한다(이름·설명은 줄바꿈, 고친 사람은 말줄임과 툴팁) */}
+                        <td className="soc-td text-xs text-slate-100">
+                          <span className="block max-w-[16rem] [overflow-wrap:anywhere]">{item.name}</span>
+                        </td>
                         <td className="soc-td text-xs text-slate-300">
-                          {item.description ?? <span className="text-slate-600">-</span>}
+                          <div className="max-w-[24rem] [overflow-wrap:anywhere]">
+                            {item.description ?? <span className="text-slate-600">-</span>}
+                          </div>
                         </td>
                         <td className="soc-td whitespace-nowrap text-xs tabular-nums text-slate-400">
-                          {item.updatedBy} · {formatDateTime(item.updatedAt)}
+                          <span className="inline-block max-w-[10rem] truncate align-bottom" title={item.updatedBy}>
+                            {item.updatedBy}
+                          </span>{' '}
+                          · {formatDateTime(item.updatedAt)}
                         </td>
                         <td className="soc-td text-right">
                           {confirmingId === item.id ? (
@@ -358,7 +366,7 @@ export function AdminCriticalAssetsPage() {
                             >
                               <p className="flex items-start gap-1.5">
                                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
-                                <span>
+                                <span className="min-w-0 [overflow-wrap:anywhere]">
                                   {item.hostIp}({item.name})을 지울까요? 되돌릴 수 없습니다. 이 주소의 인시던트는 원래 우선순위로
                                   돌아갑니다.
                                 </span>

@@ -381,6 +381,35 @@ describe('T64 감사 로그 화면', () => {
   });
 });
 
+describe('T64 중요 자산 관리 화면(T52)', () => {
+  it('이름·설명은 줄바꿈, 고친 사람은 말줄임과 툴팁으로 칸 폭이 정해져 있다', async () => {
+    const description = `${HTML} ${'D'.repeat(300)}`;
+    const { container } = renderApp('/admin/critical-assets', 'ADMIN', (url) =>
+      url.startsWith('/api/admin/critical-assets')
+        ? json({
+            items: [
+              {
+                id: 1,
+                hostIp: '10.10.0.20',
+                name: CTRL_NAME,
+                description,
+                createdBy: 'admin',
+                createdAt: '2026-11-20T00:00:00Z',
+                updatedBy: LONG_NAME,
+                updatedAt: '2026-11-20T01:00:00Z',
+              },
+            ],
+            limit: 200,
+          })
+        : null,
+    );
+    expectBoundedName(await screen.findByText(CTRL_NAME), CTRL_NAME);
+    expectBoundedName(screen.getByText(description), description);
+    expectBoundedName(screen.getByText(LONG_NAME), LONG_NAME);
+    expectNoMarkup(container);
+  });
+});
+
 /* ───────────────────────── 2. 내보내기 ───────────────────────── */
 
 /** 숨은 문자(T63 집합). 내보낸 글에 남으면 안 된다(따로 허용한 줄바꿈·탭 말고) */
