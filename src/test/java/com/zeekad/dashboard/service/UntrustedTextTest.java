@@ -23,8 +23,8 @@ class UntrustedTextTest {
 
     @Test
     void analystSeesMarkersInPlaceAndTextFieldsKeepNewlinesAndTabs() {
-        assertThat(UntrustedText.mark("a‮b​c", false)).isEqualTo("a[U+202E]b[U+200B]c");
-        assertThat(UntrustedText.mark("x😀󠀁y", false)).isEqualTo("x😀[U+E0001]y");
+        assertThat(UntrustedText.mark("a\u202eb\u200bc", false)).isEqualTo("a[U+202E]b[U+200B]c");
+        assertThat(UntrustedText.mark("x😀\udb40\udc01y", false)).isEqualTo("x😀[U+E0001]y");
         assertThat(UntrustedText.mark("lone\ud800", false)).isEqualTo("lone[U+D800]");
         // 한 줄 칸: \n·\t·\r도 표지
         assertThat(UntrustedText.mark("a\nb\tc\r", false)).isEqualTo("a[U+000A]b[U+0009]c[U+000D]");
@@ -38,7 +38,7 @@ class UntrustedTextTest {
         assertThat(UntrustedText.mark(zalgo, false)).isEqualTo("ź̂̃[U+0304][U+0305]");
         assertThat(UntrustedText.strip(zalgo, false)).isEqualTo(new UntrustedText.Stripped("ź̂̃", 2));
         // 숨은 문자를 끼워 연속을 끊어도(지운 뒤 다시 이어진다) 넘는 몫은 숨은 문자다
-        UntrustedText.Stripped split = UntrustedText.strip("ź̂​̃̄", false);
+        UntrustedText.Stripped split = UntrustedText.strip("ź̂\u200b̃̄", false);
         assertThat(split).isEqualTo(new UntrustedText.Stripped("ź̂̃", 2));
         // 한글 결합(자모)은 결합 문자가 아니다
         assertThat(UntrustedText.strip("한글́", false).removed()).isZero();
@@ -46,14 +46,14 @@ class UntrustedTextTest {
 
     @Test
     void viewerStripsCountsAndAppendsTheRemovalNoteOutsideTheCap() {
-        assertThat(UntrustedText.forViewer("ab‮c", Kind.NAME)).isEqualTo("abc [보이지 않는 문자 1개 제거]");
+        assertThat(UntrustedText.forViewer("ab\u202ec", Kind.NAME)).isEqualTo("abc [보이지 않는 문자 1개 제거]");
         assertThat(UntrustedText.forViewer("plain", Kind.NAME)).isEqualTo("plain");
         // 가림 단계가 붙인 제거 표시는 떼고 다시 붙인다(N은 합). 다시 적용해도 같다
         String once = UntrustedText.forViewer("x" + " [보이지 않는 문자 2개 제거]", Kind.VALUE);
         assertThat(once).isEqualTo("x [보이지 않는 문자 2개 제거]");
-        assertThat(UntrustedText.forViewer("y​ [보이지 않는 문자 2개 제거]", Kind.VALUE))
+        assertThat(UntrustedText.forViewer("y\u200b [보이지 않는 문자 2개 제거]", Kind.VALUE))
                 .isEqualTo("y [보이지 않는 문자 3개 제거]");
-        String longName = "A".repeat(300) + "​";
+        String longName = "A".repeat(300) + "\u200b";
         String viewer = UntrustedText.forViewer(longName, Kind.NAME);
         assertThat(viewer).isEqualTo("A".repeat(256) + "…(44자 생략) [보이지 않는 문자 1개 제거]");
         assertThat(UntrustedText.forViewer(viewer, Kind.NAME)).isEqualTo(viewer);
@@ -80,7 +80,7 @@ class UntrustedTextTest {
 
     @Test
     void analystProcessingMarksBeforeCappingSoTheCapCountsTheMarkers() {
-        String name = "‮".repeat(40); // 표지 하나 8자 × 40 = 320 > 256
+        String name = "\u202e".repeat(40); // 표지 하나 8자 × 40 = 320 > 256
         String out = UntrustedText.forAnalyst(name, Kind.NAME);
         assertThat(out).startsWith("[U+202E]".repeat(32)).endsWith("…(64자 생략)");
         assertThat(out.codePointCount(0, out.indexOf('…'))).isEqualTo(256);
@@ -88,8 +88,8 @@ class UntrustedTextTest {
 
     @Test
     void searchNormalizationStripsHiddenCharactersAppliesNfkcAndLowercases() {
-        assertThat(UntrustedText.normalizeForSearch("WEB​-ｓｅｒｖｅｒ‮-01")).isEqualTo("web-server-01");
-        assertThat(UntrustedText.normalizeForSearch("​ㅤ⁠")).isEmpty();
+        assertThat(UntrustedText.normalizeForSearch("WEB\u200b-ｓｅｒｖｅｒ\u202e-01")).isEqualTo("web-server-01");
+        assertThat(UntrustedText.normalizeForSearch("\u200b\u3164\u2060")).isEmpty();
         assertThat(UntrustedText.normalizeForSearch("ﬁle")).isEqualTo("file");
         assertThat(UntrustedText.withoutRemovalNote("10.0.*.* [보이지 않는 문자 1개 제거]")).isEqualTo("10.0.*.*");
         assertThat(TextSearch.contains("Web-ｓｅｒｖｅｒ-01 [보이지 않는 문자 1개 제거]", "web-server")).isTrue();
@@ -102,12 +102,22 @@ class UntrustedTextTest {
         String actor = "q".repeat(99) + "😀tail";
         assertThat(UntrustedText.truncateUtf16(actor, 100)).isEqualTo("q".repeat(99));
         assertThat(UntrustedText.truncateUtf16("q".repeat(98) + "😀tail", 100)).isEqualTo("q".repeat(98) + "😀");
-        assertThat(UntrustedText.truncateUtf16("short‮", 100)).isEqualTo("short‮"); // 저장값의 뜻은 바꾸지 않는다
+        assertThat(UntrustedText.truncateUtf16("short\u202e", 100)).isEqualTo("short\u202e"); // 저장값의 뜻은 바꾸지 않는다
         assertThat(UntrustedText.truncateUtf16(null, 100)).isNull();
     }
 
     @Test
+    void notesAreRecognizedOnlyAtTheVeryEndSoATrailingNewlineIsKept() {
+        // 바깥 글이 제거 표시 글 뒤에 줄바꿈으로 끝나도 표시로 읽지 않는다(마지막 줄바꿈을 잃지 않는다)
+        String viewerText = "x [보이지 않는 문자 2개 제거]\n";
+        assertThat(UntrustedText.forViewer(viewerText, Kind.TEXT)).isEqualTo(viewerText);
+        assertThat(UntrustedText.withoutRemovalNote(viewerText)).isEqualTo(viewerText);
+        // 생략 표시 글 뒤에 줄바꿈이 있으면 이미 자른 값으로 보지 않고 다시 자른다
+        assertThat(UntrustedText.truncate("abcd…(5자 생략)\n", 4)).isEqualTo("abcd…(9자 생략)");
+    }
+
+    @Test
     void logValuesCannotStartANewLine() {
-        assertThat(UntrustedText.forLog("id\nFAKE LINE\r‮")).isEqualTo("id[U+000A]FAKE LINE[U+000D][U+202E]");
+        assertThat(UntrustedText.forLog("id\nFAKE LINE\r\u202e")).isEqualTo("id[U+000A]FAKE LINE[U+000D][U+202E]");
     }
 }

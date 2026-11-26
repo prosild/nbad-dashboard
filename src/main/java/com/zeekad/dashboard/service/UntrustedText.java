@@ -55,8 +55,9 @@ public final class UntrustedText {
     /** 표지 꼴(16진 대문자 4~6자리). 자르기가 표지 한가운데를 가르지 않게 찾을 때도 쓴다. */
     private static final Pattern MARKER = Pattern.compile("\\[U\\+[0-9A-F]{4,6}\\]");
     private static final int MARKER_MAX_LENGTH = "[U+10FFFF]".length();
-    private static final Pattern TRUNCATION_NOTE = Pattern.compile("…\\((\\d{1,9})자 생략\\)$");
-    private static final Pattern REMOVAL_NOTE = Pattern.compile(" \\[보이지 않는 문자 (\\d{1,9})개 제거\\]$");
+    // 붙이는 글은 값의 맨 끝(\z)에서만 찾는다. $는 끝 줄바꿈 앞에서도 맞아 여러 줄 값의 마지막 줄바꿈을 잃게 한다
+    private static final Pattern TRUNCATION_NOTE = Pattern.compile("…\\((\\d{1,9})자 생략\\)\\z");
+    private static final Pattern REMOVAL_NOTE = Pattern.compile(" \\[보이지 않는 문자 (\\d{1,9})개 제거\\]\\z");
 
     /**
      * Unicode Default_Ignorable_Code_Point. Java 정규식·Character가 이 속성을 모르므로 범위를 옮겨 적었다.

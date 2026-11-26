@@ -64,8 +64,8 @@ class ResponseTextGuardTest {
 
     @Test
     void analystGetsMarkersAndCapsButIdentifiersStayRaw() throws Exception {
-        String evilId = "cic17-wed|10.0.0.1|orig‮inator|1";
-        UnifiedQueueResponse body = queue("‮evil​" + "A".repeat(300), evilId, "김ㅤ분석");
+        String evilId = "cic17-wed|10.0.0.1|orig\u202einator|1";
+        UnifiedQueueResponse body = queue("\u202eevil\u200b" + "A".repeat(300), evilId, "김\u3164분석");
         JsonNode out = objectMapper.readTree(write(guard.apply(body, UserRole.ANALYST, ResponseTextCatalog.QUEUE)));
         JsonNode item = out.get("items").get(0);
         String host = item.get("hostName").get(0).asText();
@@ -77,7 +77,7 @@ class ResponseTextGuardTest {
 
     @Test
     void viewerFallbackStripsFieldsTheMaskingStageDoesNotTouch() throws Exception {
-        UnifiedQueueResponse body = queue("host", "cic17-wed|10.0.0.1|originator|1", "김ㅤ분석");
+        UnifiedQueueResponse body = queue("host", "cic17-wed|10.0.0.1|originator|1", "김\u3164분석");
         JsonNode out = objectMapper.readTree(write(guard.apply(body, UserRole.VIEWER, ResponseTextCatalog.QUEUE)));
         assertThat(out.get("items").get(0).get("assignee").get("displayName").asText())
                 .isEqualTo("김분석 [보이지 않는 문자 1개 제거]");
@@ -93,9 +93,9 @@ class ResponseTextGuardTest {
         }
         String clean = "{\n  \"text\" : \"경보 10.0.0.1\"\n}";
         String evil = objectMapper.writerWithDefaultPrettyPrinter()
-                .writeValueAsString(Map.of("text", "a\u0000b‮", "k​ey", "v"));
+                .writeValueAsString(Map.of("text", "a\u0000b\u202e", "k\u200bey", "v"));
         assertThat(evil).contains("\\u0000"); // 직렬화된 글에서는 제어 문자가 이스케이프로 숨는다
-        Wrapper body = new Wrapper(new Detail(List.of(new Delivery(clean), new Delivery(evil), new Delivery("{not json ‮"))));
+        Wrapper body = new Wrapper(new Detail(List.of(new Delivery(clean), new Delivery(evil), new Delivery("{not json \u202e"))));
         JsonNode out = objectMapper.readTree(write(guard.apply(body, UserRole.ANALYST, ResponseTextCatalog.DETAIL)));
         JsonNode deliveries = out.get("detail").get("slackDeliveries");
         assertThat(deliveries.get(0).get("payloadJson").asText()).isEqualTo(clean);

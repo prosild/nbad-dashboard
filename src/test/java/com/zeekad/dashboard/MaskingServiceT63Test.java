@@ -38,17 +38,17 @@ class MaskingServiceT63Test {
     @Test
     void counterexamplesThatOnlyTheRawMaskCatchesStayMasked() {
         // 지우면 다섯 마디 숫자열(10.0.0.1.5)이 되어 지운 뒤 가림만으로는 드러난다. 원문 가림이 먼저 잡는다.
-        assertThat(viewerHostNames("10.0.0.1​.5")).containsExactly("10.0.*.*.5 [보이지 않는 문자 1개 제거]");
+        assertThat(viewerHostNames("10.0.0.1\u200b.5")).containsExactly("10.0.*.*.5 [보이지 않는 문자 1개 제거]");
         // 지우면 앞에 "숫자."가 붙는다(7.10.0.0.1)
-        assertThat(viewerHostNames("7.​10.0.0.1")).containsExactly("7.10.0.*.* [보이지 않는 문자 1개 제거]");
+        assertThat(viewerHostNames("7.\u200b10.0.0.1")).containsExactly("7.10.0.*.* [보이지 않는 문자 1개 제거]");
     }
 
     @Test
     void splitAddressesAreMaskedAfterStripping() {
-        assertThat(viewerHostNames("10.0​.0.1")).containsExactly("10.0.*.* [보이지 않는 문자 1개 제거]");
-        assertThat(viewerHostNames("srv-192.168‮.10⁠.50")).containsExactly("srv-192.168.*.* [보이지 않는 문자 2개 제거]");
+        assertThat(viewerHostNames("10.0\u200b.0.1")).containsExactly("10.0.*.* [보이지 않는 문자 1개 제거]");
+        assertThat(viewerHostNames("srv-192.168\u202e.10\u2060.50")).containsExactly("srv-192.168.*.* [보이지 않는 문자 2개 제거]");
         ScoringJob job = new ScoringJob();
-        job.setError("연결 실패 203.0​.113.45\r\n재시도");
+        job.setError("연결 실패 203.0\u200b.113.45\r\n재시도");
         // 글(여러 줄) 칸: \r\n은 \n으로, 숨은 문자는 지우고 가린다
         assertThat(maskingService.maskScoringJob(job, UserRole.VIEWER).getError())
                 .isEqualTo("연결 실패 203.0.*.*\n재시도 [보이지 않는 문자 1개 제거]");
@@ -59,11 +59,11 @@ class MaskingServiceT63Test {
         AssetNameRecord raw = new AssetNameRecord();
         raw.setCaptureId("cap");
         raw.setHostIp("10.0.0.1");
-        raw.setKerberosUser("‮admin");
+        raw.setKerberosUser("\u202eadmin");
         raw.setNtlmUser("😀bob");
         Map<String, Object> extras = new LinkedHashMap<>();
-        extras.put("zeekad_name", List.of("​​kim", "😀x​"));
-        extras.put("zeekad_source_log", "kerb‮eros");
+        extras.put("zeekad_name", List.of("\u200b\u200bkim", "😀x\u200b"));
+        extras.put("zeekad_source_log", "kerb\u202eeros");
         raw.setExtraAttributes(extras);
         AssetNameRecord masked = maskingService.maskAssetNameRecord(raw, UserRole.VIEWER);
         assertThat(masked.getKerberosUser()).isEqualTo("a*** [보이지 않는 문자 1개 제거]");
@@ -85,8 +85,8 @@ class MaskingServiceT63Test {
 
         EvidenceData evidence = new EvidenceData();
         evidence.setAvailable(true);
-        evidence.setLimits(List.of("관측 10.0​.0.2"));
-        evidence.setTopPeers(List.of(Map.of("ip", "203.0.113​.45")));
+        evidence.setLimits(List.of("관측 10.0\u200b.0.2"));
+        evidence.setTopPeers(List.of(Map.of("ip", "203.0.113\u200b.45")));
         EvidenceData maskedEvidence = maskingService.maskEvidence(evidence, UserRole.VIEWER);
         assertThat(maskedEvidence.getLimits()).containsExactly("관측 10.0.*.* [보이지 않는 문자 1개 제거]");
         assertThat(maskedEvidence.getTopPeers().get(0)).containsEntry("ip", "203.0.*.* [보이지 않는 문자 1개 제거]");
@@ -99,8 +99,8 @@ class MaskingServiceT63Test {
     @Test
     void keyCollisionsAfterStrippingKeepTheCurrentBehavior() throws Exception {
         Map<String, Object> logs = new LinkedHashMap<>();
-        logs.put("d​ns", Map.of("queries", 1));
-        logs.put("d‌ns", Map.of("queries", 2));
+        logs.put("d\u200bns", Map.of("queries", 1));
+        logs.put("d\u200cns", Map.of("queries", 2));
         EvidenceData evidence = new EvidenceData();
         evidence.setAvailable(true);
         evidence.setProtocolLogs(logs);
@@ -116,9 +116,9 @@ class MaskingServiceT63Test {
     @Test
     void analystAndAdminStillGetTheSameObjects() {
         IncidentQueueItem item = new IncidentQueueItem();
-        item.setHostName(List.of("10.0​.0.1"));
+        item.setHostName(List.of("10.0\u200b.0.1"));
         AssetNameRecord asset = new AssetNameRecord();
-        asset.setKerberosUser("‮admin");
+        asset.setKerberosUser("\u202eadmin");
         for (UserRole role : List.of(UserRole.ANALYST, UserRole.ADMIN)) {
             assertThat(maskingService.maskIncidentQueueItem(item, role)).isSameAs(item);
             assertThat(maskingService.maskAssetNameRecord(asset, role)).isSameAs(asset);

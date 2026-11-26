@@ -66,7 +66,7 @@ class T63SearchAuditLogIntegrationTest {
     static final String PASSWORD = "Pass1234!";
     static final String ADMIN_SECRET = "JBSWY3DPEHPK3PXP";
     /** 숨은 문자(U+200B)와 전각 글자를 낀 이름 */
-    static final String TRICKY_NAME = "web​-ｓｅｒｖｅｒ-63";
+    static final String TRICKY_NAME = "web\u200b-ｓｅｒｖｅｒ-63";
     static final String LOG_ACTOR = "t63_log\nFAKE-ACTOR-LINE";
 
     @Autowired
@@ -177,8 +177,8 @@ class T63SearchAuditLogIntegrationTest {
             assertThat(assetCounts(session, "web-server-63")).as("보이는 글자로").containsExactly(1L, 1L, 1L, 1L);
             assertThat(assetCounts(session, "WEB-SERVER")).as("대문자").containsExactly(1L, 1L, 1L, 1L);
             assertThat(assetCounts(session, "ｗｅｂ-ｓｅｒｖｅｒ")).as("전각 검색어").containsExactly(1L, 1L, 1L, 1L);
-            assertThat(assetCounts(session, "web​‮-server")).as("검색어의 숨은 문자").containsExactly(1L, 1L, 1L, 1L);
-            assertThat(assetCounts(session, "​⁠ㅤ")).as("숨은 문자만 = 조건 없음").containsExactly(2L, 2L, 2L, 2L);
+            assertThat(assetCounts(session, "web\u200b\u202e-server")).as("검색어의 숨은 문자").containsExactly(1L, 1L, 1L, 1L);
+            assertThat(assetCounts(session, "\u200b\u2060\u3164")).as("숨은 문자만 = 조건 없음").containsExactly(2L, 2L, 2L, 2L);
         }
     }
 
@@ -206,7 +206,7 @@ class T63SearchAuditLogIntegrationTest {
             assertThat(json(session, get("/api/hosts").param("captureId", CAP).param("period", "all")
                     .param("q", "ＷＥＢ-server")).get("total").asLong()).isEqualTo(1L);
             assertThat(json(session, get("/api/hosts").param("captureId", CAP).param("period", "all")
-                    .param("q", "​​")).get("total").asLong()).isEqualTo(2L);
+                    .param("q", "\u200b\u200b")).get("total").asLong()).isEqualTo(2L);
         }
     }
 
@@ -279,7 +279,7 @@ class T63SearchAuditLogIntegrationTest {
         mockMvc.perform(post("/api/reviews/decide").session(analyst).cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("jobId", JOB,
-                                "incidentId", "t63-missing\nFAKE-REVIEW-LINE ‮", "action", "confirm"))))
+                                "incidentId", "t63-missing\nFAKE-REVIEW-LINE \u202e", "action", "confirm"))))
                 .andExpect(status().isNotFound());
         // 상태 전이: 이미 분석 중인 건을 다시 분석 중으로(SQLSTATE 22023 경로가 사용자 이름을 찍는다)
         MockHttpSession logActor = login(LOG_ACTOR);

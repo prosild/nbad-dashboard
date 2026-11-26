@@ -140,7 +140,7 @@ class T63UntrustedTextIntegrationTest {
     static final String EVIL_A = "t63_evil_a";
     static final String EVIL_B = "t63_evil_b";
     static final String EVIL_A_DISPLAY = T63Attacks.CONTROL;
-    static final String EVIL_B_DISPLAY = ATTACKS.get(14) + " ㅤᅟ";
+    static final String EVIL_B_DISPLAY = ATTACKS.get(14) + " \u3164\u115f";
 
     @BeforeAll
     void seed() throws Exception {
@@ -167,7 +167,7 @@ class T63UntrustedTextIntegrationTest {
             insertStatus(i);
             insertReview(i);
         }
-        insertAssetRow(MASK_ROW, "‮admin", "😀bob", "10.0​.0.1");
+        insertAssetRow(MASK_ROW, "\u202eadmin", "😀bob", "10.0\u200b.0.1");
 
         analyst = login("t63_analyst");
         viewer = login("t63_viewer");
@@ -243,7 +243,7 @@ class T63UntrustedTextIntegrationTest {
         out.put("reviews", both(get("/api/reviews").param("captureId", CAP)));
         out.put("audit-logs", new String[]{lenientBody(admin, get("/api/admin/audit-logs").param("limit", "500"), "관리자"), null});
         out.put("audit-logs-search", new String[]{lenientBody(admin, get("/api/admin/audit-logs")
-                .param("actorUsername", "‮normal").param("limit", "50"), "관리자"), null});
+                .param("actorUsername", "\u202enormal").param("limit", "50"), "관리자"), null});
         return out;
     }
 
@@ -502,7 +502,7 @@ class T63UntrustedTextIntegrationTest {
                 INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
                 VALUES (?, ?, 'zeekad-fusion/1', 'failed', TIMESTAMP WITH TIME ZONE '2026-11-20 01:00:00Z',
                         TIMESTAMP WITH TIME ZONE '2026-11-20 01:01:00Z', ?, 0)
-                """, JOB_FAILED, CAP, T63Attacks.CONTROL + " 10.0​.0.9");
+                """, JOB_FAILED, CAP, T63Attacks.CONTROL + " 10.0\u200b.0.9");
         zeekadJdbc.update("""
                 INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
                 VALUES (?, ?, 'zeekad-fusion/1', 'succeeded', TIMESTAMP WITH TIME ZONE '2026-11-20 02:00:00Z',
@@ -519,9 +519,9 @@ class T63UntrustedTextIntegrationTest {
             return names;
         }
         if (i == MASK_ROW) {
-            return List.of("10.0.0.1​.5", "7.​10.0.0.1", "10.0​.0.1");
+            return List.of("10.0.0.1\u200b.5", "7.\u200b10.0.0.1", "10.0\u200b.0.1");
         }
-        return List.of("web​-ｓｅｒｖｅｒ-63");
+        return List.of("web\u200b-ｓｅｒｖｅｒ-63");
     }
 
     private void insertQueueRow(int i) {
@@ -565,7 +565,7 @@ class T63UntrustedTextIntegrationTest {
         problems.add(a);
         ObjectNode problem = problems.addObject();
         problem.put("kind", a);
-        problem.put("va‮lue", a);
+        problem.put("va\u202elue", a);
 
         ArrayNode candidates = objectMapper.createArrayNode();
         ObjectNode c1 = candidates.addObject();
@@ -586,7 +586,7 @@ class T63UntrustedTextIntegrationTest {
         f2.put("id", "F2");
         f2.put("name", "structured");
         ObjectNode f2v = f2.putObject("value");
-        f2v.put("k‮ey", a);
+        f2v.put("k\u202eey", a);
         f2v.putArray("list").add(a).add(T63Attacks.CONTROL);
 
         ObjectNode pseudonyms = objectMapper.createObjectNode();
@@ -624,7 +624,7 @@ class T63UntrustedTextIntegrationTest {
         payload.put("text", a);
         ObjectNode block = payload.putArray("blocks").addObject();
         block.put("type", "section");
-        block.putObject("text").put("type", "mrkdwn").put("te​xt", a);
+        block.putObject("text").put("type", "mrkdwn").put("te\u200bxt", a);
         zeekadJdbc.update("""
                 INSERT INTO dashboard.raw_slack_deliveries (job_id, incident_id, zeekad_message_kind, zeekad_message_version,
                     zeekad_delivery_mode, zeekad_delivery_status, slack_payload, slack_ts, delivered_at, error, created_at,
@@ -672,7 +672,7 @@ class T63UntrustedTextIntegrationTest {
         ObjectNode ev = root.putObject("evidence");
         ev.put("connection_count", 3);
         ObjectNode network = ev.putObject("network");
-        network.putObject("transport").put("tcp", 3).put("u‮dp", 1).put(T63Attacks.LONG, 2);
+        network.putObject("transport").put("tcp", 3).put("u\u202edp", 1).put(T63Attacks.LONG, 2);
         network.putObject("protocol").put("dns", 1);
         ObjectNode peers = ev.putObject("peers");
         peers.putArray("top").addObject().put("ip", "203.0.113.5").put("connections", 2).put("name", T63Attacks.CONTROL);
@@ -683,14 +683,14 @@ class T63UntrustedTextIntegrationTest {
         ObjectNode logs = ev.putObject("protocol_logs");
         logs.putObject("dns").put("queries", 1).put("query", ATTACKS.get(12));
         logs.putObject("ntlm").put("hostname", T63Attacks.CONTROL).put("username", T63Attacks.LONG);
-        logs.putObject("we​ird").put("x", "10.0​.0.7");
+        logs.putObject("we\u200bird").put("x", "10.0\u200b.0.7");
         ev.putArray("representative_connections").addObject().put("note", ATTACKS.get(14))
                 .putObject("source").put("ip", "10.63.0.1");
         ArrayNode limits = ev.putArray("limits");
         ATTACKS.forEach(limits::add);
         T63Attacks.EXTRA_HIDDEN.forEach(limits::add);
         ev.putObject("host").put("ip", "10.63.0.1").put("name", T63Attacks.CONTROL);
-        ev.put("extra_" + "f​ield", T63Attacks.CONTROL);
+        ev.put("extra_" + "f\u200bield", T63Attacks.CONTROL);
         return objectMapper.writeValueAsString(root);
     }
 }

@@ -192,8 +192,8 @@ public final class T63JsonScan {
         return found;
     }
 
-    private static final Pattern REMOVAL_NOTE = Pattern.compile(" \\[보이지 않는 문자 (\\d+)개 제거\\]$");
-    private static final Pattern TRUNCATION_NOTE = Pattern.compile("…\\((\\d+)자 생략\\)$");
+    private static final Pattern REMOVAL_NOTE = Pattern.compile(" \\[보이지 않는 문자 (\\d+)개 제거\\]\\z");
+    private static final Pattern TRUNCATION_NOTE = Pattern.compile("…\\((\\d+)자 생략\\)\\z");
 
     /** 붙이는 글(제거 표시, 생략 표시)을 뗀 본문의 코드 포인트 수 */
     public static int bodyLength(String s) {
