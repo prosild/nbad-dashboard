@@ -92,7 +92,9 @@ public class IncidentReopenService {
             String sqlState = sqlEx == null ? null : sqlEx.getSQLState();
             if ("22023".equals(sqlState)) {
                 // 종결이 아님(동시에 두 번 포함) 또는 판정이 화면과 다름. 원문은 로그에도 남기지 않는다(상태·판정 코드뿐이다).
-                log.warn("다시 열기 거부(SQLSTATE 22023): jobId={}, rank={}, actor={}", jobId, queueRank, actorUsername);
+                // T63: 사용자 이름은 표지로 찍는다(상태 전이와 같다. 줄바꿈으로 로그 줄을 만들지 못한다)
+                log.warn("다시 열기 거부(SQLSTATE 22023): jobId={}, rank={}, actor={}", jobId, queueRank,
+                        UntrustedText.forLog(actorUsername));
                 return IncidentTransitionService.TransitionResult.failure(409, "CONFLICT", CONFLICT_MESSAGE);
             }
             if ("02000".equals(sqlState)) {
@@ -133,7 +135,8 @@ public class IncidentReopenService {
         try {
             incidentAssignmentService.autoAssignOnStart(principal, item, jobId, clientIp);
         } catch (RuntimeException ex) {
-            log.error("다시 열기 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank, actorUsername, ex);
+            log.error("다시 열기 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank,
+                    UntrustedText.forLog(actorUsername), ex);
             successMessage = successMessage + IncidentTransitionService.AUTO_ASSIGN_FAILED_NOTE;
         }
         return IncidentTransitionService.TransitionResult.success(successMessage);
