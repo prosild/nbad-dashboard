@@ -85,6 +85,28 @@
         WHERE id = #{id}
     </update>
 
+    <!-- T60 실패 시도 차지: 잠겨 있지 않고 한도 미만일 때만 하나 올린다. SET의 오른쪽은 갱신 전 행의 값이다(H2·PostgreSQL 공통).
+         만료된 잠금(locked_until이 지금 이전)이 남아 있으면 잠금을 지우고 1부터 다시 센다. -->
+    <update id="claimFailedAttempt">
+        UPDATE users
+        SET failed_attempts = CASE WHEN locked_until IS NOT NULL THEN 1 ELSE failed_attempts + 1 END,
+            locked_until = NULL,
+            updated_at = #{now}
+        WHERE id = #{id}
+          AND (locked_until IS NULL OR locked_until &lt;= #{now})
+          AND (locked_until IS NOT NULL OR failed_attempts &lt; #{maxFailedAttempts})
+    </update>
+
+    <!-- T60 한도에 닿았고 아직 잠기지 않았을 때만 잠근다. 동시에 여러 요청이 와도 1행을 받는 요청은 하나다. -->
+    <update id="lockIfLimitReached">
+        UPDATE users
+        SET locked_until = #{lockedUntil},
+            updated_at = #{now}
+        WHERE id = #{id}
+          AND locked_until IS NULL
+          AND failed_attempts &gt;= #{maxFailedAttempts}
+    </update>
+
     <update id="resetLoginFailure">
         UPDATE users
         SET failed_attempts = 0,

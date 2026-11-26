@@ -5,6 +5,7 @@ import com.zeekad.dashboard.config.DashboardProperties;
 import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.AuditActionType;
 import com.zeekad.dashboard.model.DashboardUser;
+import com.zeekad.dashboard.model.UserRole;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -22,6 +23,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +38,7 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
     private final AuditService auditService;
     private final DashboardProperties properties;
     private final ClientIpResolver clientIpResolver;
+    private final FailedAttemptService failedAttemptService;
     private final Clock clock;
 
     public DashboardAuthenticationProvider(UserMapper userMapper,
@@ -43,12 +46,14 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
                                            AuditService auditService,
                                            DashboardProperties properties,
                                            ClientIpResolver clientIpResolver,
+                                           FailedAttemptService failedAttemptService,
                                            Clock clock) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
         this.properties = properties;
         this.clientIpResolver = clientIpResolver;
+        this.failedAttemptService = failedAttemptService;
         this.clock = clock;
     }
 
@@ -90,33 +95,53 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
             throw new LockedException("계정이 일시 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
         }
 
-        int currentFailures = user.getLockedUntil() != null ? 0 : user.getFailedAttempts();
-
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            int nextFailures = currentFailures + 1;
-            int maxFailures = properties.getSecurity().getMaxFailedAttempts();
-            if (nextFailures >= maxFailures) {
-                OffsetDateTime lockedUntil = OffsetDateTime.ofInstant(
-                        now.plusSeconds(properties.getSecurity().getLockoutMinutes() * 60L), ZoneOffset.UTC);
-                userMapper.updateLoginFailure(user.getId(), nextFailures, lockedUntil, nowUtc);
+            // T60: 읽은 값 + 1로 덮어쓰지 않고 원자 증가로 올린다(비밀번호를 비교하는 사이에 들어온 TOTP 실패분을 지우지 않는다).
+            // 만료된 잠금이 남아 있으면 1부터 다시 센다. 감사의 횟수는 갱신 뒤 다시 읽은 값이다.
+            boolean claimed = failedAttemptService.claim(user.getId(), now);
+            FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
+            if (!claimed) {
+                // 비밀번호를 비교하는 사이에 다른 요청이 계정을 잠갔거나, 횟수가 이미 한도에 닿아 있었다
+                Map<String, Object> detail = new LinkedHashMap<>();
+                detail.put("reason", "account_locked");
+                if (state.lockedUntil() != null) {
+                    detail.put("lockedUntil", state.lockedUntil().toString());
+                }
                 auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_FAILURE,
-                        Map.of("reason", "invalid_credentials", "failedAttempts", nextFailures), clientIp);
-                auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
-                        Map.of("failedAttempts", nextFailures, "lockedUntil", lockedUntil.toString()), clientIp);
+                        detail, clientIp);
+                recordLockIfLockedNow(user, state, clientIp);
+                throw new LockedException("계정이 일시 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
+            }
+            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_FAILURE,
+                    Map.of("reason", "invalid_credentials", "failedAttempts", state.failedAttempts()), clientIp);
+            recordLockIfLockedNow(user, state, clientIp);
+            if (state.locked()) {
                 throw new LockedException("로그인 연속 실패 횟수 초과로 계정이 잠겼습니다.");
             }
-            userMapper.updateLoginFailure(user.getId(), nextFailures, null, nowUtc);
-            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_FAILURE,
-                    Map.of("reason", "invalid_credentials", "failedAttempts", nextFailures), clientIp);
             throw new BadCredentialsException("아이디 또는 비밀번호가 올바르지 않습니다.");
         }
 
         return succeed(user, now, nowUtc, clientIp);
     }
 
-    /** 로그인 성공: 실패 수·잠금 초기화, 허용 캡처 읽기, 성공 감사 */
+    /** 이 요청이 계정을 잠갔을 때만 잠금 감사를 남긴다(동시에 온 요청이 같은 잠금을 두 번 적지 않는다) */
+    private void recordLockIfLockedNow(DashboardUser user, FailedAttemptService.State state, String clientIp) {
+        if (state.lockedByThisCall()) {
+            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
+                    Map.of("failedAttempts", state.failedAttempts(), "lockedUntil", String.valueOf(state.lockedUntil())),
+                    clientIp);
+        }
+    }
+
+    /**
+     * 로그인 성공: 허용 캡처 읽기, 성공 감사. 실패 수·잠금은 관리자가 아닌 계정만 여기서 지운다.
+     * T60: 관리자는 비밀번호가 맞아도 지우지 않고 TOTP 확인(또는 등록 완료)이 성공했을 때 지운다.
+     * 여기서 지우면 비밀번호를 아는 사람이 로그인을 다시 해서 TOTP 실패 횟수를 되돌릴 수 있다.
+     */
     private Authentication succeed(DashboardUser user, Instant now, OffsetDateTime nowUtc, String clientIp) {
-        userMapper.resetLoginFailure(user.getId(), nowUtc);
+        if (user.getRole() != UserRole.ADMIN) {
+            userMapper.resetLoginFailure(user.getId(), nowUtc);
+        }
         List<String> capturePatterns = userMapper.findCapturePatternsByUserId(user.getId());
         DashboardUserPrincipal principal = new DashboardUserPrincipal(user, capturePatterns, now);
         auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_SUCCESS,

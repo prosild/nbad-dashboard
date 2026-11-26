@@ -18,6 +18,7 @@ import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
+import com.zeekad.dashboard.security.FailedAttemptService;
 import com.zeekad.dashboard.security.SessionAttributes;
 import com.zeekad.dashboard.security.SpaCsrfTokenRequestHandler;
 import com.zeekad.dashboard.security.TotpService;
@@ -51,8 +52,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -72,6 +75,7 @@ public class AuthApiController {
     private final TotpService totpService;
     private final AuditService auditService;
     private final ClientIpResolver clientIpResolver;
+    private final FailedAttemptService failedAttemptService;
     private final MaskingService maskingService;
     private final DashboardProperties properties;
     private final ServerProperties serverProperties;
@@ -86,6 +90,7 @@ public class AuthApiController {
                              TotpService totpService,
                              AuditService auditService,
                              ClientIpResolver clientIpResolver,
+                             FailedAttemptService failedAttemptService,
                              MaskingService maskingService,
                              DashboardProperties properties,
                              ServerProperties serverProperties,
@@ -99,6 +104,7 @@ public class AuthApiController {
         this.totpService = totpService;
         this.auditService = auditService;
         this.clientIpResolver = clientIpResolver;
+        this.failedAttemptService = failedAttemptService;
         this.maskingService = maskingService;
         this.properties = properties;
         this.serverProperties = serverProperties;
@@ -262,9 +268,12 @@ public class AuthApiController {
                             "인증 코드가 올바르지 않습니다. 시간 동기화와 6자리 숫자를 확인하세요."));
         }
 
-        OffsetDateTime now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+        Instant nowInstant = clock.instant();
+        OffsetDateTime now = OffsetDateTime.ofInstant(nowInstant, ZoneOffset.UTC);
         userMapper.updateTotpState(user.getId(), secret, true, now);
         user.setTotpEnabled(true);
+        // T60: 관리자는 비밀번호가 맞은 것만으로는 실패 횟수가 되돌아가지 않는다. 등록 완료를 TOTP 확인 성공과 같이 본다
+        failedAttemptService.reset(user.getId(), nowInstant);
 
         HttpSession session = request.getSession(true);
         session.setAttribute(SessionAttributes.TOTP_VERIFIED, Boolean.TRUE);
@@ -296,9 +305,47 @@ public class AuthApiController {
                             "TOTP가 아직 등록되지 않았습니다. 먼저 TOTP 설정을 완료해 주세요."));
         }
         String code = body.code() == null ? "" : body.code();
-        if (!totpService.verifyCode(user.getTotpSecret(), code)) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiErrorResponse(400, "INVALID_TOTP_CODE", "인증 코드가 올바르지 않습니다."));
+
+        // T60: 이미 확인을 마친 세션은 지금처럼 판정만 한다. 실패 횟수를 건드리지 않고 실패 감사도 남기지 않는다
+        // (그 세션은 이미 모든 권한이 있다. 화면을 다시 열어 실수한 관리자를 잠그지 않는다).
+        HttpSession existingSession = request.getSession(false);
+        boolean alreadyVerified = existingSession != null
+                && Boolean.TRUE.equals(existingSession.getAttribute(SessionAttributes.TOTP_VERIFIED));
+        if (alreadyVerified) {
+            if (!totpService.verifyCode(user.getTotpSecret(), code)) {
+                return invalidTotpCode();
+            }
+        } else {
+            // T60: 코드를 보기 전에 시도 하나를 차지한다. 잠겨 있거나 횟수가 한도에 닿아 있으면 코드를 보지 않는다.
+            // 판정이 차지 뒤에만 일어나므로 동시에 여러 요청이 와도 판정받는 수가 한도를 넘지 않고,
+            // 잠금 전에 비밀번호 로그인만 해 둔 다른 세션도 잠긴 뒤에는 코드를 넣어 볼 수 없다.
+            Instant now = clock.instant();
+            String clientIp = clientIpResolver.resolve(request);
+            String role = user.getRole().name();
+            if (!failedAttemptService.claim(user.getId(), now)) {
+                FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
+                Map<String, Object> detail = new LinkedHashMap<>();
+                detail.put("reason", "account_locked");
+                if (state.lockedUntil() != null) {
+                    detail.put("lockedUntil", state.lockedUntil().toString());
+                }
+                auditService.recordAuthEvent(user.getUsername(), role, AuditActionType.TOTP_FAILURE, detail, clientIp);
+                recordLockIfLockedNow(user, state, clientIp);
+                endSession(request);
+                return accountLocked("계정이 일시 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
+            }
+            if (!totpService.verifyCode(user.getTotpSecret(), code)) {
+                FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
+                auditService.recordAuthEvent(user.getUsername(), role, AuditActionType.TOTP_FAILURE,
+                        Map.of("reason", "invalid_code", "failedAttempts", state.failedAttempts()), clientIp);
+                recordLockIfLockedNow(user, state, clientIp);
+                if (state.locked()) {
+                    endSession(request);
+                    return accountLocked("2단계 인증 연속 실패 횟수 초과로 계정이 잠겼습니다.");
+                }
+                return invalidTotpCode();
+            }
+            failedAttemptService.reset(user.getId(), now);
         }
 
         HttpSession session = request.getSession(true);
@@ -313,6 +360,34 @@ public class AuthApiController {
                 "TOTP 2단계 인증이 완료되었습니다.",
                 buildUserDto(principal, user, session)
         ));
+    }
+
+    private static ResponseEntity<ApiErrorResponse> invalidTotpCode() {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ApiErrorResponse(400, "INVALID_TOTP_CODE", "인증 코드가 올바르지 않습니다."));
+    }
+
+    private static ResponseEntity<ApiErrorResponse> accountLocked(String message) {
+        return ResponseEntity.status(HttpStatus.LOCKED)
+                .body(new ApiErrorResponse(423, "ACCOUNT_LOCKED", message));
+    }
+
+    /** 이 요청이 계정을 잠갔을 때만 잠금 감사를 남긴다(동시에 온 요청이 같은 잠금을 두 번 적지 않는다) */
+    private void recordLockIfLockedNow(DashboardUser user, FailedAttemptService.State state, String clientIp) {
+        if (state.lockedByThisCall()) {
+            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
+                    Map.of("failedAttempts", state.failedAttempts(), "lockedUntil", String.valueOf(state.lockedUntil())),
+                    clientIp);
+        }
+    }
+
+    /** 요청한 세션만 끝낸다(세션 목록 구조가 없어 같은 계정의 다른 세션은 그대로다) */
+    private static void endSession(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        SecurityContextHolder.clearContext();
     }
 
     private DashboardUser findAuthenticatedUser(Authentication authentication) {

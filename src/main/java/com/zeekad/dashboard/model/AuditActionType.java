@@ -8,6 +8,8 @@ public enum AuditActionType {
     LOGIN_FAILURE,
     ACCOUNT_LOCKED,
     TOTP_VERIFIED,
+    /** T60 관리자 TOTP 확인 실패: 틀린 코드(reason invalid_code)와 잠긴 계정의 확인 시도(reason account_locked) */
+    TOTP_FAILURE,
     ACCESS_DENIED_IDOR,
     INCIDENT_VIEW_UNMASKED,
     INCIDENT_STATUS_TRANSITION,
