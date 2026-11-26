@@ -239,7 +239,7 @@ export function queueCsv(items: UnifiedQueueItem[]): string {
     // T52 중요 자산: 예/아니요만(이름은 넣지 않는다. 조회자도 같다). 앞 칸 번호를 바꾸지 않게 맨 뒤에 둔다
     item.assetCritical ? '예' : '아니요',
   ]);
-  return `﻿${[QUEUE_CSV_HEADERS, ...rows].map((row) => row.map((value) => csvCell(csvValue(value))).join(',')).join('\r\n')}\r\n`;
+  return `\uFEFF${[QUEUE_CSV_HEADERS, ...rows].map((row) => row.map((value) => csvCell(csvValue(value))).join(',')).join('\r\n')}\r\n`;
 }
 
 /** 파일 이름: `incidents-YYYYMMDD-HHmm.csv`(KST) */

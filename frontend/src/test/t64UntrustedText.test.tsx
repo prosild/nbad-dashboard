@@ -386,8 +386,8 @@ describe('T64 감사 로그 화면', () => {
 /** 숨은 문자(T63 집합). 내보낸 글에 남으면 안 된다(따로 허용한 줄바꿈·탭 말고) */
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Cs}]/u;
 /** 서버를 거치지 않은 날것(옛 응답, 사람이 쓴 메모): 서식·제어·한글 채움·변형 선택자·연한 하이픈·줄 구분자·짝 없는 서러게이트·결합 문자 연속 */
-const RAW = 'ws‮01​ㅤ️­ x\u0000\u001B[2J\uD800é́́́́';
-const RAW_MARKED = 'ws[U+202E]01[U+200B][U+3164][U+FE0F][U+00AD][U+2028]x[U+0000][U+001B][2J[U+D800]é́́[U+0301][U+0301]';
+const RAW = 'ws\u202E01\u200B\u3164\uFE0F\u00AD\u2028x\u0000\u001B[2J\uD800e\u0301\u0301\u0301\u0301\u0301';
+const RAW_MARKED = 'ws[U+202E]01[U+200B][U+3164][U+FE0F][U+00AD][U+2028]x[U+0000][U+001B][2J[U+D800]e\u0301\u0301\u0301[U+0301][U+0301]';
 
 function hiddenLeft(text: string, allowed: string[]): string[] {
   return Array.from(text)
@@ -400,23 +400,23 @@ describe('T64 CSV 내보내기', () => {
     unified(queueItem({ hostName }), { assignee: { username: 'analyst1', displayName, enabled: true } });
 
   it('칸마다 숨은 문자를 표지로 바꾼다(BOM·행 구분 CRLF와 칸 안의 줄바꿈·탭만 남는다)', () => {
-    const csv = queueCsv([item([RAW, '[U+202E]이미 표지'], `분석가‮1‍`)]);
-    expect(csv.startsWith('﻿')).toBe(true);
+    const csv = queueCsv([item([RAW, '[U+202E]이미 표지'], `분석가\u202E1\u200D`)]);
+    expect(csv.startsWith('\uFEFF')).toBe(true);
     const body = csv.slice(1);
     expect(hiddenLeft(body.replace(/\r\n/g, ''), ['\n', '\t'])).toEqual([]);
     const cells = body.split('\r\n')[1].split('","');
     expect(cells[4]).toBe(`${RAW_MARKED}, [U+202E]이미 표지`);
     expect(cells[16]).toBe('분석가[U+202E]1[U+200D]');
-    expect(body).not.toMatch(/[̀-ͯ]{4}/);
+    expect(body).not.toMatch(/[\u0300-\u036F]{4}/);
   });
 
   it('수식 방어는 처리 뒤의 값으로 한다', () => {
     const lines = queueCsv([
       item(['\r\n=1+1']),
-      item(['=1+1‮']),
+      item(['=1+1\u202E']),
       item(['\r=1+1']),
-      item(['​@SUM(A1)']),
-      item(['\t-1 ']),
+      item(['\u200B@SUM(A1)']),
+      item(['\t-1\u2028']),
     ])
       .slice(1)
       .split('\r\n');
@@ -437,15 +437,15 @@ describe('T64 마크다운 요약', () => {
     detail.incident = queueItem({ hostName: [RAW] });
     detail.report = {
       ...detail.report,
-      observationSummary: `요약‮ 끝 ${RAW}`,
-      claims: [{ claim: 'a_b ~~c~~ | d & e &#x202E; &lt;b&gt; ⁦f', facts: [] }],
-      followUp: ['확인​하세요\r\n둘째 줄'],
+      observationSummary: `요약\u202E 끝 ${RAW}`,
+      claims: [{ claim: 'a_b ~~c~~ | d & e &#x202E; &lt;b&gt; \u2066f', facts: [] }],
+      followUp: ['확인\u200B하세요\r\n둘째 줄'],
     };
     const md = incidentMarkdown(detail, DEFAULT_META, 7, [
-      { action: 'none', note: `메모‮\r\n# 제목\t끝 ${RAW}`, actorDisplay: '분석가1', recordedAt: '2026-11-20T04:00:00Z' },
+      { action: 'none', note: `메모\u202E\r\n# 제목\t끝 ${RAW}`, actorDisplay: '분석가1', recordedAt: '2026-11-20T04:00:00Z' },
     ]);
     expect(hiddenLeft(md, ['\n'])).toEqual([]);
-    expect(md).not.toMatch(/[̀-ͯ]{4}/);
+    expect(md).not.toMatch(/[\u0300-\u036F]{4}/);
     // 코드 표기 안의 표지는 글자 그대로, 서술 글의 표지는 꺾쇠를 이스케이프
     expect(md).toContain(`- 호스트: \`192.168.10.5\` · \`${RAW_MARKED}\``);
     expect(md).toContain('- 요약\\[U+202E\\] 끝 ws\\[U+202E\\]01');

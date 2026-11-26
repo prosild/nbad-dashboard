@@ -16,21 +16,21 @@ describe('T64 숨은 문자 표지(여러 줄 모드)', () => {
       ['\u001B', '[U+001B]'],
       ['\u007F', '[U+007F]'],
       ['\u0085', '[U+0085]'],
-      ['‮', '[U+202E]'],
-      ['‪', '[U+202A]'],
-      ['⁦', '[U+2066]'],
-      ['​', '[U+200B]'],
-      ['‍', '[U+200D]'],
-      ['﻿', '[U+FEFF]'],
+      ['\u202E', '[U+202E]'],
+      ['\u202A', '[U+202A]'],
+      ['\u2066', '[U+2066]'],
+      ['\u200B', '[U+200B]'],
+      ['\u200D', '[U+200D]'],
+      ['\uFEFF', '[U+FEFF]'],
       ['\u{E0001}', '[U+E0001]'],
-      [' ', '[U+2028]'],
-      [' ', '[U+2029]'],
+      ['\u2028', '[U+2028]'],
+      ['\u2029', '[U+2029]'],
     ];
     for (const [raw, marked] of cases) expect(markHiddenChars(`a${raw}b`), marked).toBe(`a${marked}b`);
   });
 
   it('Default_Ignorable_Code_Point(한글 채움 문자·변형 선택자·CGJ·연한 하이픈 등)도 숨은 문자다', () => {
-    for (const raw of ['ᅟ', 'ᅠ', 'ㅤ', 'ﾠ', '︀', '️', '\u{E0100}', '\u{E01EF}', '͏', '឴', '឵', '᠋', '᠏', '­']) {
+    for (const raw of ['\u115F', '\u1160', '\u3164', '\uFFA0', '\uFE00', '\uFE0F', '\u{E0100}', '\u{E01EF}', '\u034F', '\u17B4', '\u17B5', '\u180B', '\u180F', '\u00AD']) {
       expect(markHiddenChars(raw), raw.codePointAt(0)?.toString(16)).toBe(hiddenCharMarker(raw.codePointAt(0) as number));
     }
     expect(markHiddenChars('\u{E0100}')).toBe('[U+E0100]');
@@ -50,12 +50,12 @@ describe('T64 숨은 문자 표지(여러 줄 모드)', () => {
   });
 
   it('결합 문자는 한 글자에 3개까지 남기고 넘는 몫만 표지(숨은 문자는 이어짐을 끊지 않는다)', () => {
-    expect(markHiddenChars('é̂̃')).toBe('é̂̃');
-    expect(markHiddenChars('é̂̃̄⃝')).toBe('é̂̃[U+0304][U+20DD]');
-    expect(markHiddenChars('é́​́́')).toBe('é́[U+200B]́[U+0301]');
+    expect(markHiddenChars('e\u0301\u0302\u0303')).toBe('e\u0301\u0302\u0303');
+    expect(markHiddenChars('e\u0301\u0302\u0303\u0304\u20DD')).toBe('e\u0301\u0302\u0303[U+0304][U+20DD]');
+    expect(markHiddenChars('e\u0301\u0301\u200B\u0301\u0301')).toBe('e\u0301\u0301[U+200B]\u0301[U+0301]');
     // 새 기본 글자(줄바꿈 포함)에서 다시 센다
-    expect(markHiddenChars('é́́á́́')).toBe('é́́á́́');
-    expect(markHiddenChars('é́́\ń')).toBe('é́́\ń');
+    expect(markHiddenChars('e\u0301\u0301\u0301a\u0301\u0301\u0301')).toBe('e\u0301\u0301\u0301a\u0301\u0301\u0301');
+    expect(markHiddenChars('e\u0301\u0301\u0301\n\u0301')).toBe('e\u0301\u0301\u0301\n\u0301');
     // 한글 자모 조합·보통 글자는 그대로
     expect(markHiddenChars('한글 ᄒᆞᆫ글 café')).toBe('한글 ᄒᆞᆫ글 café');
   });
@@ -63,10 +63,10 @@ describe('T64 숨은 문자 표지(여러 줄 모드)', () => {
   it('보이는 공백·글자와 서버 표지는 바꾸지 않는다(두 번 처리해도 같다)', () => {
     const visible = 'a b　c [U+202E] …(39자 생략) [보이지 않는 문자 2개 제거] <b>&amp;</b>';
     expect(markHiddenChars(visible)).toBe(visible);
-    const raw = 'x‮\u0000\r\ny\ré́́́\uD800ㅤ';
+    const raw = 'x\u202E\u0000\r\ny\re\u0301\u0301\u0301\u0301\uD800\u3164';
     const once = markHiddenChars(raw);
     expect(markHiddenChars(once)).toBe(once);
-    expect(once).toBe('x[U+202E][U+0000]\ny[U+000D]é́́[U+0301][U+D800][U+3164]');
+    expect(once).toBe('x[U+202E][U+0000]\ny[U+000D]e\u0301\u0301\u0301[U+0301][U+D800][U+3164]');
   });
 
   it('표지는 16진 대문자 4~6자리', () => {
