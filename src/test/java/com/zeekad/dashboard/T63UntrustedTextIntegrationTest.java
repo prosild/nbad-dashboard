@@ -10,6 +10,7 @@ import com.zeekad.dashboard.mapper.app.UserMapper;
 import com.zeekad.dashboard.model.DashboardUser;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.TotpService;
+import com.zeekad.dashboard.service.CriticalAssetService;
 import com.zeekad.dashboard.service.UserAdminService;
 import com.zeekad.dashboard.testsupport.T63Attacks;
 import com.zeekad.dashboard.testsupport.T63JsonScan;
@@ -114,6 +115,8 @@ class T63UntrustedTextIntegrationTest {
     @Autowired
     private TotpService totpService;
     @Autowired
+    private CriticalAssetService criticalAssetService;
+    @Autowired
     private Clock clock;
     @Autowired
     @Qualifier("zeekadReadDataSource")
@@ -142,6 +145,15 @@ class T63UntrustedTextIntegrationTest {
     static final String EVIL_A_DISPLAY = T63Attacks.CONTROL;
     static final String EVIL_B_DISPLAY = ATTACKS.get(14) + " \u3164\u115f";
 
+    /**
+     * T52 중요 자산(관리자 API로 정하는 이름·설명). 제어 문자(Cc)는 거부되므로 서식 문자·한글 채움 문자와 공격 문장을 쓴다.
+     * 이름 상한 100, 설명 상한 300(T52 검사).
+     */
+    static final String CRIT_NAME_1 = "crit\u202eevil\u200b " + ATTACKS.get(14);
+    static final String CRIT_DESC_1 = ATTACKS.get(6) + " \u2066isolated\u2069 " + ATTACKS.get(15);
+    static final String CRIT_NAME_2 = ATTACKS.get(0) + " \u3164";
+    static final String CRIT_DESC_2 = ATTACKS.get(9).replace("\n", " ") + " \ufeff";
+
     @BeforeAll
     void seed() throws Exception {
         zeekadJdbc = new JdbcTemplate(zeekadReadDataSource);
@@ -167,6 +179,14 @@ class T63UntrustedTextIntegrationTest {
             insertStatus(i);
             insertReview(i);
         }
+        // T52 중요 자산 두 건(호스트 1·2). 우선순위를 한 단계 올리고 분석가 응답에 이름이 실린다(조회자는 null)
+        for (var a : criticalAssetService.list()) {
+            if (a.getHostIp() != null && a.getHostIp().startsWith("10.63.0.")) {
+                criticalAssetService.delete(a.getId(), "seed", "ADMIN", "127.0.0.1");
+            }
+        }
+        criticalAssetService.create(hostIp(1), CRIT_NAME_1, CRIT_DESC_1, "seed", "ADMIN", "127.0.0.1");
+        criticalAssetService.create(hostIp(2), CRIT_NAME_2, CRIT_DESC_2, "seed", "ADMIN", "127.0.0.1");
         insertAssetRow(MASK_ROW, "\u202eadmin", "😀bob", "10.0\u200b.0.1");
 
         analyst = login("t63_analyst");
@@ -205,6 +225,11 @@ class T63UntrustedTextIntegrationTest {
         if (zeekadJdbc != null) {
             cleanupZeekadRows();
         }
+        for (var a : criticalAssetService.list()) {
+            if (a.getHostIp() != null && a.getHostIp().startsWith("10.63.0.")) {
+                criticalAssetService.delete(a.getId(), "seed", "ADMIN", "127.0.0.1");
+            }
+        }
         if (evidenceServer != null) {
             evidenceServer.stop(0);
         }
@@ -242,6 +267,7 @@ class T63UntrustedTextIntegrationTest {
         out.put("operations", both(get("/api/operations").param("captureId", CAP)));
         out.put("reviews", both(get("/api/reviews").param("captureId", CAP)));
         out.put("audit-logs", new String[]{lenientBody(admin, get("/api/admin/audit-logs").param("limit", "500"), "관리자"), null});
+        out.put("critical-assets", new String[]{lenientBody(admin, get("/api/admin/critical-assets"), "관리자"), null});
         out.put("audit-logs-search", new String[]{lenientBody(admin, get("/api/admin/audit-logs")
                 .param("actorUsername", "\u202enormal").param("limit", "50"), "관리자"), null});
         return out;
@@ -249,7 +275,7 @@ class T63UntrustedTextIntegrationTest {
 
     /** 이름·글이 실린 응답(분석가는 표지가 있어야, 조회자는 제거 표시가 있어야 한다) */
     private static final List<String> CARRIES_NAMES = List.of("queue", "legacy-list", "detail-1", "detail-11",
-            "detail-17", "hosts", "overview", "operations", "reviews", "audit-logs");
+            "detail-17", "hosts", "overview", "operations", "reviews", "audit-logs", "critical-assets");
 
     @Test
     void everyStringInEveryResponseFollowsThePolicyForAnalystAndViewer() throws Exception {
@@ -282,6 +308,19 @@ class T63UntrustedTextIntegrationTest {
         assertThat(problems)
                 .as("정책을 벗어난 값 %d개:%n%s", problems.size(), summarize(problems))
                 .isEmpty();
+    }
+
+    @Test
+    void criticalAssetNameAndDescriptionFollowThePolicy() throws Exception {
+        String q = "captureId=" + CAP + "&period=all&size=100";
+        Map<String, List<String>> a = valuesByField(body(analyst, get("/api/incidents/queue?" + q)));
+        assertThat(a.get("criticalAssetName")).contains("crit[U+202E]evil[U+200B] " + ATTACKS.get(14));
+        Map<String, List<String>> v = valuesByField(body(viewer, get("/api/incidents/queue?" + q)));
+        assertThat(v.getOrDefault("criticalAssetName", List.of())).as("조회자에게는 이름을 내리지 않는다(T52)").isEmpty();
+        Map<String, List<String>> d = valuesByField(body(analyst, get("/api/incidents/" + JOB + "/rank/2")));
+        assertThat(d.get("criticalAssetName")).contains(ATTACKS.get(0) + " [U+3164]");
+        Map<String, List<String>> adm = valuesByField(body(admin, get("/api/admin/critical-assets")));
+        assertThat(adm.get("description")).contains(ATTACKS.get(6) + " [U+2066]isolated[U+2069] " + ATTACKS.get(15));
     }
 
     @Test

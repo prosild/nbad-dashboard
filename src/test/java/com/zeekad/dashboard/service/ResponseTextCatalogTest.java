@@ -38,7 +38,7 @@ class ResponseTextCatalogTest {
         CATEGORIES.put("ATT&CK ID", Set.of("attackId", "attackIds"));
         CATEGORIES.put("사실 ID", Set.of("id"));
         CATEGORIES.put("열거값", Set.of("zeekadRole", "availableRoles", "zeekadStatus", "zeekadResolution", "zeekadReportKind",
-                "zeekadReviewAction", "priority", "sourceType", "anchorMode", "period", "status", "bucket", "health", "state",
+                "zeekadReviewAction", "priority", "priorityBase", "sourceType", "anchorMode", "period", "status", "bucket", "health", "state",
                 "messageKind", "messageVersion", "deliveryMode", "deliveryStatus", "zeekadMessageVersion",
                 "zeekadDeliveryMode", "zeekadDeliveryStatus", "latestDeliveryMode", "latestDeliveryStatus", "reportKind",
                 "choice", "decidedBy", "policyChoice", "llmChoice", "decisionModelChoice", "reviewAction", "currentStatus",

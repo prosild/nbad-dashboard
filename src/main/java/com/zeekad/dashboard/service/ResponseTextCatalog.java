@@ -60,10 +60,14 @@ public final class ResponseTextCatalog {
 
     /* ───────────────────────── 응답 ───────────────────────── */
 
-    /** GET /api/incidents/queue (UnifiedQueueResponse). 분석가 행은 priority·detectedAt 키가 두 번 나온다(둘 다 같은 규칙) */
+    /**
+     * GET /api/incidents/queue (UnifiedQueueResponse). 분석가 행은 priority·detectedAt 키가 두 번 나온다(둘 다 같은 규칙).
+     * T52: priorityBase는 우선순위 열거값, criticalAssetName(중요 자산 이름, 분석가·관리자만)은 이름.
+     */
     public static final ResponseTextRules QUEUE = ResponseTextRules.named("queue")
             .mount("items[]", queueItem())
-            .skip("items[].sourceType")
+            .skip("items[].sourceType", "items[].priorityBase")
+            .name("items[].criticalAssetName")
             .mount("items[].assignee", assignee())
             .skip("anchorMode", "period", "availableModels[]", "availableRoles[]")
             .mount("sources", sources())
@@ -123,7 +127,8 @@ public final class ResponseTextCatalog {
                     "detail.statusHistory[].fromStatus", "detail.statusHistory[].toStatus", "detail.statusHistory[].resolution")
             .name("detail.statusUpdatedByDisplay", "detail.statusHistory[].actorDisplay")
             .text("detail.statusHistory[].reason")
-            .skip("queueMeta.sourceType", "queueMeta.priority")
+            .skip("queueMeta.sourceType", "queueMeta.priority", "queueMeta.priorityBase")
+            .name("queueMeta.criticalAssetName")
             // 담당·대응 조치(사람이 쓴 글)
             .mount("assignment.assignee", assignee())
             .name("assignment.assignedByDisplay")
@@ -138,12 +143,13 @@ public final class ResponseTextCatalog {
     /** GET /api/incidents/{jobId}/rank/{queueRank}/related-host-incidents */
     public static final ResponseTextRules RELATED_HOST = ResponseTextRules.named("related-host")
             .skip("hostIp", "items[].captureId", "items[].hostIp", "items[].zeekadRole", "items[].priority",
-                    "items[].zeekadStatus", "items[].zeekadResolution", "items[].zeekadPickedBy");
+                    "items[].zeekadStatus", "items[].zeekadResolution", "items[].zeekadPickedBy", "items[].priorityBase")
+            .name("items[].criticalAssetName");
 
     /** GET /api/hosts (HostRiskResponse) */
     public static final ResponseTextRules HOST_RISK = ResponseTextRules.named("host-risk")
             .skip("items[].hostIp", "items[].models[]", "anchorMode", "period")
-            .name("items[].hostNames[]", "items[].accounts[]")
+            .name("items[].hostNames[]", "items[].accounts[]", "items[].criticalAssetName")
             .mount("sources", sources());
 
     /** GET /api/dashboard/overview (DashboardOverviewResponse). TechniqueCount.name은 값 */
@@ -199,7 +205,24 @@ public final class ResponseTextCatalog {
             .mount("assignment.assignee", assignee())
             .name("assignment.assignedByDisplay");
 
+    /** T52 중요 자산 한 건(관리자 API): 이름은 이름(256), 설명은 글(4,000, 여러 줄). 주소는 식별자 */
+    private static ResponseTextRules criticalAsset() {
+        return ResponseTextRules.named("critical-asset")
+                .skip("hostIp")
+                .name("name")
+                .text("description");
+    }
+
+    /** GET /api/admin/critical-assets (관리자만) */
+    public static final ResponseTextRules CRITICAL_ASSETS = ResponseTextRules.named("critical-assets")
+            .mount("items[]", criticalAsset());
+
+    /** POST·PUT /api/admin/critical-assets… 성공 응답(관리자만) */
+    public static final ResponseTextRules CRITICAL_ASSET_MUTATION = ResponseTextRules.named("critical-asset-mutation")
+            .mount("item", criticalAsset());
+
     /** 증거 파일(handoff/T63/evidence/identifier-list.txt)용 목록 */
     public static final List<ResponseTextRules> ALL = List.of(QUEUE, QUEUE_NEIGHBORS, QUEUE_NEW_COUNT, LEGACY_LIST, DETAIL,
-            RELATED_HOST, HOST_RISK, OVERVIEW, OPERATIONS, REVIEWS, AUDIT_LOGS, ASSIGNEE_CANDIDATES, ASSIGN_RESULT);
+            RELATED_HOST, HOST_RISK, OVERVIEW, OPERATIONS, REVIEWS, AUDIT_LOGS, ASSIGNEE_CANDIDATES, ASSIGN_RESULT,
+            CRITICAL_ASSETS, CRITICAL_ASSET_MUTATION);
 }

@@ -127,11 +127,11 @@ public final class T63JsonScan {
 
     private static final Set<String> NAME_FIELDS = Set.of("hostName", "hostNames", "accounts", "kerberosUser", "ntlmUser",
             "displayName", "analystDisplay", "actorDisplay", "statusUpdatedByDisplay", "assignedByDisplay",
-            "actorUsername", "selectedActorUsername");
+            "actorUsername", "selectedActorUsername", "criticalAssetName");
     private static final Set<String> TEXT_FIELDS = Set.of("observationSummary", "claim", "explanation", "reason",
             "limitations", "followUp", "verificationProblems", "verificationReason", "llmError", "error",
             "decisionModelError", "policyReasons", "reviewReason", "zeekadReviewReason", "note", "payloadTextPreview",
-            "payloadChannel", "value");
+            "payloadChannel", "value", "description");
 
     /** 시험이 기대하는 칸 종류(서버 규칙과 따로 정했다. 애매하면 너그러운 쪽) */
     public static Kind kindOf(Entry e) {

@@ -68,11 +68,13 @@ public class AdminApiController {
     /* ───────────── T52 중요 자산 ───────────── */
 
     @GetMapping("/critical-assets")
-    public ResponseEntity<CriticalAssetDtos.ListResponse> listCriticalAssets() {
+    public ResponseEntity<ResponseTextGuard.GuardedJson> listCriticalAssets() {
         List<CriticalAssetDtos.Item> items = criticalAssetService.list().stream()
                 .map(CriticalAssetDtos.Item::from)
                 .toList();
-        return ResponseEntity.ok(new CriticalAssetDtos.ListResponse(items, CriticalAssetService.MAX_ASSETS));
+        // T63: 이름·설명은 관리자가 넣은 글이다(제어 문자는 받지 않지만 방향 전환 같은 서식 문자는 들 수 있다). 관리자에게 표지·상한
+        return ResponseEntity.ok(responseTextGuard.apply(new CriticalAssetDtos.ListResponse(items, CriticalAssetService.MAX_ASSETS),
+                UserRole.ADMIN, ResponseTextCatalog.CRITICAL_ASSETS));
     }
 
     @PostMapping("/critical-assets")
@@ -86,7 +88,7 @@ public class AdminApiController {
             CriticalAsset created = criticalAssetService.create(body.hostIp(), body.name(), body.description(),
                     authentication.getName(), "ADMIN", clientIpResolver.resolve(request));
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new CriticalAssetDtos.MutationResponse("중요 자산을 등록했습니다.", CriticalAssetDtos.Item.from(created)));
+                    .body(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 등록했습니다.", CriticalAssetDtos.Item.from(created))));
         } catch (CriticalAssetException ex) {
             return criticalAssetError(ex);
         }
@@ -104,7 +106,7 @@ public class AdminApiController {
         try {
             CriticalAsset updated = criticalAssetService.update(id, body.name(), body.description(),
                     authentication.getName(), "ADMIN", clientIpResolver.resolve(request));
-            return ResponseEntity.ok(new CriticalAssetDtos.MutationResponse("중요 자산을 고쳤습니다.", CriticalAssetDtos.Item.from(updated)));
+            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 고쳤습니다.", CriticalAssetDtos.Item.from(updated))));
         } catch (CriticalAssetException ex) {
             return criticalAssetError(ex);
         }
@@ -118,10 +120,15 @@ public class AdminApiController {
         try {
             CriticalAsset deleted = criticalAssetService.delete(id, authentication.getName(), "ADMIN",
                     clientIpResolver.resolve(request));
-            return ResponseEntity.ok(new CriticalAssetDtos.MutationResponse("중요 자산을 지웠습니다.", CriticalAssetDtos.Item.from(deleted)));
+            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 지웠습니다.", CriticalAssetDtos.Item.from(deleted))));
         } catch (CriticalAssetException ex) {
             return criticalAssetError(ex);
         }
+    }
+
+    /** T63: 중요 자산 등록·고침·지우기 응답의 이름·설명에도 목록과 같은 정책 */
+    private ResponseTextGuard.GuardedJson mutation(CriticalAssetDtos.MutationResponse body) {
+        return responseTextGuard.apply(body, UserRole.ADMIN, ResponseTextCatalog.CRITICAL_ASSET_MUTATION);
     }
 
     private static ResponseEntity<ApiErrorResponse> criticalAssetError(CriticalAssetException ex) {
