@@ -46,4 +46,26 @@
         )
     </select>
 
+    <!-- T53 다시 열기: zeek_AD migration 018의 dashboard.reopen_incident(p_job, p_incident, p_actor, p_reason, p_expected_resolution).
+         이름 인자가 함수와 어긋나면 42883(함수 없음)이라 서비스가 501로 보인다. 실제 함수로 한 성공 확인이 이것을 막는다. -->
+    <select id="reopenIncident" resultType="string" databaseId="postgresql">
+        SELECT dashboard.reopen_incident(
+            p_job => #{jobId,jdbcType=BIGINT},
+            p_incident => #{incidentId,jdbcType=VARCHAR},
+            p_actor => #{loginUser,jdbcType=VARCHAR},
+            p_reason => #{reason,jdbcType=VARCHAR},
+            p_expected_resolution => #{expectedResolution,jdbcType=VARCHAR}
+        )
+    </select>
+
+    <select id="reopenIncident" resultType="string" databaseId="h2">
+        SELECT dashboard.reopen_incident(
+            #{jobId,jdbcType=BIGINT},
+            #{incidentId,jdbcType=VARCHAR},
+            #{loginUser,jdbcType=VARCHAR},
+            #{reason,jdbcType=VARCHAR},
+            #{expectedResolution,jdbcType=VARCHAR}
+        )
+    </select>
+
 </mapper>

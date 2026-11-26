@@ -308,3 +308,5 @@ FROM grouped;
 
 CREATE ALIAS IF NOT EXISTS dashboard.transition_incident FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.transitionIncident";
 CREATE ALIAS IF NOT EXISTS dashboard.decide_review FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.decideReview";
+-- T53 종결한 사건 다시 열기(zeek_AD migration 018의 대역)
+CREATE ALIAS IF NOT EXISTS dashboard.reopen_incident FOR "com.zeekad.dashboard.testsupport.H2ZeekadTransitionFunctions.reopenIncident";

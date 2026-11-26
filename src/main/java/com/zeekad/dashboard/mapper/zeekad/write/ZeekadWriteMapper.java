@@ -22,4 +22,14 @@ public interface ZeekadWriteMapper {
                         @Param("action") String action,
                         @Param("analyst") String analyst,
                         @Param("note") String note);
+
+    /**
+     * T53 종결한 사건 다시 열기(zeek_AD migration 018, dashboard.reopen_incident). closed일 때만 investigating으로 돌리고
+     * 판정을 비우며 이력에 closed → investigating 한 행을 남긴다. expectedResolution이 지금 판정과 다르면 22023.
+     */
+    String reopenIncident(@Param("jobId") Long jobId,
+                          @Param("incidentId") String incidentId,
+                          @Param("loginUser") String loginUser,
+                          @Param("reason") String reason,
+                          @Param("expectedResolution") String expectedResolution);
 }

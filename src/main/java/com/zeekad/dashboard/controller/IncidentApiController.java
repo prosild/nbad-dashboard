@@ -5,6 +5,7 @@ import com.zeekad.dashboard.dto.ApiErrorResponse;
 import com.zeekad.dashboard.dto.AssignmentDtos;
 import com.zeekad.dashboard.dto.IncidentDetailApiResponse;
 import com.zeekad.dashboard.dto.IncidentQueueResponse;
+import com.zeekad.dashboard.dto.IncidentReopenRequest;
 import com.zeekad.dashboard.dto.IncidentReviewDecisionRequest;
 import com.zeekad.dashboard.dto.IncidentTransitionRequest;
 import com.zeekad.dashboard.dto.ResponseActionDtos;
@@ -19,6 +20,7 @@ import com.zeekad.dashboard.service.IncidentQueryService;
 import com.zeekad.dashboard.service.IncidentNoLocationService;
 import com.zeekad.dashboard.service.IncidentQueueService;
 import com.zeekad.dashboard.service.IncidentRefService;
+import com.zeekad.dashboard.service.IncidentReopenService;
 import com.zeekad.dashboard.service.IncidentResponseActionService;
 import com.zeekad.dashboard.service.IncidentTransitionService;
 import com.zeekad.dashboard.service.MaskingService;
@@ -51,6 +53,7 @@ public class IncidentApiController {
     private final IncidentRefService incidentRefService;
     private final IncidentNoLocationService incidentNoLocationService;
     private final IncidentResponseActionService incidentResponseActionService;
+    private final IncidentReopenService incidentReopenService;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
@@ -62,8 +65,10 @@ public class IncidentApiController {
                                  IncidentAssignmentService incidentAssignmentService,
                                  IncidentRefService incidentRefService,
                                  IncidentNoLocationService incidentNoLocationService,
-                                 IncidentResponseActionService incidentResponseActionService) {
+                                 IncidentResponseActionService incidentResponseActionService,
+                                 IncidentReopenService incidentReopenService) {
         this.incidentResponseActionService = incidentResponseActionService;
+        this.incidentReopenService = incidentReopenService;
         this.incidentRefService = incidentRefService;
         this.incidentNoLocationService = incidentNoLocationService;
         this.incidentAssignmentService = incidentAssignmentService;
@@ -146,7 +151,9 @@ public class IncidentApiController {
                 incidentRefService.numberFor(incidentId),
                 // T56 대응 조치: 조회자에게는 메모를 내리지 않는다(종류·기록자·시각만). 기록은 ANALYST·ADMIN이고 신규가 아닐 때만.
                 incidentResponseActionService.listView(incidentId, displayMap, canRecordRole),
-                canRecordRole && IncidentResponseActionService.statusAllowsRecord(detail.currentStatus())));
+                canRecordRole && IncidentResponseActionService.statusAllowsRecord(detail.currentStatus()),
+                // T53 다시 열기: ANALYST·ADMIN이고 지금 종결일 때만(canTransition·nextAllowedStatus는 그대로다)
+                IncidentReopenService.canReopen(principal.getRole(), detail.currentStatus())));
     }
 
     /** T25 담당자 지정·변경·해제. 본문 { assignee: username|null, expected: username|null }. CSRF 필요 */
@@ -223,6 +230,29 @@ public class IncidentApiController {
                 body.reason(),
                 clientIp);
 
+        return ResponseEntity.status(result.httpStatus())
+                .body(new ActionResultResponse(result.succeeded(), result.code(), result.message()));
+    }
+
+    /**
+     * T53 종결한 인시던트 다시 열기. 본문 { reason, expectedResolution(화면이 보고 있는 판정, 필수) }. CSRF 필요.
+     * 성공하면 분석 중으로 돌아가고 판정이 비워진다. 앞선 종결과 판정은 이력에 남는다.
+     */
+    @PostMapping("/{jobId}/rank/{queueRank}/reopen")
+    public ResponseEntity<ActionResultResponse> reopen(
+            @PathVariable("jobId") Long jobId,
+            @PathVariable("queueRank") Integer queueRank,
+            @RequestBody(required = false) IncidentReopenRequest body,
+            Authentication authentication,
+            HttpServletRequest request) {
+        DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
+        String clientIp = clientIpResolver.resolve(request);
+        // 본문이 없거나 JSON null이어도 접근·역할 검사를 같은 순서로 거치게 빈 값으로 넘긴다(사유 검사에서 400).
+        IncidentTransitionService.TransitionResult result = incidentReopenService.reopen(
+                principal, jobId, queueRank,
+                body == null ? null : body.reason(),
+                body == null ? null : body.expectedResolution(),
+                clientIp);
         return ResponseEntity.status(result.httpStatus())
                 .body(new ActionResultResponse(result.succeeded(), result.code(), result.message()));
     }

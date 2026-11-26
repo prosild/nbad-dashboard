@@ -19,6 +19,8 @@ public record IncidentDetailApiResponse(
         Long incidentNo,
         /* T56: 대응 조치 기록(시간 역순. 조회자에게는 note가 null), 기록할 수 있는지(ANALYST·ADMIN이고 신규가 아님) */
         java.util.List<ResponseActionDtos.Item> responseActions,
-        boolean canRecordResponse
+        boolean canRecordResponse,
+        /* T53: 다시 열 수 있는지(ANALYST·ADMIN이고 지금 종결) */
+        boolean canReopen
 ) {
 }
