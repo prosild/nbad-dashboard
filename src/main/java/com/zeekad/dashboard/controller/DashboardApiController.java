@@ -4,6 +4,8 @@ import com.zeekad.dashboard.dto.DashboardOverviewResponse;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.DashboardOverviewService;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -19,14 +21,17 @@ public class DashboardApiController {
 
     private final DashboardOverviewService dashboardOverviewService;
     private final ClientIpResolver clientIpResolver;
+    private final ResponseTextGuard responseTextGuard;
 
-    public DashboardApiController(DashboardOverviewService dashboardOverviewService, ClientIpResolver clientIpResolver) {
+    public DashboardApiController(DashboardOverviewService dashboardOverviewService, ClientIpResolver clientIpResolver,
+                                  ResponseTextGuard responseTextGuard) {
+        this.responseTextGuard = responseTextGuard;
         this.dashboardOverviewService = dashboardOverviewService;
         this.clientIpResolver = clientIpResolver;
     }
 
     @GetMapping("/api/dashboard/overview")
-    public ResponseEntity<DashboardOverviewResponse> overview(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> overview(
             @RequestParam(name = "period", required = false) String period,
             @RequestParam(name = "start", required = false) String start,
             @RequestParam(name = "end", required = false) String end,
@@ -35,7 +40,9 @@ public class DashboardApiController {
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
-        return ResponseEntity.ok(dashboardOverviewService.overview(principal, period, start, end, source, captureId,
-                clientIpResolver.resolve(request)));
+        DashboardOverviewResponse body = dashboardOverviewService.overview(principal, period, start, end, source, captureId,
+                clientIpResolver.resolve(request));
+        // T63: 응답 직전 글자 정책
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.OVERVIEW));
     }
 }

@@ -16,6 +16,9 @@ import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.service.CriticalAssetException;
 import com.zeekad.dashboard.service.CriticalAssetService;
+import com.zeekad.dashboard.service.QueueQueryException;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import com.zeekad.dashboard.service.UserAdminService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -47,13 +50,19 @@ public class AdminApiController {
     private final UserAdminService userAdminService;
     private final CriticalAssetService criticalAssetService;
     private final ClientIpResolver clientIpResolver;
+    private final ResponseTextGuard responseTextGuard;
+
+    /** T63 감사 로그 행위자 검색어 상한(UTF-16 단위, 큐 asset·호스트 위험도 q와 같다) */
+    static final int ACTOR_QUERY_MAX_LENGTH = 100;
 
     public AdminApiController(UserAdminService userAdminService,
                               CriticalAssetService criticalAssetService,
-                              ClientIpResolver clientIpResolver) {
+                              ClientIpResolver clientIpResolver,
+                              ResponseTextGuard responseTextGuard) {
         this.userAdminService = userAdminService;
         this.criticalAssetService = criticalAssetService;
         this.clientIpResolver = clientIpResolver;
+        this.responseTextGuard = responseTextGuard;
     }
 
     /* ───────────── T52 중요 자산 ───────────── */
@@ -223,15 +232,23 @@ public class AdminApiController {
         int safeLimit = Math.max(1, Math.min(limit, 500));
         String cleanAction = actionType == null ? "" : actionType.trim();
         String cleanActor = actorUsername == null ? "" : actorUsername.trim();
+        if (cleanActor.length() > ACTOR_QUERY_MAX_LENGTH) {
+            // 400 INVALID_REQUEST(GlobalExceptionHandler가 고정 문구로 돌려준다)
+            throw new QueueQueryException("INVALID_REQUEST", "행위자 검색어는 100자를 넘을 수 없습니다.");
+        }
         List<AuditLog> logs = userAdminService.findAuditLogs(cleanAction, cleanActor, safeLimit);
 
-        return ResponseEntity.ok(new AdminAuditLogsResponse(
+        AdminAuditLogsResponse body = new AdminAuditLogsResponse(
                 logs,
                 List.of(AuditActionType.values()),
                 cleanAction,
                 cleanActor,
                 safeLimit
-        ));
+        );
+        // T63: 관리자만 보므로 표지. 저장값은 원문(증거)이고 응답에서만 정책을 적용한다.
+        // 이 메서드를 바로 부르는 시험(T58)이 있어 응답 형을 그대로 두고 처리한 값으로 되읽는다
+        return ResponseEntity.ok(responseTextGuard.applyAs(body, UserRole.ADMIN, ResponseTextCatalog.AUDIT_LOGS,
+                AdminAuditLogsResponse.class));
     }
 
     private String joinCapturePatterns(List<String> capturePatterns) {

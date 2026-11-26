@@ -40,7 +40,8 @@
                 AND action_type = #{actionType}
             </if>
             <if test="actorUsername != null and actorUsername != ''">
-                AND LOWER(actor_username) LIKE LOWER(CONCAT('%', #{actorUsername}, '%'))
+                <!-- T63: 검색어의 역슬래시·%·_는 서비스(UserAdminService.likeEscape)가 이스케이프한다. H2·PostgreSQL 같은 문장 -->
+                AND LOWER(actor_username) LIKE LOWER(CONCAT('%', #{actorUsername}, '%')) ESCAPE '\'
             </if>
         </where>
         ORDER BY occurred_at DESC, id DESC

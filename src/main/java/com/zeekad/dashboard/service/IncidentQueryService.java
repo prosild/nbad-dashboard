@@ -124,7 +124,8 @@ public class IncidentQueryService {
                 wouldSend
         );
 
-        String assetQuery = trimToNull(asset);
+        // T63: 큐와 같은 공용 정규화·상한(100 UTF-16 단위 넘으면 400, 숨은 문자만이면 조건 없음)
+        String assetQuery = TextSearch.parseQuery(asset, ASSET_TOO_LONG_MESSAGE);
         List<IncidentQueueItem> items = rawItems.stream()
                 .map(item -> maskingService.maskIncidentQueueItem(item, userRole))
                 .filter(item -> matchesAssetFilter(item, assetQuery))
@@ -216,17 +217,23 @@ public class IncidentQueryService {
         return zeekadReadMapper.findIncidentQueue(jobId, pickedBy, role, status, hasReport, wouldSend);
     }
 
-    static boolean matchesAssetFilter(IncidentQueueItem item, String assetQuery) {
-        if (assetQuery == null) {
+    /** T63: 자산 검색어가 100 UTF-16 단위를 넘을 때(큐·옛 목록 API·새 건수·이웃 같은 문구) */
+    public static final String ASSET_TOO_LONG_MESSAGE = "자산 검색어는 100자를 넘을 수 없습니다.";
+
+    /**
+     * 자산 검색. normalizedQuery는 {@link TextSearch#parseQuery}가 정규화한 검색어다(null이면 조건 없음).
+     * 비교 대상은 역할 가림을 거친 행의 주소·호스트 이름이다(분석가는 원문, 조회자는 가린 값에서 제거 표시를 뺀 글).
+     */
+    static boolean matchesAssetFilter(IncidentQueueItem item, String normalizedQuery) {
+        if (normalizedQuery == null) {
             return true;
         }
-        String needle = assetQuery.toLowerCase(Locale.ROOT);
-        if (item.getHostIp() != null && item.getHostIp().toLowerCase(Locale.ROOT).contains(needle)) {
+        if (TextSearch.contains(item.getHostIp(), normalizedQuery)) {
             return true;
         }
         if (item.getHostName() != null) {
             for (String host : item.getHostName()) {
-                if (host != null && host.toLowerCase(Locale.ROOT).contains(needle)) {
+                if (TextSearch.contains(host, normalizedQuery)) {
                     return true;
                 }
             }

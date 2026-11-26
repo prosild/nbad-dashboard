@@ -118,8 +118,9 @@ public class AnalystReviewDecisionService {
             if (sqlEx != null) {
                 String sqlState = sqlEx.getSQLState();
                 if ("22023".equals(sqlState)) {
+                    // T63: 요청 본문의 incidentId·사용자 이름은 바깥 글자열이라 표지로 찍는다(줄바꿈으로 로그 줄을 만들지 못한다)
                     log.warn("분석가 검토 결정 거부(SQLSTATE 22023): reviewJobId={}, incidentId={}, analyst={}",
-                            reviewJobId, incidentId, analystUsername);
+                            reviewJobId, UntrustedText.forLog(incidentId), UntrustedText.forLog(analystUsername));
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "검토 결정 규칙에 위배되었거나 이미 다른 분석가가 결정했습니다.");
@@ -127,7 +128,7 @@ public class AnalystReviewDecisionService {
                 }
                 if ("02000".equals(sqlState)) {
                     log.warn("분석가 검토 대상 없음(SQLSTATE 02000): reviewJobId={}, incidentId={}",
-                            reviewJobId, incidentId);
+                            reviewJobId, UntrustedText.forLog(incidentId));
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "요청한 분석가 검토 항목을 찾을 수 없습니다.");
@@ -135,7 +136,7 @@ public class AnalystReviewDecisionService {
                 }
             }
             log.error("분석가 검토 결정 중 예기치 않은 오류: reviewJobId={}, incidentId={}",
-                    reviewJobId, incidentId, ex);
+                    reviewJobId, UntrustedText.forLog(incidentId), ex);
             return DecisionResult.failure(500, "INTERNAL_ERROR",
                     "검토 결정 처리 중 오류가 발생했습니다." + SqlErrorSanitizer.REFRESH_GUIDE);
         }

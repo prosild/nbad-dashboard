@@ -93,24 +93,92 @@ public class MaskingService {
         if (trimmed.isEmpty()) {
             return username;
         }
-        if (trimmed.length() <= 1) {
+        // T63: 첫 코드 포인트가 BMP 밖(서러게이트 쌍)이거나 서러게이트면 글자를 드러내지 않는다(전에는 짝 없는 반쪽이 남았다)
+        if (trimmed.length() <= 1 || Character.isSurrogate(trimmed.charAt(0))) {
             return "***";
         }
         return trimmed.charAt(0) + "***";
     }
 
+    /* ───────────────────────── T63 조회자 글자 처리 ───────────────────────── */
+
+    /**
+     * T63 조회자: 주소가 들 수 있는 글. 원문에서 한 번 가리고, 숨은 문자를 지우고, 다시 가린다(maskIps(strip(maskIps(raw)))).
+     * 그래서 "원문의 지금 가림"(10.0.0.1&lt;U+200B&gt;.5)과 "지운 값의 지금 가림"(10.0&lt;U+200B&gt;.0.1) 둘 다보다 약하지 않다.
+     * 지운 것이 있으면 끝에 제거 표시를 붙인다(상한 밖. 상한은 응답 직전의 ResponseTextGuard가 적용한다).
+     * 숨은 문자가 없는 값은 지금(maskIpsInText)과 같다(여러 줄 칸의 \r\n만 \n이 된다).
+     */
+    public String maskViewerText(String raw, boolean multiline) {
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        UntrustedText.Stripped stripped = UntrustedText.strip(maskIpsInText(raw), multiline);
+        String masked = maskIpsInText(stripped.text());
+        return stripped.removed() > 0 ? masked + UntrustedText.removalNote(stripped.removed()) : masked;
+    }
+
+    /**
+     * T63 조회자: 계정 이름. 숨은 문자를 지운 값에 maskUsername(비교 기준은 "숨은 문자를 지운 같은 값에 대한 지금의 가림"이라
+     * &lt;U+202E&gt;admin은 a***이다), 첫 코드 포인트가 BMP 밖이면 ***. 지운 것이 있으면 제거 표시.
+     * maskUsername은 첫 글자만 남기므로 그 앞의 주소 가림(T46 zeekad_name)은 결과를 바꾸지 않는다.
+     */
+    public String maskViewerAccount(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        UntrustedText.Stripped stripped = UntrustedText.strip(raw, false);
+        String masked = maskUsername(stripped.text());
+        return stripped.removed() > 0 ? masked + UntrustedText.removalNote(stripped.removed()) : masked;
+    }
+
+    /** T63 조회자: 지금 가리지 않는 Map 키. 숨은 문자만 지우고 제거 표시를 붙인다(겹치면 지금처럼 뒤의 값이 앞을 덮는다) */
+    private static String viewerKey(String key) {
+        if (key == null || key.isEmpty()) {
+            return key;
+        }
+        UntrustedText.Stripped stripped = UntrustedText.strip(key, false);
+        return stripped.removed() > 0 ? stripped.text() + UntrustedText.removalNote(stripped.removed()) : key;
+    }
+
+    /** 가명표: 값은 "값"(한 줄) 칸, 키는 식별자라 지금 그대로 둔다(T63) */
     public JsonNode maskPseudonyms(JsonNode pseudonyms, UserRole role) {
         if (pseudonyms == null || !shouldMask(role)) {
             return pseudonyms;
         }
-        return maskJsonIps(pseudonyms);
+        return maskViewerJson(pseudonyms, false, false);
     }
 
+    /** Slack 페이로드: 글자 잎은 "글"(여러 줄) 칸, 키는 숨은 문자만 지운다(T63) */
     public JsonNode maskSlackPayload(JsonNode slackPayload, UserRole role) {
         if (slackPayload == null || !shouldMask(role)) {
             return slackPayload;
         }
-        return maskJsonIps(slackPayload);
+        return maskViewerJson(slackPayload, true, true);
+    }
+
+    /** T63 조회자 JSON 나무: 글자 잎은 maskViewerText, keys면 키의 숨은 문자를 지운다(겹치면 ObjectNode.set이 뒤의 값으로 덮는다) */
+    private JsonNode maskViewerJson(JsonNode node, boolean multiline, boolean keys) {
+        if (node == null) {
+            return null;
+        }
+        if (node.isTextual()) {
+            return TextNode.valueOf(maskViewerText(node.asText(), multiline));
+        }
+        if (node.isObject()) {
+            ObjectNode copy = objectMapper.createObjectNode();
+            for (Map.Entry<String, JsonNode> entry : node.properties()) {
+                copy.set(keys ? viewerKey(entry.getKey()) : entry.getKey(), maskViewerJson(entry.getValue(), multiline, keys));
+            }
+            return copy;
+        }
+        if (node.isArray()) {
+            ArrayNode copy = objectMapper.createArrayNode();
+            for (JsonNode child : node) {
+                copy.add(maskViewerJson(child, multiline, keys));
+            }
+            return copy;
+        }
+        return node.deepCopy();
     }
 
     public JsonNode maskJsonIps(JsonNode node) {
@@ -142,6 +210,7 @@ public class MaskingService {
     /**
      * T37: 글 잎과 객체 키 모두의 IPv4를 가린다(maskJsonIps는 키를 그대로 두므로 따로 둔다).
      * 가린 뒤 같은 객체 안에서 키가 겹치면 값을 잃지 않도록 전체를 null로 돌려준다(호출자는 구조 값을 싣지 않는다).
+     * T63: 조회자 처리(maskViewerText)를 쓴다. 글 잎은 "글"(여러 줄), 키는 한 줄. 숨은 문자를 지워 키가 겹쳐도 지금처럼 null이다.
      */
     public JsonNode maskJsonIpsIncludingKeys(JsonNode node) {
         if (node == null) {
@@ -156,14 +225,14 @@ public class MaskingService {
 
     private JsonNode maskJsonIpsIncludingKeysOrThrow(JsonNode node) {
         if (node.isTextual()) {
-            return TextNode.valueOf(maskIpsInText(node.asText()));
+            return TextNode.valueOf(maskViewerText(node.asText(), true));
         }
         if (node.isObject()) {
             ObjectNode copy = objectMapper.createObjectNode();
             Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
             while (fields.hasNext()) {
                 Map.Entry<String, JsonNode> entry = fields.next();
-                String maskedKey = maskIpsInText(entry.getKey());
+                String maskedKey = maskViewerText(entry.getKey(), false);
                 if (copy.has(maskedKey)) {
                     throw new MaskedKeyCollisionException();
                 }
@@ -204,7 +273,8 @@ public class MaskingService {
         copy.setZeekadPickedBy(item.getZeekadPickedBy());
         copy.setZeekadAlsoFlaggedBy(item.getZeekadAlsoFlaggedBy());
         copy.setConnectionCount(item.getConnectionCount());
-        copy.setHostName(maskStringListIps(item.getHostName()));
+        // T63: 호스트 이름은 접속하는 쪽이 정한다. 숨은 문자를 지운 뒤에도 주소가 가려지게(maskViewerText)
+        copy.setHostName(maskViewerTextList(item.getHostName()));
         copy.setZeekadStatus(item.getZeekadStatus());
         copy.setZeekadResolution(item.getZeekadResolution());
         copy.setStatusUpdatedAt(item.getStatusUpdatedAt());
@@ -240,8 +310,8 @@ public class MaskingService {
         AssetNameRecord copy = new AssetNameRecord();
         copy.setCaptureId(asset.getCaptureId());
         copy.setHostIp(maskIp(asset.getHostIp()));
-        copy.setKerberosUser(maskUsername(asset.getKerberosUser()));
-        copy.setNtlmUser(maskUsername(asset.getNtlmUser()));
+        copy.setKerberosUser(maskViewerAccount(asset.getKerberosUser()));
+        copy.setNtlmUser(maskViewerAccount(asset.getNtlmUser()));
         copy.setExtraAttributes(maskAssetExtraAttributes(asset.getExtraAttributes()));
         return copy;
     }
@@ -260,7 +330,7 @@ public class MaskingService {
         Map<String, Object> masked = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : map.entrySet()) {
             boolean account = entry.getKey() != null && ASSET_ACCOUNT_NAME_KEY.equalsIgnoreCase(entry.getKey());
-            masked.put(entry.getKey(), account ? maskAccountValue(entry.getValue()) : maskObjectValue(entry.getValue()));
+            masked.put(viewerKey(entry.getKey()), account ? maskAccountValue(entry.getValue()) : maskObjectValue(entry.getValue()));
         }
         return Collections.unmodifiableMap(masked);
     }
@@ -283,8 +353,9 @@ public class MaskingService {
         return maskAccountText(String.valueOf(value));
     }
 
+    /** T63: 숨은 문자를 지운 값에 maskUsername(maskViewerAccount). 주소 가림은 첫 글자를 바꾸지 않아 결과가 같다 */
     private String maskAccountText(String text) {
-        return maskUsername(maskIpsInText(text));
+        return maskViewerAccount(text);
     }
 
     public AnalystReviewItem maskAnalystReviewItem(AnalystReviewItem item, UserRole role) {
@@ -299,7 +370,7 @@ public class MaskingService {
         copy.setQueueRank(item.getQueueRank());
         copy.setHostIp(maskIp(item.getHostIp()));
         copy.setZeekadRole(item.getZeekadRole());
-        copy.setZeekadReviewReason(maskIpsInText(item.getZeekadReviewReason()));
+        copy.setZeekadReviewReason(maskViewerText(item.getZeekadReviewReason(), true));
         copy.setRequestedAt(item.getRequestedAt());
         copy.setZeekadReviewAction(item.getZeekadReviewAction());
         copy.setAnalyst(item.getAnalyst());
@@ -326,7 +397,7 @@ public class MaskingService {
         copy.setStatus(job.getStatus());
         copy.setStartedAt(job.getStartedAt());
         copy.setFinishedAt(job.getFinishedAt());
-        copy.setError(maskIpsInText(job.getError()));
+        copy.setError(maskViewerText(job.getError(), true));
         copy.setIncidentCount(job.getIncidentCount());
         return copy;
     }
@@ -362,7 +433,7 @@ public class MaskingService {
         copy.setSlackPayload(maskSlackPayload(delivery.getSlackPayload(), role));
         copy.setSlackTs(delivery.getSlackTs());
         copy.setDeliveredAt(delivery.getDeliveredAt());
-        copy.setError(maskIpsInText(delivery.getError()));
+        copy.setError(maskViewerText(delivery.getError(), true));
         copy.setCreatedAt(delivery.getCreatedAt());
         copy.setZeekadThreadParent(maskIpsInText(delivery.getZeekadThreadParent()));
         copy.setZeekadReplyBroadcast(delivery.getZeekadReplyBroadcast());
@@ -378,7 +449,7 @@ public class MaskingService {
         masked.setRepresentativeConnections(maskListOfMaps(evidence.getRepresentativeConnections()));
         masked.setProtocolLogs(maskMapValues(evidence.getProtocolLogs()));
         masked.setAdditionalFields(maskAdditionalFields(evidence.getAdditionalFields()));
-        masked.setLimits(maskStringListIps(evidence.getLimits()));
+        masked.setLimits(maskViewerTextList(evidence.getLimits()));
         return masked;
     }
 
@@ -406,22 +477,23 @@ public class MaskingService {
                     }
                     masked.put(EVIDENCE_HOST_KEY, Collections.unmodifiableMap(allowed));
                 } else if (host instanceof String str) {
-                    masked.put(EVIDENCE_HOST_KEY, maskIpsInText(str));
+                    masked.put(EVIDENCE_HOST_KEY, maskViewerText(str, false));
                 }
                 continue;
             }
-            masked.put(entry.getKey(), maskObjectValue(entry.getValue()));
+            masked.put(viewerKey(entry.getKey()), maskObjectValue(entry.getValue()));
         }
         return Collections.unmodifiableMap(masked);
     }
 
-    private List<String> maskStringListIps(List<String> values) {
+    /** 한 줄 칸 목록(호스트 이름, 근거 한계): 원소마다 maskViewerText */
+    private List<String> maskViewerTextList(List<String> values) {
         if (values == null || values.isEmpty()) {
             return Collections.emptyList();
         }
         List<String> masked = new ArrayList<>(values.size());
         for (String v : values) {
-            masked.add(maskIpsInText(v));
+            masked.add(maskViewerText(v, false));
         }
         return Collections.unmodifiableList(masked);
     }
@@ -444,7 +516,8 @@ public class MaskingService {
         }
         Map<String, Object> masked = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : map.entrySet()) {
-            masked.put(entry.getKey(), maskObjectValue(entry.getValue()));
+            // T63: 키의 숨은 문자를 지운다. 겹치면 지금처럼 뒤의 값이 앞을 덮는다(LinkedHashMap.put)
+            masked.put(viewerKey(entry.getKey()), maskObjectValue(entry.getValue()));
         }
         return Collections.unmodifiableMap(masked);
     }
@@ -455,13 +528,13 @@ public class MaskingService {
             return null;
         }
         if (value instanceof String str) {
-            return maskIpsInText(str);
+            return maskViewerText(str, false);
         }
         if (value instanceof Map<?, ?> nestedMap) {
             Map<String, Object> copy = new LinkedHashMap<>();
             for (Map.Entry<?, ?> e : nestedMap.entrySet()) {
                 if (e.getKey() != null) {
-                    copy.put(e.getKey().toString(), maskObjectValue(e.getValue()));
+                    copy.put(viewerKey(e.getKey().toString()), maskObjectValue(e.getValue()));
                 }
             }
             return Collections.unmodifiableMap(copy);

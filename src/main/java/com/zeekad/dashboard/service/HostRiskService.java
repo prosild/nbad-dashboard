@@ -270,7 +270,7 @@ public class HostRiskService {
             if (r.getHostName() != null) {
                 for (String name : r.getHostName()) {
                     if (name != null && !name.isBlank()) {
-                        hostNames.add(masked ? masking.maskIpsInText(name) : name);
+                        hostNames.add(masked ? masking.maskViewerText(name, false) : name);
                     }
                 }
             }
@@ -345,8 +345,9 @@ public class HostRiskService {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
+    /** T63: 비교 대상도 같은 정규화(조회자 값은 제거 표시를 뺀 글) */
     private static boolean contains(String text, String needle) {
-        return text != null && text.toLowerCase(Locale.ROOT).contains(needle);
+        return TextSearch.contains(text, needle);
     }
 
     /* ───────────────────────── 순서 ───────────────────────── */
@@ -428,16 +429,12 @@ public class HostRiskService {
         throw invalid("전환 거르기 값이 올바르지 않습니다.");
     }
 
-    /** 검색어(소문자). 빈 값이면 null(조건 없음), 100자를 넘으면 400 */
+    /**
+     * 검색어. 빈 값·숨은 문자만이면 null(조건 없음), 정규화 전 UTF-16 100단위를 넘으면 400.
+     * T63: 큐 asset과 같은 공용 정규화(숨은 문자 제거·NFKC·소문자)를 검색어와 비교 대상에 같이 쓴다.
+     */
     private static String parseQuery(String raw) {
-        String clean = trimToNull(raw);
-        if (clean == null) {
-            return null;
-        }
-        if (clean.length() > QUERY_MAX_LENGTH) {
-            throw invalid("검색어는 100자를 넘을 수 없습니다.");
-        }
-        return clean.toLowerCase(Locale.ROOT);
+        return TextSearch.parseQuery(raw, "검색어는 100자를 넘을 수 없습니다.");
     }
 
     /** 큐와 같은 규칙: 숫자가 아니거나 1보다 작으면 1쪽, 범위 밖이면 마지막 쪽 */

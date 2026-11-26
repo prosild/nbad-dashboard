@@ -6,6 +6,8 @@ import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.HostRiskService;
 import com.zeekad.dashboard.service.RelatedHostIncidentService;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -24,17 +26,20 @@ public class HostApiController {
     private final HostRiskService hostRiskService;
     private final RelatedHostIncidentService relatedHostIncidentService;
     private final ClientIpResolver clientIpResolver;
+    private final ResponseTextGuard responseTextGuard;
 
     public HostApiController(HostRiskService hostRiskService,
                              RelatedHostIncidentService relatedHostIncidentService,
-                             ClientIpResolver clientIpResolver) {
+                             ClientIpResolver clientIpResolver,
+                             ResponseTextGuard responseTextGuard) {
+        this.responseTextGuard = responseTextGuard;
         this.hostRiskService = hostRiskService;
         this.relatedHostIncidentService = relatedHostIncidentService;
         this.clientIpResolver = clientIpResolver;
     }
 
     @GetMapping("/api/hosts")
-    public ResponseEntity<HostRiskResponse> hosts(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> hosts(
             @RequestParam(name = "period", required = false) String period,
             @RequestParam(name = "start", required = false) String start,
             @RequestParam(name = "end", required = false) String end,
@@ -51,18 +56,21 @@ public class HostApiController {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         HostRiskService.HostParams params = new HostRiskService.HostParams(
                 period, start, end, source, captureId, sort, dir, roleTransitionOnly, q, page, size);
-        return ResponseEntity.ok(hostRiskService.load(principal, params, clientIpResolver.resolve(request)));
+        HostRiskResponse body = hostRiskService.load(principal, params, clientIpResolver.resolve(request));
+        // T63: 응답 직전 글자 정책(분석가 표지·모든 역할 상한)
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.HOST_RISK));
     }
 
     /** 상세와 같은 권한 검사·같은 경로 변수 형식(형식 오류 400, 없는 작업·순위와 허용 밖은 403·감사 기록) */
     @GetMapping("/api/incidents/{jobId}/rank/{queueRank}/related-host-incidents")
-    public ResponseEntity<RelatedHostIncidentsResponse> relatedHostIncidents(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> relatedHostIncidents(
             @PathVariable("jobId") Long jobId,
             @PathVariable("queueRank") Integer queueRank,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
-        return ResponseEntity.ok(relatedHostIncidentService.load(principal, jobId, queueRank,
-                clientIpResolver.resolve(request)));
+        RelatedHostIncidentsResponse body = relatedHostIncidentService.load(principal, jobId, queueRank,
+                clientIpResolver.resolve(request));
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.RELATED_HOST));
     }
 }

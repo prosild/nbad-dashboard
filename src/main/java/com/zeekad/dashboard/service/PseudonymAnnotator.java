@@ -64,8 +64,21 @@ public class PseudonymAnnotator {
         if (text == null || text.isEmpty()) {
             return text;
         }
-        String workingText = maskingService.shouldMask(role) ? maskingService.maskIpsInText(text) : text;
-        if (effectivePseudonyms == null || effectivePseudonyms.isEmpty()) {
+        // T63 조회자: maskIps(strip(maskIps(text)))로 가린 뒤 치환하고, 지운 숨은 문자가 있으면 끝에 제거 표시를 붙인다
+        String workingText = text;
+        String removalNote = "";
+        if (maskingService.shouldMask(role)) {
+            UntrustedText.Stripped stripped = UntrustedText.strip(maskingService.maskIpsInText(text), true);
+            workingText = maskingService.maskIpsInText(stripped.text());
+            if (stripped.removed() > 0) {
+                removalNote = UntrustedText.removalNote(stripped.removed());
+            }
+        }
+        return annotateWorking(workingText, effectivePseudonyms) + removalNote;
+    }
+
+    private String annotateWorking(String workingText, Map<String, String> effectivePseudonyms) {
+        if (workingText == null || workingText.isEmpty() || effectivePseudonyms == null || effectivePseudonyms.isEmpty()) {
             return workingText;
         }
 

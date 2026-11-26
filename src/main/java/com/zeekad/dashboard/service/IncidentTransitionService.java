@@ -117,8 +117,9 @@ public class IncidentTransitionService {
             if (sqlEx != null) {
                 String sqlState = sqlEx.getSQLState();
                 if ("22023".equals(sqlState)) {
+                    // T63: 사용자 이름은 표지로 찍는다(줄바꿈으로 로그 줄을 만들지 못한다)
                     log.warn("사건 상태 전이 거부(SQLSTATE 22023): jobId={}, rank={}, actor={}",
-                            jobId, queueRank, actorUsername);
+                            jobId, queueRank, UntrustedText.forLog(actorUsername));
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
                             "상태 변경 규칙에 위배되었거나 다른 사용자가 먼저 상태를 변경했습니다.");
@@ -164,7 +165,8 @@ public class IncidentTransitionService {
             try {
                 incidentAssignmentService.autoAssignOnStart(principal, item, jobId, clientIp);
             } catch (RuntimeException ex) {
-                log.error("조사 시작 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank, actorUsername, ex);
+                log.error("조사 시작 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank,
+                        UntrustedText.forLog(actorUsername), ex);
                 successMessage = successMessage + AUTO_ASSIGN_FAILED_NOTE;
             }
         }

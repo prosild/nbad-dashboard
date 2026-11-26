@@ -24,6 +24,8 @@ import com.zeekad.dashboard.service.IncidentReopenService;
 import com.zeekad.dashboard.service.IncidentResponseActionService;
 import com.zeekad.dashboard.service.IncidentTransitionService;
 import com.zeekad.dashboard.service.MaskingService;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -54,6 +56,7 @@ public class IncidentApiController {
     private final IncidentNoLocationService incidentNoLocationService;
     private final IncidentResponseActionService incidentResponseActionService;
     private final IncidentReopenService incidentReopenService;
+    private final ResponseTextGuard responseTextGuard;
 
     public IncidentApiController(IncidentQueryService incidentQueryService,
                                  IncidentDetailService incidentDetailService,
@@ -66,7 +69,9 @@ public class IncidentApiController {
                                  IncidentRefService incidentRefService,
                                  IncidentNoLocationService incidentNoLocationService,
                                  IncidentResponseActionService incidentResponseActionService,
-                                 IncidentReopenService incidentReopenService) {
+                                 IncidentReopenService incidentReopenService,
+                                 ResponseTextGuard responseTextGuard) {
+        this.responseTextGuard = responseTextGuard;
         this.incidentResponseActionService = incidentResponseActionService;
         this.incidentReopenService = incidentReopenService;
         this.incidentRefService = incidentRefService;
@@ -82,7 +87,7 @@ public class IncidentApiController {
     }
 
     @GetMapping
-    public ResponseEntity<IncidentQueueResponse> listQueue(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> listQueue(
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "jobId", required = false) Long jobId,
             @RequestParam(name = "pickedBy", required = false) String pickedBy,
@@ -99,7 +104,7 @@ public class IncidentApiController {
         IncidentQueryService.QueueViewResult view = incidentQueryService.loadQueueView(
                 principal, captureId, jobId, pickedBy, role, asset, status, hasReport, wouldSend, clientIp);
 
-        return ResponseEntity.ok(new IncidentQueueResponse(
+        IncidentQueueResponse body = new IncidentQueueResponse(
                 maskingService.shouldMask(principal.getRole()),
                 view.allowedCaptures(),
                 view.selectedCaptureId(),
@@ -108,7 +113,9 @@ public class IncidentApiController {
                 view.items(),
                 view.availableModels(),
                 view.availableRoles()
-        ));
+        );
+        // T63: 응답 직전 글자 정책
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.LEGACY_LIST));
     }
 
     /**
@@ -126,7 +133,7 @@ public class IncidentApiController {
     }
 
     @GetMapping("/{jobId}/rank/{queueRank}")
-    public ResponseEntity<IncidentDetailApiResponse> detail(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> detail(
             @PathVariable("jobId") Long jobId,
             @PathVariable("queueRank") Integer queueRank,
             Authentication authentication,
@@ -143,7 +150,7 @@ public class IncidentApiController {
         java.util.Map<String, String> displayMap = incidentQueryService.loadUserDisplayMap();
         boolean closed = "closed".equals(detail.currentStatus());
         boolean canRecordRole = IncidentResponseActionService.canRecord(principal.getRole());
-        return ResponseEntity.ok(new IncidentDetailApiResponse(maskedView, canDecideReview, detail,
+        IncidentDetailApiResponse body = new IncidentDetailApiResponse(maskedView, canDecideReview, detail,
                 incidentQueueService.metaFor(principal, jobId, queueRank),
                 incidentAssignmentService.currentView(incidentId, displayMap),
                 incidentAssignmentService.historyView(incidentId, displayMap),
@@ -153,7 +160,9 @@ public class IncidentApiController {
                 incidentResponseActionService.listView(incidentId, displayMap, canRecordRole),
                 canRecordRole && IncidentResponseActionService.statusAllowsRecord(detail.currentStatus()),
                 // T53 다시 열기: ANALYST·ADMIN이고 지금 종결일 때만(canTransition·nextAllowedStatus는 그대로다)
-                IncidentReopenService.canReopen(principal.getRole(), detail.currentStatus())));
+                IncidentReopenService.canReopen(principal.getRole(), detail.currentStatus()));
+        // T63: 응답 직전 글자 정책(분석가 표지·모든 역할 상한, 글 안의 JSON은 푼 잎에)
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.DETAIL));
     }
 
     /** T25 담당자 지정·변경·해제. 본문 { assignee: username|null, expected: username|null }. CSRF 필요 */
@@ -175,20 +184,22 @@ public class IncidentApiController {
             return ResponseEntity.status(result.httpStatus())
                     .body(new ApiErrorResponse(result.httpStatus(), result.code(), result.message()));
         }
-        return ResponseEntity.ok(new AssignmentDtos.AssignResponse(result.assignment()));
+        return ResponseEntity.ok(responseTextGuard.apply(new AssignmentDtos.AssignResponse(result.assignment()),
+                principal.getRole(), ResponseTextCatalog.ASSIGN_RESULT));
     }
 
     /** T25 담당자가 될 수 있는 사용자. ANALYST·ADMIN만(다른 사용자의 허용 캡처를 간접적으로 드러내므로) */
     @GetMapping("/{jobId}/rank/{queueRank}/assignees")
-    public ResponseEntity<AssignmentDtos.CandidatesResponse> assignees(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> assignees(
             @PathVariable("jobId") Long jobId,
             @PathVariable("queueRank") Integer queueRank,
             Authentication authentication,
             HttpServletRequest request) {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         String clientIp = clientIpResolver.resolve(request);
-        return ResponseEntity.ok(new AssignmentDtos.CandidatesResponse(
-                incidentAssignmentService.candidates(principal, jobId, queueRank, clientIp)));
+        AssignmentDtos.CandidatesResponse body = new AssignmentDtos.CandidatesResponse(
+                incidentAssignmentService.candidates(principal, jobId, queueRank, clientIp));
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.ASSIGNEE_CANDIDATES));
     }
 
     /**

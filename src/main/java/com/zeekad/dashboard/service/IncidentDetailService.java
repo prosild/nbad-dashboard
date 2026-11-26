@@ -148,7 +148,7 @@ public class IncidentDetailService {
                         h.getToStatus(),
                         h.getZeekadResolution(),
                         incidentQueryService.formatActorDisplay(h.getActor(), userDisplayMap),
-                        maskingService.shouldMask(role) ? maskingService.maskIpsInText(h.getReason()) : h.getReason(),
+                        maskingService.shouldMask(role) ? maskingService.maskViewerText(h.getReason(), true) : h.getReason(),
                         h.getChangedAt()
                 ))
                 .toList();
@@ -278,17 +278,17 @@ public class IncidentDetailService {
         List<String> verificationProblems = extractTextArray(report.getZeekadVerificationProblems());
         if (mask) {
             verificationProblems = verificationProblems.stream()
-                    .map(maskingService::maskIpsInText)
+                    .map(p -> maskingService.maskViewerText(p, true))
                     .toList();
         }
         List<JsonNode> verificationProblemItems =
                 buildVerificationProblemItems(report.getZeekadVerificationProblems(), mask);
 
         String verificationReason = mask
-                ? maskingService.maskIpsInText(report.getZeekadVerificationReason())
+                ? maskingService.maskViewerText(report.getZeekadVerificationReason(), true)
                 : report.getZeekadVerificationReason();
         String llmError = mask
-                ? maskingService.maskIpsInText(report.getLlmError())
+                ? maskingService.maskViewerText(report.getLlmError(), true)
                 : report.getLlmError();
 
         List<IncidentDetailView.AttackCandidateItem> attackCandidates =
@@ -345,8 +345,8 @@ public class IncidentDetailService {
             }
             String name = textOrNull(node.get("name"));
             String rawVal = nodeValueToString(node.get("value"));
-            String value = mask ? maskingService.maskIpsInText(rawVal) : rawVal;
-            String safeName = name != null ? (mask ? maskingService.maskIpsInText(name) : name) : "-";
+            String value = mask ? maskingService.maskViewerText(rawVal, true) : rawVal;
+            String safeName = name != null ? (mask ? maskingService.maskViewerText(name, false) : name) : "-";
             String safeId = mask ? maskingService.maskIpsInText(id) : id;
             IncidentDetailView.FactItem item = new IncidentDetailView.FactItem(
                     safeId, safeName, value != null ? value : "-", structuredValue(node.get("value"), mask));
@@ -385,7 +385,7 @@ public class IncidentDetailService {
             if (text == null || text.isBlank()) {
                 continue;
             }
-            String safeText = mask ? maskingService.maskIpsInText(text) : text;
+            String safeText = mask ? maskingService.maskViewerText(text, true) : text;
             if (child.isObject()) {
                 JsonNode structured = mask ? maskingService.maskJsonIpsIncludingKeys(child) : child.deepCopy();
                 items.add(structured != null ? structured : TextNode.valueOf(safeText));
@@ -523,7 +523,7 @@ public class IncidentDetailService {
         boolean mask = maskingService.shouldMask(role);
         List<String> reasons = extractTextArray(decision.getPolicyReasons());
         if (mask) {
-            reasons = reasons.stream().map(maskingService::maskIpsInText).toList();
+            reasons = reasons.stream().map(r -> maskingService.maskViewerText(r, true)).toList();
         }
 
         Map<String, Double> probs = new LinkedHashMap<>();
@@ -544,7 +544,7 @@ public class IncidentDetailService {
         boolean opinionMismatch = distinctChoices.size() > 1;
 
         String modelError = mask
-                ? maskingService.maskIpsInText(decision.getDecisionModelError())
+                ? maskingService.maskViewerText(decision.getDecisionModelError(), true)
                 : decision.getDecisionModelError();
 
         return new IncidentDetailView.SendDecisionView(

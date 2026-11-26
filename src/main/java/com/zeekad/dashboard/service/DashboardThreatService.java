@@ -121,7 +121,7 @@ public class DashboardThreatService {
                     withCandidates.add(incidentId);
                     techniqueIncidents.computeIfAbsent(attackId, k -> new HashSet<>()).add(incidentId);
                     // 조회자: 이름에 주소가 섞여 와도 나가지 않게 가린 글로 센다
-                    String shown = name != null && mask ? maskingService.maskIpsInText(name) : name;
+                    String shown = name != null && mask ? maskingService.maskViewerText(name, false) : name;
                     if (shown != null) {
                         nameIncidents.computeIfAbsent(attackId, k -> new HashMap<>())
                                 .computeIfAbsent(shown, k -> new HashSet<>()).add(incidentId);

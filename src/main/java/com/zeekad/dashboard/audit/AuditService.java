@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zeekad.dashboard.mapper.app.AuditLogMapper;
 import com.zeekad.dashboard.model.AuditActionType;
 import com.zeekad.dashboard.model.AuditLog;
+import com.zeekad.dashboard.service.UntrustedText;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -73,10 +74,11 @@ public class AuditService {
         }
     }
 
+    /**
+     * T63: UTF-16 단위 상한 이하로 자르되 서러게이트 쌍을 가르지 않는다(걸치면 그 쌍을 통째로 버린다). H2는 VARCHAR를 UTF-16 단위로,
+     * PostgreSQL은 문자로 세므로 두 DB 모두 들어간다. 저장하는 값의 뜻(숨은 문자)은 바꾸지 않는다(원문은 증거다).
+     */
     private String truncate(String value, int maxLen) {
-        if (value == null) {
-            return null;
-        }
-        return value.length() <= maxLen ? value : value.substring(0, maxLen);
+        return UntrustedText.truncateUtf16(value, maxLen);
     }
 }

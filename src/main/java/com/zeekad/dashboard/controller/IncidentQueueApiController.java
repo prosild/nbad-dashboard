@@ -8,6 +8,8 @@ import com.zeekad.dashboard.security.ClientIpResolver;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import com.zeekad.dashboard.service.IncidentQueueService;
 import com.zeekad.dashboard.service.IncidentQueueService.QueueParams;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -24,14 +26,17 @@ public class IncidentQueueApiController {
 
     private final IncidentQueueService incidentQueueService;
     private final ClientIpResolver clientIpResolver;
+    private final ResponseTextGuard responseTextGuard;
 
-    public IncidentQueueApiController(IncidentQueueService incidentQueueService, ClientIpResolver clientIpResolver) {
+    public IncidentQueueApiController(IncidentQueueService incidentQueueService, ClientIpResolver clientIpResolver,
+                                      ResponseTextGuard responseTextGuard) {
+        this.responseTextGuard = responseTextGuard;
         this.incidentQueueService = incidentQueueService;
         this.clientIpResolver = clientIpResolver;
     }
 
     @GetMapping("/api/incidents/queue")
-    public ResponseEntity<UnifiedQueueResponse> queue(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> queue(
             @RequestParam(name = "period", required = false) String period,
             @RequestParam(name = "start", required = false) String start,
             @RequestParam(name = "end", required = false) String end,
@@ -61,11 +66,13 @@ public class IncidentQueueApiController {
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
                 pickedBy, role, hasReport, wouldSend, asset, sort, dir, page, size, assignee, overdue, start, end, thread,
                 hostIp, attack);
-        return ResponseEntity.ok(incidentQueueService.loadQueue(principal, params, clientIpResolver.resolve(request)));
+        UnifiedQueueResponse body = incidentQueueService.loadQueue(principal, params, clientIpResolver.resolve(request));
+        // T63: 응답 직전 글자 정책(분석가 표지·모든 역할 상한). 검색·정렬·쪽 나눔은 원문으로 끝났다
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.QUEUE));
     }
 
     @GetMapping("/api/incidents/queue/new-count")
-    public ResponseEntity<QueueNewCountResponse> newCount(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> newCount(
             @RequestParam(name = "since", required = false) String since,
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "captureId", required = false) String captureId,
@@ -90,11 +97,12 @@ public class IncidentQueueApiController {
         QueueParams params = new QueueParams("all", source, captureId, priority, status, reviewPending, alerted,
                 pickedBy, role, hasReport, wouldSend, asset, null, null, null, null, assignee, overdue, null, null, thread,
                 hostIp, attack);
-        return ResponseEntity.ok(incidentQueueService.countNew(principal, params, since, clientIpResolver.resolve(request)));
+        QueueNewCountResponse body = incidentQueueService.countNew(principal, params, since, clientIpResolver.resolve(request));
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.QUEUE_NEW_COUNT));
     }
 
     @GetMapping("/api/incidents/queue/neighbors")
-    public ResponseEntity<QueueNeighborsResponse> neighbors(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> neighbors(
             @RequestParam(name = "jobId") Long jobId,
             @RequestParam(name = "queueRank") Integer queueRank,
             @RequestParam(name = "period", required = false) String period,
@@ -124,8 +132,9 @@ public class IncidentQueueApiController {
         QueueParams params = new QueueParams(period, source, captureId, priority, status, reviewPending, alerted,
                 pickedBy, role, hasReport, wouldSend, asset, sort, dir, null, null, assignee, overdue, start, end, thread,
                 hostIp, attack);
-        return ResponseEntity.ok(incidentQueueService.neighbors(
-                principal, jobId, queueRank, params, clientIpResolver.resolve(request)));
+        QueueNeighborsResponse body = incidentQueueService.neighbors(
+                principal, jobId, queueRank, params, clientIpResolver.resolve(request));
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.QUEUE_NEIGHBORS));
     }
 
     @GetMapping("/api/time-context")

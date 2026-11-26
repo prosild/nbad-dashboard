@@ -58,7 +58,26 @@ public class UserAdminService {
         int safeLimit = Math.max(1, Math.min(limit, 500));
         String cleanAction = (actionType == null || actionType.isBlank()) ? null : actionType.trim();
         String cleanActor = (actorUsername == null || actorUsername.isBlank()) ? null : actorUsername.trim();
-        return auditLogMapper.findFiltered(cleanAction, cleanActor, safeLimit);
+        return auditLogMapper.findFiltered(cleanAction, likeEscape(cleanActor), safeLimit);
+    }
+
+    /**
+     * T63: LIKE 검색어의 역슬래시·%·_를 글자 그대로 찾게 이스케이프한다(매퍼는 ESCAPE '\'). H2·PostgreSQL 모두 같은 문장이 돈다
+     * (PostgreSQL은 standard_conforming_strings=on 기본값에서 '\'가 한 글자다).
+     */
+    static String likeEscape(String value) {
+        if (value == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(value.length() + 8);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '\\' || c == '%' || c == '_') {
+                sb.append('\\');
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     @Transactional

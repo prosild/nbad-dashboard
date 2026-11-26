@@ -11,6 +11,8 @@ import com.zeekad.dashboard.service.AnalystReviewDecisionService;
 import com.zeekad.dashboard.service.DashboardOverviewService;
 import com.zeekad.dashboard.service.IncidentQueryService;
 import com.zeekad.dashboard.service.MaskingService;
+import com.zeekad.dashboard.service.ResponseTextCatalog;
+import com.zeekad.dashboard.service.ResponseTextGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -33,12 +35,15 @@ public class OperationsAndReviewApiController {
     private final ClientIpResolver clientIpResolver;
     private final MaskingService maskingService;
     private final DashboardOverviewService dashboardOverviewService;
+    private final ResponseTextGuard responseTextGuard;
 
     public OperationsAndReviewApiController(IncidentQueryService incidentQueryService,
                                             AnalystReviewDecisionService analystReviewDecisionService,
                                             ClientIpResolver clientIpResolver,
                                             MaskingService maskingService,
-                                            DashboardOverviewService dashboardOverviewService) {
+                                            DashboardOverviewService dashboardOverviewService,
+                                            ResponseTextGuard responseTextGuard) {
+        this.responseTextGuard = responseTextGuard;
         this.dashboardOverviewService = dashboardOverviewService;
         this.incidentQueryService = incidentQueryService;
         this.analystReviewDecisionService = analystReviewDecisionService;
@@ -47,7 +52,7 @@ public class OperationsAndReviewApiController {
     }
 
     @GetMapping("/operations")
-    public ResponseEntity<OperationsApiResponse> operations(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> operations(
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "period", required = false) String period,
             @RequestParam(name = "start", required = false) String start,
@@ -58,11 +63,13 @@ public class OperationsAndReviewApiController {
         DashboardUserPrincipal principal = ControllerAuthUtils.requirePrincipal(authentication);
         String clientIp = clientIpResolver.resolve(request);
         // T24: period·source를 더했다. period가 없으면 지금처럼 전체다(호환).
-        return ResponseEntity.ok(dashboardOverviewService.operations(principal, period, start, end, source, captureId, clientIp));
+        OperationsApiResponse body = dashboardOverviewService.operations(principal, period, start, end, source, captureId, clientIp);
+        // T63: 응답 직전 글자 정책(Slack 요약의 파생 칸은 처리한 페이로드에서)
+        return ResponseEntity.ok(responseTextGuard.applyOperations(body, principal.getRole()));
     }
 
     @GetMapping("/reviews")
-    public ResponseEntity<ReviewsApiResponse> reviews(
+    public ResponseEntity<ResponseTextGuard.GuardedJson> reviews(
             @RequestParam(name = "captureId", required = false) String captureId,
             @RequestParam(name = "pendingOnly", defaultValue = "false") boolean pendingOnly,
             Authentication authentication,
@@ -74,14 +81,16 @@ public class OperationsAndReviewApiController {
                 principal, captureId, pendingOnly, clientIp);
 
         boolean canDecideReview = principal.getRole() == UserRole.ANALYST || principal.getRole() == UserRole.ADMIN;
-        return ResponseEntity.ok(new ReviewsApiResponse(
+        ReviewsApiResponse body = new ReviewsApiResponse(
                 maskingService.shouldMask(principal.getRole()),
                 canDecideReview,
                 view.allowedCaptures(),
                 view.selectedCaptureId(),
                 view.pendingOnly(),
                 view.reviews()
-        ));
+        );
+        // T63: 응답 직전 글자 정책
+        return ResponseEntity.ok(responseTextGuard.apply(body, principal.getRole(), ResponseTextCatalog.REVIEWS));
     }
 
     @PostMapping("/reviews/decide")

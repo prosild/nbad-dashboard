@@ -758,8 +758,9 @@ public class IncidentQueueService {
         CriticalAssetService.Snapshot assets = readAssets();
         c.setCriticalHostIps(assets.hostIps());
 
+        // T63: asset은 공용 정규화(숨은 문자 제거·NFKC·소문자). 100 UTF-16 단위를 넘으면 400, 숨은 문자만이면 조건 없음
         return new Scope(allowed, c.getCaptureIds(), anchor, period, periodStart, periodEnd, c,
-                trimToNull(p.asset()), role, assets);
+                TextSearch.parseQuery(p.asset(), IncidentQueryService.ASSET_TOO_LONG_MESSAGE), role, assets);
     }
 
     /**
