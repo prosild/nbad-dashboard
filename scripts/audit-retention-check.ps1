@@ -507,7 +507,11 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
     Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. 모의가 아니라 실제 PostgreSQL이다. 기준선 행 둘(analyst-a)은 설정 도구 1차 전에 넣었다."
     $raTable = "incident_response_actions"
     $raRowsSql = "SELECT COALESCE(string_agg(note, ',' ORDER BY id), '(none)') FROM public.incident_response_actions;"
-    $raMarkerSql = "SELECT CASE WHEN to_regclass('sandbox.response_action_baseline') IS NULL THEN 'no table' ELSE (SELECT COALESCE((SELECT 'max_id=' || max_id FROM sandbox.response_action_baseline WHERE id = 1), 'no row')) END;"
+    # 표식의 지금 값: 표가 없으면 'no table', 행이 없으면 'no row', 있으면 'max_id=N'(없는 표를 가리키는 문장은 분석 단계에서 실패하므로 둘로 나눠 묻는다)
+    function Get-RaMarker {
+        if ((Get-Scalar "zeekad_dashboard" "SELECT (to_regclass('sandbox.response_action_baseline') IS NOT NULL)::text;") -ne "true") { return "no table" }
+        return (Get-Scalar "zeekad_dashboard" "SELECT COALESCE((SELECT 'max_id=' || max_id FROM sandbox.response_action_baseline WHERE id = 1), 'no row');")
+    }
     $raMaxSql = "SELECT COALESCE(max(id), 0) FROM public.incident_response_actions;"
     $raInsert = "INSERT INTO incident_response_actions (incident_id, capture_id, job_id, action_type, note, actor_username, recorded_at) VALUES ('t56-inc', 't56-cap', 1, '{0}', '{1}', '{2}', now());"
     # 운영자가 체험 계정의 행을 손으로 지우는 방법(docs/portfolio-deployment.md의 안내와 같은 문장). 표식을 트랜잭션 안에서만 켠다.
@@ -594,7 +598,7 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
     }
     $r = Invoke-Sql "t58_public_only" "zeekad_dashboard" "SELECT removed FROM sandbox.reset_response_actions();"
     Assert-Check "[T56-3] 권한을 받지 않은 역할(PUBLIC)은 초기화 함수를 못 부른다" ($r.Out -match 'ERROR:\s+permission denied') $r.Out
-    Assert-Check "[T56-3] 거부 뒤 행과 표식이 그대로" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=2") "$(Get-Scalar 'zeekad_dashboard' $raRowsSql) | $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    Assert-Check "[T56-3] 거부 뒤 행과 표식이 그대로" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows -and (Get-RaMarker) -eq "max_id=2") "$(Get-Scalar 'zeekad_dashboard' $raRowsSql) | $(Get-RaMarker)"
 
     # --- 4. 초기화: 기준선 뒤에 덧붙은 행만 지운다. 감사 로그의 기록은 남는다 ---
     $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ((($raInsert -f "block_ip", "trial 1", "trial-analyst"), ($raInsert -f "none", "trial 2", "trial-analyst"), ($raInsert -f "monitor", "analyst after baseline", "analyst-b"),
@@ -628,7 +632,7 @@ ROLLBACK;
     $setupKeep = Invoke-Setup
     Add-Line "[T56-5] 기준선 뒤에 행이 있을 때 sandbox-setup: exit=$($setupKeep.Code) $(@($setupKeep.Out -split "`r?`n" | Where-Object { $_ -match 'baseline' }) -join ' / ')"
     Assert-Check "[T56-5] 표식이 있으면 설정 도구는 그대로 둔다(max_id=2). zeek_AD 기준선도 그대로다" `
-        ($setupKeep.Code -eq 0 -and $setupKeep.Out -match 'sandbox-setup: baseline kept' -and $setupKeep.Out -match 'response action baseline kept: max_id=2 ' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=2") "exit=$($setupKeep.Code) $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+        ($setupKeep.Code -eq 0 -and $setupKeep.Out -match 'sandbox-setup: baseline kept' -and $setupKeep.Out -match 'response action baseline kept: max_id=2 ' -and (Get-RaMarker) -eq "max_id=2") "exit=$($setupKeep.Code) $(Get-RaMarker)"
     $t3 = Invoke-ResetOnce "" -NoDaysVariable
     Assert-Check "[T56-5] 그 행은 다음 초기화가 지운다(responses[OK] removed=1)" ($t3.Code -eq 0 -and $t3.Out -match ($lineRx + 'OK ' + $head + '; responses\[OK\] removed=1; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows) $t3.Out
 
@@ -644,7 +648,7 @@ ROLLBACK;
     $setupRefused = Invoke-Setup
     Add-Line "[T56-6] 체험 계정의 행이 있을 때 sandbox-setup: exit=$($setupRefused.Code) $(Get-SetupLines $setupRefused)"
     Assert-Check "[T56-6] 체험 계정의 행이 하나라도 있으면 표식을 만들지 않고 멈춘다(방문자 글을 기준선으로 굳히지 않는다)" `
-        ($setupRefused.Code -eq 1 -and $setupRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $setupRefused.Out -notmatch 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "no table") "exit=$($setupRefused.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+        ($setupRefused.Code -eq 1 -and $setupRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $setupRefused.Out -notmatch 'RESULT: OK' -and (Get-RaMarker) -eq "no table") "exit=$($setupRefused.Code) marker=$(Get-RaMarker)"
     Assert-Check "[T56-6] 거부된 실행은 행도 zeek_AD 기준선도 바꾸지 않는다" `
         ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,visitor before setup,analyst before setup" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) (Get-Scalar "zeekad_dashboard" $raRowsSql)
     $r = Invoke-Sql "postgres" "zeekad_dashboard" $raOperatorDelete -StopOnError
@@ -653,7 +657,7 @@ ROLLBACK;
     $setupNas = Invoke-Setup
     Add-Line "[T56-6] 그 행을 지운 뒤 sandbox-setup: exit=$($setupNas.Code) $(Get-SetupLines $setupNas)"
     Assert-Check "[T56-6] zeek_AD 기준선은 그대로 두고(baseline kept) 대응 조치 표식만 새로 만든다(max_id = 지금의 최대 id $raMaxNow)" `
-        ($setupNas.Code -eq 0 -and $setupNas.Out -match 'sandbox-setup: baseline kept' -and $setupNas.Out -match "response action baseline created: max_id=$raMaxNow(\s|`$)" -and $setupNas.Out -match 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($setupNas.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+        ($setupNas.Code -eq 0 -and $setupNas.Out -match 'sandbox-setup: baseline kept' -and $setupNas.Out -match "response action baseline created: max_id=$raMaxNow(\s|`$)" -and $setupNas.Out -match 'RESULT: OK' -and (Get-RaMarker) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($setupNas.Code) marker=$(Get-RaMarker)"
     $t5 = Invoke-ResetOnce "" -NoDaysVariable
     Assert-Check "[T56-6] 그 뒤 초기화는 responses[OK] removed=0이고 표식 안의 행(셋)은 남는다" ($t5.Code -eq 0 -and $t5.Out -match ($lineRx + 'OK ' + $base + '; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") "$($t5.Out) | $(Get-Scalar 'zeekad_dashboard' $raRowsSql)"
     # 표식 표는 있는데 행이 없을 때도 표식이 없는 것이다(함수는 오류, 설정 도구는 만든다).
@@ -663,7 +667,7 @@ ROLLBACK;
     Assert-Check "[T56-6] 표식 행이 없으면 함수가 예외를 낸다(responses[ERROR], 전체 ERROR, 행은 그대로)" `
         ($t6.Code -eq 1 -and $t6.Out -match ($lineRx + 'ERROR ' + $head + '; responses\[ERROR\] ERROR: +sandbox response action baseline is missing; run sandbox-setup.*; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") $t6.Out
     $setupEmpty = Invoke-Setup
-    Assert-Check "[T56-6] 그 상태의 설정 도구는 표식을 만든다" ($setupEmpty.Code -eq 0 -and $setupEmpty.Out -match "response action baseline created: max_id=$raMaxNow" -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow") "exit=$($setupEmpty.Code) $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    Assert-Check "[T56-6] 그 상태의 설정 도구는 표식을 만든다" ($setupEmpty.Code -eq 0 -and $setupEmpty.Out -match "response action baseline created: max_id=$raMaxNow" -and (Get-RaMarker) -eq "max_id=$raMaxNow") "exit=$($setupEmpty.Code) $(Get-RaMarker)"
 
     # --- 7. 옛 설정 + 새 스크립트: 초기화 함수가 아직 없거나 실행 권한이 없다(sandbox-setup을 다시 돌리기 전) ---
     $r = Invoke-Sql "postgres" "zeekad_dashboard" "DROP FUNCTION sandbox.reset_response_actions();" -StopOnError
@@ -693,13 +697,13 @@ ROLLBACK;
     $rebuildRefused = Invoke-Setup "--rebuild-baseline"
     Add-Line "[T56-8] 체험 계정의 행이 있을 때 sandbox-setup --rebuild-baseline: exit=$($rebuildRefused.Code) $(Get-SetupLines $rebuildRefused)"
     Assert-Check "[T56-8] 다시 잡을 때도 체험 계정의 행이 있으면 멈추고 zeek_AD 기준선과 표식을 바꾸지 않는다" `
-        ($rebuildRefused.Code -eq 1 -and $rebuildRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $rebuildRefused.Out -notmatch 'baseline rebuilt' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($rebuildRefused.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+        ($rebuildRefused.Code -eq 1 -and $rebuildRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $rebuildRefused.Out -notmatch 'baseline rebuilt' -and (Get-RaMarker) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($rebuildRefused.Code) marker=$(Get-RaMarker)"
     $r = Invoke-Sql "postgres" "zeekad_dashboard" $raOperatorDelete -StopOnError
     $raMaxRebuild = Get-Scalar "zeekad_dashboard" $raMaxSql
     $rebuildOk = Invoke-Setup "--rebuild-baseline"
     Add-Line "[T56-8] 그 행을 지운 뒤 sandbox-setup --rebuild-baseline: exit=$($rebuildOk.Code) $(@($rebuildOk.Out -split "`r?`n" | Where-Object { $_ -match 'baseline' }) -join ' / ')"
     Assert-Check "[T56-8] --rebuild-baseline이면 zeek_AD 기준선과 함께 표식을 다시 잡는다(max_id $raMaxNow → $raMaxRebuild)" `
-        ($rebuildOk.Code -eq 0 -and $raMaxRebuild -ne $raMaxNow -and $rebuildOk.Out -match 'sandbox-setup: baseline rebuilt' -and $rebuildOk.Out -match "response action baseline rebuilt: max_id=$raMaxRebuild" -and $rebuildOk.Out -match 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxRebuild") "exit=$($rebuildOk.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+        ($rebuildOk.Code -eq 0 -and $raMaxRebuild -ne $raMaxNow -and $rebuildOk.Out -match 'sandbox-setup: baseline rebuilt' -and $rebuildOk.Out -match "response action baseline rebuilt: max_id=$raMaxRebuild" -and $rebuildOk.Out -match 'RESULT: OK' -and (Get-RaMarker) -eq "max_id=$raMaxRebuild") "exit=$($rebuildOk.Code) marker=$(Get-RaMarker)"
     $t10 = Invoke-ResetOnce "" -NoDaysVariable
     Assert-Check "[T56-8] 다시 잡은 뒤 초기화는 responses[OK] removed=0이고 새 기준선 안의 행(넷)이 남는다" ($t10.Code -eq 0 -and $t10.Out -match ($lineRx + 'OK ' + $base + '; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup,analyst new baseline") "$($t10.Out) | $(Get-Scalar 'zeekad_dashboard' $raRowsSql)"
     $totalFailed += Save-Lines "response-actions.txt"
