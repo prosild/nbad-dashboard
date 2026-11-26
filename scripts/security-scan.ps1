@@ -777,6 +777,67 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     Assert-True (Test-SpaShell $spaRes) "admin GET $spaPath SPA 셸 표지" $spaRes
                 }
 
+                # [T52a] 중요 자산 관리자 API(WAF 경유): admin의 추가(POST)·고치기(PUT)·지우기(POST …/{id}/delete)가 WAF를 지나 앱이 처리한다.
+                #        지우기도 POST다(WAF 허용 메서드에 DELETE가 없고 앱도 DELETE를 쓰지 않는다).
+                # [T52b] analyst1·viewer1의 같은 요청(유효 CSRF)은 앱의 403이고 자산 행이 그대로다.
+                # [T52c] 변경마다 감사 CRITICAL_ASSET_CHANGE 한 행(detail operation·hostIp·name). 끝나면 자산은 지워져 뒤 단계에 닿지 않는다.
+                function Invoke-AppDbSelect52([string]$Sql) {
+                    return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-AtF", "|", "-c", $Sql))).Output.Trim()
+                }
+                $assetAuditBefore52 = [long](Invoke-AppDbSelect52 "SELECT count(*) FROM audit_logs WHERE action_type = 'CRITICAL_ASSET_CHANGE'")
+                $assetCreate52 = Invoke-Http -Url "$baseHttps/api/admin/critical-assets" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ hostIp = "10.40.0.10"; name = "E2E 중요 자산"; description = "E2E 설명" } -ProbeId "e2e-t52-create"
+                $e2eLogs.Add("[T52a] admin POST /api/admin/critical-assets via WAF: $(Format-Resp $assetCreate52 300)")
+                Assert-Status $assetCreate52 201 "[T52a] WAF를 거친 중요 자산 추가"
+                $assetId52 = $assetCreate52.Json.item.id
+                Assert-True ($null -ne $assetId52 -and $assetCreate52.Json.item.hostIp -eq "10.40.0.10") "[T52a] 추가 응답의 id·주소" $assetCreate52
+                $assetDup52 = Invoke-Http -Url "$baseHttps/api/admin/critical-assets" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ hostIp = "10.40.0.10"; name = "중복" }
+                $assetCidr52 = Invoke-Http -Url "$baseHttps/api/admin/critical-assets" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ hostIp = "10.40.0.0/24"; name = "대역" }
+                $e2eLogs.Add("[T52a] duplicate address: $(Format-Resp $assetDup52 200)`n[T52a] CIDR address: $(Format-Resp $assetCidr52 200)")
+                Assert-ApiError $assetDup52 409 "CRITICAL_ASSET_EXISTS" "[T52a] 같은 주소 409"
+                Assert-ApiError $assetCidr52 400 "INVALID_REQUEST" "[T52a] 대역 주소 400"
+                $assetPut52 = Invoke-Http -Url "$baseHttps/api/admin/critical-assets/$assetId52" -Method PUT -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ name = "E2E 중요 자산(고침)"; description = $null } -ProbeId "e2e-t52-update"
+                $e2eLogs.Add("[T52a] admin PUT /api/admin/critical-assets/$assetId52 via WAF: $(Format-Resp $assetPut52 300)")
+                Assert-Status $assetPut52 200 "[T52a] WAF를 거친 중요 자산 고치기(PUT)"
+
+                $assetRowBefore52 = Invoke-AppDbSelect52 "SELECT id || '|' || host_ip || '|' || name || '|' || updated_at FROM critical_assets WHERE id = $([long]$assetId52)"
+                foreach ($who52 in @(@($viewerCookies, "viewer1"), @($analystCookies, "analyst1"))) {
+                    $denied52 = @(
+                        @("GET list", (Invoke-Http -Url "$baseHttps/api/admin/critical-assets" -CookieJar $who52[0])),
+                        @("POST create", (Invoke-Http -Url "$baseHttps/api/admin/critical-assets" -Method POST -CookieJar $who52[0] -SaveCookies -Csrf -JsonBody @{ hostIp = "10.40.0.11"; name = "x" })),
+                        @("PUT update", (Invoke-Http -Url "$baseHttps/api/admin/critical-assets/$assetId52" -Method PUT -CookieJar $who52[0] -SaveCookies -Csrf -JsonBody @{ name = "x" })),
+                        @("POST delete", (Invoke-Http -Url "$baseHttps/api/admin/critical-assets/$assetId52/delete" -Method POST -CookieJar $who52[0] -SaveCookies -Csrf))
+                    )
+                    foreach ($d52 in $denied52) {
+                        $e2eLogs.Add("[T52b] $($who52[1]) $($d52[0]): $(Format-Resp $d52[1] 200)")
+                        Assert-ApiError $d52[1] 403 "FORBIDDEN" "[T52b] $($who52[1]) 중요 자산 $($d52[0]) 역할 거부"
+                    }
+                }
+                $assetRowAfter52 = Invoke-AppDbSelect52 "SELECT id || '|' || host_ip || '|' || name || '|' || updated_at FROM critical_assets WHERE id = $([long]$assetId52)"
+                $e2eLogs.Add("[T52b] critical_assets row before=$assetRowBefore52 after=$assetRowAfter52")
+                # 이름(한글)은 콘솔 인코딩에 기대지 않게 앞뒤가 같은지와 주소만 본다
+                Assert-True ($assetRowBefore52 -eq $assetRowAfter52 -and $assetRowAfter52 -match "^$([long]$assetId52)\|10\.40\.0\.10\|E2E") "[T52b] 거부 뒤 자산 행 그대로"
+
+                $assetDel52 = Invoke-Http -Url "$baseHttps/api/admin/critical-assets/$assetId52/delete" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf -ProbeId "e2e-t52-delete"
+                # WAF가 끊었으면 그 표식의 ModSecurity 감사 줄에 is_interrupted가 남는다(접근 로그 줄은 세지 않는다)
+                $wafLogs52 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                $wafBlocked52 = @($wafLogs52 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ "e2e-t52-delete") -and $_ -match '"is_interrupted":true' }).Count
+                $e2eLogs.Add("[T52a] admin POST /api/admin/critical-assets/$assetId52/delete via WAF: $(Format-Resp $assetDel52 300); WAF interrupted lines for probe=$wafBlocked52")
+                Assert-Status $assetDel52 200 "[T52a] WAF를 거친 중요 자산 지우기(POST …/delete)"
+                Assert-True ($wafBlocked52 -eq 0) "[T52a] 지우기 POST는 WAF가 끊지 않는다"
+                Assert-True ((Invoke-AppDbSelect52 "SELECT count(*) FROM critical_assets WHERE id = $([long]$assetId52)") -eq '0') "[T52a] 지운 행이 없다"
+                $assetAudit52 = @((Invoke-AppDbSelect52 "SELECT actor_username || '|' || actor_role || '|' || detail_json FROM audit_logs WHERE action_type = 'CRITICAL_ASSET_CHANGE' ORDER BY id") -split "`r?`n" | Where-Object { $_ } | Select-Object -Last 3)
+                $assetAuditAfter52 = [long](Invoke-AppDbSelect52 "SELECT count(*) FROM audit_logs WHERE action_type = 'CRITICAL_ASSET_CHANGE'")
+                $e2eLogs.Add("[T52c] CRITICAL_ASSET_CHANGE audit rows $assetAuditBefore52 -> $assetAuditAfter52; last 3:`n     $($assetAudit52 -join "`n     ")")
+                Assert-True ($assetAuditAfter52 -eq $assetAuditBefore52 + 3) "[T52c] 추가·고치기·지우기마다 감사 한 행(거부·중복·검증 오류는 남지 않음)"
+                # 이름은 한글이라 콘솔 인코딩에 기대지 않게 키만 본다(값은 위 로그에 남는다)
+                Assert-True ($assetAudit52.Count -eq 3 -and $assetAudit52[0] -match '^admin\|ADMIN\|.*"operation":"CREATE".*"hostIp":"10\.40\.0\.10".*"name":"E2E' -and
+                    $assetAudit52[1] -match '^admin\|ADMIN\|.*"operation":"UPDATE".*"hostIp":"10\.40\.0\.10".*"name":"E2E' -and
+                    $assetAudit52[2] -match '^admin\|ADMIN\|.*"operation":"DELETE".*"hostIp":"10\.40\.0\.10".*"name":"E2E') "[T52c] 감사 detail(operation·hostIp·name)"
+
                 # [7] 로그아웃 뒤 서버 쪽 세션 무효화: 로그아웃 전 세션 값을 직접 보내 401 확인
                 $savedSession = Get-JarCookie $adminCookies "ZEEKAD_SESSION"
                 Assert-True ([bool]$savedSession) "로그아웃 전 ZEEKAD_SESSION 값 저장"

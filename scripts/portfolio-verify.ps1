@@ -20,6 +20,8 @@
 # 계정 시드를 두 번 실행한 뒤 DSM 역방향 프록시를 흉내 낸 요청으로 E2E [0]~[8]과 ZAP 베이스라인 [9]를 확인하고 down -v로 정리한다.
 # - T61: 네트워크 둘(portfolio-net = nginx-waf·dashboard-app, portfolio-data = 내부 전용)과 capability 없음은 [0] 바로 뒤 [T61a]~[T61d],
 #   상태 확인 감사 줄은 끝 무렵 [T61e]가 본다.
+# - T52: [T23d]의 우선순위 기준이 중요 자산 규칙을 안다(자산 주소는 앱 DB, 행의 원문 host_ip는 zeekad DB에서 읽는다).
+#   [T52b]~[T52d](관리자 API 403·지우기 POST가 WAF를 지남·조회자 응답에 이름 없음)는 [T36] 바로 앞에서 본다.
 # - DSM 흉내: http://127.0.0.1:<WAF 포트>에 Host: <PublicHost>, X-Forwarded-Proto: https, X-Forwarded-For: <클라이언트 IP>.
 # - 세션·CSRF 쿠키는 Secure라 HTTP 요청에 클라이언트가 보내지 않으므로 Set-Cookie에서 값을 읽어 Cookie 헤더를 직접 만든다
 #   (DASHBOARD_COOKIE_SECURE=false로 우회하지 않는다).
@@ -952,6 +954,33 @@ try {
         if (@($It.zeekadAlsoFlaggedBy | Where-Object { $_ }).Count -ge 1 -or $It.hasReport -eq $true) { return 'medium' }
         return 'low'
     }
+    # T52 중요 자산: 기준은 응답이 아니라 DB에서 계산한다. 자산 주소는 앱 DB critical_assets, 행의 원문 host_ip는
+    #     (jobId, queueRank)로 zeekad DB에서 읽는다(demo 응답의 주소는 가려져 있다). 응답의 assetCritical·priorityBase는 견줄 대상이다.
+    #     앞 이미지(T52 전)의 앱 DB에는 표가 없어 빈 목록이다.
+    function Get-CriticalAssetHosts {
+        $set = [System.Collections.Generic.HashSet[string]]::new()
+        $exists = (Invoke-Psql "zeekad_dashboard" "SELECT to_regclass('public.critical_assets') IS NOT NULL").Output.Trim()
+        if ($exists -ne 't') { return ,$set }
+        foreach ($ip in @((Invoke-Psql "zeekad_dashboard" "SELECT host_ip FROM critical_assets ORDER BY id").Output -split "`r?`n" | Where-Object { $_ })) {
+            [void]$set.Add($ip.Trim())
+        }
+        return ,$set
+    }
+    function Get-RawHostByRowKey([string]$CaptureArray) {
+        $map = @{}
+        $sql = "SELECT job_id || '/' || queue_rank || '|' || COALESCE(host_ip, '') FROM dashboard.latest_incident_queue WHERE capture_id = ANY($CaptureArray)"
+        foreach ($line in @((Invoke-Psql "zeekad" $sql).Output -split "`r?`n" | Where-Object { $_ })) {
+            $parts = $line.Trim() -split '\|', 2
+            $map[$parts[0]] = $parts[1]
+        }
+        return $map
+    }
+    # 한 단계 올림: Low → Medium, Medium → High, High·종결('')은 그대로
+    function Get-RaisedPriority([string]$Base, [bool]$Critical) {
+        if (-not $Base -or -not $Critical) { return $Base }
+        if ($Base -eq 'low') { return 'medium' }
+        return 'high'
+    }
     function Get-AllQueueItems($Client, [string]$Query, [int]$Size) {
         $all = [System.Collections.Generic.List[object]]::new()
         $first = Invoke-Http -Path "/api/incidents/queue?$Query&size=$Size&page=1" -Client $Client
@@ -1030,12 +1059,26 @@ try {
     }
     $summaryText = "summary total=$($s.total) high=$($s.high) medium=$($s.medium) low=$($s.low) reviewPending=$($s.reviewPending) alerted=$($s.alerted) byStatus=$($s.byStatus | ConvertTo-Json -Compress)"
     $countText = "items total=$($all.Items.Count) high=$($cnt.high) medium=$($cnt.medium) low=$($cnt.low) reviewPending=$($cnt.review) alerted=$($cnt.alerted) open=$($cnt.open) investigating=$($cnt.investigating) closed=$($cnt.closed) other=$($cnt.other)"
-    $prioMismatch = @($all.Items | Where-Object { ([string]$_.priority) -ne (Get-RefPriority $_) })
-    $e2eLogs.Add("[T23d] $summaryText`n       $countText`n       server priority vs old rule mismatches=$($prioMismatch.Count)$(if ($prioMismatch.Count) { ' ' + (($prioMismatch | Select-Object -First 5 | ForEach-Object { "$($_.jobId)/$($_.queueRank)" }) -join ',') })")
+    # T52: 기준 = 옛 규칙(기본 우선순위)을 중요 자산이면 한 단계 올린 값. 자산 여부는 DB의 원문 host_ip와 자산 주소로 정한다.
+    #      응답의 priorityBase = 기본 우선순위, assetCritical = DB로 정한 자산 여부, demo(조회자)의 criticalAssetName = null
+    $assetHosts23 = Get-CriticalAssetHosts
+    $rawHost23 = Get-RawHostByRowKey $publicArr
+    $raised23 = 0
+    $criticalRows23 = 0
+    $prioMismatch = @($all.Items | Where-Object {
+        $base = Get-RefPriority $_
+        $critical = $assetHosts23.Contains([string]$rawHost23["$($_.jobId)/$($_.queueRank)"])
+        $expected = Get-RaisedPriority $base $critical
+        if ($critical) { $criticalRows23++ }
+        if ($expected -ne $base) { $raised23++ }
+        ([string]$_.priority) -ne $expected -or ([string]$_.priorityBase) -ne $base -or [bool]$_.assetCritical -ne $critical -or
+            $null -ne $_.criticalAssetName -or -not ($_.PSObject.Properties.Name -contains 'criticalAssetName')
+    })
+    $e2eLogs.Add("[T23d] $summaryText`n       $countText`n       critical asset hosts (app DB)=$($assetHosts23.Count) critical rows (DB host_ip)=$criticalRows23 raised rows=$raised23`n       server priority/priorityBase/assetCritical vs rule (old rule + one step for critical assets) mismatches=$($prioMismatch.Count)$(if ($prioMismatch.Count) { ' ' + (($prioMismatch | Select-Object -First 5 | ForEach-Object { "$($_.jobId)/$($_.queueRank)" }) -join ',') })")
     Assert-True ([int]$s.total -eq $all.Items.Count -and [int]$s.high -eq $cnt.high -and [int]$s.medium -eq $cnt.medium -and [int]$s.low -eq $cnt.low -and
         [int]$s.reviewPending -eq $cnt.review -and [int]$s.alerted -eq $cnt.alerted -and [int]$s.byStatus.open -eq $cnt.open -and
         [int]$s.byStatus.investigating -eq $cnt.investigating -and [int]$s.byStatus.closed -eq $cnt.closed -and [int]$s.byStatus.other -eq $cnt.other) "[T23d] summary = 모든 쪽 items로 센 값"
-    Assert-True ($prioMismatch.Count -eq 0) "[T23d] PostgreSQL 서버 우선순위 = 옛 화면 규칙 (불일치 $($prioMismatch.Count))"
+    Assert-True ($prioMismatch.Count -eq 0) "[T23d] PostgreSQL 서버 우선순위 = 옛 화면 규칙 + 중요 자산 한 단계(priorityBase·assetCritical 포함, demo 이름 null) (불일치 $($prioMismatch.Count))"
     $keys100 = @($all.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
     $small = Get-AllQueueItems $demo "period=all" 25
     $keys25 = @($small.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
@@ -3250,6 +3293,90 @@ ORDER BY 1
     if ($old47) {
         Assert-True ([long]$old47.Total -eq [long]$new47.Total) "[T47k] 두 이미지의 큐 total이 같다 (old=$($old47.Total), new=$($new47.Total))"
         Assert-True ($new47.Median -le [Math]::Ceiling($old47.Median * 1.5)) "[T47k] 새 이미지 큐 중앙값이 앞 이미지의 1.5배 이하 (old=$($old47.Median) ms, new=$($new47.Median) ms)"
+    }
+
+    # ───────── [T52] 중요 자산: 관리자 API 권한·조회자 응답에 이름 없음·지우기 POST가 WAF를 지남 ─────────
+    # [T52a](시드가 자산 목록을 파일과 같게 맞추고 두 번째 실행은 그대로)는 시드 단계와 함께 더한다(T54 통합 뒤, handoff T52 6절).
+    Write-Host "=== [T52] 중요 자산: 관리자 API 403·조회자 응답에 이름 없음·지우기 POST가 WAF를 지남 ==="
+    Assert-True ((Invoke-Psql "zeekad_dashboard" "SELECT to_regclass('public.critical_assets') IS NOT NULL").Output.Trim() -eq 't') "[T52b] 앱 DB에 critical_assets 표(V6)"
+    $assetSnap52 = { (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || '|' || COALESCE(string_agg(id || ':' || host_ip || '=' || name || '@' || updated_at, ',' ORDER BY id), '') FROM critical_assets").Output.Trim() }
+    $assetAudit52 = { [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs WHERE action_type = 'CRITICAL_ASSET_CHANGE'").Output.Trim() }
+    $assetRows52 = @((Invoke-Psql "zeekad_dashboard" "SELECT id || '|' || host_ip || '|' || name FROM critical_assets ORDER BY id").Output -split "`r?`n" | Where-Object { $_ } | ForEach-Object {
+            $p = $_.Trim() -split '\|', 3
+            [pscustomobject]@{ Id = $p[0]; HostIp = $p[1]; Name = $p[2] }
+        })
+    $targetId52 = if ($assetRows52.Count) { $assetRows52[0].Id } else { '999999' }
+    $before52 = & $assetSnap52
+    $auditBefore52 = & $assetAudit52
+    # 앞 단계에서 앱을 다시 띄웠을 수 있어 새 클라이언트로 로그인한다(쓰기 속도 제한도 주소별이라 새 주소를 쓴다)
+    $demo52 = New-Client "198.51.100.152"
+    Assert-Status (Login-Api $demo52 "demo" $env:DEMO_PASSWORD) 200 "[T52] demo 로그인"
+    $trial52 = New-Client "198.51.100.153"
+    Assert-Status (Login-Api $trial52 $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T52] $trialUser 로그인"
+
+    # [T52b] 조회자(demo)·분석가(trial-analyst)의 관리자 API는 유효 CSRF로도 앱의 403이고 자산 목록과 감사 행이 그대로다.
+    # [T52c] 그 가운데 지우기 요청(POST …/{id}/delete)은 WAF를 지나 앱이 답한다(ApiErrorResponse JSON, WAF 차단 줄 없음).
+    $deleteProbe52 = "t52c-delete-" + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    foreach ($who in @(@($demo52, 'demo'), @($trial52, $trialUser))) {
+        $probes52 = @(
+            @{ Label = "GET list"; Method = "GET"; Path = "/api/admin/critical-assets"; Body = $null },
+            @{ Label = "POST create"; Method = "POST"; Path = "/api/admin/critical-assets"; Body = @{ hostIp = "10.10.0.99"; name = "t52-rehearsal" } },
+            @{ Label = "PUT update"; Method = "PUT"; Path = "/api/admin/critical-assets/$targetId52"; Body = @{ name = "t52-rehearsal"; description = $null } },
+            @{ Label = "POST delete"; Method = "POST"; Path = "/api/admin/critical-assets/$targetId52/delete"; Body = $null }
+        )
+        foreach ($p in $probes52) {
+            $probeId = if ($p.Label -eq 'POST delete' -and $who[1] -ne 'demo') { $deleteProbe52 } else { "" }
+            $r = if ($p.Method -eq 'GET') { Invoke-Http -Path $p.Path -Client $who[0] }
+                 else { Invoke-Http -Path $p.Path -Method $p.Method -Client $who[0] -Csrf -JsonBody $p.Body -ProbeId $probeId }
+            $e2eLogs.Add("[T52b] $($who[1]) $($p.Label) (valid X-XSRF-TOKEN): $(Format-Resp $r 200)")
+            Assert-ApiError $r 403 "FORBIDDEN" "[T52b] $($who[1]) $($p.Label) $($p.Path) 역할 거부(앱의 403)"
+        }
+    }
+    $after52 = & $assetSnap52
+    $auditAfter52 = & $assetAudit52
+    $e2eLogs.Add("[T52b] critical_assets before=$before52`n       after=$after52; CRITICAL_ASSET_CHANGE audit rows $auditBefore52 -> $auditAfter52")
+    Assert-True ($before52 -eq $after52 -and $auditBefore52 -eq $auditAfter52) "[T52b] 거부 뒤 자산 목록·감사 행 그대로"
+    $wafLog52 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+    $blocked52 = @($wafLog52 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ $deleteProbe52) -and $_ -match '"is_interrupted":true' })
+    $e2eLogs.Add("[T52c] POST /api/admin/critical-assets/$targetId52/delete (probe=$deleteProbe52) reached the app (JSON 403 above); WAF interrupted lines for the probe=$($blocked52.Count)")
+    Assert-True ($blocked52.Count -eq 0) "[T52c] 지우기 POST는 WAF 허용 메서드 안이라 WAF가 끊지 않는다"
+
+    # [T52d] 조회자 응답: 큐 전체(모든 쪽)·상세 queueMeta·같은 호스트 인시던트·호스트 위험도에 criticalAssetName이 늘 null이고
+    #        assetCritical·priorityBase 키는 있다. 자산 이름(앱 DB)은 어떤 조회자 응답 글에도 없다. 분석가는 이름을 받는다.
+    $demoQueue52 = Get-AllQueueItems $demo52 "period=all" 100
+    $badRows52 = @($demoQueue52.Items | Where-Object { $null -ne $_.criticalAssetName -or -not ($_.PSObject.Properties.Name -contains 'assetCritical') -or -not ($_.PSObject.Properties.Name -contains 'priorityBase') })
+    $critItems52 = @($demoQueue52.Items | Where-Object { $_.assetCritical -eq $true })
+    $bodies52 = [System.Collections.Generic.List[string]]::new()
+    $hosts52 = Invoke-Http -Path "/api/hosts?period=all&size=100" -Client $demo52
+    Assert-Status $hosts52 200 "[T52d] demo 호스트 위험도"
+    $bodies52.Add($hosts52.Body)
+    $badHosts52 = @($hosts52.Json.items | Where-Object { $null -ne $_.criticalAssetName })
+    $metaBad52 = 0
+    foreach ($ci in @($critItems52 | Select-Object -First 3)) {
+        $d = Invoke-Http -Path "/api/incidents/$($ci.jobId)/rank/$($ci.queueRank)" -Client $demo52
+        $rel = Invoke-Http -Path "/api/incidents/$($ci.jobId)/rank/$($ci.queueRank)/related-host-incidents" -Client $demo52
+        Assert-Status $d 200 "[T52d] demo 상세 $($ci.jobId)/$($ci.queueRank)"
+        Assert-Status $rel 200 "[T52d] demo 같은 호스트 인시던트 $($ci.jobId)/$($ci.queueRank)"
+        $bodies52.Add($d.Body)
+        $bodies52.Add($rel.Body)
+        if ($d.Json.queueMeta.assetCritical -ne $true -or $null -ne $d.Json.queueMeta.criticalAssetName) { $metaBad52++ }
+        if (@($rel.Json.items | Where-Object { $null -ne $_.criticalAssetName }).Count -gt 0) { $metaBad52++ }
+    }
+    $nameHits52 = @(foreach ($a in $assetRows52) { foreach ($b in $bodies52) { if ($a.Name -and $b.Contains($a.Name)) { $a.Name } } }) | Select-Object -Unique
+    # 분석가 응답은 원문 주소라 Get-AllQueueItems(가리지 않은 IPv4를 [T23] 목록에 모음)를 쓰지 않는다
+    $trialQueue52 = [pscustomobject]@{ Items = [System.Collections.Generic.List[object]]::new() }
+    $trialPages52 = 1
+    for ($pg = 1; $pg -le $trialPages52; $pg++) {
+        $tq = Invoke-Http -Path "/api/incidents/queue?period=all&size=100&page=$pg" -Client $trial52
+        Assert-Status $tq 200 "[T52d] $trialUser 큐 page=$pg"
+        $trialPages52 = [int]$tq.Json.pageCount
+        foreach ($it in @($tq.Json.items)) { $trialQueue52.Items.Add($it) }
+    }
+    $trialNamed52 = @($trialQueue52.Items | Where-Object { $_.assetCritical -eq $true -and $_.criticalAssetName })
+    $e2eLogs.Add("[T52d] demo queue items=$($demoQueue52.Items.Count) critical=$($critItems52.Count) rows with name or missing keys=$($badRows52.Count); hosts rows with name=$($badHosts52.Count); detail/related checked=$([Math]::Min(3, $critItems52.Count)) bad=$metaBad52; asset names found in demo bodies=[$($nameHits52 -join ', ')]`n       $trialUser critical rows with name=$($trialNamed52.Count)/$(@($trialQueue52.Items | Where-Object { $_.assetCritical -eq $true }).Count)")
+    Assert-True ($badRows52.Count -eq 0 -and $badHosts52.Count -eq 0 -and $metaBad52 -eq 0 -and @($nameHits52).Count -eq 0) "[T52d] 조회자 응답에 자산 이름 없음(criticalAssetName null, 키는 있음)"
+    if ($assetRows52.Count -gt 0) {
+        Assert-True ($critItems52.Count -gt 0 -and $trialNamed52.Count -eq @($trialQueue52.Items | Where-Object { $_.assetCritical -eq $true }).Count) "[T52d] 중요 자산 행이 있고 분석가는 그 행마다 이름을 받는다"
     }
 
     # ───────── [T36] 운영 정리: 익명 볼륨·조회 한도·HSTS ─────────
