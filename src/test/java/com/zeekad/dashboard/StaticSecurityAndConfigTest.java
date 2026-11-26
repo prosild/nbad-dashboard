@@ -393,6 +393,55 @@ class StaticSecurityAndConfigTest {
     }
 
     @Test
+    void wafAuditLogPartsAreSetOnlyInTheWafImageAndExcludeHeadersAndBodies() throws IOException {
+        // T59: ModSecurity 감사 로그의 부분은 WAF 이미지 한 곳(Dockerfile의 ENV)에서 정한다. 기반 이미지의 템플릿이 이 환경 값을
+        // SecAuditLogParts로 옮긴다(실제로 걸리는지는 scripts/waf-audit-log-check.ps1이 띄운 컨테이너의 렌더된 설정으로 본다).
+        Pattern partsAssignment = Pattern.compile("MODSEC_AUDIT_LOG_PARTS=\"?([A-Za-z]*)\"?");
+        List<String> partsValues = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8).lines()
+                .filter(line -> !line.trim().startsWith("#"))
+                .flatMap(line -> partsAssignment.matcher(line).results().map(match -> match.group(1)))
+                .toList();
+        assertThat(partsValues).as("WAF Dockerfile의 MODSEC_AUDIT_LOG_PARTS는 한 번만").hasSize(1);
+        String parts = partsValues.get(0);
+        // 요청 헤더(B), 요청 본문(C, I), 응답 본문(E), 응답 헤더(F)를 적지 않는다: 쿠키·CSRF 토큰·Set-Cookie·본문이 컨테이너 로그에 남는다.
+        assertThat(parts).as("감사 로그 부분에 B·C·I·E·F가 없어야 합니다").doesNotContainPattern("(?i)[BCIEF]");
+        // 값을 바꾸면 재현 시험(-ExpectedParts)으로 무엇이 남는지 다시 재야 하므로 정한 값 그대로인지 본다.
+        assertThat(parts).isEqualTo("AHZ");
+
+        // 다른 곳에서 덮지 않는다: compose 파일(루트와 docker/ 아래)에 그 환경 값이 없고, 저장소의 nginx·ModSecurity 템플릿에
+        // SecAuditLogParts나 요청마다 부분을 바꾸는 ctl:auditLogParts가 없다(override 템플릿은 기반 설정 뒤에 읽혀 이긴다).
+        List<Path> composeFiles = new java.util.ArrayList<>();
+        try (Stream<Path> rootFiles = Files.list(Path.of("."))) {
+            rootFiles.filter(p -> p.getFileName().toString().matches("compose.*\\.ya?ml")).forEach(composeFiles::add);
+        }
+        List<Path> templates = new java.util.ArrayList<>();
+        try (Stream<Path> dockerFiles = Files.walk(Path.of("docker"))) {
+            dockerFiles.filter(Files::isRegularFile).forEach(p -> {
+                if (p.toString().endsWith(".yml") || p.toString().endsWith(".yaml")) {
+                    composeFiles.add(p);
+                } else if (p.toString().endsWith(".template")) {
+                    templates.add(p);
+                }
+            });
+        }
+        assertThat(composeFiles).contains(Path.of("./compose.yml"), Path.of("./compose.portfolio.yml"),
+                Path.of("docker/verify/compose.verify.yml"));
+        for (Path file : composeFiles) {
+            assertThat(Files.readString(file, StandardCharsets.UTF_8))
+                    .as("%s에서 MODSEC_AUDIT_LOG_PARTS를 주면 이미지의 값을 덮습니다", file)
+                    .doesNotContain("MODSEC_AUDIT_LOG_PARTS");
+        }
+        assertThat(templates).contains(Path.of("docker/nginx-waf/templates/modsecurity.d/modsecurity-override.conf.template"));
+        for (Path file : templates) {
+            List<String> activeLines = Files.readString(file, StandardCharsets.UTF_8).lines()
+                    .filter(line -> !line.trim().startsWith("#"))
+                    .toList();
+            assertThat(activeLines).as("%s에 감사 로그 부분 지시어가 없어야 합니다", file)
+                    .noneMatch(line -> line.toLowerCase(java.util.Locale.ROOT).contains("auditlogparts"));
+        }
+    }
+
+    @Test
     void t32WafAddressIsFixedAndIsTheOnlyTrustedProxy() throws IOException {
         record Stack(Path compose, String wafVar, String wafDefault, String subnet, String ipRange) {
         }

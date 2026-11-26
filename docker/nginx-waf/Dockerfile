@@ -25,6 +25,14 @@ ENV ZEEKAD_PROXY_X_FORWARDED_FOR=\$remote_addr \
     ZEEKAD_PROXY_X_FORWARDED_PORT=\$forwarded_port \
     RESOLVER_CONFIG="valid=10s ipv6=off"
 
+# ModSecurity 감사 로그에 남기는 부분(T59). 기반 이미지의 modsecurity.conf.template이 이 값을 SecAuditLogParts로 옮긴다.
+# - 기반 기본값 ABIJDEFHZ는 요청 헤더(B)와 응답 헤더(F)를 통째로 적어 세션 쿠키·CSRF 토큰·Set-Cookie 값이 컨테이너 로그에 남고,
+#   응답 본문(E)도 text/plain·text/html·text/xml이면 남는다(scripts/waf-audit-log-check.ps1로 확인).
+# - AHZ만 남긴다: 접속 주소·시각·unique_id·메서드·요청 주소·응답 코드(A), 걸린 규칙의 메시지(H), 끝 표시(Z).
+#   요청 헤더가 통째로 빠지므로 차단 요청의 User-Agent·Host·받은 X-Forwarded-For 원문은 접근 로그 줄에서 시각·접속 주소·요청 주소로 찾는다.
+# - 설정은 여기 한 곳에 둔다. compose에서 MODSEC_AUDIT_LOG_PARTS를 주면 이 값을 덮으므로 주지 않는다(StaticSecurityAndConfigTest가 본다).
+ENV MODSEC_AUDIT_LOG_PARTS=AHZ
+
 USER nginx
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=5 \

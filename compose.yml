@@ -111,6 +111,7 @@ services:
       ANOMALY_INBOUND: "5"
       ANOMALY_OUTBOUND: "4"
       MODSEC_AUDIT_ENGINE: "RelevantOnly"
+      # 감사 로그에 남기는 부분(요청·응답의 헤더와 본문은 뺀다)은 WAF 이미지(docker/nginx-waf/Dockerfile)가 정한다. 여기서 덮지 않는다.
       MODSEC_AUDIT_LOG: "/dev/stdout"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
