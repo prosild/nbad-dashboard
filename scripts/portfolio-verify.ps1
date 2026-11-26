@@ -525,7 +525,7 @@ try {
     $examples54 = @((Get-Content "docker/portfolio/seed/demo_examples.json" -Raw -Encoding UTF8 | ConvertFrom-Json).examples)
     $ids54Sql = ($examples54 | ForEach-Object { "'$($_.incidentId)'" }) -join ", "
     $pre54 = (Invoke-Psql "zeekad" ("SELECT (SELECT count(*) FROM zeekad.incident_status) || '/' || (SELECT count(*) FROM zeekad.incident_status_history) || '/' || (SELECT count(*) FROM zeekad.analyst_review) " +
-        "|| ' examples: queue=' || (SELECT count(*) FROM dashboard.latest_incident_queue WHERE incident_id IN ($ids54Sql)) || ' status=' || (SELECT count(*) FROM dashboard.incident_status WHERE incident_id IN ($ids54Sql))")).Output.Trim()
+        "|| ' examples: queue=' || (SELECT count(*) FROM dashboard.latest_incident_queue WHERE incident_id IN ($ids54Sql)) || ' status=' || (SELECT count(*) FROM zeekad.incident_status WHERE incident_id IN ($ids54Sql))")).Output.Trim()
     $preAssign54 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignments WHERE incident_id IN ($ids54Sql)").Output.Trim()
     $e2eLogs.Add("[T54] before seed: zeekad incident_status/incident_status_history/analyst_review rows and examples = $pre54; example assignment rows=$preAssign54 (examples: $(@($examples54 | ForEach-Object { "$($_.key)=$($_.resolution)" }) -join ', '))")
     Assert-True ($examples54.Count -eq 3 -and $pre54 -match ' examples: queue=3 status=0$' -and $preAssign54 -eq '0') "[T54] 시드 전 예시 셋은 최신 큐에 있고 신규·담당 행 없음 ($pre54, assignment rows=$preAssign54)"
@@ -554,7 +554,8 @@ try {
     $t54aLines = @(); $t54aBad = @()
     foreach ($ex in $examples54) {
         $id = $ex.incidentId
-        $st = (Invoke-Psql "zeekad" "SELECT zeekad_status || ':' || COALESCE(zeekad_resolution, '') || ':' || updated_by FROM dashboard.incident_status WHERE incident_id = '$id'").Output.Trim()
+        # 상태는 zeek_AD 상태 표에서 읽는다(계약 뷰 dashboard.incident_status는 인시던트 × 성공 작업마다 한 행이고 상태 행이 없으면 open으로 채운다)
+        $st = (Invoke-Psql "zeekad" "SELECT status || ':' || COALESCE(resolution, '') || ':' || updated_by FROM zeekad.incident_status WHERE incident_id = '$id'").Output.Trim()
         $events = @()
         foreach ($q in @(
                 @("zeekad", "SELECT to_status || '=' || (EXTRACT(EPOCH FROM changed_at) * 1000000)::bigint FROM dashboard.incident_status_history WHERE incident_id = '$id' AND actor = 'demo-analyst'"),
@@ -575,7 +576,7 @@ try {
     $e2eLogs.Add("[T54a] examples after seed:`n       $($t54aLines -join "`n       ")`n       assignment rows with an assignee (all)=$assigned54; example assignment rows (all:released by demo-analyst)=$released54`n       demo-analyst (role|enabled|display name ok|patterns)=$acct54; audit rows by demo-analyst: $audit54")
     Assert-True ($t54aBad.Count -eq 0) "[T54a] 예시 셋: 종결·판정·마지막 변경자 demo-analyst, 이력 순서 착수 → 자동 담당 → (정탐) 조치 → 해제 → 종결 ($($t54aBad -join '; '))"
     Assert-True ($assigned54 -eq '0' -and $released54 -eq '3:3') "[T54a] 담당자 있는 담당 행 0, 예시 셋의 담당 행은 demo-analyst가 해제한 행 ($assigned54, $released54)"
-    Assert-True ($acct54 -eq 'ANALYST|f|t|lab-20261119,lab-20261122') "[T54a] demo-analyst: ANALYST·비활성·표시 이름·허용 캡처 ($acct54)"
+    Assert-True ($acct54 -eq 'ANALYST|false|true|lab-20261119,lab-20261122') "[T54a] demo-analyst: ANALYST·비활성·표시 이름·허용 캡처 ($acct54)"
     Assert-True ($audit54 -match '(^|, )INCIDENT_RESPONSE_ACTION=2(,|$)' -and $audit54 -match '(^|, )INCIDENT_STATUS_TRANSITION=6(,|$)' -and $audit54 -match '(^|, )LOGIN_SUCCESS=1(,|$)') "[T54a] demo-analyst 감사: 로그인 1, 상태 변경 6, 대응 조치 2 ($audit54)"
 
     # T23: 숨김 캡처 = 리허설 DB dashboard.scoring_jobs의 전체 캡처 ID - 공개 캡처(manifest 사건 수 키가 아니다. 최신 작업 사건이 0건인 캡처도 빠지지 않게).
@@ -1881,8 +1882,8 @@ try {
     $posA54 = @((Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE incident_id = '$($exA54.incidentId)'").Output.Trim() -split '/')
     $exSnap54 = {
         $z = (Invoke-Psql "zeekad" ("SELECT count(*) || ':' || md5(string_agg(t::text, ',' ORDER BY t::text)) FROM (" +
-            "SELECT incident_id, zeekad_status AS s, zeekad_resolution AS r, updated_by AS a, updated_at AS at FROM dashboard.incident_status WHERE incident_id IN ($ids54Sql) " +
-            "UNION ALL SELECT incident_id, to_status, zeekad_resolution, actor || ':' || COALESCE(reason, ''), changed_at FROM dashboard.incident_status_history WHERE incident_id IN ($ids54Sql)) t")).Output.Trim()
+            "SELECT incident_id, status AS s, resolution AS r, updated_by AS a, updated_at AS at FROM zeekad.incident_status WHERE incident_id IN ($ids54Sql) " +
+            "UNION ALL SELECT incident_id, to_status, resolution, actor || ':' || COALESCE(reason, ''), changed_at FROM zeekad.incident_status_history WHERE incident_id IN ($ids54Sql)) t")).Output.Trim()
         $d = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || '/' || count(*) FILTER (WHERE actor_username = 'demo-analyst') FROM incident_response_actions WHERE incident_id IN ($ids54Sql)").Output.Trim()
         "zeekad rows=$z actions(all/demo-analyst)=$d"
     }
@@ -1896,7 +1897,7 @@ try {
     $s54Mid = & $exSnap54
     $c54Reset = & $runResetOnce
     $s54After = & $exSnap54
-    $c54Other = (Invoke-Psql "zeekad" "SELECT count(*) FROM dashboard.incident_status WHERE incident_id = '$($inc[2].Id)'").Output.Trim()
+    $c54Other = (Invoke-Psql "zeekad" "SELECT count(*) FROM zeekad.incident_status WHERE incident_id = '$($inc[2].Id)'").Output.Trim()
     $e2eLogs.Add("[T54c] examples before=$s54Before; after trial writes=$s54Mid; reset --once exit=$($c54Reset.ExitCode) $(($c54Reset.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' '); after reset=$s54After; other incident status rows=$c54Other")
     Assert-True ($s54Mid -ne $s54Before -and $s54Mid -match 'actions\(all/demo-analyst\)=3/2$') "[T54c] 덧붙인 조치가 예시 A에 보임 ($s54Mid)"
     Assert-True ($c54Reset.ExitCode -eq 0 -and $c54Other -eq '0' -and $s54After -eq $s54Before -and $s54After -match 'actions\(all/demo-analyst\)=2/2$') "[T54c] 초기화 뒤 다른 건은 신규, 덧붙인 조치는 지워지고 예시 셋은 그대로 ($s54After)"

@@ -160,7 +160,10 @@ class ZeekadReader:
                            user="dashboard_ro", password=env("DASHBOARD_RO_PASSWORD"), dbname="zeekad")
 
     def read(self, incident_ids):
-        """최신 큐의 행(작업 번호·순위·캡처)과 상태 행(상태·판정·마지막 변경자). 상태는 앱 상세와 같이 가장 최근 행을 쓴다."""
+        """최신 큐의 행(작업 번호·순위·캡처)과 상태 행(상태·판정·마지막 변경자).
+        계약 뷰 dashboard.incident_status는 인시던트 × 성공 작업마다 한 행이고 zeek_AD 상태 표를 incident_id로 LEFT JOIN한다.
+        상태 행이 없으면 zeekad_status가 'open'으로 채워지고 updated_by가 NULL이다(updated_by는 상태 표에서 NOT NULL).
+        그래서 updated_by가 있는 행만 상태 행으로 본다(없으면 신규). 같은 인시던트의 행은 같은 상태 값을 갖는다."""
         with psycopg.connect(**self.params) as conn:
             conn.read_only = True
             queue = {}
@@ -172,8 +175,8 @@ class ZeekadReader:
             status = {}
             for incident_id, st, resolution, updated_by in conn.execute(
                     "SELECT DISTINCT ON (incident_id) incident_id, zeekad_status, zeekad_resolution, updated_by"
-                    " FROM dashboard.incident_status WHERE incident_id = ANY(%s)"
-                    " ORDER BY incident_id, updated_at DESC", (incident_ids,)).fetchall():
+                    " FROM dashboard.incident_status WHERE incident_id = ANY(%s) AND updated_by IS NOT NULL"
+                    " ORDER BY incident_id, updated_at DESC NULLS LAST", (incident_ids,)).fetchall():
                 status[incident_id] = {"status": norm(st), "resolution": norm(resolution), "updated_by": updated_by}
         return queue, status
 
