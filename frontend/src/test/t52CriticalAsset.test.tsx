@@ -385,8 +385,9 @@ describe('T52 호스트 위험도', () => {
 /* ───────────── CSV·마크다운 ───────────── */
 
 describe('T52 CSV·마크다운의 중요 자산 칸', () => {
-  it('CSV는 우선순위 다음에 "중요 자산" 칸(예/아니요)을 두고 이름은 넣지 않는다(조회자도 같다)', () => {
-    expect(QUEUE_CSV_HEADERS.indexOf('중요 자산')).toBe(QUEUE_CSV_HEADERS.indexOf('우선순위') + 1);
+  it('CSV는 맨 뒤에 "중요 자산" 칸(예/아니요)을 두고 이름은 넣지 않는다(조회자도 같다). 앞 칸 번호는 그대로다', () => {
+    expect(QUEUE_CSV_HEADERS.indexOf('중요 자산')).toBe(QUEUE_CSV_HEADERS.length - 1);
+    expect(QUEUE_CSV_HEADERS.indexOf('탐지 시각(KST)')).toBe(2);
     const rows = queueRows(false);
     const lines = queueCsv(rows).slice(1).split('\r\n');
     const col = QUEUE_CSV_HEADERS.indexOf('중요 자산');

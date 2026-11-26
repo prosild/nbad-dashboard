@@ -447,7 +447,7 @@ describe('T45 CSV 시각 열 머리줄', () => {
     expect(QUEUE_CSV_HEADERS[2]).toBe('탐지 시각(KST)');
     expect(QUEUE_CSV_HEADERS[7]).toBe('발생 시작(KST)');
     expect(QUEUE_CSV_HEADERS[8]).toBe('발생 종료(KST)');
-    expect(QUEUE_CSV_HEADERS).toHaveLength(18);
+    expect(QUEUE_CSV_HEADERS).toHaveLength(19);
     const lines = queueCsv([{ ...makeItem(1), incidentNo: 101 }]).slice(1).split('\r\n');
     const head = lines[0].split(',');
     expect(head[2]).toBe('"탐지 시각(KST)"');

@@ -166,7 +166,6 @@ export function csvCell(value: unknown): string {
 export const QUEUE_CSV_HEADERS = [
   '번호',
   '우선순위',
-  '중요 자산',
   '탐지 시각(KST)',
   '호스트 IP',
   '호스트 이름',
@@ -183,6 +182,7 @@ export const QUEUE_CSV_HEADERS = [
   '판정',
   '담당',
   '세션 수',
+  '중요 자산',
 ] as const;
 
 /** 표시 이름. 값이 없으면 "-"가 아니라 빈 칸 */
@@ -199,8 +199,6 @@ export function queueCsv(items: UnifiedQueueItem[]): string {
   const rows = items.map((item) => [
     item.incidentNo,
     label('priority', item.priority),
-    // T52 중요 자산: 예/아니요만(이름은 넣지 않는다. 조회자도 같다)
-    item.assetCritical ? '예' : '아니요',
     time(item.detectedAt),
     item.hostIp,
     item.hostName.join(', '),
@@ -217,6 +215,8 @@ export function queueCsv(items: UnifiedQueueItem[]): string {
     label('resolution', item.zeekadResolution),
     item.assignee?.displayName,
     item.connectionCount,
+    // T52 중요 자산: 예/아니요만(이름은 넣지 않는다. 조회자도 같다). 앞 칸 번호를 바꾸지 않게 맨 뒤에 둔다
+    item.assetCritical ? '예' : '아니요',
   ]);
   return `﻿${[QUEUE_CSV_HEADERS, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }
