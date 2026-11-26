@@ -630,6 +630,32 @@ class StaticSecurityAndConfigTest {
                 .doesNotContain("zeekad-portfolio-http", "ZEEKAD_READ_RATE");
     }
 
+    @Test
+    void t60TotpVerifyIsInLoginRateLimitMapAsLiteralLine() throws IOException {
+        String template = Files.readString(
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"), StandardCharsets.UTF_8).replace("\r", "");
+        // 로그인 제한 map: 기본값과 리터럴 두 줄뿐이다(로그인, 관리자 TOTP 확인). 두 경로가 로그인 영역 하나를 같이 쓴다
+        String mapStart = "map \"$request_method:$uri\" $zeekad_login_limit_key {\n";
+        assertThat(template).contains(mapStart);
+        String loginMap = template.substring(template.indexOf(mapStart) + mapStart.length());
+        loginMap = loginMap.substring(0, loginMap.indexOf("\n}"));
+        assertThat(loginMap.lines().map(String::trim).filter(line -> !line.isEmpty()).toList()).containsExactly(
+                "default \"\";",
+                "\"POST:/api/auth/login\" $binary_remote_addr;",
+                "\"POST:/api/auth/totp/verify\" $binary_remote_addr;");
+        // 그 키를 쓰는 영역과 적용 줄은 하나씩이다
+        assertThat(template.split(Pattern.quote("limit_req_zone $zeekad_login_limit_key zone=zeekad_login:10m rate=${ZEEKAD_LOGIN_RATE};"), -1))
+                .hasSize(2);
+        assertThat(template.split(Pattern.quote("limit_req zone=zeekad_login burst=${ZEEKAD_LOGIN_BURST} nodelay;"), -1)).hasSize(2);
+        // 정규식 줄로 쓰지 않았고(쓰기 map의 줄 수를 세는 단언이 깨진다) 등록 확인 경로는 넣지 않았다
+        assertThat(template.lines().map(String::trim).filter(line -> line.startsWith("\"~")))
+                .noneMatch(line -> line.contains("totp"));
+        assertThat(template.lines().filter(line -> !line.trim().startsWith("#"))).noneMatch(line -> line.contains("totp/setup"));
+        // VMware 스택에는 이 설정이 붙지 않는다(속도 제한 없음)
+        assertThat(Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8))
+                .doesNotContain("zeekad-portfolio-http", "ZEEKAD_LOGIN_RATE");
+    }
+
     private static boolean inCidr(String ip, String cidr) {
         String[] parts = cidr.split("/");
         int bits = Integer.parseInt(parts[1]);

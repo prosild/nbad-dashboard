@@ -34,10 +34,13 @@ map "$zeekad_from_proxy:$http_x_forwarded_proto" $zeekad_forwarded_port {
     default   $forwarded_port;
 }
 
-# 로그인 속도 제한: POST /api/auth/login만, 클라이언트 IP당. 키가 빈 요청은 세지 않으므로 다른 요청은 영향이 없다.
+# 로그인 속도 제한: POST /api/auth/login과 관리자 TOTP 확인 POST /api/auth/totp/verify(T60), 클라이언트 IP당.
+# 두 경로가 이 영역 하나를 같이 쓴다. 키가 빈 요청은 세지 않으므로 다른 요청은 영향이 없다.
+# TOTP 등록 확인(POST /api/auth/totp/setup)은 넣지 않는다(등록 전에는 비밀키를 그대로 받으므로 코드를 맞혀 볼 이유가 없다).
 map "$request_method:$uri" $zeekad_login_limit_key {
     default "";
     "POST:/api/auth/login" $binary_remote_addr;
+    "POST:/api/auth/totp/verify" $binary_remote_addr;
 }
 limit_req_zone $zeekad_login_limit_key zone=zeekad_login:10m rate=${ZEEKAD_LOGIN_RATE};
 limit_req zone=zeekad_login burst=${ZEEKAD_LOGIN_BURST} nodelay;
