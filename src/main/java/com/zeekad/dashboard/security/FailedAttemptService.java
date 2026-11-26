@@ -1,13 +1,17 @@
 package com.zeekad.dashboard.security;
 
+import com.zeekad.dashboard.audit.AuditService;
 import com.zeekad.dashboard.config.DashboardProperties;
 import com.zeekad.dashboard.mapper.app.UserMapper;
+import com.zeekad.dashboard.model.AuditActionType;
 import com.zeekad.dashboard.model.DashboardUser;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * T60 인증 실패 횟수와 계정 잠금(users.failed_attempts·locked_until). 비밀번호 실패와 관리자 TOTP 확인 실패가 같은 횟수를 쓴다.
@@ -19,10 +23,12 @@ public class FailedAttemptService {
 
     private final UserMapper userMapper;
     private final DashboardProperties properties;
+    private final AuditService auditService;
 
-    public FailedAttemptService(UserMapper userMapper, DashboardProperties properties) {
+    public FailedAttemptService(UserMapper userMapper, DashboardProperties properties, AuditService auditService) {
         this.userMapper = userMapper;
         this.properties = properties;
+        this.auditService = auditService;
     }
 
     /**
@@ -50,6 +56,27 @@ public class FailedAttemptService {
                 : fresh.getLockedUntil().withOffsetSameInstant(ZoneOffset.UTC);
         boolean locked = freshLockedUntil != null && freshLockedUntil.toInstant().isAfter(now);
         return new State(fresh.getFailedAttempts(), freshLockedUntil, lockedByThisCall, locked);
+    }
+
+    /**
+     * 이 호출이 계정을 잠갔을 때만 잠금 감사(ACCOUNT_LOCKED)를 남긴다. 동시에 온 요청이 같은 잠금을 두 번 적지 않는다.
+     */
+    public void recordLockIfLockedNow(DashboardUser user, State state, String clientIp) {
+        if (state.lockedByThisCall()) {
+            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
+                    Map.of("failedAttempts", state.failedAttempts(), "lockedUntil", String.valueOf(state.lockedUntil())),
+                    clientIp);
+        }
+    }
+
+    /** 잠긴 계정에 온 시도(차지하지 못한 시도)의 실패 감사 detail: reason account_locked와, 있으면 잠금 시각 */
+    public static Map<String, Object> lockedDetail(State state) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("reason", "account_locked");
+        if (state.lockedUntil() != null) {
+            detail.put("lockedUntil", state.lockedUntil().toString());
+        }
+        return detail;
     }
 
     /** 횟수와 잠금을 지운다(관리자의 TOTP 확인 성공과 등록 완료) */

@@ -23,7 +23,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -102,19 +101,14 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
             FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
             if (!claimed) {
                 // 비밀번호를 비교하는 사이에 다른 요청이 계정을 잠갔거나, 횟수가 이미 한도에 닿아 있었다
-                Map<String, Object> detail = new LinkedHashMap<>();
-                detail.put("reason", "account_locked");
-                if (state.lockedUntil() != null) {
-                    detail.put("lockedUntil", state.lockedUntil().toString());
-                }
                 auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_FAILURE,
-                        detail, clientIp);
-                recordLockIfLockedNow(user, state, clientIp);
+                        FailedAttemptService.lockedDetail(state), clientIp);
+                failedAttemptService.recordLockIfLockedNow(user, state, clientIp);
                 throw new LockedException("계정이 일시 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
             }
             auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.LOGIN_FAILURE,
                     Map.of("reason", "invalid_credentials", "failedAttempts", state.failedAttempts()), clientIp);
-            recordLockIfLockedNow(user, state, clientIp);
+            failedAttemptService.recordLockIfLockedNow(user, state, clientIp);
             if (state.locked()) {
                 throw new LockedException("로그인 연속 실패 횟수 초과로 계정이 잠겼습니다.");
             }
@@ -122,15 +116,6 @@ public class DashboardAuthenticationProvider implements AuthenticationProvider {
         }
 
         return succeed(user, now, nowUtc, clientIp);
-    }
-
-    /** 이 요청이 계정을 잠갔을 때만 잠금 감사를 남긴다(동시에 온 요청이 같은 잠금을 두 번 적지 않는다) */
-    private void recordLockIfLockedNow(DashboardUser user, FailedAttemptService.State state, String clientIp) {
-        if (state.lockedByThisCall()) {
-            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
-                    Map.of("failedAttempts", state.failedAttempts(), "lockedUntil", String.valueOf(state.lockedUntil())),
-                    clientIp);
-        }
     }
 
     /**

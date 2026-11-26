@@ -55,7 +55,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -324,13 +323,9 @@ public class AuthApiController {
             String role = user.getRole().name();
             if (!failedAttemptService.claim(user.getId(), now)) {
                 FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
-                Map<String, Object> detail = new LinkedHashMap<>();
-                detail.put("reason", "account_locked");
-                if (state.lockedUntil() != null) {
-                    detail.put("lockedUntil", state.lockedUntil().toString());
-                }
-                auditService.recordAuthEvent(user.getUsername(), role, AuditActionType.TOTP_FAILURE, detail, clientIp);
-                recordLockIfLockedNow(user, state, clientIp);
+                auditService.recordAuthEvent(user.getUsername(), role, AuditActionType.TOTP_FAILURE,
+                        FailedAttemptService.lockedDetail(state), clientIp);
+                failedAttemptService.recordLockIfLockedNow(user, state, clientIp);
                 endSession(request);
                 return accountLocked("계정이 일시 잠겼습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.");
             }
@@ -338,7 +333,7 @@ public class AuthApiController {
                 FailedAttemptService.State state = failedAttemptService.settle(user.getId(), now);
                 auditService.recordAuthEvent(user.getUsername(), role, AuditActionType.TOTP_FAILURE,
                         Map.of("reason", "invalid_code", "failedAttempts", state.failedAttempts()), clientIp);
-                recordLockIfLockedNow(user, state, clientIp);
+                failedAttemptService.recordLockIfLockedNow(user, state, clientIp);
                 if (state.locked()) {
                     endSession(request);
                     return accountLocked("2단계 인증 연속 실패 횟수 초과로 계정이 잠겼습니다.");
@@ -370,15 +365,6 @@ public class AuthApiController {
     private static ResponseEntity<ApiErrorResponse> accountLocked(String message) {
         return ResponseEntity.status(HttpStatus.LOCKED)
                 .body(new ApiErrorResponse(423, "ACCOUNT_LOCKED", message));
-    }
-
-    /** 이 요청이 계정을 잠갔을 때만 잠금 감사를 남긴다(동시에 온 요청이 같은 잠금을 두 번 적지 않는다) */
-    private void recordLockIfLockedNow(DashboardUser user, FailedAttemptService.State state, String clientIp) {
-        if (state.lockedByThisCall()) {
-            auditService.recordAuthEvent(user.getUsername(), user.getRole().name(), AuditActionType.ACCOUNT_LOCKED,
-                    Map.of("failedAttempts", state.failedAttempts(), "lockedUntil", String.valueOf(state.lockedUntil())),
-                    clientIp);
-        }
     }
 
     /** 요청한 세션만 끝낸다(세션 목록 구조가 없어 같은 계정의 다른 세션은 그대로다) */
