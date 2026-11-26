@@ -9,7 +9,10 @@
 #   - 스키마 sandbox(소유 zeekad_owner): sandbox.reset_pipeline()(SECURITY DEFINER). 초기화 역할은 이 스키마 USAGE와 함수 EXECUTE만 있다
 #     (PostgreSQL은 함수를 부를 때 그 스키마 USAGE가 필요하다. 그래서 기준선은 따로 sandbox_baseline에 둔다).
 # - zeekad_dashboard DB: 스키마 sandbox(소유 dashboard_app)의 sandbox.reset_assignments()(SECURITY DEFINER).
-# - 전용 역할 zeekad_sandbox_reset(LOGIN, 비밀번호 SANDBOX_RESET_DB_PASSWORD): 두 DB CONNECT, 두 sandbox 스키마 USAGE, 두 함수 EXECUTE만.
+#   감사 로그 보관 기한 함수 public.purge_expired_audit_logs(integer)(T58)는 여기서 만들지 않는다. 앱의 Flyway(V4)가 만들고
+#   이 도구는 초기화 역할에 그 함수의 EXECUTE만 준다(감사 로그 표 권한은 주지 않는다). 함수가 아직 없으면(앱이 V4를 적용하기 전) 멈춘다.
+# - 전용 역할 zeekad_sandbox_reset(LOGIN, 비밀번호 SANDBOX_RESET_DB_PASSWORD): 두 DB CONNECT, 두 sandbox 스키마 USAGE,
+#   초기화 함수 둘과 위 삭제 함수의 EXECUTE만.
 # 기준선은 처음 만들 때와 --rebuild-baseline일 때만 만든다. 그때는 체험 계정(SANDBOX_TRIAL_USERNAME) 흔적이 세 표와 담당 표에
 # 하나도 없어야 하고(방문자 변경이 기준선이 되는 것을 막는다), 처음 만들 때는 담당자가 있는 담당 행이 0이어야 하며(공개 기준선의 담당은 0),
 # 다시 만들 때는 초기화 역할의 접속이 없어야 한다(sandbox-reset을 먼저 멈춘다). 아니면 아무것도 바꾸지 않고 멈춘다.
@@ -56,6 +59,11 @@ for t in public.incident_assignments public.incident_assignment_history public.u
         log "table $t is missing in zeekad_dashboard; start dashboard-app once (Flyway) first"; exit 1
     fi
 done
+# 감사 로그 보관 기한 함수(T58)는 앱 migration V4가 만든다. 없으면 건너뛰지 않고 멈춘다.
+PURGE_FN='public.purge_expired_audit_logs(integer)'
+if [ "$(q zeekad_dashboard "SELECT to_regprocedure('$PURGE_FN') IS NOT NULL")" != "t" ]; then
+    log "function $PURGE_FN is missing in zeekad_dashboard; start dashboard-app with migration V4 (Flyway) first"; exit 1
+fi
 
 # --- 1. 전용 역할 ---
 run postgres -v pw="$SANDBOX_RESET_DB_PASSWORD" <<SQL
@@ -319,7 +327,19 @@ GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;
 SQL
 log "zeekad_dashboard: sandbox.reset_assignments() ready"
 
-# --- 6. 권한 점검: 초기화 역할은 두 함수 EXECUTE와 그 스키마 USAGE만(CREATE·표 권한 없음) ---
+# --- 5b. zeekad_dashboard: 감사 로그 보관 기한 함수의 실행 권한(T58) ---
+# 함수는 앱 migration V4의 것이다(소유 dashboard_app, 정의자 권한, PUBLIC 회수). 여기서는 초기화 역할에 EXECUTE만 준다.
+# 감사 로그 표 권한은 주지 않는다. 소유자나 정의자 권한 설정이 다르면 권한을 주지 않고 멈춘다.
+PURGE_META="$(q zeekad_dashboard "SELECT pg_get_userbyid(proowner) || ' secdef=' || prosecdef FROM pg_proc WHERE oid = '$PURGE_FN'::regprocedure")"
+if [ "$PURGE_META" != "dashboard_app secdef=true" ]; then
+    log "REFUSED: $PURGE_FN is not the V4 function (owner and security definer: $PURGE_META)"; exit 1
+fi
+run zeekad_dashboard <<'SQL'
+GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_sandbox_reset;
+SQL
+log "zeekad_dashboard: EXECUTE on $PURGE_FN granted to $RESET_ROLE"
+
+# --- 6. 권한 점검: 초기화 역할은 초기화 함수 둘·삭제 함수의 EXECUTE와 sandbox 스키마 USAGE만(CREATE·표 권한 없음). 삭제 함수는 PUBLIC이 못 부른다 ---
 CHECK_SQL="SELECT concat_ws(' ',
   'public_create=' || has_schema_privilege('$RESET_ROLE', 'public', 'CREATE'),
   'sandbox_create=' || has_schema_privilege('$RESET_ROLE', 'sandbox', 'CREATE'),
@@ -327,7 +347,7 @@ CHECK_SQL="SELECT concat_ws(' ',
   'db_temp=' || has_database_privilege('$RESET_ROLE', current_database(), 'TEMP'),
   'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = '$RESET_ROLE'))"
 Z="$(q zeekad "$CHECK_SQL") baseline_usage=$(q zeekad "SELECT has_schema_privilege('$RESET_ROLE', 'sandbox_baseline', 'USAGE')::text")"
-D="$(q zeekad_dashboard "$CHECK_SQL")"
+D="$(q zeekad_dashboard "$CHECK_SQL") purge_public_execute=$(q zeekad_dashboard "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = '$PURGE_FN'::regprocedure AND x.grantee = 0)::text")"
 log "privileges of $RESET_ROLE: zeekad[$Z] zeekad_dashboard[$D]"
 for v in $Z $D; do
     case "$v" in

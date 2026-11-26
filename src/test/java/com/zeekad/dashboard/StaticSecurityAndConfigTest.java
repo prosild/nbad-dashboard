@@ -593,6 +593,140 @@ class StaticSecurityAndConfigTest {
         return v;
     }
 
+    @Test
+    void t58AuditRetentionMigrationResetServiceAndContainerLogLimits() throws IOException {
+        // V4(PostgreSQL): 트리거는 DELETE 한 경우만 통과(표식 + 30일 바닥값), TRUNCATE 차단, 삭제 함수는 정의자 권한·search_path 고정·PUBLIC 회수
+        String v4 = Files.readString(
+                Path.of("src/main/resources/db/migration/postgresql/V4__audit_retention.sql"), StandardCharsets.UTF_8);
+        assertThat(v4.replace("\r", "").replaceAll("[ \\t]+", " ")).contains(
+                "IF TG_OP = 'DELETE' THEN\n IF current_setting('dashboard.audit_retention_purge', true) = 'on'\n"
+                        + " AND OLD.occurred_at < CURRENT_TIMESTAMP - INTERVAL '30 days' THEN\n RETURN OLD;",
+                "RAISE EXCEPTION 'audit_logs is append-only: % is forbidden', TG_OP;",
+                "BEFORE TRUNCATE ON audit_logs\nFOR EACH STATEMENT\nEXECUTE FUNCTION prevent_audit_log_mutation();",
+                "CREATE OR REPLACE FUNCTION public.purge_expired_audit_logs(p_retention_days integer)",
+                "SECURITY DEFINER\nSET search_path = pg_catalog, pg_temp\nSET lock_timeout = '5s'",
+                "IF p_retention_days IS NULL OR p_retention_days < 30 THEN\n RAISE EXCEPTION",
+                "PERFORM set_config('dashboard.audit_retention_purge', 'on', true);",
+                "PERFORM set_config('dashboard.audit_retention_purge', 'off', true);",
+                "REVOKE ALL ON FUNCTION public.purge_expired_audit_logs(integer) FROM PUBLIC;");
+        // UPDATE를 통과시키는 가지가 없다(RETURN은 DELETE 가지의 RETURN OLD와 삭제 함수의 RETURN NEXT뿐)
+        assertThat(v4).doesNotContain("RETURN NEW").doesNotContainIgnoringCase("disable trigger")
+                .doesNotContainIgnoringCase("drop trigger");
+        assertThat(v4.split("RETURN OLD;", -1)).hasSize(2);
+        // 이력 표·번호 표의 트리거는 V4가 건드리지 않는다.
+        assertThat(v4).doesNotContain("incident_assignment_history", "incident_refs");
+        // H2 V4는 버전만 맞춘다(삭제 함수·트리거 변경 없음)
+        String h2v4 = Files.readString(
+                Path.of("src/main/resources/db/migration/h2/V4__audit_retention.sql"), StandardCharsets.UTF_8);
+        String h2Statements = h2v4.lines().filter(line -> !line.startsWith("--")).reduce("", (a, b) -> a + b + "\n");
+        assertThat(h2Statements).doesNotContainIgnoringCase("create ").doesNotContainIgnoringCase("trigger")
+                .doesNotContainIgnoringCase("delete ").doesNotContainIgnoringCase("alias");
+
+        // 앱 코드(Java, MyBatis 매퍼)에는 감사 로그를 지우거나 삭제 함수를 부르는 문장이 없다.
+        Pattern auditRemoval = Pattern.compile(
+                "(?i)delete\\s+from\\s+(public\\.)?audit_logs|truncate\\s+(table\\s+)?(only\\s+)?(public\\.)?audit_logs"
+                        + "|purge_expired_audit_logs\\s*\\(");
+        for (Path root : List.of(Path.of("src/main/java"), Path.of("src/main/resources/mapper"))) {
+            try (Stream<Path> files = Files.walk(root)) {
+                List<Path> sources = files.filter(Files::isRegularFile).toList();
+                assertThat(sources).isNotEmpty();
+                for (Path file : sources) {
+                    assertThat(Files.readString(file, StandardCharsets.UTF_8))
+                            .as("앱 코드 %s에 감사 로그 삭제 문장이 없어야 한다", file)
+                            .doesNotContainPattern(auditRemoval);
+                }
+            }
+        }
+        assertThat(Files.readString(Path.of("src/main/resources/application.yml"), StandardCharsets.UTF_8))
+                .doesNotContainIgnoringCase("retention");
+
+        // 설정 도구: 삭제 함수를 만들지 않고 초기화 역할에 EXECUTE만 준다. 함수가 없으면 멈춘다. (금지 글은 t33 시험이 본다)
+        String setupSh = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-setup.sh"), StandardCharsets.UTF_8);
+        assertThat(setupSh).contains(
+                "GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_sandbox_reset;",
+                "PURGE_FN='public.purge_expired_audit_logs(integer)'",
+                "is missing in zeekad_dashboard; start dashboard-app with migration V4 (Flyway) first\"; exit 1",
+                "purge_public_execute=")
+                .doesNotContain("FUNCTION public.purge_expired_audit_logs(p_retention_days");
+        // GRANT 문은 일곱뿐이다: DB CONNECT 둘, sandbox 스키마 USAGE 둘, 함수 EXECUTE 셋(표 권한 없음)
+        List<String> grants = setupSh.lines().map(String::trim).filter(line -> line.startsWith("GRANT ")).toList();
+        assertThat(grants).containsExactly(
+                "GRANT CONNECT ON DATABASE zeekad TO $RESET_ROLE;",
+                "GRANT CONNECT ON DATABASE zeekad_dashboard TO $RESET_ROLE;",
+                "GRANT USAGE ON SCHEMA sandbox TO zeekad_sandbox_reset;",
+                "GRANT EXECUTE ON FUNCTION sandbox.reset_pipeline() TO zeekad_sandbox_reset;",
+                "GRANT USAGE ON SCHEMA sandbox TO zeekad_sandbox_reset;",
+                "GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;",
+                "GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_sandbox_reset;");
+
+        // 초기화 서비스: 기한 값 검사(정수 30~3650, 아니면 exit 2), 하루 한 번 판정 함수, 있는지·실행 권한 확인 뒤 호출, 감사 칸
+        String resetSh = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-reset.sh"), StandardCharsets.UTF_8);
+        assertThat(resetSh).contains(
+                "AUDIT_DAYS=\"${SANDBOX_AUDIT_RETENTION_DAYS:-}\"",
+                "[ \"$AUDIT_DAYS\" -lt 30 ] || [ \"$AUDIT_DAYS\" -gt 3650 ]",
+                "audit_purge_decision() {",
+                "has_function_privilege(current_user, to_regprocedure('$AUDIT_FN')::oid, 'EXECUTE')",
+                "FROM public.purge_expired_audit_logs($AUDIT_DAYS)",
+                "to_char(cutoff AT TIME ZONE 'UTC',",
+                "[ \"$r_state\" = ERROR ] && overall=ERROR",
+                "; audit[$r_state]${r_result:+ $r_result}\"");
+        assertThat(resetSh.toLowerCase(java.util.Locale.ROOT)).doesNotContain("delete from", "truncate",
+                "disable trigger", "set_config", "dashboard.audit_retention_purge");
+
+        // compose: 공개 데모 기한 90일(고정 값), 모든 서비스에 같은 로그 크기 한도(json-file 10MB x 5)
+        String portfolio = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+        assertThat(serviceBlock(portfolio, "sandbox-reset")).contains("SANDBOX_AUDIT_RETENTION_DAYS: \"90\"");
+        assertThat(portfolio).doesNotContain("PORTFOLIO_AUDIT_RETENTION");
+        record ComposeFile(Path path, List<String> services) { }
+        for (ComposeFile file : List.of(
+                new ComposeFile(Path.of("compose.portfolio.yml"), List.of("postgres", "api", "dashboard-app", "nginx-waf",
+                        "demo-seed", "sandbox-setup", "sandbox-reset")),
+                new ComposeFile(Path.of("compose.yml"), List.of("dashboard-app", "nginx-waf")))) {
+            String text = Files.readString(file.path(), StandardCharsets.UTF_8).replace("\r", "");
+            assertThat(text).as("%s 로그 한도 앵커", file.path()).contains(
+                    "x-zeekad-logging: &zeekad-logging\n  driver: json-file\n  options:\n    max-size: \"10m\"\n    max-file: \"5\"\n");
+            // 서비스 이름 목록이 파일의 서비스 전부인지 본다(새 서비스가 한도 없이 들어오지 않게).
+            String servicesPart = text.substring(text.indexOf("\nservices:\n") + 1);
+            List<String> declared = servicesPart.substring(0, indexOfNextTopLevelKey(servicesPart)).lines()
+                    .filter(line -> line.matches("^  [A-Za-z0-9_-]+:\\s*$"))
+                    .map(line -> line.trim().replace(":", "")).toList();
+            assertThat(declared).as("%s 서비스 목록", file.path()).containsExactlyElementsOf(file.services());
+            for (String service : file.services()) {
+                String block = serviceBlock(text, service);
+                assertThat(block.lines().filter(line -> line.equals("    logging: *zeekad-logging")).count())
+                        .as("%s %s 로그 한도", file.path(), service).isEqualTo(1);
+            }
+        }
+
+        // 감사 로그 화면 사전: enum의 모든 유형에 한국어 라벨이 있다(없으면 화면에 "미등록 값"으로 보인다). 역할 칸의 SYSTEM도.
+        String labels = Files.readString(Path.of("frontend/src/utils/labels.ts"), StandardCharsets.UTF_8).replace("\r", "");
+        String auditDict = labels.substring(labels.indexOf("  auditAction: {"));
+        auditDict = auditDict.substring(0, auditDict.indexOf("\n  },"));
+        for (com.zeekad.dashboard.model.AuditActionType type : com.zeekad.dashboard.model.AuditActionType.values()) {
+            assertThat(auditDict).as("labels.ts auditAction %s", type).containsPattern("\\n    " + type.name() + ": '[^']+',");
+        }
+        assertThat(auditDict).contains("AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',", "INCIDENT_ASSIGNMENT: '담당 지정',");
+        String roleDict = labels.substring(labels.indexOf("  userRole: {"));
+        assertThat(roleDict.substring(0, roleDict.indexOf("\n  },"))).contains("SYSTEM: '시스템',");
+    }
+
+    /** services: 줄로 시작하는 글에서 다음 최상위 키(들여쓰기 없는 줄. 주석 제외)가 시작하는 위치. 없으면 끝. */
+    private static int indexOfNextTopLevelKey(String fromServicesLine) {
+        int pos = fromServicesLine.indexOf('\n') + 1;
+        while (pos < fromServicesLine.length()) {
+            int next = fromServicesLine.indexOf('\n', pos);
+            String line = next < 0 ? fromServicesLine.substring(pos) : fromServicesLine.substring(pos, next);
+            if (!line.isEmpty() && !Character.isWhitespace(line.charAt(0)) && !line.startsWith("#")) {
+                return pos;
+            }
+            if (next < 0) {
+                break;
+            }
+            pos = next + 1;
+        }
+        return fromServicesLine.length();
+    }
+
     private static String serviceBlock(String compose, String service) {
         List<String> lines = compose.lines().toList();
         StringBuilder block = new StringBuilder();
