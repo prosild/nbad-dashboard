@@ -14,5 +14,10 @@ public enum AuditActionType {
     ANALYST_REVIEW_DECISION,
     /** T25 담당자 지정·변경·해제(조사 시작 때 자동 지정 포함) */
     INCIDENT_ASSIGNMENT,
-    USER_ADMIN_CHANGE
+    USER_ADMIN_CHANGE,
+    /**
+     * T58 보관 기한이 지난 감사 행 삭제. 앱은 이 값을 쓰지 않는다(조회와 화면 필터에만 쓴다).
+     * 행은 DB 함수 purge_expired_audit_logs가 남긴다(행위자 audit-retention, 역할 SYSTEM).
+     */
+    AUDIT_RETENTION_PURGE
 }

@@ -121,6 +121,8 @@ export const LABEL_DICTIONARIES = {
     VIEWER: '조회자',
     ANALYST: '분석가',
     ADMIN: '관리자',
+    /** 사람이 아닌 행위자(계정 시드, 보관 기한 삭제)의 감사 행에만 나온다. 계정 역할이 아니다 */
+    SYSTEM: '시스템',
   },
   /** 감사 로그 동작 유형 (대시보드 AuditActionType) */
   auditAction: {
@@ -132,7 +134,9 @@ export const LABEL_DICTIONARIES = {
     INCIDENT_VIEW_UNMASKED: '마스킹 없이 인시던트 열람',
     INCIDENT_STATUS_TRANSITION: '인시던트 상태 변경',
     ANALYST_REVIEW_DECISION: '에스컬레이션 결정',
+    INCIDENT_ASSIGNMENT: '담당 지정',
     USER_ADMIN_CHANGE: '사용자 계정 변경',
+    AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',
   },
   /** 증적 표의 열 이름 (zeek_AD evidence.v1 하위 키) */
   evidenceField: {
