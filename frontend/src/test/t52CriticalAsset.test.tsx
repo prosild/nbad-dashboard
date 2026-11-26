@@ -6,7 +6,7 @@ import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { DetailHeader } from '../components/incident/DetailHeader';
 import { RelatedHostIncidents } from '../components/incident/RelatedHostIncidents';
-import { PRIORITY_TOOLTIP } from '../components/StatusBadge';
+import { PRIORITY_COLUMN_TOOLTIP, PRIORITY_TOOLTIP } from '../components/StatusBadge';
 import { ToastProvider } from '../components/ToastContext';
 import type { IncidentQueueItem, IncidentQueueMeta, UnifiedQueueItem } from '../types/api';
 import type { HostRiskItem, RelatedHostIncident } from '../types/hosts';
@@ -51,6 +51,13 @@ afterEach(() => {
 /** 표지(배지)를 찾는다: data-critical-asset 속성이 있는 요소 */
 function badgesIn(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-critical-asset]'));
+}
+
+/** 화면 읽기 글(.sr-only)을 뺀 보이는 글 */
+function visibleText(el: HTMLElement): string {
+  const copy = el.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('.sr-only').forEach((n) => n.remove());
+  return (copy.textContent ?? '').trim();
 }
 
 /* ───────────── 자료 ───────────── */
@@ -169,7 +176,12 @@ describe('T52 큐의 중요 자산 표지', () => {
       const badges = badgesIn(r);
       expect(badges).toHaveLength(1);
       expect(badges[0]).toHaveAttribute('title', title);
-      expect(badges[0].textContent).toContain('중요 자산');
+      // T62: 데스크톱 표에서는 왕관 아이콘만 보인다(보이는 글 "중요 자산"이 우선순위 칸을 넓혀 1280px 표가 넘쳤다)
+      expect(badges[0]).toHaveAttribute('data-critical-asset', 'icon');
+      expect(badges[0].querySelector('svg')).not.toBeNull();
+      expect(visibleText(badges[0])).toBe('');
+      // 배지 꼴로 옆에 두어도 칸이 34px 넓어져 1536px에서 넘쳤다. 우선순위 배지 모서리에 겹쳐 둔다(칸 폭을 늘리지 않는다)
+      expect(badges[0].parentElement?.className).toContain('absolute');
       // 툴팁만으로는 휴대폰·키보드 사용자가 볼 수 없어 화면 읽기 글로도 둔다
       expect(badges[0].querySelector('.sr-only')?.textContent).toBe(title.replace('\n', '. '));
       // 우선순위 배지 바로 옆(같은 칸)
@@ -185,6 +197,20 @@ describe('T52 큐의 중요 자산 표지', () => {
     const cardBadges = badgesIn(cards);
     expect(cardBadges).toHaveLength(4);
     expect(cardBadges.map((b) => b.getAttribute('title'))).toContain(withName(RAISED));
+    // 휴대폰 카드는 글 표지 그대로다(T62는 데스크톱 표만 아이콘으로 바꿨다)
+    for (const b of cardBadges) {
+      expect(b).toHaveAttribute('data-critical-asset', '');
+      expect(visibleText(b)).toBe('중요 자산');
+    }
+  });
+
+  it('T62: 데스크톱 표의 우선순위 열 머리 툴팁이 왕관 아이콘의 뜻을 알린다', async () => {
+    renderQueue('ANALYST', queueRows(false));
+    const table = await screen.findByRole('table');
+    const th = within(table).getByRole('button', { name: /우선순위 기준 정렬/ }).closest('th') as HTMLElement;
+    expect(th).toHaveAttribute('title', PRIORITY_COLUMN_TOOLTIP);
+    expect(PRIORITY_COLUMN_TOOLTIP.startsWith(`${PRIORITY_TOOLTIP}.\n`)).toBe(true);
+    expect(PRIORITY_COLUMN_TOOLTIP).toContain('왕관 아이콘: 중요 자산으로 등록된 호스트입니다');
   });
 
   it('조회자: 표지는 보이고 이름은 어디에도 보이지 않는다(응답에 잘못 실려 와도)', async () => {

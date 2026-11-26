@@ -41,6 +41,7 @@ import {
   IncidentStatusBadge,
   NewRowBadge,
   OngoingBadge,
+  PRIORITY_COLUMN_TOOLTIP,
   PRIORITY_TOOLTIP,
   PriorityBadge,
   ResolutionBadge,
@@ -1182,7 +1183,7 @@ function QueueTable({
             <th scope="col" className="soc-th-compact hidden px-1.5 2xl:table-cell 2xl:px-2" data-col-head="incident-no">
               번호
             </th>
-            <SortHeader column="priority" label="우선순위" title={PRIORITY_TOOLTIP} {...headerProps} />
+            <SortHeader column="priority" label="우선순위" title={PRIORITY_COLUMN_TOOLTIP} {...headerProps} />
             <SortHeader
               column="detected"
               label="탐지 · 경과"
@@ -1254,8 +1255,15 @@ function QueueTable({
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
                   <div className="flex items-center gap-1">
-                    <PriorityBadge priority={item.priority} />
-                    {item.assetCritical && <QueueCriticalBadge item={item} masked={masked} />}
+                    {/* T62: 중요 자산 왕관은 우선순위 배지 오른쪽 위 모서리에 겹쳐 둔다(칸 폭을 늘리지 않는다. 배지 오른쪽 여백 안에 걸친다) */}
+                    <span className={`relative inline-flex ${item.assetCritical ? 'mr-1.5' : ''}`}>
+                      <PriorityBadge priority={item.priority} />
+                      {item.assetCritical && (
+                        <span className="absolute -right-1.5 -top-1.5 inline-flex">
+                          <QueueCriticalBadge item={item} masked={masked} iconOnly />
+                        </span>
+                      )}
+                    </span>
                     {isNewRow(item, highlightAfter) && <NewRowBadge />}
                   </div>
                 </td>
@@ -1524,14 +1532,18 @@ function MobileElapsed({ item, anchor }: { item: UnifiedQueueItem; anchor: strin
   );
 }
 
-/** T52 큐 행의 중요 자산 표지(우선순위 배지 옆) */
-function QueueCriticalBadge({ item, masked }: { item: UnifiedQueueItem; masked: boolean }) {
+/**
+ * T52 큐 행의 중요 자산 표지(우선순위 배지 옆). T62: 데스크톱 표(iconOnly)는 왕관 아이콘만 보인다(글 표지가 우선순위 칸을
+ * 넓혀 1280px 표가 넘쳤다). 툴팁·화면 읽기 글은 같고 휴대폰 카드는 글 표지 그대로다.
+ */
+function QueueCriticalBadge({ item, masked, iconOnly = false }: { item: UnifiedQueueItem; masked: boolean; iconOnly?: boolean }) {
   return (
     <CriticalAssetBadge
       priority={item.priority}
       priorityBase={item.priorityBase}
       name={item.criticalAssetName}
       masked={masked}
+      iconOnly={iconOnly}
     />
   );
 }
