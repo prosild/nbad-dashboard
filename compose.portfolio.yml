@@ -225,6 +225,7 @@ services:
         ipv4_address: ${PORTFOLIO_WAF_IP:-10.203.48.250}
 
   # 계정 시드(한 번씩 실행하는 도구. up으로는 뜨지 않는다): 공개 계정(demo, trial-analyst)만 활성, 나머지 계정 비활성. 멱등.
+  # T54: 분석이 끝난 예시 셋도 기록한다(시연 분석가 demo-analyst로 앱 API를 불러, 기록하는 동안만 그 계정을 켠다). sandbox-setup 앞에 돌린다.
   demo-seed:
     profiles: ["seed"]
     image: ${PORTFOLIO_PIPELINE_IMAGE:-zeekad-pipeline:dev}
@@ -236,6 +237,8 @@ services:
       SEED_DB_HOST: postgres
       SEED_DB_PORT: "5432"
       DASHBOARD_APP_PASSWORD: ${DASHBOARD_APP_PASSWORD:-}
+      # T54: 분석이 끝난 예시(seed/demo_examples.json)의 상태를 판정할 때 zeekad 계약 뷰를 읽는 계정. 앱과 같은 읽기 전용 dashboard_ro(새 비밀값이 아니다).
+      DASHBOARD_RO_PASSWORD: ${DASHBOARD_RO_PASSWORD:-}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-}
       DEMO_DISPLAY_NAME: ${DEMO_DISPLAY_NAME:-포트폴리오 방문자 (읽기 전용)}
       # T33 체험용 분석가 계정 trial-analyst. 비어 있으면 시드가 만들지 않고(이미 있으면 비활성) 알린다.

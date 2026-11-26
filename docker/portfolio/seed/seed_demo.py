@@ -10,16 +10,27 @@
 (Kali 실습망 캡처 lab-20261119·lab-20261122만 정확한 ID로 공개하고, 시험 캡처 lab-20261201·첫 VM 실행 lab-20261118·
 시험 뒤 유휴 구간 lab-20261123 같은 나머지 실습망 캡처는 시연 화면에서 숨긴다, 2026-11-21·2026-11-23 결정). 패턴이 바뀌면 관리자 API로 갱신한다.
 
+T54 분석이 끝난 예시: 자료 파일(SEED_EXAMPLES_FILE, 기본 /seed/demo_examples.json)의 인시던트를 시연 분석가 계정
+demo-analyst(ANALYST, 평소 비활성)로 앱 API를 불러 착수 → (정탐이면) 대응 조치 → 담당 해제 → 종결까지 기록한다.
+기록 시각은 앱·zeek_AD 함수가 정하는 실제 시각이다(꾸미지 않는다). 종결 뒤에는 담당을 바꿀 수 없어 해제가 종결 앞이다.
+- 판정 먼저, 쓰기는 나중: 로그인 전에 DB 읽기만으로 예시마다 상태를 판정한다. zeekad 쪽(최신 큐의 작업 번호·순위, 상태·판정·마지막 변경자)은
+  앱과 같은 읽기 계정 dashboard_ro(DASHBOARD_RO_PASSWORD)로 계약 뷰를 읽고, 앱 DB 쪽(담당자, demo-analyst의 조치 수)은 dashboard_app으로 읽는다.
+  하나라도 어긋나면 아무것도 쓰지 않고(계정도 켜지 않고) 예시별 이유와 함께 0이 아닌 코드로 끝낸다. 최신 큐에 없는 예시는 건너뛴다.
+- demo-analyst의 비밀번호는 예시를 기록해야 하는 실행마다 무작위로 만들고 쓰고 나면 버린다(출력·저장하지 않는다).
+  계정이 없으면 createUser에 주고, 있으면 공개 계정과 같은 SQL 해시 교체 + 감사 행으로 바꾼다. 기록이 끝나면 곧바로 끈다.
+- zeek_AD 표, 대응 조치 표, 담당 표에는 SQL로 쓰지 않는다(예시의 기록은 모두 앱 API를 거친다).
+
 compose.portfolio.yml의 demo-seed 서비스(zeekad-pipeline 이미지의 Python)로 실행한다. 다시 실행해도 안전하다(멱등).
-1. zeekad_dashboard를 dashboard_app 계정으로 읽어 현재 상태를 확인한다. 이미 목표 상태면 아무것도 바꾸지 않고 끝낸다.
+1. zeekad_dashboard를 dashboard_app 계정으로 읽어 현재 상태를 확인하고, 예시의 상태를 판정한다. 이미 목표 상태면 아무것도 바꾸지 않고 끝낸다.
 2. 바꿀 것이 있으면 가능한 단계는 앱 관리자 API(감사 로그 USER_ADMIN_CHANGE)로 한다. admin 로그인은
-   BOOTSTRAP_ADMIN_PASSWORD + BOOTSTRAP_ADMIN_TOTP_SECRET으로 계산한 TOTP 코드로 한다.
-3. API가 없는 단계만 직접 SQL로 하고, 같은 트랜잭션에서 감사 로그(actor portfolio-seed)를 남긴다.
+   BOOTSTRAP_ADMIN_PASSWORD + BOOTSTRAP_ADMIN_TOTP_SECRET으로 계산한 TOTP 코드로 한다(한 실행에 한 번).
+3. API가 없는 단계만 직접 SQL로 하고, 같은 트랜잭션에서 감사 로그(actor portfolio-seed)를 남긴다(users 표만).
    - admin 비활성화: UserAdminService가 자기 계정 비활성화를 막는다.
    - 관리자 API가 필요한데 admin이 비활성인 경우의 일시 활성화(API 단계를 마치면 곧바로 다시 비활성화).
-   - 이미 있는 demo의 비밀번호 변경: 비밀번호 변경 API가 없다(createUser는 기존 아이디를 거부한다).
+   - 이미 있는 demo·trial-analyst·demo-analyst의 비밀번호 변경: 비밀번호 변경 API가 없다(createUser는 기존 아이디를 거부한다).
      해시는 앱과 같은 BCrypt(strength 12)를 pgcrypto(crypt + gen_salt('bf', 12))로 만든다.
-비밀번호·TOTP 시크릿·세션 값은 출력하지 않는다. 비밀번호는 환경 변수로만 받는다(명령줄 인자로 받지 않는다).
+   - API 단계가 실패해도 켜져 있는 demo-analyst를 끈다(finally, admin과 같은 방식).
+비밀번호·TOTP 시크릿·세션 값과 예시 글은 출력하지 않는다. 비밀번호는 환경 변수로만 받는다(명령줄 인자로 받지 않는다).
 """
 
 import base64
@@ -27,6 +38,8 @@ import hashlib
 import hmac
 import json
 import os
+import re
+import secrets
 import struct
 import sys
 import time
@@ -43,6 +56,13 @@ DEFAULT_ANALYST_DISPLAY_NAME = "포트폴리오 방문자 (분석가 체험)"
 DEFAULT_DEMO_PATTERNS = "cic17-*,syn1-*,lab-20261119,lab-20261122"
 ADMIN_USERNAME = "admin"
 SEED_ACTOR = "portfolio-seed"
+# T54 시연 분석가: 예시를 기록하는 동안만 켠다. 잠금 제외 목록에 넣지 않는다.
+EXAMPLE_USERNAME = "demo-analyst"
+EXAMPLE_ROLE = "ANALYST"
+EXAMPLE_DISPLAY_NAME = "시연 분석가"
+EXAMPLE_PATTERNS = ["lab-20261119", "lab-20261122"]
+DEFAULT_EXAMPLES_FILE = "/seed/demo_examples.json"
+RESOLUTIONS = ("true_positive", "false_positive", "benign")
 
 
 def env(name, required=True, default=None):
@@ -104,7 +124,7 @@ class Db:
             return conn.execute("SELECT public.crypt(%s, public.gen_salt('bf', 12))", (raw_password,)).fetchone()[0]
 
     def sql_change(self, operation, target, reason, statement, params):
-        """API가 없는 변경 한 건을 감사 로그와 같은 트랜잭션으로 실행한다."""
+        """API가 없는 변경 한 건(users 표)을 감사 로그와 같은 트랜잭션으로 실행한다."""
         with self.app() as conn:
             conn.execute(statement, params)
             conn.execute(
@@ -113,6 +133,53 @@ class Db:
                 (SEED_ACTOR, json.dumps({"operation": operation, "targetUsername": target, "via": "direct SQL",
                                          "reason": reason}, ensure_ascii=False)))
         log(f"SQL {operation} {target} ({reason})")
+
+    def read_example_app_state(self, incident_ids):
+        """앱 DB 읽기(T54): 인시던트별 현재 담당자 아이디(없으면 None)와 demo-analyst가 쓴 대응 조치 수."""
+        with self.app() as conn:
+            assignees = dict(conn.execute(
+                "SELECT a.incident_id, u.username FROM incident_assignments a"
+                " LEFT JOIN users u ON u.id = a.assignee_user_id WHERE a.incident_id = ANY(%s)",
+                (incident_ids,)).fetchall())
+            actions = dict(conn.execute(
+                "SELECT incident_id, count(*) FROM incident_response_actions"
+                " WHERE actor_username = %s AND incident_id = ANY(%s) GROUP BY incident_id",
+                (EXAMPLE_USERNAME, incident_ids)).fetchall())
+        return assignees, actions
+
+    def current_assignee(self, incident_id):
+        assignees, _ = self.read_example_app_state([incident_id])
+        return assignees.get(incident_id)
+
+
+class ZeekadReader:
+    """zeekad 계약 뷰 읽기 전용(T54). 앱이 쓰는 읽기 계정 dashboard_ro로 붙는다(새 비밀값이 아니다)."""
+
+    def __init__(self):
+        self.params = dict(host=env("SEED_DB_HOST", default="postgres"), port=int(env("SEED_DB_PORT", default="5432")),
+                           user="dashboard_ro", password=env("DASHBOARD_RO_PASSWORD"), dbname="zeekad")
+
+    def read(self, incident_ids):
+        """최신 큐의 행(작업 번호·순위·캡처)과 상태 행(상태·판정·마지막 변경자). 상태는 앱 상세와 같이 가장 최근 행을 쓴다."""
+        with psycopg.connect(**self.params) as conn:
+            conn.read_only = True
+            queue = {}
+            for incident_id, job_id, queue_rank, capture_id in conn.execute(
+                    "SELECT incident_id, job_id, queue_rank, capture_id FROM dashboard.latest_incident_queue"
+                    " WHERE incident_id = ANY(%s) ORDER BY incident_id, job_id, queue_rank", (incident_ids,)).fetchall():
+                queue.setdefault(incident_id, []).append(
+                    {"job_id": job_id, "queue_rank": queue_rank, "capture_id": capture_id})
+            status = {}
+            for incident_id, st, resolution, updated_by in conn.execute(
+                    "SELECT DISTINCT ON (incident_id) incident_id, zeekad_status, zeekad_resolution, updated_by"
+                    " FROM dashboard.incident_status WHERE incident_id = ANY(%s)"
+                    " ORDER BY incident_id, updated_at DESC", (incident_ids,)).fetchall():
+                status[incident_id] = {"status": norm(st), "resolution": norm(resolution), "updated_by": updated_by}
+        return queue, status
+
+
+def norm(value):
+    return None if value is None else str(value).strip().lower()
 
 
 class Api:
@@ -161,6 +228,14 @@ class Api:
             raise RuntimeError(f"admin login nextRoute={result.get('nextRoute')} (TOTP must already be enabled)")
         self.call("POST", "/api/auth/totp/verify", {"code": totp_code(totp_secret)}, csrf=True)
         log("API admin login + TOTP verified")
+
+    def login_analyst(self, username, password):
+        """분석가 로그인(TOTP 없음, T54 예시 기록용 세션)."""
+        self.call("GET", "/api/auth/csrf")
+        result = self.call("POST", "/api/auth/login", {"username": username, "password": password}, csrf=True)
+        if result.get("nextRoute") != "/":
+            raise RuntimeError(f"{username} login nextRoute={result.get('nextRoute')} (expected an analyst session)")
+        log(f"API {username} login")
 
     def users(self):
         return {u["username"]: u for u in self.call("GET", "/api/admin/users")["users"]}
@@ -222,6 +297,202 @@ def describe(users):
                      for u in users.values())
 
 
+# ───────────────────────── T54 분석이 끝난 예시 ─────────────────────────
+
+RESPONSE_ACTIONS = ("block_ip", "isolate_host", "lock_account", "handover", "monitor", "none", "other")
+MAX_TEXT_CODE_POINTS = 500  # 앱의 FreeTextLimits.MAX_CODE_POINTS(상태 변경 사유)와 대응 조치 메모 상한
+INCIDENT_ID_SHAPE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\|[0-9A-Fa-f.:]+\|(originator|responder)\|\d+$")
+
+
+def pattern_allows(patterns, capture_id):
+    """허용 캡처 패턴(정확한 ID 또는 끝의 * 접두)에 맞는가. 앱의 CapturePatternMatcher와 같은 규칙."""
+    for p in patterns:
+        if p.endswith("*"):
+            if capture_id.startswith(p[:-1]):
+                return True
+        elif capture_id == p:
+            return True
+    return False
+
+
+def load_examples():
+    """자료 파일의 예시 목록. 꼴이 틀리면 아무것도 바꾸기 전에 멈춘다. 빈 목록이면 계정만 맞춘다."""
+    path = os.environ.get("SEED_EXAMPLES_FILE", "").strip() or DEFAULT_EXAMPLES_FILE
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as error:
+        sys.exit(f"seed: cannot read examples file {path} ({type(error).__name__})")
+    examples = doc.get("examples") if isinstance(doc, dict) else None
+    if not isinstance(examples, list):
+        sys.exit(f"seed: examples file {path} has no 'examples' list")
+
+    def text_ok(value):
+        return isinstance(value, str) and value.strip() != "" and len(value.strip()) <= MAX_TEXT_CODE_POINTS
+
+    seen = set()
+    for ex in examples:
+        if not isinstance(ex, dict):
+            sys.exit(f"seed: examples file {path}: an example is not an object")
+        key, incident_id, action = ex.get("key"), ex.get("incidentId"), ex.get("responseAction")
+        shape = INCIDENT_ID_SHAPE.match(incident_id) if isinstance(incident_id, str) else None
+        bad = []
+        if not isinstance(key, str) or not key:
+            bad.append("key")
+        if shape is None:
+            bad.append("incidentId")
+        elif not pattern_allows(EXAMPLE_PATTERNS, shape.group(1)):
+            bad.append(f"capture {shape.group(1)} is outside the {EXAMPLE_USERNAME} capture patterns")
+        if ex.get("resolution") not in RESOLUTIONS:
+            bad.append("resolution")
+        if not text_ok(ex.get("startReason")) or not text_ok(ex.get("closeReason")):
+            bad.append("startReason/closeReason")
+        if action is not None and (not isinstance(action, dict) or action.get("action") not in RESPONSE_ACTIONS
+                                   or (action.get("note") is not None and not text_ok(action.get("note")))
+                                   or (action.get("action") in ("none", "other") and not text_ok(action.get("note")))):
+            bad.append("responseAction")
+        if ex.get("resolution") == "true_positive" and action is None:
+            bad.append("responseAction (required for true_positive)")
+        if incident_id in seen:
+            bad.append("duplicate incidentId")
+        seen.add(incident_id)
+        if bad:
+            sys.exit(f"seed: examples file {path}: example {key!r} invalid: {', '.join(bad)}")
+    return examples, path
+
+
+class ExamplePlan:
+    """예시 하나의 판정. kind: skipped(최신 큐에 없음) · kept(목표 상태) · apply(기록할 것) · fail(어긋남)."""
+
+    def __init__(self, example, kind, reason="", steps=(), job_id=None, queue_rank=None):
+        self.example = example
+        self.kind = kind
+        self.reason = reason
+        self.steps = list(steps)
+        self.job_id = job_id
+        self.queue_rank = queue_rank
+
+    @property
+    def label(self):
+        return f"{self.example['key']} ({self.example['incidentId']})"
+
+
+def plan_example(example, queue_rows, status, assignee, actor_actions):
+    """DB에서 읽은 값만으로 예시 하나의 할 일을 정한다(쓰지 않는다). handoff/T54.md 3절의 표.
+    정탐의 대응 조치는 demo-analyst의 조치가 0일 때만 기록한다(다시 실행할 때 같은 조치를 겹쳐 쓰지 않는다)."""
+    rows = queue_rows or []
+    if not rows:
+        return ExamplePlan(example, "skipped", "not in the latest queue (another snapshot or an ID typo)")
+    if len(rows) > 1:
+        return ExamplePlan(example, "fail", f"{len(rows)} rows in the latest queue (expected one)")
+    job_id, queue_rank = rows[0]["job_id"], rows[0]["queue_rank"]
+    true_positive = example["resolution"] == "true_positive"
+    need_action = true_positive and actor_actions == 0
+    if status is None:
+        if assignee is not None:
+            return ExamplePlan(example, "fail", f"new (no status row) but assigned to {assignee}")
+        steps = ["start"] + (["response-action"] if need_action else []) + ["release", "close"]
+        return ExamplePlan(example, "apply", "new", steps, job_id, queue_rank)
+    st, by = status["status"], status["updated_by"]
+    if st == "investigating":
+        if by != EXAMPLE_USERNAME:
+            return ExamplePlan(example, "fail", f"investigating, last changed by {by} (not {EXAMPLE_USERNAME})")
+        if assignee not in (None, EXAMPLE_USERNAME):
+            return ExamplePlan(example, "fail", f"investigating, assigned to {assignee}")
+        steps = (["response-action"] if need_action else []) + (["release"] if assignee else []) + ["close"]
+        return ExamplePlan(example, "apply", f"investigating by {EXAMPLE_USERNAME} (resume)", steps, job_id, queue_rank)
+    if st == "closed":
+        wrong = []
+        if status["resolution"] != example["resolution"]:
+            wrong.append(f"resolution {status['resolution']} (expected {example['resolution']})")
+        if by != EXAMPLE_USERNAME:
+            wrong.append(f"last changed by {by} (not {EXAMPLE_USERNAME})")
+        if assignee is not None:
+            wrong.append(f"still assigned to {assignee}; the API cannot release a closed incident (409 INCIDENT_CLOSED)")
+        if true_positive and actor_actions == 0:
+            wrong.append(f"true positive without a response action by {EXAMPLE_USERNAME}")
+        if wrong:
+            return ExamplePlan(example, "fail", "closed but " + "; ".join(wrong))
+        return ExamplePlan(example, "kept", "closed as planned", job_id=job_id, queue_rank=queue_rank)
+    return ExamplePlan(example, "fail", f"unexpected status {st!r} (status row by {by})")
+
+
+def plan_examples(examples, db):
+    """예시 전부를 DB 읽기만으로 판정한다. 예시가 없으면 zeekad에 붙지 않는다."""
+    if not examples:
+        return []
+    ids = [ex["incidentId"] for ex in examples]
+    queue, status = ZeekadReader().read(ids)
+    assignees, actions = db.read_example_app_state(ids)
+    return [plan_example(ex, queue.get(ex["incidentId"]), status.get(ex["incidentId"]),
+                         assignees.get(ex["incidentId"]), actions.get(ex["incidentId"], 0)) for ex in examples]
+
+
+def examples_summary(plans):
+    """실행 앞의 판정으로 센다: 기록한 것(apply), 그대로 둔 것(kept), 건너뛴 것(skipped)과 그 ID."""
+    count = {kind: [p for p in plans if p.kind == kind] for kind in ("apply", "kept", "skipped")}
+    return (f"examples: applied={len(count['apply'])} kept={len(count['kept'])} skipped={len(count['skipped'])}"
+            + (f" skipped_ids=[{', '.join(p.example['incidentId'] for p in count['skipped'])}]"
+               if count["skipped"] else ""))
+
+
+def example_account_problems(users):
+    """demo-analyst의 목표 상태(있음, ANALYST, 표시 이름, 허용 캡처)와 다른 점. 켜짐은 다른 비공개 계정처럼 따로 본다."""
+    account = users.get(EXAMPLE_USERNAME)
+    if account is None:
+        return ["missing"]
+    if (account["role"] != EXAMPLE_ROLE or sorted(account["patterns"]) != sorted(EXAMPLE_PATTERNS)
+            or account["display_name"] != EXAMPLE_DISPLAY_NAME):
+        return ["access"]
+    return []
+
+
+def record_examples(db, api_base, plans, password):
+    """분석가 세션(demo-analyst)으로 예시를 기록한다. 담당 해제는 종결 앞이다(종결 뒤에는 담당을 바꿀 수 없다)."""
+    analyst = Api(api_base)
+    analyst.login_analyst(EXAMPLE_USERNAME, password)
+    try:
+        for plan in plans:
+            ex = plan.example
+            base = f"/api/incidents/{plan.job_id}/rank/{plan.queue_rank}"
+            done = []
+            if "start" in plan.steps:
+                analyst.call("POST", base + "/transition", {"toStatus": "investigating", "reason": ex["startReason"]},
+                             csrf=True)
+                done.append("start")
+            if "response-action" in plan.steps:
+                action = ex["responseAction"]
+                analyst.call("POST", base + "/response-actions",
+                             {"action": action["action"], "note": action.get("note")}, csrf=True)
+                done.append(f"response-action {action['action']}")
+            # 착수 때 앱이 미배정이면 행위자를 담당자로 지정한다. 지금 담당자를 다시 읽어 그 계정이면 해제한다.
+            assignee = db.current_assignee(ex["incidentId"])
+            if assignee == EXAMPLE_USERNAME:
+                analyst.call("POST", base + "/assignment", {"assignee": None, "expected": EXAMPLE_USERNAME}, csrf=True)
+                done.append("release")
+            elif assignee is not None:
+                raise RuntimeError(f"example {plan.label}: assigned to {assignee} before closing; not closed")
+            if db.current_assignee(ex["incidentId"]) is not None:
+                raise RuntimeError(f"example {plan.label}: still assigned after release; not closed")
+            analyst.call("POST", base + "/transition", {"toStatus": "closed", "resolution": ex["resolution"],
+                                                       "reason": ex["closeReason"]}, csrf=True)
+            done.append(f"close {ex['resolution']}")
+            log(f"API example {plan.label}: {', '.join(done)}")
+    finally:
+        try:
+            analyst.logout()
+        except Exception as error:  # 계정은 곧 꺼진다. 로그아웃 실패로 원래 오류를 덮지 않는다.
+            log(f"{EXAMPLE_USERNAME} logout failed ({type(error).__name__})")
+
+
+def disable_example_account_sql(db):
+    """finally: 켜져 있는 demo-analyst를 SQL로 끈다(관리자 세션이 깨졌을 때도). 감사 행을 같은 트랜잭션에 남긴다."""
+    account = db.read_users().get(EXAMPLE_USERNAME)
+    if account is not None and account["enabled"]:
+        db.sql_change("DISABLE", EXAMPLE_USERNAME, "demo example recording ended (admin API session did not disable it)",
+                      "UPDATE users SET enabled = FALSE, updated_at = now() WHERE username = %s", (EXAMPLE_USERNAME,))
+
+
 def main():
     demo_capture_patterns = demo_patterns()
     targets = [Target(DEMO_USERNAME, DEMO_ROLE, env("DEMO_PASSWORD"),
@@ -238,6 +509,7 @@ def main():
     admin_totp_secret = env("BOOTSTRAP_ADMIN_TOTP_SECRET")
     for name in ("BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD"):
         env(name)
+    examples, examples_path = load_examples()
     db = Db()
     api_base = env("SEED_API_BASE_URL", default="http://dashboard-app:8080")
 
@@ -248,14 +520,28 @@ def main():
     if ADMIN_USERNAME not in users:
         sys.exit("seed: bootstrap account admin is missing (BOOTSTRAP_ADMIN_PASSWORD must be set before the first app start)")
 
+    # 0) 예시 판정(T54): 쓰기 전에 DB 읽기만으로 전부 본다. 하나라도 어긋나면 아무것도 쓰지 않는다(계정도 켜지 않는다).
+    plans = plan_examples(examples, db)
+    log(f"examples file {examples_path}: {len(examples)} example(s); "
+        + (", ".join(f"{p.example['key']}={p.kind}({p.reason})" for p in plans) or "none"))
+    failures = [p for p in plans if p.kind == "fail"]
+    if failures:
+        for p in failures:
+            log(f"example {p.label}: FAIL {p.reason}")
+        sys.exit(f"seed: {len(failures)} example(s) are in an unexpected state; nothing was changed")
+    to_apply = [p for p in plans if p.kind == "apply"]
+    example_problems = example_account_problems(users)
+
     problems = all_problems(users, targets, db)
     others_enabled = [name for name, u in users.items()
                       if name not in public_names and name != ADMIN_USERNAME and u["enabled"]]
     admin_enabled = users[ADMIN_USERNAME]["enabled"]
     plan = ", ".join(f"{name}={p or 'ok'}" for name, p in problems.items())
-    log(f"plan: {plan}, enabled non-public accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
+    log(f"plan: {plan}, {EXAMPLE_USERNAME}={example_problems or 'ok'}, examples to record={len(to_apply)}, "
+        f"enabled non-public accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
 
-    if not has_problems(problems) and not others_enabled and not admin_enabled:
+    if not has_problems(problems) and not others_enabled and not admin_enabled and not example_problems and not to_apply:
+        log(examples_summary(plans))
         log(f"RESULT: NO_CHANGES (audit_logs rows={audit_before})")
         return
 
@@ -266,14 +552,18 @@ def main():
                           "UPDATE users SET password_hash = %s, failed_attempts = 0, locked_until = NULL, updated_at = now()"
                           " WHERE username = %s", (db.bcrypt_hash(t.password), t.username))
 
-    # 2) 관리자 API 단계: 공개 계정 생성·수정·활성화·잠금 해제, 다른 계정 비활성화.
-    #    API 단계가 실패해도 3)의 admin 비활성화는 반드시 실행한다(finally).
-    api_needed = any(set(p) - {"password"} for p in problems.values()) or bool(others_enabled)
+    # 2) 관리자 API 단계: 공개 계정 생성·수정·활성화·잠금 해제, demo-analyst 맞추기와 예시 기록, 다른 계정 비활성화.
+    #    API 단계가 실패해도 3)의 demo-analyst·admin 비활성화는 반드시 실행한다(finally).
+    api_needed = (any(set(p) - {"password"} for p in problems.values()) or bool(others_enabled)
+                  or bool(example_problems) or bool(to_apply))
     try:
         if api_needed:
-            run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems)
+            run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems,
+                          example_problems, to_apply)
     finally:
-        # 3) admin 비활성화는 API가 막으므로(자기 계정) SQL로.
+        # 3) 예시를 기록하던 계정이 켜진 채 남지 않게 한다(관리자 세션이 깨졌을 수 있어 SQL로).
+        disable_example_account_sql(db)
+        # admin 비활성화는 API가 막으므로(자기 계정) SQL로.
         if db.read_users()[ADMIN_USERNAME]["enabled"]:
             db.sql_change("DISABLE", ADMIN_USERNAME, "UserAdminService rejects disabling the signed-in account",
                           "UPDATE users SET enabled = FALSE, updated_at = now() WHERE username = %s", (ADMIN_USERNAME,))
@@ -281,13 +571,18 @@ def main():
     users = db.read_users()
     remaining = {name: p for name, p in all_problems(users, targets, db).items() if p}
     still_enabled = [name for name, u in users.items() if name not in public_names and u["enabled"]]
+    example_remaining = example_account_problems(users)
+    not_done = [f"{p.label}={p.kind}({p.reason})" for p in plan_examples(examples, db) if p.kind not in ("kept", "skipped")]
     log(f"final users: {describe(users)}")
-    if remaining or still_enabled:
-        sys.exit(f"seed: target state not reached (public accounts={remaining}, enabled={still_enabled})")
+    if remaining or still_enabled or example_remaining or not_done:
+        sys.exit(f"seed: target state not reached (public accounts={remaining}, enabled={still_enabled}, "
+                 f"{EXAMPLE_USERNAME}={example_remaining or 'ok'}, examples={not_done or 'ok'})")
+    log(examples_summary(plans))
     log(f"RESULT: CHANGED (audit_logs rows {audit_before} -> {db.audit_count()})")
 
 
-def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems):
+def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems,
+                  example_problems, to_apply):
     if not admin_enabled:
         db.sql_change("TEMP_ENABLE", ADMIN_USERNAME, "admin API session for seeding; disabled again right after",
                       "UPDATE users SET enabled = TRUE, failed_attempts = 0, locked_until = NULL, updated_at = now()"
@@ -314,7 +609,41 @@ def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret
         if "locked" in wrong:
             api.call("POST", f"/api/admin/users/{account['id']}/unlock", csrf=True)
             log(f"API UNLOCK_ACCOUNT {t.username}")
-    # toggle-enabled는 상태를 뒤집으므로 방금 읽은 상태가 활성일 때만 부른다.
+
+    # T54 demo-analyst: 없으면 만들고(createUser는 계정을 켠 채 만든다) 접근 설정을 맞춘다. 예시를 기록할 때만
+    # 이번 실행의 무작위 비밀번호를 정하고 켠다. 비밀번호는 출력·저장하지 않고 이 함수 안에서 버린다.
+    account = current.get(EXAMPLE_USERNAME)
+    password = secrets.token_urlsafe(32) if (to_apply or account is None) else None
+    if account is None:
+        api.call("POST", "/api/admin/users", {"username": EXAMPLE_USERNAME, "displayName": EXAMPLE_DISPLAY_NAME,
+                                              "password": password, "role": EXAMPLE_ROLE,
+                                              "capturePatterns": EXAMPLE_PATTERNS}, csrf=True, expect=201)
+        log(f"API CREATE_USER {EXAMPLE_USERNAME}")
+    else:
+        if "access" in example_problems:
+            api.call("PUT", f"/api/admin/users/{account['id']}", {"displayName": EXAMPLE_DISPLAY_NAME,
+                                                                   "role": EXAMPLE_ROLE,
+                                                                   "capturePatterns": EXAMPLE_PATTERNS}, csrf=True)
+            log(f"API UPDATE_USER {EXAMPLE_USERNAME}")
+        if to_apply:
+            # 이미 있는 계정의 비밀번호는 API로 바꿀 수 없다: 공개 계정과 같은 SQL 해시 교체 + 감사 행.
+            db.sql_change("SET_PASSWORD", EXAMPLE_USERNAME,
+                          "no password-change API; one-time random password for recording demo examples (not stored)",
+                          "UPDATE users SET password_hash = %s, failed_attempts = 0, locked_until = NULL, updated_at = now()"
+                          " WHERE username = %s", (db.bcrypt_hash(password), EXAMPLE_USERNAME))
+            if not account["enabled"]:
+                api.call("POST", f"/api/admin/users/{account['id']}/toggle-enabled", csrf=True)
+                log(f"API TOGGLE_ENABLED {EXAMPLE_USERNAME} -> enabled")
+    try:
+        if to_apply:
+            record_examples(db, api_base, to_apply, password)
+    finally:
+        password = None
+    # toggle-enabled는 상태를 뒤집으므로 방금 읽은 상태가 활성일 때만 부른다. demo-analyst를 먼저 끄고 나머지를 끈다.
+    example_account = api.users().get(EXAMPLE_USERNAME)
+    if example_account is not None and example_account["enabled"]:
+        api.call("POST", f"/api/admin/users/{example_account['id']}/toggle-enabled", csrf=True)
+        log(f"API TOGGLE_ENABLED {EXAMPLE_USERNAME} -> disabled")
     public_names = {t.username for t in targets}
     for name, user in api.users().items():
         if name not in public_names and name != ADMIN_USERNAME and user["enabled"]:
