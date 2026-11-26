@@ -131,11 +131,12 @@ public class IncidentQueryService {
                 .filter(item -> matchesAssetFilter(item, assetQuery))
                 .toList();
 
+        // T63(설계자 결정): 작업 오류 글은 현황판·운영 현황처럼 조회자에게 가린다(전에는 이 API만 원문이었다)
         return new QueueViewResult(
                 allowedCaptures,
                 selectedCaptureId,
-                selectedJob,
-                captureJobs,
+                maskingService.maskScoringJob(selectedJob, userRole),
+                captureJobs.stream().map(j -> maskingService.maskScoringJob(j, userRole)).toList(),
                 items,
                 availableModels,
                 availableRoles

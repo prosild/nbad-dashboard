@@ -247,13 +247,6 @@ class T63UntrustedTextIntegrationTest {
         return out;
     }
 
-    /**
-     * T63 전부터 조회자에게 가리지 않는 칸(가림 누락. 옛 목록 API의 작업 목록과 상세의 job은 maskScoringJob을 거치지 않는다).
-     * 가림을 넓히는 변경이라 이 작업에서 고치지 않고 설계자에게 올렸다(보고서). 숨은 문자 없음·상한 판정은 그대로 받는다.
-     */
-    private static final List<String> NOT_MASKED_BEFORE_T63 = List.of(".selectedJob.error", ".captureJobs[].error",
-            ".detail.job.error");
-
     /** 이름·글이 실린 응답(분석가는 표지가 있어야, 조회자는 제거 표시가 있어야 한다) */
     private static final List<String> CARRIES_NAMES = List.of("queue", "legacy-list", "detail-1", "detail-11",
             "detail-17", "hosts", "overview", "operations", "reviews", "audit-logs");
@@ -365,9 +358,6 @@ class T63UntrustedTextIntegrationTest {
             problems.add(name + "/조회자: 제거 표시가 하나도 없다");
         }
         for (Entry e : T63JsonScan.scan(body)) {
-            if (NOT_MASKED_BEFORE_T63.stream().anyMatch(e.path()::endsWith)) {
-                continue;
-            }
             if (UNMASKED_IPV4.matcher(T63JsonScan.visible(e.text())).find()) {
                 problems.add(name + "/조회자 " + e.path() + ": 가려지지 않은 IPv4가 보인다");
             }

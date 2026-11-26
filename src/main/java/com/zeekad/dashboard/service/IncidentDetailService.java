@@ -90,7 +90,8 @@ public class IncidentDetailService {
         captureAccessService.recordUnmaskedViewIfPrivileged(
                 principal, rawIncident.getCaptureId(), jobId, rawIncident.getIncidentId(), clientIp);
 
-        ScoringJob job = zeekadReadMapper.findScoringJobById(jobId);
+        // T63(설계자 결정): 작업 오류 글은 현황판·운영 현황처럼 조회자에게 가린다(전에는 상세만 원문이었다)
+        ScoringJob job = maskingService.maskScoringJob(zeekadReadMapper.findScoringJobById(jobId), role);
         List<IncidentModelScore> modelScores = zeekadReadMapper.findModelScores(jobId, rawIncident.getIncidentId())
                 .stream()
                 .map(score -> maskingService.maskIncidentModelScore(score, role))
@@ -292,7 +293,7 @@ public class IncidentDetailService {
                 : report.getLlmError();
 
         List<IncidentDetailView.AttackCandidateItem> attackCandidates =
-                parseAttackCandidates(report.getZeekadAttackCandidates());
+                parseAttackCandidates(report.getZeekadAttackCandidates(), mask);
 
         return new IncidentDetailView.ReportView(
                 true,
@@ -473,7 +474,11 @@ public class IncidentDetailService {
         return new IncidentDetailView.SendRecommendationItem(choice, reason, facts);
     }
 
-    private List<IncidentDetailView.AttackCandidateItem> parseAttackCandidates(JsonNode candidatesNode) {
+    /**
+     * ATT&amp;CK 후보. attackId는 식별자라 그대로 두고, 이름·전술은 T63(설계자 결정)부터 조회자에게 현황판 위협 패널
+     * (DashboardThreatService)과 같은 가림(maskViewerText)을 적용한다(전에는 상세만 원문이었다).
+     */
+    private List<IncidentDetailView.AttackCandidateItem> parseAttackCandidates(JsonNode candidatesNode, boolean mask) {
         if (candidatesNode == null || !candidatesNode.isArray()) {
             return List.of();
         }
@@ -485,6 +490,10 @@ public class IncidentDetailService {
             String attackId = textOrNull(node.get("attack_id"));
             String name = textOrNull(node.get("name"));
             List<String> tactics = extractTextArray(node.get("tactics"));
+            if (mask) {
+                name = name == null ? null : maskingService.maskViewerText(name, false);
+                tactics = tactics.stream().map(t -> maskingService.maskViewerText(t, false)).toList();
+            }
             if (attackId != null || name != null) {
                 items.add(new IncidentDetailView.AttackCandidateItem(
                         attackId != null ? attackId : "-",
