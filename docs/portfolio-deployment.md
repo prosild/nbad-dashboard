@@ -91,12 +91,13 @@
 | `docker/portfolio/initdb/03-zeekad-functions.sh` | 스냅샷에 없는 zeek_AD 함수 넣기(`T53`): `dashboard.reopen_incident`라는 이름의 함수가 없을 때만 아래 사본을 `zeekad` DB에 한 트랜잭션으로 실행. 실패하면 복원 표지를 지우고 멈춤 |
 | `docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql` | zeek_AD migration 018(종결한 사건 다시 열기)의 바이트 그대로 사본. 출처 commit과 sha256은 같은 폴더의 `SOURCE.md`. 하위 폴더라 이미지가 자동 실행하지 않는다 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
-| `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음). 분석이 끝난 예시 셋을 시연 분석가 `demo-analyst`로 기록(`T54`, 1.4) |
+| `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음). 분석이 끝난 예시 셋을 시연 분석가 `demo-analyst`로 기록(`T54`, 1.4). 중요 자산 목록을 자료 파일과 같게 맞춤(`T52`, 1.5) |
 | `docker/portfolio/seed/demo_examples.json` | 분석이 끝난 예시 셋의 자료(인시던트 ID·판정·착수 사유·대응 조치·종결 사유, `T54`). 시드가 읽는다(`SEED_EXAMPLES_FILE`, 기본 `/seed/demo_examples.json`) |
+| `docker/portfolio/seed/critical_assets.json` | 공개 데모의 중요 자산 여섯 건(주소·이름·설명, `T52`). 시드가 읽는다(`SEED_ASSETS_FILE`, 기본 `/seed/critical_assets.json`) |
 | `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 셋, `--rebuild-baseline`. 감사 로그 삭제 함수의 실행 권한(`T58`). 대응 조치 기준선 표식과 그 초기화 함수(`T56`) |
 | `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`). 매 주기 기준선 뒤에 덧붙은 대응 조치 기록 삭제(`T56`) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(로컬 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
-| `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T54] 분석이 끝난 예시 셋, [T33] 초기화(주기 1분), [T61] 네트워크 둘·capability·상태 확인 감사 줄, ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
+| `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T54] 분석이 끝난 예시 셋, [T52a]~[T52d] 중요 자산, [T33] 초기화(주기 1분), [T61] 네트워크 둘·capability·상태 확인 감사 줄, ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
@@ -148,6 +149,23 @@
 - **조회자에게 보이는 것**: 상태 변경 사유는 주소만 가려서 보인다(`10.10.*.*`). 대응 조치는 종류·기록자·시각만 보이고 메모는 내려가지 않는다. 기본 정렬에서 종결 건은 맨 뒤로 가므로 큐의 종결 필터(`/incidents?status=closed&period=all`)로 찾는다. 예시 A에는 옛 작업의 미결정 검토 때문에 큐의 "검토 대기" 표시가 남는다(에스컬레이션 목록에는 없다. 지금도 종결된 옛 시연 건에 같은 표시가 있다).
 - **운영 현황에 주는 영향**: 기록 시각이 기준 시각(탐지 작업의 끝 시각) 뒤라 기간 7일 등에는 들지 않고 전체 기간에만 든다. 처리 시간(탐지부터 종결까지)은 며칠로 나온다. 예시는 기준 시각과 24시간 창을 옮기지 않는다. 판정이 10건 미만이라 "모델 판정"은 계속 "표본 부족"이다.
 - **실습 공격 재현을 정탐으로 닫는 이유**: 탐지 품질의 되먹임에서는 재현한 공격을 맞힌 것이 정탐이다. 실제로 차단·격리하지 않았으므로 대응 조치는 "조치 없음"과 그 사유로 적었다. 글 끝의 "(시연)"과 행위자 `demo-analyst`는 스냅샷의 옛 시연 기록과 같은 관례다(`docs/ui-terminology.md`).
+
+### 1.5 중요 자산(`T52`)
+
+관리자가 등록한 중요 자산(IPv4 주소 하나·이름·설명)의 열린 인시던트는 자동 분류 우선순위가 한 단계 오른다(Low → Medium, Medium → High). 같은 우선순위 안에서는 중요 자산이 먼저 온다(규칙·관리자 화면·API는 `docs/deployment-guide.md`, 문구는 `docs/ui-terminology.md`). 공개 데모의 목록은 자료 파일 `docker/portfolio/seed/critical_assets.json`에 있고 시드가 관리자 API로 앱의 목록을 그 파일과 같게 맞춘다.
+
+| 주소 | 이름 |
+|---|---|
+| `10.10.0.20`~`10.10.0.23` | 실습망 대상 서버(뒤 셋은 같은 서버의 별칭 주소) |
+| `10.10.0.10` | 실습망 배포 서버 |
+| `192.168.10.3` | 도메인 서버(CIC-IDS2017, DNS·Kerberos) |
+
+- **목록을 정한 방법**: 공개 스냅샷에서 등록 앞뒤의 분포를 잰 뒤 사용자가 정했다(2026-11-26). 공개 데이터셋의 웹 서버(`192.168.10.50`)·Ubuntu 서버(`192.168.10.51`)까지 넣으면 전체 기간 High가 두 배를 넘어 뺐다.
+- **시드가 하는 일**: 바꾸기 전에 파일을 검증한다(꼴, IPv4 하나의 정확한 꼴(범위·공백 없음), 중복 주소, 이름 1~100자·설명 300자 이하·제어 문자 없음, 200건 이하). 0건도 거부한다(빈 파일이나 깨진 파일이 목록 전부를 지우지 않게). 어긋나면 아무것도 바꾸지 않고(로그인도 하지 않고) 0이 아닌 코드로 끝난다. 판정은 로그인 전에 앱 DB 읽기(`dashboard_app`)로 하고, 자산만 달라도 관리자 단계를 돈다. 계정·예시·자산이 모두 같으면 지금처럼 로그인 없이 `RESULT: NO_CHANGES`다. 관리자 세션 안에서 `T54` 단계 뒤(로그아웃 앞)에 지우기 → 고치기 → 만들기 순서로 맞춘다(지우기가 먼저라 200건 상한에 걸리지 않는다). 주소를 바꾸는 API는 없어 주소가 바뀌면 지우고 만든다. 변경마다 감사 `CRITICAL_ASSET_CHANGE`가 남는다. 결과는 로그 한 줄 `critical-assets: created=<n> updated=<n> deleted=<n> kept=<n>`이다.
+- **파일에 없는 자산은 지운다**: 관리자 화면에서 공개 데모에 손으로 더한 자산도 다음 시드가 지운다. 공개 데모의 목록은 파일로만 바꾼다.
+- **앱 DB에 표가 없으면 멈춘다**: `critical_assets` 표(`V6`)가 없으면(`T52` 앞 앱 이미지) 아무것도 바꾸지 않고 0이 아닌 코드로 끝난다. 앱 이미지를 먼저 바꾼다(3.8의 `T52` 절).
+- **조회자에게 보이는 것**: `demo`에게는 "중요 자산" 표지와 우선순위가 한 단계 올랐다는 사실만 보이고 자산 이름·설명은 내려가지 않는다. 다만 주소와 이름이 이 공개 저장소의 자료 파일에 함께 있으므로, 공개 데모에서 이름을 가리는 것은 규칙의 시연이다. 실제 운영에서는 자산을 관리자 화면으로만 등록한다.
+- **매시 초기화와의 관계**: 중요 자산은 앱 DB의 표 하나이고 매시 초기화(`T33`)와 기준선은 이 표를 건드리지 않는다. 체험 분석가(`trial-analyst`)는 관리자 API를 쓸 수 없다(`403`).
 
 ## 2. 로컬 PC에서 준비
 
@@ -405,6 +423,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml logs postgres | grep
 # 계정 시드: 첫 실행은 RESULT: CHANGED, 두 번째 실행은 RESULT: NO_CHANGES 이어야 한다.
 # 분석이 끝난 예시 셋(T54, 1.4): 첫 실행은 "examples: applied=3 kept=0 skipped=0", 두 번째는 "examples: applied=0 kept=3 skipped=0".
 # skipped가 0이 아니면(스냅샷 착오나 ID 오타) sandbox-setup으로 넘어가지 않고 멈춘다.
+# 중요 자산(T52, 1.5): 첫 실행은 "critical-assets: created=6 updated=0 deleted=0 kept=0", 두 번째는 "created=0 updated=0 deleted=0 kept=6".
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm demo-seed
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm demo-seed
 # 체험 계정 초기화 설정(T33): 시드 뒤에 돌린다(예시 셋이 기준선에 들어간다). 첫 실행은 "baseline created", 두 번째는 "baseline kept", 둘 다 RESULT: OK
@@ -857,6 +876,16 @@ $C exec -T sandbox-reset sh -c 'PGPASSWORD="$SANDBOX_RESET_DB_PASSWORD" psql -h 
 - **반영 뒤 확인**: `trial-analyst`로 종결 건 하나를 다시 열면 분석 중으로 바뀌고 이력에 "종결 → 분석 중 · 다시 열림"이 보인다. 다음 정각 뒤 그 건이 원래 종결 상태로 돌아왔는지 본다(`[T53d]`와 같다). `demo`에는 다시 열기 폼이 없다. 같은 주소에서 다시 열기 요청을 잇달아 보내면 `429`다. 이어서 4.4를 한다.
 - **되돌리기**: 함수만 빼려면 `$Q -c "DROP FUNCTION dashboard.reopen_incident(bigint, text, text, text, text)"`. 그러면 앱의 다시 열기는 `501`로 돌아가고 다른 기능은 그대로다. 이미 다시 연 건의 상태와 이력은 그대로 남는다(다음 정각 초기화가 기준선으로 되돌린다). 앱 이미지와 파일은 서비스 하나 절차의 롤백(`*.pre-t53`)을 따른다. 옛 `03-zeekad-functions.sh`가 없던 상태로 돌아가도 이미 만든 볼륨에는 영향이 없다.
 
+#### 중요 자산을 넣는 갱신(`T52`)
+
+`T52`는 앱 이미지 하나(`V6`: 앱 DB의 `critical_assets` 표, 관리자 API와 화면 `/admin/critical-assets`, 우선순위 규칙)와 시드 파일 둘(`docker/portfolio/seed/seed_demo.py`, 새 파일 `docker/portfolio/seed/critical_assets.json`)을 바꾼다. WAF 이미지·`compose.portfolio.yml`·`.env`·스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다.
+
+- **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(위 "서비스 하나의 이미지 갱신". Flyway가 `V6`를 적용한다. `flyway_schema_history`에 버전 6이 성공으로 있는지 본다) → ② 시드 파일 둘을 `*.pre-t52`로 보존하고 바꾼다 → ③ 시드를 두 번 돌린다(첫 번째 `critical-assets: created=6 updated=0 deleted=0 kept=0`과 `RESULT: CHANGED`, 두 번째 `kept=6`과 `RESULT: NO_CHANGES`). ①보다 ③을 먼저 하면 시드가 `app database has no critical_assets table`로 멈춘다(아무것도 바꾸지 않는다).
+- **공개 경로를 닫지 않아도 된다**: 자산 단계는 앱 DB의 자산 표만 바꾸고 zeek_AD 표·기준선과 상관없다. 기준선(`sandbox-setup --rebuild-baseline`)도 다시 만들지 않는다. `admin`이 몇 초 켜지는 것은 다른 재시드와 같다(5절).
+- **`T54`와 한 번에 반영할 때**: 위 `T54` 절의 순서에서 시드 두 번이 자산도 맞춘다(앱 이미지를 그 순서 앞에 바꾼다). 시드 로그에 `examples:` 줄과 `critical-assets:` 줄이 함께 있다.
+- **반영 뒤 확인**: 4.4의 `T52` 항목.
+- **롤백**: 시드 파일 둘을 `*.pre-t52`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 `dashboard-app`을 `up`한다. 우선순위는 옛 규칙으로 돌아간다. 앱 DB의 `V6` 표와 자산 행은 남는다(앞 앱 이미지는 그 표를 읽지 않는다. `V6`를 둔 채 앞 앱 이미지가 뜨는 것은 `T52` 확인에서 두 이미지를 같은 DB에 함께 띄워 봤다). 시드 파일을 새것으로 둔 채 앱만 되돌리면, 자산이 파일과 다를 때 시드가 앞 앱 이미지에 없는 자산 API를 부르다 실패한다.
+
 ### 3.9 스냅샷(공개 데이터) 교체
 
 스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다. 이 백업은 되돌리기용이고 그 시점의 감사 로그가 통째로 들어 있으므로 감사 로그와 같은 기한을 둔다: 90일 넘은 백업은 배포 절차가 지운다(아래 3a. 자동이 아니라 다음 배포 때 지우므로 배포가 뜸하면 90일보다 오래 남는다). 체험 계정 변경의 매시 정각 초기화(1.3)는 새 볼륨에서 다시 설정한다(아래 8c).
@@ -1015,6 +1044,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `trial-analyst` / 공개 비밀번호로 로그인되고 역할이 `ANALYST`, 허용 캡처가 `demo`와 같으며 숨긴 캡처 직접 조회가 `403`이다. 공개 데모에서는 쓰기(상태 변경·결정·담당)와 로그인 실패를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T33]`). (리허설 [T33a])
 - [ ] 다음 정각 뒤 `logs --since 2h sandbox-reset`에 `OK` 줄이 있고 `ERROR`가 없다. (3.5, 리허설 [T33f])
 - [ ] 분석이 끝난 예시 셋(`T54`): 시드 로그가 `skipped=0`이고 `applied + kept = 3`이다. `demo`로 `/incidents?status=closed&period=all`에 셋이 보이고, 예시 A 상세가 종결·정탐이며 사유의 주소가 가려져 있고(`10.10.*.*`) 대응 조치는 종류·기록자·시각만 보인다(메모 없음). 다음 정각 뒤에도 그대로다. `demo-analyst`가 비활성이다(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc "SELECT enabled FROM users WHERE username = 'demo-analyst'"`가 `f`. 로그인 실패를 일부러 만들지 않는다). (1.4, 리허설 [T54a]~[T54d])
+- [ ] 중요 자산(`T52`): 두 번째 시드 실행의 로그가 `critical-assets: created=0 updated=0 deleted=0 kept=6`이다. NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc "SELECT host_ip FROM critical_assets ORDER BY host_ip"`가 자료 파일의 여섯 주소다. `demo`로 큐에서 `10.10.*.*`·`192.168.*.*` 행 일부에 "중요 자산" 표지가 보이고 그 툴팁·응답에 자산 이름이 없다(큐 응답의 `criticalAssetName`이 모두 `null`). `demo`로 `/api/admin/critical-assets`가 `403`이다. (1.5, 리허설 [T52a]~[T52d])
 - [ ] 초기화 줄 끝에 감사 칸(`audit[…]`)이 있고 보관 기한을 반영한 뒤 `audit[OK] purged=… cutoff=…` 줄이 한 번 이상 있다. `audit[NOT_CONFIGURED]`가 이어지면 `sandbox-setup`을 다시 돌린다(실행 권한). 90일 넘은 감사 행이 없다: `SELECT count(*) FROM audit_logs WHERE occurred_at < now() - interval '91 days'`가 `0`(개수만 본다). (1.3, 리허설 [T58b]·[T58c])
 - [ ] 컨테이너 로그 한도가 걸려 있다: `docker inspect --format '{{json .HostConfig.LogConfig}}' <컨테이너>`가 서비스마다 `json-file`, `max-size` `10m`, `max-file` `5`다. (리허설 [T58a])
 - [ ] 감사 로그·담당 이력의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5다. 그래서 IP 하나가 쓰기로 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 자동 담당 기록은 사유가 없어 수백 바이트라 하루 약 30MB 안팎이다. 허용 밖 인시던트 조회 거부(`ACCESS_DENIED_IDOR`)도 조회 1번에 감사 1행을 남긴다(행당 인덱스 포함 약 300바이트, 리허설 `[T36b]`). 이 증가는 `T33` 전부터 `demo`로도 열려 있었고 `T35`까지는 상한이 없었다. `T36`부터 조회 한도(IP당 분당 200회 + 버스트 30)가 묶어 IP 하나가 조회 거부로 하루에 늘릴 수 있는 감사 로그는 약 288,000행(약 86MB)이다. 이것은 IP별 상한이고 전체 상한이 아니다(방문자가 IP를 바꾸면 더 늘릴 수 있다). 인증 없는 조회는 감사 행을 만들지 않는다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다. `T58`부터 감사 로그는 90일이 지나면 하루 한 번 지워지므로 위 증가는 90일치까지 쌓인다(담당 이력은 기한이 없다). PostgreSQL은 지운 자리를 autovacuum 뒤에 다시 쓰므로 DB 크기 값은 지운 날 바로 줄지 않는다. 컨테이너 로그는 컨테이너마다 50MB(10MB 파일 5개)가 한도다. 기간이 아니라 크기 한도라 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 사라진다. `T61`부터 `nginx-waf`의 상태 확인이 감사 줄을 남기지 않아 `nginx-waf` 로그도 방문자 요청만큼만 찬다(`T60`까지는 상태 확인 줄이 한도를 며칠 만에 채웠다).
@@ -1035,12 +1065,12 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 
 ## 5. 계정 시드의 직접 SQL 단계와 위험
 
-시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*,lab-20261119,lab-20261122`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, `TRIAL_ANALYST_PASSWORD`가 있으면 `trial-analyst`도 같은 조건(역할 `ANALYST`, 같은 허용 캡처), `demo-analyst` 존재·`ANALYST`·표시 이름·허용 캡처 `lab-20261119,lab-20261122`(`T54`), 다른 계정 모두 비활성, 분석이 끝난 예시 셋이 모두 `kept`·`skipped`(1.4))면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음, 로그인 없음). 바꿀 것이 있을 때만 바꾼다. 예시 판정은 로그인 전에 DB 읽기만으로 하고, 어긋난 예시가 하나라도 있으면 아무것도 바꾸지 않고 실패한다(zeekad는 읽기 전용 계정 `dashboard_ro`로 읽는다).
+시드(`docker/portfolio/seed/seed_demo.py`)는 먼저 `zeekad_dashboard`를 `dashboard_app`으로 읽어 현재 상태를 확인하고, 이미 목표 상태(`demo` 존재·`VIEWER`·허용 캡처 `DEMO_CAPTURE_PATTERNS`(비어 있으면 `cic17-*,syn1-*,lab-20261119,lab-20261122`, 순서 무관)·표시 이름·활성·잠금 없음·`.env` 비밀번호와 일치, `TRIAL_ANALYST_PASSWORD`가 있으면 `trial-analyst`도 같은 조건(역할 `ANALYST`, 같은 허용 캡처), `demo-analyst` 존재·`ANALYST`·표시 이름·허용 캡처 `lab-20261119,lab-20261122`(`T54`), 다른 계정 모두 비활성, 분석이 끝난 예시 셋이 모두 `kept`·`skipped`(1.4), 중요 자산 목록이 자료 파일과 같음(`T52`, 1.5))면 아무것도 바꾸지 않는다(`RESULT: NO_CHANGES`, 감사 로그 추가 없음, 로그인 없음). 바꿀 것이 있을 때만 바꾼다. 예시 판정은 로그인 전에 DB 읽기만으로 하고, 어긋난 예시가 하나라도 있으면 아무것도 바꾸지 않고 실패한다(zeekad는 읽기 전용 계정 `dashboard_ro`로 읽는다).
 
 가능한 단계는 앱 관리자 API로 한다(`admin` 로그인 + `.env`의 `BOOTSTRAP_ADMIN_TOTP_SECRET`으로 계산한 TOTP 코드, 감사 로그 `USER_ADMIN_CHANGE`):
-공개 계정 생성(`CREATE_USER`), 역할·허용 캡처·표시 이름 수정(`UPDATE_USER`), 활성화·다른 계정 비활성화(`TOGGLE_ENABLED`, 상태를 읽고 필요할 때만 호출), 잠금 해제(`UNLOCK_ACCOUNT`). `demo-analyst`의 생성·수정·켜기·끄기도 같은 API다(`T54`). 예시 기록(착수·대응 조치·담당 해제·종결)은 관리자가 아니라 `demo-analyst` 세션이 분석가 API로 한다. 관리자 로그인은 한 실행에 한 번이다(TOTP 실패가 실패 횟수에 든다, `T60`).
+공개 계정 생성(`CREATE_USER`), 역할·허용 캡처·표시 이름 수정(`UPDATE_USER`), 활성화·다른 계정 비활성화(`TOGGLE_ENABLED`, 상태를 읽고 필요할 때만 호출), 잠금 해제(`UNLOCK_ACCOUNT`). `demo-analyst`의 생성·수정·켜기·끄기도 같은 API다(`T54`). 중요 자산 맞추기(`T52`)는 관리자 자산 API다(목록 `GET`, 만들기 `POST /api/admin/critical-assets`, 고치기 `PUT …/{id}`, 지우기 `POST …/{id}/delete`, 감사 `CRITICAL_ASSET_CHANGE`). 예시 기록(착수·대응 조치·담당 해제·종결)은 관리자가 아니라 `demo-analyst` 세션이 분석가 API로 한다. 관리자 로그인은 한 실행에 한 번이다(TOTP 실패가 실패 횟수에 든다, `T60`).
 
-한 관리자 세션 안의 순서: 공개 계정 맞추기 → `demo-analyst` 만들기(없을 때) 또는 SQL 비밀번호 교체 뒤 켜기(예시를 기록할 때만) → `demo-analyst` 세션으로 예시 기록 → `demo-analyst` 끄기 → 공개 계정이 아닌 활성 계정 끄기 → 로그아웃.
+한 관리자 세션 안의 순서: 공개 계정 맞추기 → `demo-analyst` 만들기(없을 때) 또는 SQL 비밀번호 교체 뒤 켜기(예시를 기록할 때만) → `demo-analyst` 세션으로 예시 기록 → `demo-analyst` 끄기 → 공개 계정이 아닌 활성 계정 끄기 → 중요 자산 맞추기(`T52`) → 로그아웃.
 
 API로 할 수 없어 `zeekad_dashboard`에 직접 SQL을 쓰는 단계는 넷이다. 모두 `users` 표만 바꾸고, 각 SQL은 같은 트랜잭션에서 감사 로그 한 줄(`actor_username=portfolio-seed`, `actor_role=SYSTEM`, `action_type=USER_ADMIN_CHANGE`, `detail_json`에 `operation`·`via: direct SQL`·이유)을 남긴다. zeek_AD 표·대응 조치 표·담당 표에는 SQL로 쓰지 않는다(정적 시험 `t54SeedRecordsExamplesOnlyThroughTheAppApiAndKeepsNoNewSecret`).
 

@@ -20,6 +20,15 @@ demo-analyst(ANALYST, 평소 비활성)로 앱 API를 불러 착수 → (정탐�
   계정이 없으면 createUser에 주고, 있으면 공개 계정과 같은 SQL 해시 교체 + 감사 행으로 바꾼다. 기록이 끝나면 곧바로 끈다.
 - zeek_AD 표, 대응 조치 표, 담당 표에는 SQL로 쓰지 않는다(예시의 기록은 모두 앱 API를 거친다).
 
+T52 중요 자산: 자료 파일(SEED_ASSETS_FILE, 기본 /seed/critical_assets.json)과 앱의 중요 자산 목록을 같게 맞춘다.
+없는 것은 만들고, 이름·설명이 다르면 고치고, 파일에 없는 것은 지운다(관리자 API, 감사 CRITICAL_ASSET_CHANGE). 주소는 바꾸지 않는다(지우고 만든다).
+- 파일 검증 먼저: 꼴, 주소(IPv4 하나의 정확한 꼴), 중복 주소, 이름·설명 길이를 바꾸기 전에 본다. 0개도 거부한다
+  (빈 파일이나 깨진 파일이 목록 전부를 지우지 않게). 어긋나면 아무것도 바꾸지 않고 0이 아닌 코드로 끝낸다.
+- 판정은 앱 DB 읽기(dashboard_app)로 한다. 자산만 달라도 관리자 단계를 돈다. 계정·예시·자산이 모두 같으면 로그인하지 않는다(NO_CHANGES).
+- 관리자 단계 안에서 T54 단계(공개 계정 → 예시 → 계정 끄기) 뒤, 로그아웃 앞에 둔다. 로그 한 줄:
+  critical-assets: created=<n> updated=<n> deleted=<n> kept=<n>
+- 앱 DB에 critical_assets 표가 없으면(T52 앞 이미지) 아무것도 바꾸지 않고 멈춘다.
+
 compose.portfolio.yml의 demo-seed 서비스(zeekad-pipeline 이미지의 Python)로 실행한다. 다시 실행해도 안전하다(멱등).
 1. zeekad_dashboard를 dashboard_app 계정으로 읽어 현재 상태를 확인하고, 예시의 상태를 판정한다. 이미 목표 상태면 아무것도 바꾸지 않고 끝낸다.
 2. 바꿀 것이 있으면 가능한 단계는 앱 관리자 API(감사 로그 USER_ADMIN_CHANGE)로 한다. admin 로그인은
@@ -63,6 +72,13 @@ EXAMPLE_DISPLAY_NAME = "시연 분석가"
 EXAMPLE_PATTERNS = ["lab-20261119", "lab-20261122"]
 DEFAULT_EXAMPLES_FILE = "/seed/demo_examples.json"
 RESOLUTIONS = ("true_positive", "false_positive", "benign")
+# T52 중요 자산(앱 CriticalAssetService와 같은 상한·꼴)
+DEFAULT_ASSETS_FILE = "/seed/critical_assets.json"
+MAX_ASSETS = 200
+ASSET_NAME_MAX = 100
+ASSET_DESCRIPTION_MAX = 300
+IPV4_OCTET = r"(?:0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])"
+IPV4_EXACT = re.compile(r"\A" + IPV4_OCTET + r"(?:\." + IPV4_OCTET + r"){3}\Z")
 
 
 def env(name, required=True, default=None):
@@ -150,6 +166,15 @@ class Db:
     def current_assignee(self, incident_id):
         assignees, _ = self.read_example_app_state([incident_id])
         return assignees.get(incident_id)
+
+    def read_critical_assets(self):
+        """앱 DB 읽기(T52): 주소 → (이름, 설명). 표가 없으면(T52 앞 앱 이미지) None."""
+        with self.app() as conn:
+            exists = conn.execute("SELECT to_regclass('public.critical_assets') IS NOT NULL").fetchone()[0]
+            if not exists:
+                return None
+            rows = conn.execute("SELECT host_ip, name, description FROM critical_assets ORDER BY id").fetchall()
+        return {host: (name, description) for host, name, description in rows}
 
 
 class ZeekadReader:
@@ -488,6 +513,97 @@ def record_examples(db, api_base, plans, password):
             log(f"{EXAMPLE_USERNAME} logout failed ({type(error).__name__})")
 
 
+# ───────────────────────── T52 중요 자산 ─────────────────────────
+
+def clean_asset_text(value):
+    """앱과 같은 다듬기: 앞뒤 공백을 지운다. 설명의 빈 글은 없음(None)이다."""
+    return value.strip() if isinstance(value, str) else value
+
+
+def load_assets():
+    """자료 파일의 중요 자산(주소 → (이름, 설명)). 바꾸기 전에 꼴·주소·중복·길이를 보고 0개도 거부한다.
+    어긋나면 아무것도 바꾸지 않고 멈춘다(빈 파일이나 깨진 파일이 목록 전부를 지우지 않게)."""
+    path = os.environ.get("SEED_ASSETS_FILE", "").strip() or DEFAULT_ASSETS_FILE
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as error:
+        sys.exit(f"seed: cannot read critical assets file {path} ({type(error).__name__}); nothing was changed")
+    assets = doc.get("assets") if isinstance(doc, dict) else None
+    if not isinstance(assets, list):
+        sys.exit(f"seed: critical assets file {path} has no 'assets' list; nothing was changed")
+    if not assets:
+        sys.exit(f"seed: critical assets file {path} has no asset (an empty list would delete every asset); nothing was changed")
+    if len(assets) > MAX_ASSETS:
+        sys.exit(f"seed: critical assets file {path} has {len(assets)} assets (limit {MAX_ASSETS}); nothing was changed")
+
+    def text_ok(value, limit, required):
+        if value is None:
+            return not required
+        if not isinstance(value, str):
+            return False
+        clean = value.strip()
+        if required and clean == "":
+            return False
+        return len(clean) <= limit and not any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F for ch in clean)
+
+    wanted = {}
+    for index, asset in enumerate(assets):
+        if not isinstance(asset, dict):
+            sys.exit(f"seed: critical assets file {path}: entry #{index + 1} is not an object; nothing was changed")
+        host = asset.get("hostIp")
+        bad = []
+        if not isinstance(host, str) or IPV4_EXACT.match(host) is None:
+            bad.append("hostIp (one exact IPv4 address, no range, no spaces)")
+        elif host in wanted:
+            bad.append("duplicate hostIp")
+        if not text_ok(asset.get("name"), ASSET_NAME_MAX, True):
+            bad.append(f"name (1..{ASSET_NAME_MAX} characters, no control characters)")
+        if not text_ok(asset.get("description"), ASSET_DESCRIPTION_MAX, False):
+            bad.append(f"description (up to {ASSET_DESCRIPTION_MAX} characters, no control characters)")
+        if bad:
+            sys.exit(f"seed: critical assets file {path}: entry #{index + 1} invalid: {', '.join(bad)}; nothing was changed")
+        description = clean_asset_text(asset.get("description"))
+        wanted[host] = (clean_asset_text(asset["name"]), description or None)
+    return wanted, path
+
+
+def plan_assets(wanted, current):
+    """파일(wanted)과 앱(current)의 차이: 만들 주소, 고칠 주소, 지울 주소, 그대로인 주소."""
+    create = [h for h in wanted if h not in current]
+    change = [h for h in wanted if h in current and tuple(current[h]) != wanted[h]]
+    remove = [h for h in current if h not in wanted]
+    kept = [h for h in wanted if h in current and tuple(current[h]) == wanted[h]]
+    return {"create": create, "change": change, "remove": remove, "kept": kept}
+
+
+def assets_summary(plan):
+    return (f"critical-assets: created={len(plan['create'])} updated={len(plan['change'])} "
+            f"deleted={len(plan['remove'])} kept={len(plan['kept'])}")
+
+
+def sync_critical_assets(api, wanted):
+    """관리자 세션 안에서 앱의 목록을 파일과 같게 맞춘다. 세션 안에서 다시 읽은 목록으로 정한다(상한 때문에 지우기가 먼저)."""
+    listed = api.call("GET", "/api/admin/critical-assets")["items"]
+    by_host = {item["hostIp"]: item for item in listed}
+    plan = plan_assets(wanted, {h: (i["name"], i["description"]) for h, i in by_host.items()})
+    for host in plan["remove"]:
+        api.call("POST", f"/api/admin/critical-assets/{by_host[host]['id']}/delete", csrf=True)
+        log(f"API CRITICAL_ASSET_DELETE {host}")
+    for host in plan["change"]:
+        name, description = wanted[host]
+        api.call("PUT", f"/api/admin/critical-assets/{by_host[host]['id']}", {"name": name, "description": description},
+                 csrf=True)
+        log(f"API CRITICAL_ASSET_CHANGE {host}")
+    for host in plan["create"]:
+        name, description = wanted[host]
+        api.call("POST", "/api/admin/critical-assets", {"hostIp": host, "name": name, "description": description},
+                 csrf=True, expect=201)
+        log(f"API CRITICAL_ASSET_CREATE {host}")
+    log(assets_summary(plan))
+    return plan
+
+
 def disable_example_account_sql(db):
     """finally: 켜져 있는 demo-analyst를 SQL로 끈다(관리자 세션이 깨졌을 때도). 감사 행을 같은 트랜잭션에 남긴다."""
     account = db.read_users().get(EXAMPLE_USERNAME)
@@ -513,6 +629,7 @@ def main():
     for name in ("BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD"):
         env(name)
     examples, examples_path = load_examples()
+    wanted_assets, assets_path = load_assets()
     db = Db()
     api_base = env("SEED_API_BASE_URL", default="http://dashboard-app:8080")
 
@@ -535,6 +652,14 @@ def main():
     to_apply = [p for p in plans if p.kind == "apply"]
     example_problems = example_account_problems(users)
 
+    # 0') 중요 자산 판정(T52): 앱 DB 읽기만으로 파일과 견준다. 표가 없으면(T52 앞 앱 이미지) 아무것도 바꾸지 않는다.
+    current_assets = db.read_critical_assets()
+    if current_assets is None:
+        sys.exit("seed: app database has no critical_assets table (app image before T52); nothing was changed")
+    asset_plan = plan_assets(wanted_assets, current_assets)
+    asset_changes = bool(asset_plan["create"] or asset_plan["change"] or asset_plan["remove"])
+    log(f"critical assets file {assets_path}: {len(wanted_assets)} asset(s); plan {assets_summary(asset_plan)}")
+
     problems = all_problems(users, targets, db)
     others_enabled = [name for name, u in users.items()
                       if name not in public_names and name != ADMIN_USERNAME and u["enabled"]]
@@ -543,8 +668,10 @@ def main():
     log(f"plan: {plan}, {EXAMPLE_USERNAME}={example_problems or 'ok'}, examples to record={len(to_apply)}, "
         f"enabled non-public accounts={others_enabled + ([ADMIN_USERNAME] if admin_enabled else []) or 'none'}")
 
-    if not has_problems(problems) and not others_enabled and not admin_enabled and not example_problems and not to_apply:
+    if (not has_problems(problems) and not others_enabled and not admin_enabled and not example_problems and not to_apply
+            and not asset_changes):
         log(examples_summary(plans))
+        log(assets_summary(asset_plan))
         log(f"RESULT: NO_CHANGES (audit_logs rows={audit_before})")
         return
 
@@ -558,11 +685,14 @@ def main():
     # 2) 관리자 API 단계: 공개 계정 생성·수정·활성화·잠금 해제, demo-analyst 맞추기와 예시 기록, 다른 계정 비활성화.
     #    API 단계가 실패해도 3)의 demo-analyst·admin 비활성화는 반드시 실행한다(finally).
     api_needed = (any(set(p) - {"password"} for p in problems.values()) or bool(others_enabled)
-                  or bool(example_problems) or bool(to_apply))
+                  or bool(example_problems) or bool(to_apply) or asset_changes)
     try:
         if api_needed:
             run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems,
-                          example_problems, to_apply)
+                          example_problems, to_apply, wanted_assets)
+        else:
+            # 관리자 단계를 돌지 않으면(비밀번호만 바뀐 경우) 자산은 그대로다
+            log(assets_summary(asset_plan))
     finally:
         # 3) 예시를 기록하던 계정이 켜진 채 남지 않게 한다(관리자 세션이 깨졌을 수 있어 SQL로).
         disable_example_account_sql(db)
@@ -576,16 +706,19 @@ def main():
     still_enabled = [name for name, u in users.items() if name not in public_names and u["enabled"]]
     example_remaining = example_account_problems(users)
     not_done = [f"{p.label}={p.kind}({p.reason})" for p in plan_examples(examples, db) if p.kind not in ("kept", "skipped")]
+    final_assets = plan_assets(wanted_assets, db.read_critical_assets() or {})
+    assets_left = {k: v for k, v in final_assets.items() if k != "kept" and v}
     log(f"final users: {describe(users)}")
-    if remaining or still_enabled or example_remaining or not_done:
+    if remaining or still_enabled or example_remaining or not_done or assets_left:
         sys.exit(f"seed: target state not reached (public accounts={remaining}, enabled={still_enabled}, "
-                 f"{EXAMPLE_USERNAME}={example_remaining or 'ok'}, examples={not_done or 'ok'})")
+                 f"{EXAMPLE_USERNAME}={example_remaining or 'ok'}, examples={not_done or 'ok'}, "
+                 f"critical assets={assets_left or 'ok'})")
     log(examples_summary(plans))
     log(f"RESULT: CHANGED (audit_logs rows {audit_before} -> {db.audit_count()})")
 
 
 def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret, targets, problems,
-                  example_problems, to_apply):
+                  example_problems, to_apply, wanted_assets):
     if not admin_enabled:
         db.sql_change("TEMP_ENABLE", ADMIN_USERNAME, "admin API session for seeding; disabled again right after",
                       "UPDATE users SET enabled = TRUE, failed_attempts = 0, locked_until = NULL, updated_at = now()"
@@ -652,6 +785,8 @@ def run_api_steps(db, api_base, admin_enabled, admin_password, admin_totp_secret
         if name not in public_names and name != ADMIN_USERNAME and user["enabled"]:
             api.call("POST", f"/api/admin/users/{user['id']}/toggle-enabled", csrf=True)
             log(f"API TOGGLE_ENABLED {name} -> disabled")
+    # T52 중요 자산: T54 단계 뒤, 같은 관리자 세션에서 파일과 같게 맞춘다(감사 CRITICAL_ASSET_CHANGE)
+    sync_critical_assets(api, wanted_assets)
     api.logout()
 
 

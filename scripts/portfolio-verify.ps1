@@ -21,7 +21,7 @@
 # - T61: 네트워크 둘(portfolio-net = nginx-waf·dashboard-app, portfolio-data = 내부 전용)과 capability 없음은 [0] 바로 뒤 [T61a]~[T61d],
 #   상태 확인 감사 줄은 끝 무렵 [T61e]가 본다.
 # - T52: [T23d]의 우선순위 기준이 중요 자산 규칙을 안다(자산 주소는 앱 DB, 행의 원문 host_ip는 zeekad DB에서 읽는다).
-#   [T52b]~[T52d](관리자 API 403·지우기 POST가 WAF를 지남·조회자 응답에 이름 없음)는 [T36] 바로 앞에서 본다.
+#   [T52a](시드가 중요 자산 목록을 자료 파일과 같게 맞춤)는 재시드 단계 뒤, [T52b]~[T52d](관리자 API 403·지우기 POST가 WAF를 지남·조회자 응답에 이름 없음)는 [T36] 바로 앞에서 본다.
 # - DSM 흉내: http://127.0.0.1:<WAF 포트>에 Host: <PublicHost>, X-Forwarded-Proto: https, X-Forwarded-For: <클라이언트 IP>.
 # - 세션·CSRF 쿠키는 Secure라 HTTP 요청에 클라이언트가 보내지 않으므로 Set-Cookie에서 값을 읽어 Cookie 헤더를 직접 만든다
 #   (DASHBOARD_COOKIE_SECURE=false로 우회하지 않는다).
@@ -1546,6 +1546,33 @@ try {
     Assert-Status $newLogin 200 "바뀐 DEMO_PASSWORD로 demo 로그인"
     Assert-ApiError $oldLogin 401 "INVALID_CREDENTIALS" "이전 demo 비밀번호 거부"
     Assert-ApiError $v1Login 403 "ACCOUNT_DISABLED" "재시드 뒤 viewer1 비활성"
+
+    # ───────── [T52a] 시드가 중요 자산 목록을 자료 파일과 같게 맞춘다 ─────────
+    # 1차가 만들고(created=N), 2차는 그대로(kept=N, 로그인 없는 NO_CHANGES). 자산만 다르면(이름 하나를 SQL로 바꾸고 파일에 없는 주소 하나를
+    # SQL로 넣음) 관리자 단계를 돌아 고치고 지운 뒤 다시 실행하면 그대로다. 앱 DB 목록 = 파일, 변경마다 감사 CRITICAL_ASSET_CHANGE.
+    Write-Host "=== [T52a] 시드의 중요 자산 맞추기 ==="
+    $assetFile52 = Get-Content "docker/portfolio/seed/critical_assets.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    $assetN52 = @($assetFile52.assets).Count
+    $assetWant52 = (@($assetFile52.assets | Sort-Object hostIp | ForEach-Object { $_.hostIp }) -join ',')
+    $assetRead52 = { (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(string_agg(host_ip, ',' ORDER BY host_ip), '') FROM critical_assets").Output.Trim() }
+    $assetAuditCount52 = { [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs WHERE action_type = 'CRITICAL_ASSET_CHANGE'").Output.Trim() }
+    $e2eLogs.Add("[T52a] seed run1: $([regex]::Match($seed1.Output, 'critical-assets: [^\r\n]*').Value); run2: $([regex]::Match($seed2.Output, 'critical-assets: [^\r\n]*').Value); file assets=$assetN52 [$assetWant52]; app DB [$(& $assetRead52)]")
+    Assert-True ($seed1.Output -match "critical-assets: created=$assetN52 updated=0 deleted=0 kept=0") "[T52a] 시드 1차 critical-assets: created=$assetN52`n$($seed1.Output)"
+    Assert-True ($seed2.Output -match "critical-assets: created=0 updated=0 deleted=0 kept=$assetN52") "[T52a] 시드 2차 critical-assets: kept=$assetN52"
+    Assert-True ((& $assetRead52) -eq $assetWant52) "[T52a] 앱 DB 자산 주소 = 자료 파일 ([$(& $assetRead52)] vs [$assetWant52])"
+    $firstAsset52 = @($assetFile52.assets)[0]
+    $audit52a = & $assetAuditCount52
+    [void](Invoke-Psql "zeekad_dashboard" "UPDATE critical_assets SET name = 'rehearsal-changed' WHERE host_ip = '$($firstAsset52.hostIp)'")
+    [void](Invoke-Psql "zeekad_dashboard" "INSERT INTO critical_assets (host_ip, name, description, created_by, created_at, updated_by, updated_at) VALUES ('10.99.99.99', 'rehearsal-extra', NULL, 'rehearsal', now(), 'rehearsal', now())")
+    $seed5 = Invoke-NativeCapture "docker" $seedArgs -IgnoreExitCode
+    $seed6 = Invoke-NativeCapture "docker" $seedArgs -IgnoreExitCode
+    $audit52b = & $assetAuditCount52
+    Save-Evidence "seed-run-5.txt" "EXIT_CODE=$($seed5.ExitCode) (critical asset name changed and an extra asset inserted by SQL)`n$($seed5.Output)`n--- run 6 ---`nEXIT_CODE=$($seed6.ExitCode)`n$($seed6.Output)"
+    $e2eLogs.Add("[T52a] asset-only drift: run5 $([regex]::Match($seed5.Output, 'critical-assets: [^\r\n]*').Value) $([regex]::Match($seed5.Output, 'RESULT: [^\r\n]*').Value); run6 $([regex]::Match($seed6.Output, 'critical-assets: [^\r\n]*').Value) $([regex]::Match($seed6.Output, 'RESULT: [^\r\n]*').Value); CRITICAL_ASSET_CHANGE audit rows $audit52a -> $audit52b")
+    Assert-True ($seed5.ExitCode -eq 0 -and $seed5.Output -match "critical-assets: created=0 updated=1 deleted=1 kept=$($assetN52 - 1)" -and $seed5.Output -match 'seed: API admin login' -and $seed5.Output -match 'RESULT: CHANGED') "[T52a] 자산만 달라도 관리자 단계를 돌아 고치고 지운다`n$($seed5.Output)"
+    Assert-True ($seed5.Output -notmatch 'seed: SQL SET_PASSWORD|seed: API (CREATE_USER|UPDATE_USER)') "[T52a] 자산만 다른 실행은 계정을 바꾸지 않는다"
+    Assert-True ($seed6.ExitCode -eq 0 -and $seed6.Output -match 'RESULT: NO_CHANGES' -and $seed6.Output -match "kept=$assetN52") "[T52a] 맞춘 뒤 다시 실행하면 그대로"
+    Assert-True ((& $assetRead52) -eq $assetWant52 -and $audit52b -eq $audit52a + 2) "[T52a] 앱 DB 자산 주소 = 자료 파일, 감사 두 행(고치기·지우기)"
 
     # ───────── [T33] 체험용 분석가 trial-analyst·매 주기 초기화(리허설 주기 1분) ─────────
     # 순서: 시드 확인 → 설정 전 미설정 로그 → sandbox-setup 두 번(멱등) → 권한 거부 시도 → 쓰기 흐름 → 다음 주기 초기화 확인(세 표 = 기준선,
@@ -3296,7 +3323,7 @@ ORDER BY 1
     }
 
     # ───────── [T52] 중요 자산: 관리자 API 권한·조회자 응답에 이름 없음·지우기 POST가 WAF를 지남 ─────────
-    # [T52a](시드가 자산 목록을 파일과 같게 맞추고 두 번째 실행은 그대로)는 시드 단계와 함께 더한다(T54 통합 뒤, handoff T52 6절).
+    # [T52a](시드가 자산 목록을 자료 파일과 같게 맞춤)는 재시드 단계 바로 뒤에 있다.
     Write-Host "=== [T52] 중요 자산: 관리자 API 403·조회자 응답에 이름 없음·지우기 POST가 WAF를 지남 ==="
     Assert-True ((Invoke-Psql "zeekad_dashboard" "SELECT to_regclass('public.critical_assets') IS NOT NULL").Output.Trim() -eq 't') "[T52b] 앱 DB에 critical_assets 표(V6)"
     $assetSnap52 = { (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || '|' || COALESCE(string_agg(id || ':' || host_ip || '=' || name || '@' || updated_at, ',' ORDER BY id), '') FROM critical_assets").Output.Trim() }
@@ -3362,7 +3389,11 @@ ORDER BY 1
         if ($d.Json.queueMeta.assetCritical -ne $true -or $null -ne $d.Json.queueMeta.criticalAssetName) { $metaBad52++ }
         if (@($rel.Json.items | Where-Object { $null -ne $_.criticalAssetName }).Count -gt 0) { $metaBad52++ }
     }
-    $nameHits52 = @(foreach ($a in $assetRows52) { foreach ($b in $bodies52) { if ($a.Name -and $b.Contains($a.Name)) { $a.Name } } }) | Select-Object -Unique
+    # 이름이 실릴 수 있는 길은 criticalAssetName 값뿐이다: 어떤 응답 글에도 문자열 값이 없어야 한다.
+    # 자산 이름 글자 찾기는 자유 글이 없는 호스트 위험도 응답에서만 한다(상세의 AI 리포트 등에 "도메인 서버" 같은 말이 우연히 있을 수 있다).
+    $namedKey52 = @($bodies52 | Where-Object { $_ -match '"criticalAssetName"\s*:\s*"' }).Count
+    $nameHits52 = @(@(foreach ($a in $assetRows52) { if ($a.Name -and $hosts52.Body.Contains($a.Name)) { $a.Name } }) | Select-Object -Unique)
+    if ($namedKey52 -gt 0) { $nameHits52 += "criticalAssetName string value in $namedKey52 body(ies)" }
     # 분석가 응답은 원문 주소라 Get-AllQueueItems(가리지 않은 IPv4를 [T23] 목록에 모음)를 쓰지 않는다
     $trialQueue52 = [pscustomobject]@{ Items = [System.Collections.Generic.List[object]]::new() }
     $trialPages52 = 1

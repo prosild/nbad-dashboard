@@ -210,4 +210,46 @@ class T52StaticTest {
         String shell = read("frontend/src/components/AppShell.tsx");
         assertThat(shell).containsPattern("\\{ to: '/admin/critical-assets', label: '중요 자산',[^}]*adminOnly: true \\}");
     }
+
+    /** 6절: 공개 데모 자료 파일은 사용자가 정한 여섯 건이고, 시드는 관리자 API로만(지우기도 POST) T54 단계 뒤 같은 세션에서 맞춘다 */
+    @Test
+    void portfolioSeedSyncsTheDecidedSixAssetsThroughTheAdminApi() throws IOException {
+        com.fasterxml.jackson.databind.JsonNode doc = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(Path.of("docker/portfolio/seed/critical_assets.json").toFile());
+        com.fasterxml.jackson.databind.JsonNode assets = doc.get("assets");
+        List<String> rows = new ArrayList<>();
+        for (com.fasterxml.jackson.databind.JsonNode a : assets) {
+            String host = a.path("hostIp").asText();
+            assertThat(com.zeekad.dashboard.service.HostIpFilter.kindOf(host)).as(host)
+                    .isEqualTo(com.zeekad.dashboard.service.HostIpFilter.Kind.EXACT);
+            String name = a.path("name").asText();
+            String description = a.path("description").asText();
+            assertThat(name.codePointCount(0, name.length())).isBetween(1, 100);
+            assertThat(description.codePointCount(0, description.length())).isLessThanOrEqualTo(300);
+            rows.add(host + "=" + name);
+        }
+        assertThat(rows).containsExactly(
+                "10.10.0.20=실습망 대상 서버", "10.10.0.21=실습망 대상 서버", "10.10.0.22=실습망 대상 서버",
+                "10.10.0.23=실습망 대상 서버", "10.10.0.10=실습망 배포 서버", "192.168.10.3=도메인 서버");
+        assertThat(assets.get(5).path("description").asText()).isEqualTo("DNS·Kerberos");
+
+        String seed = read("docker/portfolio/seed/seed_demo.py");
+        // 쓰기는 관리자 API뿐이다(SQL로는 자산 표를 읽기만 한다). 지우기도 POST …/delete
+        assertThat(seed).doesNotContainPattern("(?i)(insert\\s+into|update|delete\\s+from)\\s+critical_assets");
+        assertThat(seed).contains("\"/api/admin/critical-assets\"", "/api/admin/critical-assets/{by_host[host]['id']}/delete\"",
+                "SELECT host_ip, name, description FROM critical_assets");
+        // 파일 검증이 바꾸기 전에 있다(빈 목록·상한·주소 꼴·중복). 로그 한 줄의 꼴
+        assertThat(seed).contains("an empty list would delete every asset", "duplicate hostIp", "IPV4_EXACT.match(host)",
+                "critical-assets: created={len(plan['create'])} updated={len(plan['change'])} ");
+        // 자산 단계는 T54 단계(계정 끄기) 뒤, 같은 관리자 세션의 로그아웃 앞이다
+        String apiSteps = seed.substring(seed.indexOf("def run_api_steps("));
+        int t54Disable = apiSteps.indexOf("API TOGGLE_ENABLED {name} -> disabled");
+        int sync = apiSteps.indexOf("sync_critical_assets(api, wanted_assets)");
+        int logout = apiSteps.indexOf("api.logout()");
+        assertThat(t54Disable).isPositive();
+        assertThat(sync).isGreaterThan(t54Disable);
+        assertThat(logout).isGreaterThan(sync);
+        // 자산만 달라도 관리자 단계를 돌고, 셋 다 같으면 로그인 없이 NO_CHANGES
+        assertThat(seed).contains("or bool(to_apply) or asset_changes)", "and not asset_changes):");
+    }
 }
