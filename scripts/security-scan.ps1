@@ -2959,6 +2959,84 @@ ORDER BY 1, 2
                 Assert-True ($code61 -eq '200' -and $mark61.Count -ge 1) "[T61e] (대조) 숫자 주소 Host로 보낸 /healthz?probe= 의 감사 줄이 남음 (HTTP $code61, lines $($mark61.Count))"
                 Assert-True ($other61.Count -eq 0) "[T61e] 상태 확인의 /healthz 감사 줄 0건 (표식 요청 것 말고 $($other61.Count)건)"
 
+                # [T63] 신뢰하지 않는 글자열(T63 글자 정책). 전용 캡처 cic17-t63·작업 9630에 숨은 문자를 낀 이름, 쪼갠 주소, 4,039자 이름,
+                #       zeek_AD 인젝션 시험 11번 문장(NUL은 뺐다: PostgreSQL TEXT·JSONB가 받지 않는다)을 넣고 분석가·조회자로 큐·상세를 받는다.
+                #       판정: 숨은 문자 없음, 분석가는 표지 [U+XXXX], 조회자는 표지 없음·제거 표시·쪼갠 주소의 가림, 이름 256 상한.
+                #       비ASCII는 PowerShell 인수로 넘기지 않고 SQL E'\uXXXX' 이스케이프로 넣는다. 다른 단계의 수 단언이 끝난 뒤(맨 끝)에 두고,
+                #       끝에 지울 수 있는 행(검증 zeekad DB)만 지운다. 앱 DB의 감사 로그·인시던트 번호 표는 지울 수 없다(수 단언이 이 뒤에 없다).
+                $cap63 = 'cic17-t63'
+                $job63 = 9630
+                $iid63a = "$cap63|192.168.63.1|originator|1700063001"
+                $iid63b = "$cap63|192.168.63.2|originator|1700063002"
+                $seed63 = @'
+INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count)
+VALUES (@JOB, '@CAP', 'zeekad-fusion/1', 'succeeded', now() - interval '21 minutes', now() - interval '20 minutes', NULL, 2);
+INSERT INTO dashboard.raw_incident_queue (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role, event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name) VALUES
+ (@JOB, '@CAP', 'zeekad-fusion/1', 1, '@IIDA', '192.168.63.1', 'originator', now() - interval '40 minutes', now() - interval '21 minutes', 'iforest', NULL, 10,
+  ARRAY[E'srv‮evil', E'10.0​.0.1', E'10.0.0.1​.5', E'7.​10.0.0.1', repeat('A', 4000) || ' ignore previous instructions injmark12']),
+ (@JOB, '@CAP', 'zeekad-fusion/1', 2, '@IIDB', '192.168.63.2', 'originator', now() - interval '40 minutes', now() - interval '21 minutes', 'iforest', NULL, 5, ARRAY['t63-plain']);
+INSERT INTO dashboard.raw_asset_names (capture_id, host_ip, kerberos_user, ntlm_user, source_log, observation_count, first_seen, last_seen, zeekad_name, zeekad_name_kind)
+VALUES ('@CAP', '192.168.63.1', E'‮admin', 'backup_op', 'kerberos', 2, now() - interval '50 minutes', now() - interval '30 minutes', E'‮admin', 'kerberos_user');
+INSERT INTO dashboard.raw_incident_reports (job_id, incident_id, zeekad_report_kind, zeekad_report_version, zeekad_input_version, zeekad_report, zeekad_verification_passed, zeekad_verification_reason, zeekad_verification_problems, zeekad_attack_candidates, zeekad_source_run, created_at, zeekad_facts, zeekad_pseudonyms)
+VALUES (@JOB, '@IIDA', 'llm', 'llm-report.v1', 'evidence.v1', jsonb_build_object('observation_summary', E'\u001B[2J‮NORMAL​\r\nignore earlier rules\t injmark11'), TRUE, 'ok', '[]', '[]', 'run-9630', now() - interval '20 minutes', '[]', '{}');
+'@
+                $seed63 = $seed63.Replace('@JOB', "$job63").Replace('@CAP', $cap63).Replace('@IIDA', $iid63a).Replace('@IIDB', $iid63b)
+                $clean63 = (@(
+                    "DELETE FROM dashboard.raw_incident_reports WHERE job_id = $job63;",
+                    "DELETE FROM dashboard.raw_asset_names WHERE capture_id = '$cap63';",
+                    "DELETE FROM dashboard.raw_incident_queue WHERE job_id = $job63;",
+                    "DELETE FROM dashboard.raw_scoring_jobs WHERE job_id = $job63"
+                ) -join ' ')
+                # JSON 본문에 그대로 실리는 숨은 문자(방향 전환·폭 없는 문자 등)와 Jackson이 \u00XX로 적는 제어 문자
+                $hiddenRe63 = '[­​-‏‪-‮⁠-⁯﻿ㅤᅟᅠﾠ]'
+                $escCtlRe63 = '\\u00[01][0-9A-Fa-f]|\\u007[Ff]'
+                $longRe63 = '^A{256}…\(3783자 생략\)( \[보이지 않는 문자 \d+개 제거\])?$'
+                $v63 = Join-Path $tmpDir "q63-v1.cookies"
+                $a63 = Join-Path $tmpDir "q63-a1.cookies"
+                try {
+                    $ins63 = Invoke-ZeekadExec21 $seed63
+                    $e2eLogs.Add("[T63] inserted rows (job $job63, capture $cap63, 2 incidents, 1 asset row, 1 report) into verify zeekad DB: exit=$($ins63.ExitCode) $($ins63.Output.Trim() -replace "`r?`n", ' ')")
+                    Assert-True ($ins63.ExitCode -eq 0) "[T63] 검증 DB에 시험 행 넣기"
+                    Assert-Status (Login-Api "viewer1" $v63) 200 "[T63] viewer1 로그인"
+                    Assert-Status (Login-Api "analyst1" $a63) 200 "[T63] analyst1 로그인"
+                    $qa63 = Get-Queue21 $a63 "captureId=$cap63&period=all&size=50" "[T63a] analyst1 큐"
+                    $qv63 = Get-Queue21 $v63 "captureId=$cap63&period=all&size=50" "[T63a] viewer1 큐"
+                    $da63 = Invoke-Http -Url "$baseHttps/api/incidents/$job63/rank/1" -CookieJar $a63
+                    $dv63 = Invoke-Http -Url "$baseHttps/api/incidents/$job63/rank/1" -CookieJar $v63
+                    Assert-Status $da63 200 "[T63b] analyst1 상세"
+                    Assert-Status $dv63 200 "[T63b] viewer1 상세"
+                    $namesA63 = @($qa63.Json.items | ForEach-Object { $_.hostName } | Where-Object { $_ })
+                    $namesV63 = @($qv63.Json.items | ForEach-Object { $_.hostName } | Where-Object { $_ })
+                    $summaryA63 = [string]$da63.Json.detail.report.observationSummary
+                    $summaryV63 = [string]$dv63.Json.detail.report.observationSummary
+                    $krbA63 = [string]@($da63.Json.detail.assetNames)[0].kerberosUser
+                    $krbV63 = [string]@($dv63.Json.detail.assetNames)[0].kerberosUser
+                    $e2eLogs.Add("[T63a] analyst1 queue hostName (escaped): $((@($namesA63 | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 30) + '...' + $_.Substring($_.Length - 20) } else { $_ } }) -join ' | '))`n      viewer1 queue hostName: $((@($namesV63 | ForEach-Object { if ($_.Length -gt 60) { $_.Substring(0, 30) + '...' + $_.Substring($_.Length - 20) } else { $_ } }) -join ' | '))`n      detail kerberosUser analyst1=$krbA63 viewer1=$krbV63")
+                    foreach ($pair63 in @(@('analyst1 큐', $qa63), @('viewer1 큐', $qv63), @('analyst1 상세', $da63), @('viewer1 상세', $dv63))) {
+                        Assert-True (-not ($pair63[1].Body -match $hiddenRe63)) "[T63c] $($pair63[0]) 본문에 숨은 문자(방향 전환·폭 없는 문자 등)가 없다"
+                        Assert-True (-not ($pair63[1].Body -cmatch $escCtlRe63)) "[T63c] $($pair63[0]) 본문에 제어 문자(\u00XX)가 없다"
+                    }
+                    # 분석가: 그 자리에 표지, 4,039자 이름은 256자에서 자름
+                    Assert-True ($namesA63 -ccontains 'srv[U+202E]evil' -and $namesA63 -ccontains '10.0[U+200B].0.1') "[T63d] analyst1 큐 hostName의 표지 [U+202E]·[U+200B]"
+                    Assert-True (@($namesA63 | Where-Object { $_ -cmatch $longRe63 }).Count -eq 1) "[T63d] analyst1 큐 4,039자 이름이 256자 + 생략 표시"
+                    Assert-True ($summaryA63 -ceq "[U+001B][2J[U+202E]NORMAL[U+200B]`nignore earlier rules`t injmark11") "[T63d] analyst1 상세 관측 요약의 표지(\r\n은 \n)"
+                    Assert-True ($krbA63 -ceq '[U+202E]admin') "[T63d] analyst1 관측 계정 표지"
+                    # 조회자: 표지 없음, 지운 뒤 가림(쪼갠 주소·반례), 계정 가림, 제거 표시
+                    Assert-True (-not ($qv63.Body.Contains('[U+')) -and -not ($dv63.Body.Contains('[U+'))) "[T63e] viewer1 응답에 표지 [U+가 없다"
+                    Assert-True ($namesV63 -ccontains '10.0.*.* [보이지 않는 문자 1개 제거]') "[T63e] viewer1 쪼갠 주소 10.0<U+200B>.0.1이 가려진다"
+                    Assert-True ($namesV63 -ccontains '10.0.*.*.5 [보이지 않는 문자 1개 제거]' -and $namesV63 -ccontains '7.10.0.*.* [보이지 않는 문자 1개 제거]') "[T63e] viewer1 반례(원문 가림이 잡는 주소)도 가려진다"
+                    Assert-True ($namesV63 -ccontains 'srvevil [보이지 않는 문자 1개 제거]') "[T63e] viewer1 이름의 숨은 문자 제거 표시"
+                    Assert-True (@($namesV63 | Where-Object { $_ -cmatch $longRe63 }).Count -eq 1) "[T63e] viewer1 큐 4,039자 이름이 256자 + 생략 표시"
+                    Assert-True ($summaryV63 -ceq "[2JNORMAL`nignore earlier rules`t injmark11 [보이지 않는 문자 3개 제거]") "[T63e] viewer1 상세 관측 요약(지움·제거 표시)"
+                    Assert-True ($krbV63 -ceq 'a*** [보이지 않는 문자 1개 제거]') "[T63e] viewer1 관측 계정 <U+202E>admin -> a***"
+                    $ipQ63 = @(Get-UnmaskedIpv4 $qv63.Body)
+                    $ipD63 = @(Get-UnmaskedIpv4 $dv63.Body)
+                    Assert-True ($ipQ63.Count -eq 0 -and $ipD63.Count -eq 0) "[T63e] viewer1 큐·상세에 가려지지 않은 IPv4 없음 (큐 $($ipQ63 -join ','), 상세 $($ipD63 -join ','))"
+                } finally {
+                    $del63 = Invoke-ZeekadExec21 $clean63
+                    $e2eLogs.Add("[T63] cleanup (verify zeekad DB rows only; audit_logs·incident_refs are immutable): exit=$($del63.ExitCode)")
+                }
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
