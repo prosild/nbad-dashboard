@@ -95,6 +95,44 @@
   .soc-subhead {
     @apply text-xs font-semibold text-slate-300;
   }
+
+  /*
+   * T49 옆 칸(인시던트 상세의 조치 패널). AppShell이 머리말과 한 상자에 넣어 그린다.
+   * 좁은 화면(1280px 미만): 머리말 다음에 흐름대로 놓인다. 좌우 여백은 본문(main의 px-4 sm:px-6)과 같고
+   * 머리말과의 간격은 24px이다.
+   */
+  .soc-side-panel {
+    margin: 1.5rem 1rem 0;
+  }
+
+  @media (min-width: 640px) {
+    .soc-side-panel {
+      margin: 1.5rem 1.5rem 0;
+    }
+  }
+
+  /*
+   * 넓은 화면(Tailwind xl = 1280px 이상): 감싼 상자(sticky top-0)를 기준으로 놓는다.
+   * 그 상자의 흐름 안 내용은 머리말뿐이라 백분율 100%가 머리말 높이다. 머리말이 몇 줄이든 바로 아래에 온다
+   * (머리말 높이에 맞춘 고정 값이 없다).
+   * - top: 머리말 아래쪽에서 24px(본문 위 여백 py-6과 같다. 스크롤하지 않은 화면에서 본문 첫 줄과 나란하다).
+   * - right: 본문(main의 mx-auto max-w-[1600px] px-6) 오른쪽 끝에 맞춘다. 1600px은 그 max-w-[1600px]와 같은 값이다.
+   * - max-height: 화면 높이에서 머리말 높이와 아래 여백 3.5rem을 뺀다. 3.5rem은 고정 스냅샷 띠(한 줄, 29px)와
+   *   위 간격 24px의 합 53px을 0.25rem 단위로 올린 값이다. 스크롤하지 않은 화면에서도(띠가 머리말 위에 보일 때)
+   *   패널 아래쪽이 화면을 넘지 않고, 스크롤한 뒤에는 화면 아래쪽과 32px 떨어진다.
+   *   띠가 없으면 스크롤 0에서 29px이 남을 뿐이고, 띠가 두 줄이 되면 스크롤 0에서만 다시 넘친다.
+   */
+  @media (min-width: 1280px) {
+    .soc-side-panel {
+      position: absolute;
+      top: calc(100% + 1.5rem);
+      right: max(1.5rem, calc((100% - 1600px) / 2 + 1.5rem));
+      width: 22rem;
+      max-height: calc(100vh - 100% - 3.5rem);
+      margin: 0;
+      overflow-y: auto;
+    }
+  }
 }
 
 /* T34 탐지 추이 막대 링크: 키보드 포커스·마우스 올림 표시(누르는 영역은 첫 투명 사각형) */

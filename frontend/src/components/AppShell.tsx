@@ -26,9 +26,23 @@ export const PRODUCT_NAME = 'zeek_AD 보안 관제';
 
 /**
  * T21: 고정 띠(stickyBar)가 있는 화면(인시던트 상세)은 넓은 화면(xl)에서 상단 바 줄을 접지 않는다.
- * 헤더 높이가 폭에 따라 달라지지 않아야 조치 패널의 고정 위치(xl:top)가 헤더에 가리지 않는다.
+ * T49: 옆 칸(sidePanel)의 위치는 더는 이 줄의 높이에 기대지 않는다(머리말 상자의 아래쪽 끝에 매달린다).
+ * 줄을 접지 않는 것은 윗줄이 한 줄로 남게 하려는 것뿐이다.
  */
 const STICKY_ROW_NOWRAP = 'xl:flex-nowrap';
+
+/**
+ * T49: 머리말과 옆 칸을 감싸는 상자. 늘 그려 두고 클래스만 바꾼다(조건에 따라 넣고 빼면 머리말이 다시 만들어진다).
+ * - 옆 칸이 없거나 좁은 화면(xl 미만): `contents`라 상자가 없는 것과 같다. 머리말이 `sticky top-0 z-30`이다.
+ * - 옆 칸이 있고 넓은 화면(xl 이상): 상자가 `sticky top-0 z-30`이고 머리말은 `static`이다.
+ *   옆 칸(`soc-side-panel`, index.css)은 이 상자를 기준으로 `top: 100%`(= 머리말 높이)에 놓인다.
+ */
+const HEAD_BOX = 'contents';
+const HEAD_BOX_WITH_PANEL = 'contents xl:sticky xl:top-0 xl:z-30 xl:block';
+/** 옆 칸이 있을 때 머리말에만 붙는다: 넓은 화면에서 sticky를 풀고 감싼 상자가 대신 붙는다 */
+const HEADER_UNSTICK = 'xl:static';
+/** 옆 칸이 있을 때 main에만 붙는다: 좁은 화면에서 옆 칸과 그다음 내용의 간격을 16px로 둔다(넓은 화면은 py-6 그대로) */
+const MAIN_WITH_PANEL = 'pt-4 xl:pt-6';
 
 interface NavItem {
   to: string;
@@ -52,17 +66,27 @@ export function AppShell({
   title,
   actions,
   stickyBar,
+  sidePanel,
+  sidePanelLabel,
   children,
 }: {
   title: string;
   actions?: React.ReactNode;
   /** 상단 바 아래에 붙어 스크롤해도 남는 띠(인시던트 상세의 요약 헤더 등) */
   stickyBar?: React.ReactNode;
+  /**
+   * T49 옆 칸(인시던트 상세의 조치 패널). 넓은 화면(xl)은 머리말 바로 아래 오른쪽에 붙어 스크롤해도 남고,
+   * 좁은 화면은 머리말 다음에 흐름대로 놓인다. 본문은 넓은 화면에서 오른쪽 23rem을 스스로 비운다.
+   */
+  sidePanel?: React.ReactNode;
+  /** 옆 칸 `aside`의 접근성 이름 */
+  sidePanelLabel?: string;
   children: React.ReactNode;
 }) {
   const { user, logout, timeContext } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const hasSidePanel = sidePanel !== undefined && sidePanel !== null && sidePanel !== false;
 
   const visibleNav = NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === 'ADMIN');
 
@@ -181,53 +205,66 @@ export function AppShell({
             {DISPLAY_TIME_ZONE_LABEL}
           </div>
         )}
-        <header className="sticky top-0 z-30 border-b border-slate-800/90 bg-[#090f1d]/95 backdrop-blur">
-          <div className={`mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                aria-label="메뉴 열기"
-                onClick={() => setMobileOpen(true)}
-                className="rounded-lg border border-slate-700 bg-slate-800/70 p-2 text-slate-200 hover:bg-slate-700 lg:hidden"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-              <div>
-                <h1 className="text-lg font-bold tracking-tight text-slate-100 sm:text-xl">{title}</h1>
+        <div className={hasSidePanel ? HEAD_BOX_WITH_PANEL : HEAD_BOX}>
+          <header
+            className={`sticky top-0 z-30 border-b border-slate-800/90 bg-[#090f1d]/95 backdrop-blur${hasSidePanel ? ` ${HEADER_UNSTICK}` : ''}`}
+          >
+            <div className={`mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  aria-label="메뉴 열기"
+                  onClick={() => setMobileOpen(true)}
+                  className="rounded-lg border border-slate-700 bg-slate-800/70 p-2 text-slate-200 hover:bg-slate-700 lg:hidden"
+                >
+                  <Menu className="h-4 w-4" />
+                </button>
+                <div>
+                  <h1 className="text-lg font-bold tracking-tight text-slate-100 sm:text-xl">{title}</h1>
+                </div>
+              </div>
+
+              <div className={`flex flex-wrap items-center gap-2 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
+                <span
+                  className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-slate-400"
+                  title="화면의 모든 날짜·시각은 한국 표준시(UTC+9)로 표시합니다."
+                >
+                  <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  시각 기준 {DISPLAY_TIME_ZONE_LABEL}
+                </span>
+                {user?.maskedView ? (
+                  <SocBadge
+                    tone="neutral"
+                    title={`${labelText('userRole', user.role)} 계정입니다. 조회만 할 수 있고, IP 주소와 계정 이름 일부가 서버에서 가려져 보입니다.`}
+                  >
+                    <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                    마스킹 적용
+                  </SocBadge>
+                ) : (
+                  user && (
+                    <SocBadge tone="neutral" title="현재 계정의 권한">
+                      <Lock className="h-3 w-3 text-slate-400" aria-hidden="true" />
+                      {labelText('userRole', user.role)}
+                    </SocBadge>
+                  )
+                )}
+                {actions}
               </div>
             </div>
+            {stickyBar && <div className="mx-auto max-w-[1600px] px-4 pb-2.5 sm:px-6">{stickyBar}</div>}
+          </header>
+          {hasSidePanel && (
+            <aside aria-label={sidePanelLabel} className="soc-side-panel">
+              {sidePanel}
+            </aside>
+          )}
+        </div>
 
-            <div className={`flex flex-wrap items-center gap-2 ${stickyBar ? STICKY_ROW_NOWRAP : ''}`}>
-              <span
-                className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-slate-400"
-                title="화면의 모든 날짜·시각은 한국 표준시(UTC+9)로 표시합니다."
-              >
-                <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-                시각 기준 {DISPLAY_TIME_ZONE_LABEL}
-              </span>
-              {user?.maskedView ? (
-                <SocBadge
-                  tone="neutral"
-                  title={`${labelText('userRole', user.role)} 계정입니다. 조회만 할 수 있고, IP 주소와 계정 이름 일부가 서버에서 가려져 보입니다.`}
-                >
-                  <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
-                  마스킹 적용
-                </SocBadge>
-              ) : (
-                user && (
-                  <SocBadge tone="neutral" title="현재 계정의 권한">
-                    <Lock className="h-3 w-3 text-slate-400" aria-hidden="true" />
-                    {labelText('userRole', user.role)}
-                  </SocBadge>
-                )
-              )}
-              {actions}
-            </div>
-          </div>
-          {stickyBar && <div className="mx-auto max-w-[1600px] px-4 pb-2.5 sm:px-6">{stickyBar}</div>}
-        </header>
-
-        <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 sm:px-6">{children}</main>
+        <main
+          className={`mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 sm:px-6${hasSidePanel ? ` ${MAIN_WITH_PANEL}` : ''}`}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

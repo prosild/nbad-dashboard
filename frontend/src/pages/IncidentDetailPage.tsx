@@ -48,6 +48,8 @@ export const NAV_LOAD_FAILED_TEXT = '이동 목록을 불러오지 못했습니�
 export const NAV_NOT_IN_LIST_TEXT = '목록이 갱신되어 이 인시던트가 지금 목록에 없습니다';
 /** 보고 있는 탐지 작업이 최신이 아닐 때(T23) */
 export const NEWER_RESULT_TEXT = '이 인시던트의 더 새로운 분석 결과가 있습니다';
+/** T49: 조치 패널이 있을 때 본문(안내 줄과 카드)이 넓은 화면에서 비우는 오른쪽 폭(패널 22rem + 간격 1rem) */
+const BODY_WITH_PANEL = 'xl:pr-[23rem]';
 /** T27 번호 위치가 최신 큐가 아닐 때 */
 export const NOT_LATEST_TEXT = '최신 탐지 결과에는 이 인시던트가 없습니다. 마지막으로 나온 탐지 결과를 보여 줍니다.';
 
@@ -291,8 +293,28 @@ export function IncidentDetailPage() {
           />
         ) : undefined
       }
+      sidePanelLabel="조치 패널"
+      sidePanel={
+        // T49: 조치 패널은 AppShell이 머리말과 한 상자에 그린다(넓은 화면은 머리말 바로 아래 오른쪽에 붙고
+        // 좁은 화면은 머리말 다음에 놓인다). 길면 패널 안에서 스크롤한다.
+        current ? (
+          <ActionPanel
+            key={`${current.incident.jobId}-${current.incident.queueRank}`}
+            detail={current}
+            readOnly={readOnly}
+            onRefresh={loadDetail}
+            onShowHistory={() => selectTab('history')}
+            assignment={data?.assignment ?? null}
+            assignmentHistory={data?.assignmentHistory ?? []}
+            canAssign={Boolean(data?.canAssign)}
+            blockedReason={staleDetail ? STALE_ACTION_BLOCKED_DETAIL : null}
+            currentUsername={user?.username ?? null}
+          />
+        ) : undefined
+      }
     >
-      <div className="space-y-4">
+      {/* T49: 패널이 있으면 넓은 화면에서 오른쪽(패널 22rem + 간격 1rem)을 비운다. 안내 줄도 카드와 같은 폭이 된다. */}
+      <div className={current ? `space-y-4 ${BODY_WITH_PANEL}` : 'space-y-4'}>
         {stale && currentKey && (
           <div
             role="status"
@@ -341,27 +363,8 @@ export function IncidentDetailPage() {
         {loading && !current && !locateError ? (
           <LoadingPanel label="인시던트 정보를 불러오는 중..." />
         ) : current ? (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-            {/* 조치 패널: 넓은 화면은 오른쪽 고정, 좁은 화면은 헤더 바로 아래. 길면 패널 안에서 스크롤. */}
-            <aside
-              aria-label="조치 패널"
-              className="xl:sticky xl:top-[8.5rem] xl:col-start-2 xl:row-start-1 xl:max-h-[calc(100vh-9.5rem)] xl:self-start xl:overflow-y-auto"
-            >
-              <ActionPanel
-                key={`${current.incident.jobId}-${current.incident.queueRank}`}
-                detail={current}
-                readOnly={readOnly}
-                onRefresh={loadDetail}
-                onShowHistory={() => selectTab('history')}
-                assignment={data?.assignment ?? null}
-                assignmentHistory={data?.assignmentHistory ?? []}
-                canAssign={Boolean(data?.canAssign)}
-                blockedReason={staleDetail ? STALE_ACTION_BLOCKED_DETAIL : null}
-                currentUsername={user?.username ?? null}
-              />
-            </aside>
-
-            <div className="soc-card min-w-0 xl:col-start-1 xl:row-start-1">
+          <div className="grid grid-cols-1 gap-4">
+            <div className="soc-card min-w-0">
               <div
                 role="tablist"
                 aria-label="인시던트 상세 내용"
