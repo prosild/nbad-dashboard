@@ -165,6 +165,20 @@ function Invoke-Psql([string]$Database, [string]$Sql, [string]$User = "postgres"
 # --- HTTP: DSM 흉내 헤더 + 직접 관리하는 쿠키 ---
 function New-Client([string]$Ip) { return [pscustomobject]@{ Ip = $Ip; Cookies = [ordered]@{}; SetCookieLines = @() } }
 
+# 표식을 요청 주소에 붙인다(T59): 쿼리가 이미 있으면 &probe=, 없으면 ?probe=. 표식은 영문·숫자·'-'·'_'만 쓴다.
+# WAF 감사 로그는 요청 헤더를 남기지 않으므로 그 요청의 감사 줄은 요청 주소로 찾는다.
+function Add-ProbeQuery([string]$Path, [string]$ProbeId) {
+    if ($ProbeId -notmatch '^[A-Za-z0-9_-]+$') { throw "표식에 쓸 수 없는 글자가 있습니다(영문·숫자·'-'·'_'만)." }
+    $separator = '?'
+    if ($Path.Contains('?')) { $separator = '&' }
+    return $Path + $separator + "probe=" + $ProbeId
+}
+# 로그 한 줄이 그 표식의 요청 것인지: 요청 주소의 쿼리 probe=<표식>(뒤에 표식 글자가 이어지지 않음)으로 본다.
+function Test-ProbeMark([string]$Line, [string]$ProbeId) {
+    if (-not $Line -or -not $ProbeId) { return $false }
+    return [regex]::IsMatch($Line, '[?&]probe=' + [regex]::Escape($ProbeId) + '(?![A-Za-z0-9_-])')
+}
+
 function Invoke-Http {
     param(
         [string]$Path,
@@ -178,6 +192,7 @@ function Invoke-Http {
         [string[]]$ExtraHeaders = @()
     )
     $script:httpSeq++
+    if ($ProbeId) { $Path = Add-ProbeQuery $Path $ProbeId }
     $hdrFile = Join-Path $tmpDir "resp-$($script:httpSeq).hdr"
     $bodyFile = Join-Path $tmpDir "resp-$($script:httpSeq).body"
     $xffValue = if ($Xff) { $Xff } elseif ($Client) { $Client.Ip } else { "203.0.113.200" }
@@ -282,7 +297,7 @@ function Assert-WafBlocked($Resp, [string]$ProbeId, [string]$What) {
     $logLine = $null
     for ($i = 0; $i -lt 10 -and -not $logLine; $i++) {
         $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-        $logLine = $wafLogs -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($ProbeId) } | Select-Object -Last 1
+        $logLine = $wafLogs -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ $ProbeId) } | Select-Object -Last 1
         if (-not $logLine) { Start-Sleep -Seconds 1 }
     }
     Assert-True ([bool]$logLine) "$What (nginx-waf ModSecurity 감사 로그에 probe=$ProbeId 기록)"
@@ -1193,6 +1208,110 @@ try {
     $benign = Invoke-Http -Path "/api/auth/login" -Method POST -Client $jc -Csrf -JsonBody @{ username = "nobody-portfolio"; password = "x" }
     $e2eLogs.Add("[8] (대조) benign JSON login with same CSRF: $(Format-Resp $benign 160)")
     Assert-ApiError $benign 401 "INVALID_CREDENTIALS" "WAF 대조용 정상 JSON 로그인(앱 도달)"
+
+    Write-Host "=== [8b] WAF 감사 로그에 남는 값(T59) ==="
+    # WAF 이미지가 감사 로그의 부분을 AHZ로 줄였다(docker/nginx-waf/Dockerfile). 공개 스택에서 실제로 걸렸는지 본다:
+    # 없는 사용자 이름 + 표식 비밀번호로 로그인 실패(401), demo 세션으로 관리자 API 403을 만든 뒤 nginx-waf 컨테이너 로그 전체
+    # (stdout + stderr)에 그 표식 비밀번호·세션 쿠키 값·CSRF 토큰 값이 0번 나온다. 두 요청의 감사 줄(요청 주소의 probe=)은 있고
+    # 응답 코드가 맞으며 headers·body 키가 없다(0번이 빈 단언이 아님을 보인다).
+    # 로그인 속도 제한(클라이언트 IP당)에 걸리지 않게 이 구간만 쓰는 주소 둘을 쓴다. [seed-3]이 demo 비밀번호를 바꾸기 전에 둔다.
+    # 실패 글에는 값이나 로그 줄 원문을 넣지 않는다(개수와 응답 코드만). Login-Api·Assert-Status·Assert-ApiError는 실패하면
+    # 응답 본문을 찍으므로 이 구간에서는 쓰지 않는다.
+    function Get-WafLogText8b {
+        # Out-String은 stderr 줄(ErrorRecord)을 콘솔 폭에서 접어 값이 줄 사이에서 갈릴 수 있다. 줄마다 글로 바꿔 잇는다.
+        $logArgs8b = $composeArgs + @("logs", "--no-log-prefix", "nginx-waf")
+        $savedEap8b = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $parts8b = @(& docker @logArgs8b 2>&1 | ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+                })
+        } finally {
+            $ErrorActionPreference = $savedEap8b
+        }
+        return ($parts8b -join "`n")
+    }
+    function Get-Count8b([string]$Text, [string]$Value) {
+        if (-not $Text -or -not $Value) { return 0 }
+        return [regex]::Matches($Text, [regex]::Escape($Value)).Count
+    }
+    $pw8b = "PfT59Pw$(New-RandomToken 24)"
+    $user8b = "pf-t59-nouser-$(New-RandomToken 8)"
+    $probeFail8b = "pf-t59-loginfail-$(New-RandomToken 8)"
+    $probeDenied8b = "pf-t59-denied-$(New-RandomToken 8)"
+
+    $anon8b = New-Client "198.51.100.82"
+    $csrfAnon8b = Invoke-Http -Path "/api/auth/csrf" -Client $anon8b
+    Assert-True ($csrfAnon8b.Status -eq 200) "[8b] 비로그인 GET /api/auth/csrf (HTTP $($csrfAnon8b.Status))"
+    $fail8b = Invoke-Http -Path "/api/auth/login" -Method POST -Client $anon8b -Csrf -JsonBody ([ordered]@{ username = $user8b; password = $pw8b }) -ProbeId $probeFail8b
+    Assert-True ($fail8b.Status -eq 401 -and $null -ne $fail8b.Json -and $null -ne $fail8b.Json.code) "[8b] 없는 사용자 이름으로 로그인 실패는 앱의 401 (HTTP $($fail8b.Status))"
+
+    $demo8b = New-Client "198.51.100.83"
+    $csrfDemo8b = Invoke-Http -Path "/api/auth/csrf" -Client $demo8b
+    Assert-True ($csrfDemo8b.Status -eq 200) "[8b] demo GET /api/auth/csrf (HTTP $($csrfDemo8b.Status))"
+    $login8b = Invoke-Http -Path "/api/auth/login" -Method POST -Client $demo8b -Csrf -JsonBody @{ username = "demo"; password = $env:DEMO_PASSWORD }
+    Assert-True ($login8b.Status -eq 200) "[8b] demo 로그인 (HTTP $($login8b.Status))"
+    $session8b = [string]$demo8b.Cookies["ZEEKAD_SESSION"]
+    $token8b = [string]$demo8b.Cookies["XSRF-TOKEN"]
+    Assert-True ($session8b.Length -ge 16 -and $token8b.Length -ge 16) "[8b] 로그인 뒤 세션 쿠키와 CSRF 토큰이 있음(길이 16 이상)"
+    $denied8b = Invoke-Http -Path "/api/admin/users" -Client $demo8b -ProbeId $probeDenied8b
+    Assert-True ($denied8b.Status -eq 403 -and $null -ne $denied8b.Json -and $null -ne $denied8b.Json.code) "[8b] demo GET /api/admin/users 는 앱의 403 (HTTP $($denied8b.Status))"
+    # 요청 사이에 쿠키 값이 바뀌었으면 바뀐 값도 센다.
+    $sessionAfter8b = [string]$demo8b.Cookies["ZEEKAD_SESSION"]
+    $tokenAfter8b = [string]$demo8b.Cookies["XSRF-TOKEN"]
+    $tokenAnon8b = [string]$anon8b.Cookies["XSRF-TOKEN"]
+
+    # 두 요청의 감사 줄이 나올 때까지 기다린 뒤(최대 10초) 로그 전체에서 센다.
+    $expected8b = @(
+        [pscustomobject]@{ Name = "로그인 실패"; Probe = $probeFail8b; Code = "401" },
+        [pscustomobject]@{ Name = "권한 거부"; Probe = $probeDenied8b; Code = "403" }
+    )
+    $log8b = ""
+    $lineOf8b = @{}
+    for ($i = 0; $i -lt 10; $i++) {
+        $log8b = Get-WafLogText8b
+        $audit8b = @($log8b -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') })
+        $lineOf8b = @{}
+        $missing8b = 0
+        foreach ($e8b in $expected8b) {
+            $probeNow8b = $e8b.Probe
+            $hit8b = @($audit8b | Where-Object { Test-ProbeMark $_ $probeNow8b })
+            if ($hit8b.Count -gt 0) { $lineOf8b[$e8b.Probe] = [string]$hit8b[-1] } else { $missing8b++ }
+        }
+        if ($missing8b -eq 0) { break }
+        Start-Sleep -Seconds 1
+    }
+    $auditSummary8b = [System.Collections.Generic.List[string]]::new()
+    foreach ($e8b in $expected8b) {
+        $line8b = [string]$lineOf8b[$e8b.Probe]
+        $code8b = [regex]::Match($line8b, '"http_code":(\d+)').Groups[1].Value
+        $interrupted8b = $line8b -match '"is_interrupted":true'
+        $hasHeaders8b = $line8b -match '"headers":\{'
+        $hasBody8b = $line8b -match '"body":"'
+        $auditSummary8b.Add("$($e8b.Name) http_code=$code8b is_interrupted=$interrupted8b headers=$hasHeaders8b body=$hasBody8b")
+        Assert-True ([bool]$line8b) "[8b] $($e8b.Name) 요청의 nginx-waf 감사 줄이 있음(요청 주소의 probe=)"
+        Assert-True ($code8b -eq $e8b.Code -and -not $interrupted8b) "[8b] $($e8b.Name) 감사 줄의 http_code=$($e8b.Code)·차단 아님 (실제 http_code=$code8b is_interrupted=$interrupted8b)"
+        Assert-True (-not $hasHeaders8b -and -not $hasBody8b) "[8b] $($e8b.Name) 감사 줄에 headers·body 키가 없음 (headers=$hasHeaders8b body=$hasBody8b)"
+    }
+    $values8b = @(
+        [pscustomobject]@{ Name = "표식 비밀번호"; Value = $pw8b },
+        [pscustomobject]@{ Name = "세션 쿠키 값(로그인 직후)"; Value = $session8b },
+        [pscustomobject]@{ Name = "세션 쿠키 값(요청 뒤)"; Value = $sessionAfter8b },
+        [pscustomobject]@{ Name = "CSRF 토큰 값(로그인 직후)"; Value = $token8b },
+        [pscustomobject]@{ Name = "CSRF 토큰 값(요청 뒤)"; Value = $tokenAfter8b },
+        [pscustomobject]@{ Name = "CSRF 토큰 값(비로그인 요청)"; Value = $tokenAnon8b }
+    )
+    $counts8b = [System.Collections.Generic.List[string]]::new()
+    foreach ($v8b in $values8b) {
+        $n8b = Get-Count8b $log8b $v8b.Value
+        $counts8b.Add("$($v8b.Name)=$n8b")
+    }
+    $e2eLogs.Add("[8b] WAF 감사 로그에 남는 값: 로그인 실패(없는 사용자 이름) HTTP $($fail8b.Status), demo GET /api/admin/users HTTP $($denied8b.Status)`n     감사 줄: $($auditSummary8b -join '; ')`n     nginx-waf 로그 전체($(@($log8b -split "`r?`n").Count)줄)에서 센 횟수: $($counts8b -join ', ')")
+    foreach ($v8b in $values8b) {
+        $n8b = Get-Count8b $log8b $v8b.Value
+        Assert-True ([bool]$v8b.Value) "[8b] $($v8b.Name): 값을 읽음(빈 값이면 세지 못한다)"
+        Assert-True ($n8b -eq 0) "[8b] nginx-waf 로그 전체에 $($v8b.Name) 0번 (실제 $($n8b)번)"
+    }
 
     Write-Host "=== [seed-3] 재시드: 이미 있는 demo 비밀번호 변경(SQL)·비활성 admin 일시 활성화 경로 ==="
     # 운영 중 상태가 어긋난 경우를 흉내 낸다: viewer1이 다시 활성, .env의 DEMO_PASSWORD가 바뀜.

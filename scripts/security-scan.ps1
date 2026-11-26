@@ -240,6 +240,9 @@ if (-not $SkipE2E -or -not $SkipZap) {
                         [string]$RawContentType = ""
                     )
                     $script:httpSeq++
+                    # 표식(-ProbeId)은 요청 주소의 쿼리 probe=<표식>으로 붙인다(T59). WAF 감사 로그는 요청 헤더를 남기지 않으므로
+                    # 그 요청의 감사 줄은 요청 주소로 찾는다(Test-ProbeMark). X-E2E-Probe 헤더는 그대로 함께 보낸다.
+                    if ($ProbeId) { $Url = Add-ProbeQuery $Url $ProbeId }
                     $hdrFile = Join-Path $tmpDir "resp-$($script:httpSeq).hdr"
                     $bodyFile = Join-Path $tmpDir "resp-$($script:httpSeq).body"
                     $curlArgs = @("-sS", "-k", "--max-time", "20", "-X", $Method, "-D", $hdrFile, "-o", $bodyFile, "-w", "%{http_code}")
@@ -341,14 +344,40 @@ if (-not $SkipE2E -or -not $SkipZap) {
                     Assert-True (-not (Test-SpaShell $Resp)) "$What (SPA index.html 폴백 아님)" $Resp
                 }
 
-                # WAF 차단 판정: 403 + 앱 ApiErrorResponse JSON 아님 + nginx-waf 로그에 그 요청(X-E2E-Probe)의 ModSecurity 차단 기록(규칙 ID)
+                # 표식을 요청 주소에 붙인다: 쿼리가 이미 있으면 &probe=, 없으면 ?probe=. 표식은 영문·숫자·'-'·'_'만 쓴다.
+                function Add-ProbeQuery([string]$Url, [string]$ProbeId) {
+                    if ($ProbeId -notmatch '^[A-Za-z0-9_-]+$') { throw "표식에 쓸 수 없는 글자가 있습니다(영문·숫자·'-'·'_'만)." }
+                    $separator = '?'
+                    if ($Url.Contains('?')) { $separator = '&' }
+                    return $Url + $separator + "probe=" + $ProbeId
+                }
+                # 로그 한 줄이 그 표식의 요청 것인지: 요청 주소의 쿼리 probe=<표식>(뒤에 표식 글자가 이어지지 않음)으로 본다.
+                # ModSecurity 감사 줄의 "uri"와 nginx 접근 줄의 요청 줄에 그대로 남는다.
+                function Test-ProbeMark([string]$Line, [string]$ProbeId) {
+                    if (-not $Line -or -not $ProbeId) { return $false }
+                    return [regex]::IsMatch($Line, '[?&]probe=' + [regex]::Escape($ProbeId) + '(?![A-Za-z0-9_-])')
+                }
+
+                # 그 표식이 든 nginx-waf 로그 줄(접근 줄·감사 줄) 수. "그 표식의 차단 줄 0건"을 보는 음성 단언([12a]·[15b]·[21c])이
+                # 표식을 못 찾아 빈 채로 통과하지 않게 함께 본다(막히지 않은 200 요청도 접근 줄은 남는다). 줄이 나올 때까지 최대 5초 기다린다.
+                function Get-WafProbeLineCount([string]$ProbeId) {
+                    $count = 0
+                    for ($try = 0; $try -lt 5 -and $count -eq 0; $try++) {
+                        if ($try -gt 0) { Start-Sleep -Seconds 1 }
+                        $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                        $count = @($wafLogs -split "`r?`n" | Where-Object { Test-ProbeMark $_ $ProbeId }).Count
+                    }
+                    return $count
+                }
+
+                # WAF 차단 판정: 403 + 앱 ApiErrorResponse JSON 아님 + nginx-waf 로그에 그 요청(요청 주소의 probe=)의 ModSecurity 차단 기록(규칙 ID)
                 function Assert-WafBlocked($Resp, [string]$ProbeId, [string]$What) {
                     Assert-Status $Resp 403 "$What (WAF 403)"
                     Assert-True (-not ($null -ne $Resp.Json -and $null -ne $Resp.Json.code)) "$What (응답이 앱 ApiErrorResponse JSON이 아님)" $Resp
                     $logLine = $null
                     for ($i = 0; $i -lt 10 -and -not $logLine; $i++) {
                         $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-                        $logLine = $wafLogs -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($ProbeId) } | Select-Object -Last 1
+                        $logLine = $wafLogs -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ $ProbeId) } | Select-Object -Last 1
                         if (-not $logLine) { Start-Sleep -Seconds 1 }
                     }
                     Assert-True ([bool]$logLine) "$What (nginx-waf ModSecurity 감사 로그에 probe=$ProbeId 기록)"
@@ -1140,7 +1169,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 }
                 function Get-WafInterrupted([string]$ProbeId) {
                     $wafLogs = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-                    return @($wafLogs -split "`r?`n" | Where-Object { $_.Contains($ProbeId) -and $_ -match '"is_interrupted":true' })
+                    return @($wafLogs -split "`r?`n" | Where-Object { (Test-ProbeMark $_ $ProbeId) -and $_ -match '"is_interrupted":true' })
                 }
                 $q12A1 = Join-Path $tmpDir "q12-a1.cookies"
                 $q12A2 = Join-Path $tmpDir "q12-a2.cookies"
@@ -1166,6 +1195,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($assignAudit -match "INCIDENT_ASSIGNMENT\|analyst1\|cic17-wed\|101\|$([regex]::Escape($iid1012))\|" -and $assignAudit -match '"to":"analyst1"' -and $assignAudit -match '"reason":"manual"') "[12a] 감사 기록 INCIDENT_ASSIGNMENT(from·to·reason·대상)"
                 Assert-True ($histRows -match "$([regex]::Escape($iid1012))\|cic17-wed\|101\|-\|analyst1\|analyst1\|manual") "[12a] 이력 행(미배정 → analyst1, manual)"
                 Assert-True ([int]$meQ.Json.total -eq 1) "[12a] 큐 assignee=me = 1" $meQ
+                Assert-True ((Get-WafProbeLineCount "e2e-t25-assign") -ge 1) "[12a] 지정 POST의 표식이 nginx-waf 로그에 남음(아래 0건이 빈 단언이 아님)"
                 Assert-True ($wafHits12.Count -eq 0) "[12a] 지정 POST가 nginx-waf(CRS)에 차단되지 않음"
 
                 # [12b] analyst1이 허용 밖 캡처(syn1-wed 211/1) 지정 → 403 + ACCESS_DENIED_IDOR
@@ -1840,7 +1870,7 @@ ORDER BY 1, 2
                     Assert-True ($nbAtt.Status -eq 200 -and [long]$nbAtt.Json.total -eq [long]$attA21.tactic['credential-access']) "[21b] neighbors가 attack 조건을 받음" $nbAtt
 
                     # [21c] WAF 통과(T45·T45b가 남긴 것): '*'가 든 hostIp, 공백이 든 attack(%20과 + 둘 다), 현황판 호스트 링크(role + hostIp)가
-                    #       앱의 200을 받고 그 요청(X-E2E-Probe)의 nginx-waf 차단 기록이 0건이다([12a] 방식)
+                    #       앱의 200을 받고 그 요청(요청 주소의 probe=)의 nginx-waf 차단 기록이 0건이다([12a] 방식)
                     $roleBand21 = [long](Invoke-ZeekadSelect "SELECT count(*) FROM $lq21 WHERE $capV21 AND $mask21 = '$bandT21' AND lower(l.zeekad_role) = 'originator'")
                     $wafCases21 = @(
                         @{ Id = "e2e-t47-hostip-$(New-RandomToken 6)"; Name = 'viewer1'; Jar = $v21; Q = "period=all&hostIp=$bandT21"; Expect = [long]$bandCountV21[$bandT21] },
@@ -1857,6 +1887,7 @@ ORDER BY 1, 2
                         $e2eLogs.Add("[21c] $($case.Name) GET /api/incidents/queue?$($case.Q) (probe $($case.Id)) -> $(Format-Resp $case.Resp 80); total=$($case.Resp.Json.total) expected(SQL)=$($case.Expect); nginx-waf interrupted lines=$($hits.Count)")
                         Assert-Status $case.Resp 200 "[21c] WAF를 거친 $($case.Q)"
                         Assert-True ($null -ne $case.Resp.Json -and [long]$case.Resp.Json.total -eq [long]$case.Expect -and [long]$case.Expect -gt 0) "[21c] $($case.Q) 가 앱의 200(건수 = 독립 SQL)을 받음" $case.Resp
+                        Assert-True ((Get-WafProbeLineCount $case.Id) -ge 1) "[21c] $($case.Q) 의 표식이 nginx-waf 로그에 남음(아래 0건이 빈 단언이 아님)"
                         Assert-True ($hits.Count -eq 0) "[21c] $($case.Q) 가 nginx-waf(CRS)에 차단되지 않음"
                     }
 
@@ -2146,7 +2177,7 @@ ORDER BY 1, 2
                 $line15a = $null
                 for ($i = 0; $i -lt 10 -and -not $line15a; $i++) {
                     $wafLogs15 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-                    $line15a = $wafLogs15 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($probe15a) } | Select-Object -Last 1
+                    $line15a = $wafLogs15 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ $probe15a) } | Select-Object -Last 1
                     if (-not $line15a) { Start-Sleep -Seconds 1 }
                 }
                 $rules15a = @([regex]::Matches([string]$line15a, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
@@ -2162,7 +2193,7 @@ ORDER BY 1, 2
                 $ok15 = Invoke-Http -Url "$baseHttps$xmlPath15" -Method POST -ProbeId $probe15b -RawBody "<a><b>1</b></a>" -RawContentType "application/xml"
                 Start-Sleep -Seconds 1
                 $wafLogs15b = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-                $lines15b = @($wafLogs15b -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_.Contains($probe15b) })
+                $lines15b = @($wafLogs15b -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and (Test-ProbeMark $_ $probe15b) })
                 $interrupted15b = @($lines15b | Where-Object { $_ -match '"is_interrupted":true' })
                 $rules15b = @($lines15b | ForEach-Object { [regex]::Matches($_, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } } | Select-Object -Unique)
                 $logins15 = Invoke-AuditSelect "SELECT COUNT(*) FROM audit_logs WHERE id > $auditBase15 AND action_type IN ('LOGIN_FAILURE','ACCOUNT_LOCKED')"
@@ -2170,6 +2201,7 @@ ORDER BY 1, 2
                 $e2eLogs.Add("[15b] unauthenticated POST $xmlPath15 Content-Type: application/xml body '<a><b>1</b></a>': $(Format-Resp $ok15 200)`n      WAF audit lines for probe=$($lines15b.Count) interrupted=$($interrupted15b.Count) ruleIds=[$($rules15b -join ', ')]`n      LOGIN_FAILURE/ACCOUNT_LOCKED audit rows since [15] = $logins15`n      nginx-waf health after [15] = $health15")
                 Assert-True ($ok15.Status -ge 400 -and $ok15.Status -lt 500) "[15b] 잘 짜인 XML 본문은 앱 4xx(5xx 아님)" $ok15
                 Assert-True ($null -ne $ok15.Json -and $null -ne $ok15.Json.code) "[15b] 응답이 앱 ApiErrorResponse JSON(WAF가 막지 않음)" $ok15
+                Assert-True ((Get-WafProbeLineCount $probe15b) -ge 1) "[15b] 잘 짜인 XML 요청의 표식이 nginx-waf 로그에 남음(아래 0건이 빈 단언이 아님)"
                 Assert-True ($interrupted15b.Count -eq 0) "[15b] nginx-waf 차단 기록 없음"
                 Assert-True ([int]$logins15 -eq 0) "[15] 로그인 실패·잠금 감사 0"
                 Assert-True ($health15 -eq "healthy") "[15] nginx-waf healthy ($health15)"
@@ -2484,6 +2516,7 @@ ORDER BY 1, 2
                 Assert-True ($f22rows -eq "$($inc22[1])|cic17-wed|$job22|block_ip|$memo22|analyst1") "[22f] 표 행(인시던트·캡처·작업·종류·앞뒤 공백을 뺀 메모·기록자)"
                 Assert-True ($f22audit -match "^INCIDENT_RESPONSE_ACTION\|analyst1\|cic17-wed\|$job22\|$([regex]::Escape($inc22[1]))\|" -and $f22audit -match '"action":"block_ip"' -and $f22audit.Contains("`"note`":`"$memo22`"")) "[22f] 감사 기록 INCIDENT_RESPONSE_ACTION(대상·action·note)"
                 Assert-True ($f22list.Count -eq 1 -and $f22list[0].action -eq "block_ip" -and $f22list[0].note -eq $memo22 -and ([string]$f22list[0].actorDisplay).Contains("analyst1") -and [bool]$f22list[0].recordedAt -and $f22d.Json.canRecordResponse -eq $true) "[22f] 상세 응답의 목록과 canRecordResponse" $f22d
+                Assert-True ((Get-WafProbeLineCount "e2e-t56-record") -ge 1) "[22f] 기록 POST의 표식이 nginx-waf 로그에 남음(아래 0건이 빈 단언이 아님)"
                 Assert-True ($wafHits22.Count -eq 0) "[22f] 기록 POST가 nginx-waf(CRS)에 차단되지 않음"
 
                 # [22g] 기록 뒤 정탐 종결 성공. [22h] 종결 뒤에도 덧붙일 수 있다(뒤늦은 조치: 조치 없음 + 사유)
@@ -2521,6 +2554,117 @@ ORDER BY 1, 2
                 $e2eLogs.Add("[22k] analyst1 POST $job22/3 transition closed/false_positive (기록 0건): $(Format-Resp $k22 300)`n      zeekad status|history rows after=$after22k")
                 Assert-Status $k22 200 "[22k] 기록 없이 오탐 종결"
                 Assert-True ($after22k -eq "closed/false_positive|1") "[22k] 종결 반영(closed/false_positive)" $k22
+
+                # [23] WAF 감사 로그에 남는 값(T59). WAF 이미지가 감사 로그의 부분을 AHZ로 줄였다(docker/nginx-waf/Dockerfile).
+                #      없는 사용자 이름 + 표식 비밀번호로 로그인 실패(401)를, 로그인한 analyst1 세션으로 403과 409를 만든 뒤
+                #      nginx-waf 컨테이너 로그 전체(stdout + stderr)에 그 표식 비밀번호·세션 쿠키 값·CSRF 토큰 값이 0번 나온다.
+                #      세 요청의 감사 줄(요청 주소의 probe=)은 있고 응답 코드가 맞으며 headers·body 키가 없다(0번이 빈 단언이 아님을 보인다).
+                #      로그인 실패·잠금 감사 수를 세는 [14e]·[15] 뒤, 대응 조치 기록 [22](T56) 뒤에 둔다. 실패 글에는 값이나 로그 줄 원문을 넣지 않는다(개수와 응답 코드만).
+                #      Assert-Status·Assert-ApiError·Login-Api는 실패하면 응답 본문을 찍으므로 이 구간에서는 쓰지 않는다.
+                function Get-WafLogText23 {
+                    # Out-String은 stderr 줄(ErrorRecord)을 콘솔 폭에서 접어 값이 줄 사이에서 갈릴 수 있다. 줄마다 글로 바꿔 잇는다.
+                    $logArgs23 = $composeArgs + @("logs", "--no-log-prefix", "nginx-waf")
+                    $savedEap23 = $ErrorActionPreference
+                    $ErrorActionPreference = 'Continue'
+                    try {
+                        $parts23 = @(& docker @logArgs23 2>&1 | ForEach-Object {
+                                if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+                            })
+                    } finally {
+                        $ErrorActionPreference = $savedEap23
+                    }
+                    return ($parts23 -join "`n")
+                }
+                function Get-Count23([string]$Text, [string]$Value) {
+                    if (-not $Text -or -not $Value) { return 0 }
+                    return [regex]::Matches($Text, [regex]::Escape($Value)).Count
+                }
+                $anon23 = Join-Path $tmpDir "t59-anon.cookies"
+                $jar23 = Join-Path $tmpDir "t59-a1.cookies"
+                $pw23 = "E2eT59Pw$(New-RandomToken 24)"
+                $user23 = "e2e-t59-nouser-$(New-RandomToken 8)"
+                $probeFail23 = "e2e-t59-loginfail-$(New-RandomToken 8)"
+                $probeDenied23 = "e2e-t59-denied-$(New-RandomToken 8)"
+                $probeConflict23 = "e2e-t59-conflict-$(New-RandomToken 8)"
+
+                # [23a] 없는 사용자 이름 + 표식 비밀번호 → 401
+                $csrfAnon23 = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $anon23 -SaveCookies
+                Assert-True ($csrfAnon23.Status -eq 200) "[23a] 비로그인 GET /api/auth/csrf (HTTP $($csrfAnon23.Status))"
+                $fail23 = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $anon23 -SaveCookies -Csrf `
+                    -JsonBody ([ordered]@{ username = $user23; password = $pw23 }) -ProbeId $probeFail23
+                Assert-True ($fail23.Status -eq 401 -and $null -ne $fail23.Json -and $null -ne $fail23.Json.code) "[23a] 없는 사용자 이름으로 로그인 실패는 앱의 401 (HTTP $($fail23.Status))"
+
+                # [23b] analyst1 로그인 → 관리자 API 403, 담당자 expected 어긋남 409(종결이어도 409다. 어느 쪽도 값을 바꾸지 않는다)
+                $csrfA23 = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $jar23 -SaveCookies
+                Assert-True ($csrfA23.Status -eq 200) "[23b] analyst1 GET /api/auth/csrf (HTTP $($csrfA23.Status))"
+                $login23 = Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $jar23 -SaveCookies -Csrf `
+                    -JsonBody @{ username = "analyst1"; password = $bootstrapPwd }
+                Assert-True ($login23.Status -eq 200) "[23b] analyst1 로그인 (HTTP $($login23.Status))"
+                $session23 = Get-JarCookie $jar23 "ZEEKAD_SESSION"
+                $token23 = Get-JarCookie $jar23 "XSRF-TOKEN"
+                Assert-True ("$session23".Length -ge 16 -and "$token23".Length -ge 16) "[23b] 로그인 뒤 쿠키 파일에 세션 쿠키와 CSRF 토큰이 있음(길이 16 이상)"
+                $denied23 = Invoke-Http -Url "$baseHttps/api/admin/users" -CookieJar $jar23 -SaveCookies -ProbeId $probeDenied23
+                Assert-True ($denied23.Status -eq 403 -and $null -ne $denied23.Json -and $null -ne $denied23.Json.code) "[23b] analyst1 GET /api/admin/users 는 앱의 403 (HTTP $($denied23.Status))"
+                $conflict23 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2/assignment" -Method POST -CookieJar $jar23 -SaveCookies -Csrf `
+                    -JsonBody ([ordered]@{ assignee = $null; expected = "e2e-t59-nobody" }) -ProbeId $probeConflict23
+                Assert-True ($conflict23.Status -eq 409 -and $null -ne $conflict23.Json -and $null -ne $conflict23.Json.code) "[23b] analyst1 담당자 expected 어긋남은 앱의 409 (HTTP $($conflict23.Status))"
+                # 요청 사이에 쿠키 값이 바뀌었으면 바뀐 값도 센다.
+                $sessionAfter23 = Get-JarCookie $jar23 "ZEEKAD_SESSION"
+                $tokenAfter23 = Get-JarCookie $jar23 "XSRF-TOKEN"
+                $tokenAnon23 = Get-JarCookie $anon23 "XSRF-TOKEN"
+
+                # [23c] 세 요청의 감사 줄이 나올 때까지 기다린 뒤(최대 10초) 로그 전체에서 센다
+                $expected23 = @(
+                    [pscustomobject]@{ Name = "로그인 실패"; Probe = $probeFail23; Code = "401" },
+                    [pscustomobject]@{ Name = "권한 거부"; Probe = $probeDenied23; Code = "403" },
+                    [pscustomobject]@{ Name = "충돌"; Probe = $probeConflict23; Code = "409" }
+                )
+                $log23 = ""
+                $lineOf23 = @{}
+                for ($i = 0; $i -lt 10; $i++) {
+                    $log23 = Get-WafLogText23
+                    $audit23 = @($log23 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') })
+                    $lineOf23 = @{}
+                    $missing23 = 0
+                    foreach ($e23 in $expected23) {
+                        $probeNow23 = $e23.Probe
+                        $hit23 = @($audit23 | Where-Object { Test-ProbeMark $_ $probeNow23 })
+                        if ($hit23.Count -gt 0) { $lineOf23[$e23.Probe] = [string]$hit23[-1] } else { $missing23++ }
+                    }
+                    if ($missing23 -eq 0) { break }
+                    Start-Sleep -Seconds 1
+                }
+                $auditSummary23 = [System.Collections.Generic.List[string]]::new()
+                foreach ($e23 in $expected23) {
+                    $line23 = [string]$lineOf23[$e23.Probe]
+                    $code23 = [regex]::Match($line23, '"http_code":(\d+)').Groups[1].Value
+                    $interrupted23 = $line23 -match '"is_interrupted":true'
+                    $hasHeaders23 = $line23 -match '"headers":\{'
+                    $hasBody23 = $line23 -match '"body":"'
+                    $auditSummary23.Add("$($e23.Name) http_code=$code23 is_interrupted=$interrupted23 headers=$hasHeaders23 body=$hasBody23")
+                    Assert-True ([bool]$line23) "[23c] $($e23.Name) 요청의 nginx-waf 감사 줄이 있음(요청 주소의 probe=)"
+                    Assert-True ($code23 -eq $e23.Code -and -not $interrupted23) "[23c] $($e23.Name) 감사 줄의 http_code=$($e23.Code)·차단 아님 (실제 http_code=$code23 is_interrupted=$interrupted23)"
+                    Assert-True (-not $hasHeaders23 -and -not $hasBody23) "[23c] $($e23.Name) 감사 줄에 headers·body 키가 없음 (headers=$hasHeaders23 body=$hasBody23)"
+                }
+                $values23 = @(
+                    [pscustomobject]@{ Name = "표식 비밀번호"; Value = $pw23 },
+                    [pscustomobject]@{ Name = "세션 쿠키 값(로그인 직후)"; Value = $session23 },
+                    [pscustomobject]@{ Name = "세션 쿠키 값(요청 뒤)"; Value = $sessionAfter23 },
+                    [pscustomobject]@{ Name = "CSRF 토큰 값(로그인 직후)"; Value = $token23 },
+                    [pscustomobject]@{ Name = "CSRF 토큰 값(요청 뒤)"; Value = $tokenAfter23 },
+                    [pscustomobject]@{ Name = "CSRF 토큰 값(비로그인 요청)"; Value = $tokenAnon23 }
+                )
+                $counts23 = [System.Collections.Generic.List[string]]::new()
+                foreach ($v23 in $values23) {
+                    $n23 = Get-Count23 $log23 $v23.Value
+                    $counts23.Add("$($v23.Name)=$n23")
+                }
+                $e2eLogs.Add("[23] WAF 감사 로그에 남는 값: 로그인 실패(없는 사용자 이름) HTTP $($fail23.Status), analyst1 GET /api/admin/users HTTP $($denied23.Status), analyst1 POST 101/2 assignment(expected 어긋남) HTTP $($conflict23.Status)`n      감사 줄: $($auditSummary23 -join '; ')`n      nginx-waf 로그 전체($(@($log23 -split "`r?`n").Count)줄)에서 센 횟수: $($counts23 -join ', ')")
+                foreach ($v23 in $values23) {
+                    $n23 = Get-Count23 $log23 $v23.Value
+                    Assert-True ([bool]$v23.Value) "[23c] $($v23.Name): 값을 읽음(빈 값이면 세지 못한다)"
+                    Assert-True ($n23 -eq 0) "[23c] nginx-waf 로그 전체에 $($v23.Name) 0번 (실제 $($n23)번)"
+                }
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
