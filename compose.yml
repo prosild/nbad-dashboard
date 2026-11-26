@@ -57,6 +57,9 @@ services:
       BOOTSTRAP_ANALYST2_PASSWORD: ${BOOTSTRAP_ANALYST2_PASSWORD:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       BOOTSTRAP_ADMIN_TOTP_SECRET: ${BOOTSTRAP_ADMIN_TOTP_SECRET:-}
+    # T61: 공개 스택(compose.portfolio.yml)과 같다. 이미지가 일반 계정으로 8080을 열므로 capability가 필요 없다.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/login"]
       interval: 10s
@@ -113,8 +116,13 @@ services:
       MODSEC_AUDIT_ENGINE: "RelevantOnly"
       # 감사 로그에 남기는 부분(요청·응답의 헤더와 본문은 뺀다)은 WAF 이미지(docker/nginx-waf/Dockerfile)가 정한다. 여기서 덮지 않는다.
       MODSEC_AUDIT_LOG: "/dev/stdout"
+    # T61: 모든 capability 제거·권한 상승 금지(이미지가 nginx 계정으로 8080·8443을 연다. 호스트의 80·443은 Docker가 잇는다).
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      # T61: Host를 이름으로 보낸다. 숫자 주소 Host는 CRS 920350에 걸려 응답이 200이어도 상태 확인마다 감사 줄이 남았다(10초마다 한 줄).
+      # 접속 주소는 127.0.0.1 그대로다. WAF 규칙은 끄지 않는다(바깥에서 숫자 주소 Host로 온 요청은 지금처럼 감사 줄이 남는다).
+      test: ["CMD", "wget", "-q", "--spider", "--header", "Host: localhost", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 5s
       retries: 6

@@ -288,6 +288,7 @@ try {
     foreach ($k in $wafEnv.Keys) { $runWaf += @("-e", "$k=$($wafEnv[$k])") }
     [void](Invoke-Docker ($runWaf + @($Image)))
 
+    # 준비 확인: 숫자 주소 Host 그대로 /healthz를 친다(이 요청은 CRS 920350에 걸려 감사 줄을 남긴다. 이미지의 상태 확인은 T61부터 이름 Host를 보낸다).
     $ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         $h = Invoke-Docker @("exec", $WafName, "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz") -IgnoreExitCode
@@ -377,7 +378,7 @@ try {
     $otherOut = @($outLines | Where-Object { -not $_.StartsWith('{"transaction"') -and -not ($_ -match '" \d{3} \d+ "') })
     $healthAudit = @($auditLines | Where-Object { $_.Contains('"uri":"/healthz"') })
     Add-Line "INFO [출력] stdout $($outLines.Count)줄(감사 줄 $($auditLines.Count), 접근 줄 $($accessLines.Count), 그 밖 $($otherOut.Count)), stderr $($errLines.Count)줄(그중 ModSecurity 차단 줄 $(@($errLines | Where-Object { $_ -match 'ModSecurity: Access denied' }).Count))"
-    Add-Line "INFO [출력] /healthz 감사 줄 $($healthAudit.Count)건(상태 확인 요청의 Host가 숫자 주소라 CRS 920350이 붙어 200인데도 감사 대상이 된다. 표식과 무관한 별도 발견)"
+    Add-Line "INFO [출력] /healthz 감사 줄 $($healthAudit.Count)건(이 도구의 준비 확인 요청은 Host가 숫자 주소라 CRS 920350이 붙어 200인데도 감사 대상이 된다. T61부터 이미지와 compose의 상태 확인은 이름 Host를 보내 줄을 남기지 않는다. 표식과 무관)"
 
     function Get-AuditLine([string]$Id) { return @($auditLines | Where-Object { $_.Contains("probe=$Id") }) }
     function Get-Field([string]$Line, [string]$Pattern) { $m = [regex]::Match($Line, $Pattern); if ($m.Success) { return $m.Groups[1].Value } return "" }

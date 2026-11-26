@@ -12,7 +12,7 @@
 # - 실제와 같게 적용한다: 슈퍼유저가 아닌 역할 dashboard_app이 소유한 DB에 저장소의 V1~V5 파일을 그대로,
 #   파일마다 한 트랜잭션(psql -1 -v ON_ERROR_STOP=1)으로 그 역할로 적용한다.
 # - 이어서 저장소의 docker/portfolio/sandbox/sandbox-setup.sh와 sandbox-reset.sh --once를 그대로 같은 컨테이너에서 돌린다
-#   (zeek_AD 표 다섯은 열만 맞춘 빈 표로 둔다. 초기화 함수 둘·기준선·전용 역할·권한은 설정 도구가 실제로 만든다).
+#   (zeek_AD 표 다섯은 열만 맞춘 빈 표로 둔다. 초기화 함수 셋·기준선·전용 역할·권한은 설정 도구가 실제로 만든다).
 #   설정 도구가 V4 전에는 멈추는지, 삭제 함수의 EXECUTE만 주는지, 한 줄 로그의 감사 칸이 상태마다 어떻게 나오는지 본다.
 #   T56: V5 전에도 멈추는지, 대응 조치 표의 트리거(UPDATE·TRUNCATE 거부, 표식 없는 DELETE 거부), 기준선 표식이 zeek_AD 기준선과 따로
 #   정해지는지(NAS 갱신 경우), 체험 계정의 행이 있으면 표식을 만들지 않는지, 초기화가 기준선 뒤의 행만 지우는지,
@@ -380,7 +380,7 @@ ROLLBACK;
 
     # ================= 설정 도구와 초기화 서비스(저장소의 두 스크립트 그대로) =================
     Add-Line "# T58 설정 도구(sandbox-setup.sh)와 초기화 서비스(sandbox-reset.sh --once): 저장소의 두 스크립트를 그대로 같은 일회용 PostgreSQL 컨테이너에서 실행"
-    Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. zeek_AD 표 다섯은 열만 맞춘 빈 표다. 초기화 함수 둘·기준선·역할·권한은 설정 도구가 만든 실제 것이다."
+    Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. zeek_AD 표 다섯은 열만 맞춘 빈 표다. 초기화 함수 셋·기준선·역할·권한은 설정 도구가 만든 실제 것이다."
     $lineRx = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z sandbox-reset: '
     # T56: assignments 칸 다음에 responses 칸이 온다(설계 변경으로 줄의 꼴이 바뀌었다). 이 구간에서는 기준선 뒤의 대응 조치 행이 없어 늘 removed=0이다.
     $base = 'pipeline\[OK\] analyst_review\(-0 \+0 ~0\) incident_status\(-0 \+0 ~0\) incident_status_history\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0; responses\[OK\] removed=0'
