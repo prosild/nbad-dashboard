@@ -520,6 +520,17 @@ try {
     $e2eLogs.Add("[restore] ANALYZE lines=[$($analyzeLines -join ' / ')]; zeekad tables (all|last_analyze set)=$lastAnalyzed")
     Assert-True ($analyzeLines.Count -ge 2 -and $lastAnalyzed -match '^(\d+)\|\1$') "[T39] 복원 끝 ANALYZE 실행, zeekad 표 모두 통계 있음 ($lastAnalyzed)"
 
+    # T54: 분석이 끝난 예시 셋(시드 자료 파일). 시드 전 값: 예시가 최신 큐에 있고 상태 행·담당 행이 없으며(신규), 세 표의 행 수를 적어 둔다
+    #      (기준선의 행 수를 이 값과 견준다: [T54b]). incident_id에 '|'가 있어 결과 칸 구분자와 겹치므로 ID는 결과로 꺼내지 않는다.
+    $examples54 = @((Get-Content "docker/portfolio/seed/demo_examples.json" -Raw -Encoding UTF8 | ConvertFrom-Json).examples)
+    $ids54Sql = ($examples54 | ForEach-Object { "'$($_.incidentId)'" }) -join ", "
+    $pre54 = (Invoke-Psql "zeekad" ("SELECT (SELECT count(*) FROM zeekad.incident_status) || '/' || (SELECT count(*) FROM zeekad.incident_status_history) || '/' || (SELECT count(*) FROM zeekad.analyst_review) " +
+        "|| ' examples: queue=' || (SELECT count(*) FROM dashboard.latest_incident_queue WHERE incident_id IN ($ids54Sql)) || ' status=' || (SELECT count(*) FROM dashboard.incident_status WHERE incident_id IN ($ids54Sql))")).Output.Trim()
+    $preAssign54 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignments WHERE incident_id IN ($ids54Sql)").Output.Trim()
+    $e2eLogs.Add("[T54] before seed: zeekad incident_status/incident_status_history/analyst_review rows and examples = $pre54; example assignment rows=$preAssign54 (examples: $(@($examples54 | ForEach-Object { "$($_.key)=$($_.resolution)" }) -join ', '))")
+    Assert-True ($examples54.Count -eq 3 -and $pre54 -match ' examples: queue=3 status=0$' -and $preAssign54 -eq '0') "[T54] 시드 전 예시 셋은 최신 큐에 있고 신규·담당 행 없음 ($pre54, assignment rows=$preAssign54)"
+    $pre54Rows = @(($pre54 -split ' ')[0] -split '/' | ForEach-Object { [long]$_ })
+
     # --- 계정 시드 두 번(두 번째는 변경 없음이어야 한다) ---
     Write-Host "=== 계정 시드 1차·2차 실행 ==="
     $seedArgs = $composeArgs + @("--profile", "seed", "run", "--rm", "demo-seed")
@@ -534,6 +545,38 @@ try {
     $userRows = (Invoke-Psql "zeekad_dashboard" "SELECT u.username, u.role, u.enabled, u.totp_enabled, string_agg(a.capture_pattern, ',') FROM users u LEFT JOIN user_capture_access a ON a.user_id = u.id GROUP BY u.id ORDER BY u.id").Output.Trim()
     $e2eLogs.Add("[seed] run1 exit=$($seed1.ExitCode) $([regex]::Match($seed1.Output, 'RESULT: [^\r\n]*').Value)`n[seed] run2 exit=$($seed2.ExitCode) $([regex]::Match($seed2.Output, 'RESULT: [^\r\n]*').Value); audit_logs rows before=$auditBefore after=$auditAfter`n[seed] users (username|role|enabled|totp_enabled|patterns):`n    $($userRows -replace "`r?`n", "`n    ")`n[seed] USER_ADMIN_CHANGE audit rows (id|actor|actor_role|action|detail):`n    $($seedAudit -replace "`r?`n", "`n    ")")
     Assert-True ($seed2.ExitCode -eq 0 -and $seed2.Output -match 'RESULT: NO_CHANGES' -and $auditBefore -eq $auditAfter) "시드 2차 실행 변경 없음(RESULT: NO_CHANGES, 감사 로그 증가 없음)`n$($seed2.Output)"
+
+    # [T54a] 시드 1차가 예시 셋을 앱 API로 기록했다: 상태·판정·마지막 변경자, 정탐 둘의 대응 조치(none, demo-analyst), 담당자 있는 행 0,
+    #        demo-analyst 비활성, 이력 순서(착수 → 자동 담당 → (정탐) 조치 → 해제 → 종결). 2차는 그대로 둔다(로그인 없음은 위 단언).
+    Write-Host "=== [T54a] 분석이 끝난 예시 셋(시드가 앱 API로 기록) ==="
+    Assert-True ($seed1.Output -match 'examples: applied=3 kept=0 skipped=0') "[T54a] 시드 1차 examples: applied=3 kept=0 skipped=0`n$($seed1.Output)"
+    Assert-True ($seed2.Output -match 'examples: applied=0 kept=3 skipped=0') "[T54a] 시드 2차 examples: applied=0 kept=3 skipped=0"
+    $t54aLines = @(); $t54aBad = @()
+    foreach ($ex in $examples54) {
+        $id = $ex.incidentId
+        $st = (Invoke-Psql "zeekad" "SELECT zeekad_status || ':' || COALESCE(zeekad_resolution, '') || ':' || updated_by FROM dashboard.incident_status WHERE incident_id = '$id'").Output.Trim()
+        $events = @()
+        foreach ($q in @(
+                @("zeekad", "SELECT to_status || '=' || (EXTRACT(EPOCH FROM changed_at) * 1000000)::bigint FROM dashboard.incident_status_history WHERE incident_id = '$id' AND actor = 'demo-analyst'"),
+                @("zeekad_dashboard", "SELECT 'action:' || action_type || '=' || (EXTRACT(EPOCH FROM recorded_at) * 1000000)::bigint FROM incident_response_actions WHERE incident_id = '$id' AND actor_username = 'demo-analyst'"),
+                @("zeekad_dashboard", "SELECT (CASE WHEN to_user_id IS NULL THEN 'release' ELSE 'assign:' || reason END) || '=' || (EXTRACT(EPOCH FROM changed_at) * 1000000)::bigint FROM incident_assignment_history WHERE incident_id = '$id' AND actor_username = 'demo-analyst'"))) {
+            $events += @((Invoke-Psql $q[0] $q[1]).Output -split "`r?`n" | Where-Object { $_ -match '=\d+$' } | ForEach-Object { $p = $_ -split '=', 2; [pscustomobject]@{ Name = $p[0]; At = [long]$p[1] } })
+        }
+        $order = (@($events | Sort-Object At | ForEach-Object { $_.Name }) -join ',')
+        $expOrder = if ($ex.resolution -eq 'true_positive') { "investigating,assign:auto_on_start,action:$($ex.responseAction.action),release,closed" } else { "investigating,assign:auto_on_start,release,closed" }
+        $t54aLines += "$($ex.key) $($ex.resolution): status=$st order=$order"
+        if ($st -ne "closed:$($ex.resolution):demo-analyst" -or $order -ne $expOrder) { $t54aBad += "$($ex.key) status=$st order=$order (expected closed:$($ex.resolution):demo-analyst, $expOrder)" }
+    }
+    $assigned54 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignments WHERE assignee_user_id IS NOT NULL").Output.Trim()
+    $released54 = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || ':' || count(*) FILTER (WHERE assignee_user_id IS NULL AND assigned_by = 'demo-analyst') FROM incident_assignments WHERE incident_id IN ($ids54Sql)").Output.Trim()
+    $acct54 = (Invoke-Psql "zeekad_dashboard" ("SELECT u.role || '|' || u.enabled || '|' || (u.display_name = U&'\C2DC\C5F0 \BD84\C11D\AC00') || '|' || COALESCE(string_agg(a.capture_pattern, ',' ORDER BY a.capture_pattern), '') " +
+        "FROM users u LEFT JOIN user_capture_access a ON a.user_id = u.id WHERE u.username = 'demo-analyst' GROUP BY u.id")).Output.Trim()
+    $audit54 = (Invoke-Psql "zeekad_dashboard" "SELECT action_type || '=' || count(*) FROM audit_logs WHERE actor_username = 'demo-analyst' GROUP BY action_type ORDER BY action_type").Output.Trim() -replace "`r?`n", ', '
+    $e2eLogs.Add("[T54a] examples after seed:`n       $($t54aLines -join "`n       ")`n       assignment rows with an assignee (all)=$assigned54; example assignment rows (all:released by demo-analyst)=$released54`n       demo-analyst (role|enabled|display name ok|patterns)=$acct54; audit rows by demo-analyst: $audit54")
+    Assert-True ($t54aBad.Count -eq 0) "[T54a] 예시 셋: 종결·판정·마지막 변경자 demo-analyst, 이력 순서 착수 → 자동 담당 → (정탐) 조치 → 해제 → 종결 ($($t54aBad -join '; '))"
+    Assert-True ($assigned54 -eq '0' -and $released54 -eq '3:3') "[T54a] 담당자 있는 담당 행 0, 예시 셋의 담당 행은 demo-analyst가 해제한 행 ($assigned54, $released54)"
+    Assert-True ($acct54 -eq 'ANALYST|f|t|lab-20261119,lab-20261122') "[T54a] demo-analyst: ANALYST·비활성·표시 이름·허용 캡처 ($acct54)"
+    Assert-True ($audit54 -match '(^|, )INCIDENT_RESPONSE_ACTION=2(,|$)' -and $audit54 -match '(^|, )INCIDENT_STATUS_TRANSITION=6(,|$)' -and $audit54 -match '(^|, )LOGIN_SUCCESS=1(,|$)') "[T54a] demo-analyst 감사: 로그인 1, 상태 변경 6, 대응 조치 2 ($audit54)"
 
     # T23: 숨김 캡처 = 리허설 DB dashboard.scoring_jobs의 전체 캡처 ID - 공개 캡처(manifest 사건 수 키가 아니다. 최신 작업 사건이 0건인 캡처도 빠지지 않게).
     $dbCaptures = @((Invoke-Psql "zeekad" "SELECT DISTINCT capture_id FROM dashboard.scoring_jobs WHERE capture_id IS NOT NULL ORDER BY 1").Output -split "`r?`n" | Where-Object { $_ })
@@ -1523,6 +1566,16 @@ try {
     $e2eLogs.Add("[T33b] sandbox-setup run1 exit=$($setup1.ExitCode): $((@($setup1.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|privileges|RESULT)' })) -join ' / ')`n       run2 exit=$($setup2.ExitCode): $((@($setup2.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: (baseline|RESULT)' })) -join ' / ')")
     Assert-True ($setup1.ExitCode -eq 0 -and $setup1.Output -match 'baseline created' -and $setup1.Output -match 'RESULT: OK') "[T33b] sandbox-setup 1차(기준선 생성)`n$($setup1.Output)"
     Assert-True ($setup2.ExitCode -eq 0 -and $setup2.Output -match 'baseline kept' -and $setup2.Output -match 'RESULT: OK') "[T33b] sandbox-setup 2차(기준선 유지, 멱등)`n$($setup2.Output)"
+    # [T54b] 기준선에 예시 셋이 들어갔다: 상태 행 +3, 이력 행 +6, 검토 행 그대로(시드 전 값과 견줌), 대응 조치 표식이 정탐 둘의 조치 기록 id 이상.
+    #        시드 뒤 이 단계까지 zeekad 세 표에 쓰는 단계가 없다([4]의 demo 쓰기는 거부된다).
+    $marker54 = (Invoke-Psql "zeekad" "SELECT incident_status_rows || '/' || incident_status_history_rows || '/' || analyst_review_rows FROM sandbox_baseline.marker WHERE id = 1").Output.Trim()
+    $baseEx54 = (Invoke-Psql "zeekad" "SELECT (SELECT count(*) FROM sandbox_baseline.incident_status WHERE incident_id IN ($ids54Sql)) || '/' || (SELECT count(*) FROM sandbox_baseline.incident_status_history WHERE incident_id IN ($ids54Sql))").Output.Trim()
+    $raMark54 = (Invoke-Psql "zeekad_dashboard" "SELECT (SELECT max_id FROM sandbox.response_action_baseline WHERE id = 1) || ':' || (SELECT max(id) FROM incident_response_actions WHERE actor_username = 'demo-analyst' AND incident_id IN ($ids54Sql)) || ':' || (SELECT count(*) FROM incident_response_actions WHERE actor_username = 'demo-analyst' AND incident_id IN ($ids54Sql))").Output.Trim()
+    $expMarker54 = "$($pre54Rows[0] + 3)/$($pre54Rows[1] + 6)/$($pre54Rows[2])"
+    $e2eLogs.Add("[T54b] baseline marker rows (status/history/review)=$marker54 (before seed $($pre54Rows -join '/'), expected $expMarker54); example rows in baseline (status/history)=$baseEx54; response action marker max_id:demo-analyst max id:count=$raMark54")
+    Assert-True ($marker54 -eq $expMarker54 -and $baseEx54 -eq '3/6') "[T54b] 기준선 = 시드 전 + 예시 셋(상태 +3, 이력 +6, 검토 그대로) ($marker54, expected $expMarker54; examples $baseEx54)"
+    $raParts54 = @($raMark54 -split ':')
+    Assert-True ($raParts54.Count -eq 3 -and $raParts54[2] -eq '2' -and [long]$raParts54[0] -ge [long]$raParts54[1]) "[T54b] 대응 조치 표식이 예시의 조치 기록 둘의 id 이상 ($raMark54)"
     $rwAfter = (Invoke-Psql "zeekad" $rwPrivSql).Output.Trim()
     $fnPriv = (Invoke-Psql "zeekad" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_pipeline()', 'EXECUTE') || ' dashboard_rw_exec=' || has_function_privilege('dashboard_rw', 'sandbox.reset_pipeline()', 'EXECUTE') || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_pipeline()'::regprocedure AND x.grantee = 0) || ' secdef=' || (SELECT prosecdef FROM pg_proc WHERE oid = 'sandbox.reset_pipeline()'::regprocedure) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'sandbox.reset_pipeline()'::regprocedure)").Output.Trim()
     $fnPrivD = (Invoke-Psql "zeekad_dashboard" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_assignments()', 'EXECUTE') || ' app_owner=' || (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'sandbox.reset_assignments()'::regprocedure) || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_assignments()'::regprocedure AND x.grantee = 0) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'sandbox.reset_assignments()'::regprocedure)").Output.Trim()
@@ -1633,13 +1686,14 @@ try {
     Assert-True (& $isBaseline (& $baselineDiff)) "[T33d] 쓰기 전 세 표 = 기준선"
     # T39: 표본은 공개 실습망 캡처에서 뽑되 lab-20261122를 먼저 보고 없으면 lab-20261119에서 뽑는다(어느 캡처인지 로그에 남긴다).
     $open33 = @(); $pend33 = @(); $openCap33 = ''; $pendCap33 = ''
+    # T54: 두 표본 모두 분석이 끝난 예시 셋을 뺀다(예시 A에는 옛 작업의 미결정 검토가 있다. 리허설 쓰기가 예시를 건드리지 않게).
     foreach ($sampleCap in @('lab-20261122', 'lab-20261119')) {
         if ($open33.Count -lt 6) {
-            $open33 = @((Invoke-Psql "zeekad" "SELECT lq.job_id || '|' || lq.queue_rank || '|' || lq.incident_id FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = '$sampleCap' AND NOT EXISTS (SELECT 1 FROM zeekad.incident_status s WHERE s.incident_id = lq.incident_id) ORDER BY lq.job_id, lq.queue_rank LIMIT 6").Output -split "`r?`n" | Where-Object { $_ })
+            $open33 = @((Invoke-Psql "zeekad" "SELECT lq.job_id || '|' || lq.queue_rank || '|' || lq.incident_id FROM dashboard.latest_incident_queue lq WHERE lq.capture_id = '$sampleCap' AND lq.incident_id NOT IN ($ids54Sql) AND NOT EXISTS (SELECT 1 FROM zeekad.incident_status s WHERE s.incident_id = lq.incident_id) ORDER BY lq.job_id, lq.queue_rank LIMIT 6").Output -split "`r?`n" | Where-Object { $_ })
             $openCap33 = $sampleCap
         }
         if ($pend33.Count -lt 2) {
-            $pend33 = @((Invoke-Psql "zeekad" "SELECT r.job_id || '|' || r.incident_id FROM zeekad.analyst_review r WHERE r.action IS NULL AND split_part(r.incident_id, '|', 1) = '$sampleCap' ORDER BY r.job_id, r.incident_id LIMIT 2").Output -split "`r?`n" | Where-Object { $_ })
+            $pend33 = @((Invoke-Psql "zeekad" "SELECT r.job_id || '|' || r.incident_id FROM zeekad.analyst_review r WHERE r.action IS NULL AND split_part(r.incident_id, '|', 1) = '$sampleCap' AND r.incident_id NOT IN ($ids54Sql) ORDER BY r.job_id, r.incident_id LIMIT 2").Output -split "`r?`n" | Where-Object { $_ })
             $pendCap33 = $sampleCap
         }
     }
@@ -1820,6 +1874,54 @@ try {
     Assert-True ($rb1.ExitCode -ne 0 -and $rb1.Output -match 'REFUSED' -and $markerBefore -eq $markerMid) "[T33i] 체험 계정 흔적이 있으면 기준선 다시 만들기 거부"
     Assert-True ($iReset.ExitCode -eq 0 -and $rb2.ExitCode -eq 0 -and $rb2.Output -match 'baseline rebuilt' -and $markerBefore -ne $markerAfter -and (& $isBaseline $iFinal)) "[T33i] 흔적이 없으면 기준선 다시 만들기"
 
+    # [T54c] 체험 계정이 예시를 건드려도 초기화가 기준선(예시 포함)으로 되돌린다: trial-analyst가 다른 신규 건 하나를 분석 중으로 바꾸고
+    #        예시 A(종결)에 대응 조치 하나를 덧붙인 뒤 reset --once → 그 건은 신규로, 덧붙인 조치는 지워지고, 예시 셋(상태·판정·이력, demo-analyst의 조치)은 그대로.
+    #        초기화 서비스는 [T33g]부터 멈춰 있고 기준선은 [T33i]가 예시를 포함한 채 다시 만들었다.
+    $exA54 = @($examples54 | Where-Object { $_.key -eq 'A' })[0]
+    $posA54 = @((Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE incident_id = '$($exA54.incidentId)'").Output.Trim() -split '/')
+    $exSnap54 = {
+        $z = (Invoke-Psql "zeekad" ("SELECT count(*) || ':' || md5(string_agg(t::text, ',' ORDER BY t::text)) FROM (" +
+            "SELECT incident_id, zeekad_status AS s, zeekad_resolution AS r, updated_by AS a, updated_at AS at FROM dashboard.incident_status WHERE incident_id IN ($ids54Sql) " +
+            "UNION ALL SELECT incident_id, to_status, zeekad_resolution, actor || ':' || COALESCE(reason, ''), changed_at FROM dashboard.incident_status_history WHERE incident_id IN ($ids54Sql)) t")).Output.Trim()
+        $d = (Invoke-Psql "zeekad_dashboard" "SELECT count(*) || '/' || count(*) FILTER (WHERE actor_username = 'demo-analyst') FROM incident_response_actions WHERE incident_id IN ($ids54Sql)").Output.Trim()
+        "zeekad rows=$z actions(all/demo-analyst)=$d"
+    }
+    $s54Before = & $exSnap54
+    $t54c = New-Client "198.51.100.240"
+    Assert-Status (Login-Api $t54c $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T54c] $trialUser 로그인"
+    $c54a = Invoke-Http -Path "/api/incidents/$($inc[2].Job)/rank/$($inc[2].Rank)/transition" -Method POST -Client $t54c -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T54 리허설: 다른 신규 건 착수" }
+    $c54b = Invoke-Http -Path "/api/incidents/$($posA54[0])/rank/$($posA54[1])/response-actions" -Method POST -Client $t54c -Csrf -JsonBody @{ action = "monitor"; note = "T54 리허설: 예시에 덧붙인 조치" }
+    Assert-Status $c54a 200 "[T54c] $trialUser 다른 신규 건 분석 중으로"
+    Assert-Status $c54b 200 "[T54c] $trialUser 예시 A에 대응 조치 덧붙임"
+    $s54Mid = & $exSnap54
+    $c54Reset = & $runResetOnce
+    $s54After = & $exSnap54
+    $c54Other = (Invoke-Psql "zeekad" "SELECT count(*) FROM dashboard.incident_status WHERE incident_id = '$($inc[2].Id)'").Output.Trim()
+    $e2eLogs.Add("[T54c] examples before=$s54Before; after trial writes=$s54Mid; reset --once exit=$($c54Reset.ExitCode) $(($c54Reset.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' '); after reset=$s54After; other incident status rows=$c54Other")
+    Assert-True ($s54Mid -ne $s54Before -and $s54Mid -match 'actions\(all/demo-analyst\)=3/2$') "[T54c] 덧붙인 조치가 예시 A에 보임 ($s54Mid)"
+    Assert-True ($c54Reset.ExitCode -eq 0 -and $c54Other -eq '0' -and $s54After -eq $s54Before -and $s54After -match 'actions\(all/demo-analyst\)=2/2$') "[T54c] 초기화 뒤 다른 건은 신규, 덧붙인 조치는 지워지고 예시 셋은 그대로 ($s54After)"
+
+    # [T54d] 조회자(demo)가 보는 예시 A: 종결·정탐, 상태 변경 사유의 주소는 가려지고(가려진 꼴을 그대로 적는다), 대응 조치 메모는 응답에 없다.
+    #        큐의 종결 필터(status=closed&period=all)에 예시 셋이 나온다. WAF를 거친 응답이다(출력 규칙에 걸리면 200이 아니다).
+    $v54 = New-Client "198.51.100.241"
+    Assert-Status (Login-Api $v54 "demo" $env:DEMO_PASSWORD) 200 "[T54d] demo 로그인"
+    $dA54 = Invoke-Http -Path "/api/incidents/$($posA54[0])/rank/$($posA54[1])" -Client $v54
+    Assert-Status $dA54 200 "[T54d] demo 예시 A 상세"
+    $ip54 = [System.Collections.Generic.List[string]]::new()
+    Find-UnmaskedIpv4 $dA54.Json "detail[A]" $ip54
+    $hist54 = @($dA54.Json.detail.statusHistory)
+    $closeH54 = @($hist54 | Where-Object { $_.toStatus -eq 'closed' })
+    $notes54 = @($dA54.Json.responseActions | Where-Object { $null -ne $_.note })
+    $closedQ54 = Get-AllQueueItems $v54 "status=closed&period=all" 100
+    $pos54 = @($examples54 | ForEach-Object { (Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE incident_id = '$($_.incidentId)'").Output.Trim() })
+    $closedPos54 = @($closedQ54.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
+    $missing54 = @($pos54 | Where-Object { $closedPos54 -notcontains $_ })
+    $e2eLogs.Add("[T54d] demo example A detail: maskedView=$($dA54.Json.maskedView) currentStatus=$($dA54.Json.detail.currentStatus) resolution=$($dA54.Json.detail.currentResolution) incidentNo=$($dA54.Json.incidentNo); unmasked IPv4 JSON paths=$($ip54.Count)$(if ($ip54.Count) { ' ' + (($ip54 | Select-Object -First 10) -join ', ') })`n       close reason as the viewer sees it: $(@($closeH54 | ForEach-Object { $_.reason }) -join ' / ')`n       response actions (action|note is null): $(@($dA54.Json.responseActions | ForEach-Object { "$($_.action)|$($null -eq $_.note)" }) -join ', ')`n       closed filter (period=all) total=$($closedQ54.First.Json.total) example positions=[$($pos54 -join ', ')] missing=[$($missing54 -join ', ')]")
+    Assert-True ($dA54.Json.maskedView -eq $true -and $dA54.Json.detail.currentStatus -eq 'closed' -and $dA54.Json.detail.currentResolution -eq 'true_positive' -and $closeH54.Count -eq 1) "[T54d] demo 예시 A: 종결·정탐, 종결 이력 하나"
+    Assert-True ($ip54.Count -eq 0 -and $closeH54[0].reason -match '10\.10\.\*\.\*') "[T54d] demo 예시 A 응답에 가려지지 않은 IPv4 없음, 종결 사유의 주소는 가려짐 ($($ip54 -join ', '))"
+    Assert-True (@($dA54.Json.responseActions).Count -ge 1 -and $notes54.Count -eq 0) "[T54d] demo에게 대응 조치 메모가 내려가지 않음 (기록 $(@($dA54.Json.responseActions).Count), 메모 $($notes54.Count))"
+    Assert-True ($pos54.Count -eq 3 -and $missing54.Count -eq 0) "[T54d] 큐 종결 필터(전체 기간)에 예시 셋 (빠진 것 $($missing54 -join ', '))"
+
     # [T33j] trial-analyst 잠금 없음(요청마다 다른 클라이언트 IP, 로그인 속도 제한 회피)
     $auditBase33 = [long](Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(MAX(id),0) FROM audit_logs").Output.Trim()
     $codes33 = @()
@@ -1864,9 +1966,10 @@ try {
     # [T33x] (선택) 노출 확인: 공개 실습망 캡처의 모든 인시던트에 대해 화면이 부르는 API 응답을 demo와 trial-analyst로 받아 JSON 경로 단위로 비교
     if ($ExposureFullDir) { Invoke-T33Exposure $tc }
 
-    # 리허설 일회용 DB 정리: 뒤 단계([T25c]는 모든 인시던트 담당을 ON CONFLICT DO NOTHING으로 넣는다)가 영향받지 않게 T33이 만든 담당 행(해제된 NULL 행)을 지운다.
+    # 리허설 일회용 DB 정리: 뒤 단계([T25c]는 모든 인시던트 담당을 ON CONFLICT DO NOTHING으로 넣는다)가 영향받지 않게 해제된 담당 행(NULL 행)을 지운다.
+    # T54: T33이 만든 해제 행(sandbox-reset)뿐 아니라 예시 셋의 해제 행(demo-analyst가 종결 전에 해제)도 지운다(남으면 [T25c]가 그 셋을 건너뛴다).
     # 담당 이력(추가만)은 그대로 둔다. 초기화 서비스는 멈춘 채 둔다(뒤 단계의 리허설 쓰기를 되돌리지 않게).
-    $cleanup33 = (Invoke-Psql "zeekad_dashboard" "DELETE FROM incident_assignments WHERE assignee_user_id IS NULL AND assigned_by = 'sandbox-reset'").Output.Trim()
+    $cleanup33 = (Invoke-Psql "zeekad_dashboard" "DELETE FROM incident_assignments WHERE assignee_user_id IS NULL").Output.Trim()
     $e2eLogs.Add("[T33] rehearsal cleanup: $cleanup33 (released rows removed from the disposable rehearsal DB; sandbox-reset stays stopped for later steps)")
 
     Write-Host "=== [T25] 담당·착수 지연·처리 시간(V2 적용·독립 SQL·모든 인시던트 담당 성능·T24 이미지 되돌리기) ==="
