@@ -18,6 +18,8 @@
 
 # 포트폴리오 스택 리허설 검증(로컬 PC). compose.portfolio.yml을 NAS와 같은 구성으로 띄우고(프로젝트 이름만 다름),
 # 계정 시드를 두 번 실행한 뒤 DSM 역방향 프록시를 흉내 낸 요청으로 E2E [0]~[8]과 ZAP 베이스라인 [9]를 확인하고 down -v로 정리한다.
+# - T61: 네트워크 둘(portfolio-net = nginx-waf·dashboard-app, portfolio-data = 내부 전용)과 capability 없음은 [0] 바로 뒤 [T61a]~[T61d],
+#   상태 확인 감사 줄은 끝 무렵 [T61e]가 본다.
 # - DSM 흉내: http://127.0.0.1:<WAF 포트>에 Host: <PublicHost>, X-Forwarded-Proto: https, X-Forwarded-For: <클라이언트 IP>.
 # - 세션·CSRF 쿠키는 Secure라 HTTP 요청에 클라이언트가 보내지 않으므로 Set-Cookie에서 값을 읽어 Cookie 헤더를 직접 만든다
 #   (DASHBOARD_COOKIE_SECURE=false로 우회하지 않는다).
@@ -106,7 +108,9 @@ function Test-DemoPattern([string]$CaptureId) {
 # 보이는 캡처 = manifest 캡처 중 허용 패턴에 맞는 것, 숨김 캡처 = 나머지 전부.
 $demoVisibleCaptures = @($expectedCounts.Keys | Where-Object { Test-DemoPattern $_ })
 $demoHiddenCaptures = @($expectedCounts.Keys | Where-Object { -not (Test-DemoPattern $_) })
-foreach ($img in @("zeek-ad-dashboard-app:local", "zeek-ad-dashboard-waf:local", "zeekad-pipeline:dev", "pgvector/pgvector:0.8.1-pg17")) {
+# T61: [T32c]·[T36b]의 일회용 컨테이너(portfolio-net에 붙임)는 파이프라인 이미지의 python을 쓴다.
+$probeImage = "zeekad-pipeline:dev"
+foreach ($img in @("zeek-ad-dashboard-app:local", "zeek-ad-dashboard-waf:local", $probeImage, "pgvector/pgvector:0.8.1-pg17")) {
     [void](Invoke-NativeCapture "docker" @("image", "inspect", "--format", "{{.Id}}", $img))
 }
 
@@ -131,6 +135,11 @@ $env:PORTFOLIO_READ_BURST = $readOverride.Burst
 
 $composeArgs = @("compose", "-p", $ProjectName, "-f", "compose.portfolio.yml", "--env-file", ".env.portfolio.example")
 $networkName = "${ProjectName}_portfolio-net"
+# T61: 데이터 네트워크(내부 전용). dashboard-app·postgres·api·sandbox-*·demo-seed가 붙고 nginx-waf는 붙지 않는다.
+$dataNetworkName = "${ProjectName}_portfolio-data"
+# T61: portfolio-net에 붙인 일회용 컨테이너(앱·WAF 말고는 그 네트워크에 붙는 것이 없으므로 "같은 네트워크의 다른 컨테이너"를 이것으로 흉내 낸다).
+# 뒤에 "-c <코드> <인자...>"를 붙여 쓴다. 이미지를 내려받지 않는다(--pull never).
+$netProbeArgs = @("run", "--rm", "--pull", "never", "--network", $networkName, "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--entrypoint", "python", $probeImage)
 $baseUrl = "http://127.0.0.1:$WafHttpPort"
 $e2eLogs = [System.Collections.Generic.List[string]]::new()
 $tmpDir = Join-Path ([IO.Path]::GetTempPath()) "zeekad-portfolio-$ProjectName-$(Get-Random)"
@@ -142,6 +151,16 @@ function Get-ServiceContainer([string]$Service) {
     $id = (Invoke-NativeCapture "docker" ($composeArgs + @("ps", "-q", $Service))).Output.Trim()
     if (-not $id) { throw "서비스 컨테이너가 없습니다: $Service" }
     return $id
+}
+
+# 서비스 컨테이너의 한 네트워크 주소(T61부터 dashboard-app은 네트워크가 둘이다). Windows PowerShell 5.1은 네이티브 인자 안 큰따옴표를
+# 지우므로 템플릿에 index "이름"을 쓰지 않고 네트워크 전체를 JSON으로 받아 고른다. 그 네트워크에 붙어 있지 않으면 빈 문자열.
+function Get-NetIp([string]$Service, [string]$Network) {
+    $cid = Get-ServiceContainer $Service
+    $nets = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .NetworkSettings.Networks}}", $cid)).Output | ConvertFrom-Json
+    $n = $nets.PSObject.Properties | Where-Object { $_.Name -eq $Network } | Select-Object -First 1
+    if (-not $n) { return "" }
+    return [string]$n.Value.IPAddress
 }
 
 function Invoke-Psql([string]$Database, [string]$Sql, [string]$User = "postgres", [string]$PasswordEnv = "") {
@@ -587,6 +606,95 @@ try {
         "# 역할 멤버십(사용자 역할): $(if ($membership) { $membership } else { '(none)' })`n# pg_db_role_setting 행 수: $settings`n# DB ACL:`n$dbAcl`n"
     Save-Evidence "globals-diff.txt" $globalsText
     $e2eLogs.Add("[0f] globals vs source:`n    $($globalsText.Trim() -replace "`n", "`n    ")")
+
+    # ───────── [T61a]~[T61d] 네트워크 둘·WAF에서 DB·근거 API 차단·capability 없음 ─────────
+    # [0] 바로 뒤에 둔다: 상주 다섯이 모두 떠 있고 일회용·ZAP 컨테이너가 없으며, 뒤 단계의 실패가 이 단계를 막지 않는다.
+    Write-Host "=== [T61] 네트워크 둘(portfolio-net·portfolio-data)·WAF에서 DB·근거 API 차단·capability 없음 ==="
+    $svcById61 = @{}
+    foreach ($info in $inspected) { $svcById61[[string]$info.Id] = [string]$info.Config.Labels.'com.docker.compose.service' }
+    $netOf61 = {
+        param([string]$Net)
+        $n = @((Invoke-NativeCapture "docker" @("network", "inspect", $Net)).Output | ConvertFrom-Json)[0]
+        $svcs = @()
+        if ($n.Containers) {
+            $svcs = @($n.Containers.PSObject.Properties | ForEach-Object { if ($svcById61.ContainsKey($_.Name)) { $svcById61[$_.Name] } else { "(other:$($_.Value.Name))" } } | Sort-Object)
+        }
+        return [pscustomobject]@{ Internal = [bool]$n.Internal; Services = ($svcs -join ','); Subnet = (@($n.IPAM.Config | ForEach-Object { $_.Subnet }) -join ',') }
+    }
+    $pubNet61 = & $netOf61 $networkName
+    $dataNet61 = & $netOf61 $dataNetworkName
+    # 동작 확인: 내부 전용 네트워크에만 붙은 컨테이너에는 기본 경로(목적지 00000000)가 없다.
+    $routes61 = [ordered]@{}
+    foreach ($svc in @("postgres", "api", "sandbox-reset", "dashboard-app", "nginx-waf")) {
+        $rt = Invoke-NativeCapture "docker" @("exec", (Get-ServiceContainer $svc), "cat", "/proc/net/route") -IgnoreExitCode
+        $routes61[$svc] = if ($rt.ExitCode -ne 0) { -1 } else { @($rt.Output -split "`r?`n" | Where-Object { ($_.Trim() -split '\s+')[1] -eq '00000000' }).Count }
+    }
+    $e2eLogs.Add("[T61a] $networkName internal=$($pubNet61.Internal) subnet=$($pubNet61.Subnet) containers=[$($pubNet61.Services)]`n       $dataNetworkName internal=$($dataNet61.Internal) subnet=$($dataNet61.Subnet) containers=[$($dataNet61.Services)]`n       default routes in /proc/net/route (service=count): $(($routes61.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')")
+    Assert-True ($pubNet61.Services -eq 'dashboard-app,nginx-waf' -and -not $pubNet61.Internal) "[T61a] portfolio-net에는 nginx-waf·dashboard-app만, 내부 전용 아님 ([$($pubNet61.Services)] internal=$($pubNet61.Internal))"
+    Assert-True ($dataNet61.Services -eq 'api,dashboard-app,postgres,sandbox-reset' -and $dataNet61.Internal) "[T61a] portfolio-data에는 postgres·api·dashboard-app·sandbox-reset만, 내부 전용 ([$($dataNet61.Services)] internal=$($dataNet61.Internal))"
+    Assert-True ($routes61['postgres'] -eq 0 -and $routes61['api'] -eq 0 -and $routes61['sandbox-reset'] -eq 0 -and $routes61['dashboard-app'] -ge 1) "[T61a] postgres·api·sandbox-reset에는 기본 경로가 없고 dashboard-app에는 있다"
+
+    # [T61b] nginx-waf 안에서 api:8000·postgres:5432에 이름으로도 portfolio-data 주소로도 TCP 연결이 되지 않는다.
+    # 연결 단계로 판정한다: BusyBox nc -z(입출력 없이 연결만, -w 3 연결 시간 상한, 바깥 timeout 5 전체 상한). 연결되면 exit 0과 "open".
+    # 닿지 않음 = bad address·unreachable·timed out·refused(-z의 거부는 메시지 없이 exit 1). 그 밖의 결과는 닿은 것으로 본다(실패).
+    $wafCid61 = Get-ServiceContainer "nginx-waf"
+    $tcp61 = {
+        param([string]$TargetHost, [string]$Port)
+        $r = Invoke-NativeCapture "docker" @("exec", $wafCid61, "timeout", "5", "nc", "-z", "-v", "-w", "3", $TargetHost, $Port) -IgnoreExitCode
+        $out = ($r.Output -replace "`r?`n", ' ').Trim()
+        $why = if ($r.ExitCode -eq 0 -and $out -match '\bopen\b') { "open" }
+            elseif ($r.ExitCode -ne 0 -and $out -match "bad address") { "bad address" }
+            elseif ($r.ExitCode -ne 0 -and $out -match '(?i)unreachable') { "unreachable" }
+            elseif ($r.ExitCode -ne 0 -and ($out -match '(?i)timed out' -or $r.ExitCode -eq 124 -or $r.ExitCode -eq 143)) { "timed out" }
+            elseif ($r.ExitCode -ne 0 -and ($out -match '(?i)refused' -or -not $out)) { "refused" }
+            else { "other" }
+        return [pscustomobject]@{ Target = "${TargetHost}:$Port"; Exit = $r.ExitCode; Why = $why; Out = $out }
+    }
+    $apiData61 = Get-NetIp "api" $dataNetworkName
+    $pgData61 = Get-NetIp "postgres" $dataNetworkName
+    Assert-True ($apiData61 -and $pgData61) "[T61b] api·postgres의 portfolio-data 주소 ($apiData61, $pgData61)"
+    $blocked61 = @(@(@("api", "8000"), @("postgres", "5432"), @($apiData61, "8000"), @($pgData61, "5432")) | ForEach-Object { & $tcp61 $_[0] $_[1] })
+    $control61 = & $tcp61 "dashboard-app" "8080"
+    $e2eLogs.Add("[T61b] inside nginx-waf, timeout 5 nc -z -v -w 3 <host> <port> (connect only):`n       $(($blocked61 + @($control61) | ForEach-Object { "$($_.Target) -> exit=$($_.Exit) $($_.Why) [$($_.Out)]" }) -join "`n       ")")
+    foreach ($b in $blocked61) {
+        Assert-True (@("bad address", "unreachable", "timed out", "refused") -contains $b.Why) "[T61b] nginx-waf에서 $($b.Target)에 TCP 연결이 되지 않음 (exit=$($b.Exit) $($b.Why) [$($b.Out)])"
+    }
+    Assert-True ($control61.Why -eq "open") "[T61b] (대조) 같은 도구로 nginx-waf에서 dashboard-app:8080은 연결됨 (exit=$($control61.Exit) [$($control61.Out)])"
+
+    # [T61c] api 안에서 nginx-waf:8080(이름)과 WAF 주소:8080이 예외로 끝나고(종류를 적는다) dashboard-app:8080은 연결된다.
+    $wafIp61 = Get-NetIp "nginx-waf" $networkName
+    $py61 = @(
+        'import socket, sys',
+        'for t in sys.argv[1:]:',
+        '    h, p = t.rsplit(":", 1)',
+        '    try:',
+        '        s = socket.create_connection((h, int(p)), timeout=3); s.close(); print(t, "connected")',
+        '    except Exception as e:',
+        '        print(t, "error", type(e).__name__, str(e).replace("\n", " "))'
+    ) -join "`n"
+    $py61b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py61))
+    $apiOut61 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "api", "python", "-c", "import base64;exec(base64.b64decode('$py61b64'))", "nginx-waf:8080", "${wafIp61}:8080", "dashboard-app:8080")) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[T61c] inside api, socket.create_connection(timeout=3) (nginx-waf portfolio-net address=$wafIp61):`n       $($apiOut61 -replace "`r?`n", "`n       ")")
+    Assert-True ($wafIp61 -and $apiOut61 -match '(?m)^nginx-waf:8080 error \w+') "[T61c] api에서 nginx-waf:8080(이름)은 예외로 끝남"
+    Assert-True ($apiOut61 -match "(?m)^$([regex]::Escape($wafIp61)):8080 error \w+") "[T61c] api에서 WAF 주소 ${wafIp61}:8080은 예외로 끝남"
+    Assert-True ($apiOut61 -match '(?m)^dashboard-app:8080 connected') "[T61c] (대조) api에서 dashboard-app:8080은 연결됨"
+
+    # [T61d] 상주 다섯의 PID 1: CapBnd 0(모든 capability 제거), NoNewPrivs 1. postgres는 root로 시작하지 않는다(Config.User = postgres, 첫째 안).
+    $caps61 = [System.Collections.Generic.List[string]]::new()
+    $capBad61 = [System.Collections.Generic.List[string]]::new()
+    foreach ($svc in @("postgres", "api", "dashboard-app", "nginx-waf", "sandbox-reset")) {
+        $info = @($inspected | Where-Object { $_.Config.Labels.'com.docker.compose.service' -eq $svc })[0]
+        $st = (Invoke-NativeCapture "docker" @("exec", (Get-ServiceContainer $svc), "cat", "/proc/1/status") -IgnoreExitCode).Output
+        $bnd = [regex]::Match($st, '(?m)^CapBnd:\s*([0-9a-fA-F]+)').Groups[1].Value
+        $eff = [regex]::Match($st, '(?m)^CapEff:\s*([0-9a-fA-F]+)').Groups[1].Value
+        $nnp = [regex]::Match($st, '(?m)^NoNewPrivs:\s*(\d+)').Groups[1].Value
+        $caps61.Add("$svc user=$(if ($info.Config.User) { $info.Config.User } else { '(image default)' }) CapDrop=$(@($info.HostConfig.CapDrop) -join ',') CapAdd=$(@($info.HostConfig.CapAdd) -join ',') SecurityOpt=$(@($info.HostConfig.SecurityOpt) -join ',') | PID 1 CapBnd=$bnd CapEff=$eff NoNewPrivs=$nnp")
+        if ($bnd -ne '0000000000000000' -or $eff -ne '0000000000000000' -or $nnp -ne '1') { $capBad61.Add("$svc CapBnd=$bnd CapEff=$eff NoNewPrivs=$nnp") }
+    }
+    $pgUser61 = [string](@($inspected | Where-Object { $_.Config.Labels.'com.docker.compose.service' -eq 'postgres' })[0].Config.User)
+    $e2eLogs.Add("[T61d] privileges (docker inspect | /proc/1/status):`n       $($caps61 -join "`n       ")")
+    Assert-True ($capBad61.Count -eq 0) "[T61d] 상주 다섯의 PID 1 CapBnd·CapEff 0, NoNewPrivs 1 ($($capBad61 -join '; '))"
+    Assert-True ($pgUser61 -eq 'postgres') "[T61d] postgres는 root로 시작하지 않음(Config.User=$pgUser61)"
 
     Write-Host "=== [1] SPA·보안 헤더·리다이렉트 Location ==="
     $loginGet = Invoke-Http -Path "/login"
@@ -2424,17 +2532,14 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True ($restored29e -eq 'f|0|t') "[T29e] viewer1 비활성·잠금 해제로 되돌림"
 
     # ───────── [T32] 전달 헤더 신뢰: WAF 고정 주소·게이트웨이만 믿기 ─────────
-    # 호스트(DSM 흉내) 경로는 게이트웨이에서 온 연결이라 X-Forwarded-For·Proto를 믿고, 같은 네트워크의 api 컨테이너가
+    # 호스트(DSM 흉내) 경로는 게이트웨이에서 온 연결이라 X-Forwarded-For·Proto를 믿고, 같은 네트워크의 다른 컨테이너가
     # nginx-waf:8080이나 dashboard-app:8080에 직접 보낸 전달 헤더는 믿지 않는다. 로그인 시도는 없는 계정이라 잠금에 영향이 없다.
+    # T61: api는 portfolio-data에만 붙어 nginx-waf에 닿지 않는다. WAF 쪽([T32c])은 portfolio-net에 붙인 일회용 컨테이너에서,
+    #      앱 직접([T32d])은 지금처럼 api 컨테이너(portfolio-data 주소)에서 보낸다.
     Write-Host "=== [T32] 전달 헤더 신뢰(WAF 고정 주소·게이트웨이) ==="
-    function Get-NetIp([string]$Service) {
-        $cid = Get-ServiceContainer $Service
-        # 이 스택 컨테이너는 네트워크가 하나뿐이다. Windows PowerShell 5.1은 네이티브 인자 안 큰따옴표를 지우므로 index "이름"을 쓰지 않는다.
-        return (Invoke-NativeCapture "docker" @("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", $cid)).Output.Trim()
-    }
-    $wafIp32 = Get-NetIp "nginx-waf"
-    $apiIp32 = Get-NetIp "api"
-    $gw32 = (Invoke-NativeCapture "docker" @("network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", $networkName)).Output.Trim()
+    $wafIp32 = Get-NetIp "nginx-waf" $networkName
+    $apiIp32 = Get-NetIp "api" $dataNetworkName
+    $gw32 =(Invoke-NativeCapture "docker" @("network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}}{{end}}", $networkName)).Output.Trim()
     $appTrusted32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_TRUSTED_PROXIES-<unset>}"')) -IgnoreExitCode).Output.Trim()
     $wafRealIp32 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "nginx-waf", "sh", "-c", 'echo ${SET_REAL_IP_FROM:-unset}+${ZEEKAD_GATEWAY_IP:-unset}')) -IgnoreExitCode).Output.Trim()
     $e2eLogs.Add("[T32a] nginx-waf=$wafIp32 api=$apiIp32 network gateway=$gw32; app DASHBOARD_TRUSTED_PROXIES=$appTrusted32; nginx-waf SET_REAL_IP_FROM+ZEEKAD_GATEWAY_IP=$wafRealIp32")
@@ -2470,10 +2575,13 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     Assert-True (-not $hostHsts32) "[T32b] 호스트(DSM 흉내) WAF 응답에 HSTS 없음(공개에서는 DSM이 붙임)" $hostCsrf32
     Assert-True ((Get-HeaderValue $hostNope32 "Location") -eq "https://$PublicHost/login") "[T32b] 호스트 경로 Location https://$PublicHost/login (T31과 같음)" $hostNope32
 
-    # [T32c] api 컨테이너 -> nginx-waf:8080, [T32d] api 컨테이너 -> dashboard-app:8080 직접. 파이썬 스크립트는 base64로 넘긴다.
+    # [T32c] portfolio-net 일회용 컨테이너 -> nginx-waf:8080, [T32d] api 컨테이너 -> dashboard-app:8080 직접. 파이썬 스크립트는 base64로 넘긴다.
+    # 첫 줄(self)은 보내는 쪽 주소다: base의 호스트·포트에 연결한 소켓의 getsockname()[0](일회용 컨테이너의 주소는 미리 알 수 없다).
     $py32 = @(
-        'import sys, json, re, urllib.request, urllib.error',
+        'import sys, json, re, socket, urllib.parse, urllib.request, urllib.error',
         'base, user, xff, probe = sys.argv[1:5]',
+        'u = urllib.parse.urlsplit(base)',
+        'so = socket.create_connection((u.hostname, u.port or 80), timeout=10); print("self", so.getsockname()[0]); so.close()',
         'class NoRedirect(urllib.request.HTTPRedirectHandler):',
         '    def redirect_request(self, *args, **kwargs):',
         '        return None',
@@ -2498,27 +2606,32 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
         'print("nope", s3, "location=%s" % h3.get("Location"))'
     ) -join "`n"
     $py32b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py32))
-    function Invoke-ApiProbe([string]$Base, [string]$User, [string]$Xff, [string]$Probe) {
-        return (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "api", "python", "-c", "import base64;exec(base64.b64decode('$py32b64'))", $Base, $User, $Xff, $Probe)) -IgnoreExitCode).Output.Trim()
+    # -FromNet: portfolio-net에 붙인 일회용 컨테이너($netProbeArgs)에서, 아니면 api 컨테이너에서 보낸다.
+    function Invoke-ApiProbe([string]$Base, [string]$User, [string]$Xff, [string]$Probe, [switch]$FromNet) {
+        $code = "import base64;exec(base64.b64decode('$py32b64'))"
+        $runArgs = if ($FromNet) { $netProbeArgs + @("-c", $code) } else { $composeArgs + @("exec", "-T", "api", "python", "-c", $code) }
+        return (Invoke-NativeCapture "docker" ($runArgs + @($Base, $User, $Xff, $Probe)) -IgnoreExitCode).Output.Trim()
     }
 
-    $viaWafUser32 = "t32_api_waf_$(New-RandomToken 6)"
-    $probeWaf32 = "t32apiwaf$(New-RandomToken 8)"
-    $viaWaf32 = Invoke-ApiProbe "http://nginx-waf:8080" $viaWafUser32 "198.51.100.32" $probeWaf32
+    $viaWafUser32 = "t32_net_waf_$(New-RandomToken 6)"
+    $probeWaf32 = "t32netwaf$(New-RandomToken 8)"
+    $viaWaf32 = Invoke-ApiProbe "http://nginx-waf:8080" $viaWafUser32 "198.51.100.32" $probeWaf32 -FromNet
+    $probeIp32 = [regex]::Match($viaWaf32, '(?m)^self (\S+)').Groups[1].Value
     $viaWafLine32 = Get-WafAccessLine $probeWaf32
     $viaWafConn32 = ($viaWafLine32 -split ' ')[0]
     $viaWafIp32 = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$viaWafUser32' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1").Output.Trim()
-    $e2eLogs.Add("[T32c] api container ($apiIp32) -> nginx-waf:8080 with X-Forwarded-For: 198.51.100.32, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($viaWaf32 -replace "`r?`n", ' | ')`n       WAF access log connection address=$viaWafConn32; audit LOGIN_FAILURE client_ip=$viaWafIp32")
-    Assert-True ($viaWafConn32 -eq $apiIp32) "[T32c] WAF 로그 접속 주소 = api 컨테이너"
-    Assert-True ($viaWaf32 -match '(?m)^login 401' -and $viaWafIp32 -eq $apiIp32) "[T32c] api -> WAF 감사 로그 IP = api 주소, 198.51.100.32 아님 (client_ip=$viaWafIp32)"
-    Assert-True ($viaWaf32 -match '(?m)^csrf 200 hsts=False') "[T32c] api -> WAF X-Forwarded-Proto: https는 https 판정 아님(HSTS 없음)"
+    $e2eLogs.Add("[T32c] one-off container on $networkName ($probeIp32) -> nginx-waf:8080 with X-Forwarded-For: 198.51.100.32, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($viaWaf32 -replace "`r?`n", ' | ')`n       WAF access log connection address=$viaWafConn32; audit LOGIN_FAILURE client_ip=$viaWafIp32")
+    Assert-True ($probeIp32 -match '^\d{1,3}(\.\d{1,3}){3}$' -and $probeIp32 -ne $wafIp32 -and $probeIp32 -ne $gw32) "[T32c] 일회용 컨테이너 주소가 portfolio-net의 다른 주소 ($probeIp32)"
+    Assert-True ($viaWafConn32 -eq $probeIp32) "[T32c] WAF 로그 접속 주소 = 일회용 컨테이너 ($viaWafConn32)"
+    Assert-True ($viaWaf32 -match '(?m)^login 401' -and $viaWafIp32 -eq $probeIp32) "[T32c] 일회용 컨테이너 -> WAF 감사 로그 IP = 그 컨테이너 주소, 198.51.100.32 아님 (client_ip=$viaWafIp32)"
+    Assert-True ($viaWaf32 -match '(?m)^csrf 200 hsts=False') "[T32c] 일회용 컨테이너 -> WAF X-Forwarded-Proto: https는 https 판정 아님(HSTS 없음)"
     $loc32c = [regex]::Match($viaWaf32, 'location=(\S+)').Groups[1].Value
-    Assert-True ($viaWaf32 -match '(?m)^nope 302' -and $loc32c -notmatch '^https://' -and $loc32c -notmatch ':443') "[T32c] api -> WAF 리다이렉트가 https/443이 아님 ($loc32c)"
+    Assert-True ($viaWaf32 -match '(?m)^nope 302' -and $loc32c -notmatch '^https://' -and $loc32c -notmatch ':443') "[T32c] 일회용 컨테이너 -> WAF 리다이렉트가 https/443이 아님 ($loc32c)"
 
     $directUser32 = "t32_api_app_$(New-RandomToken 6)"
     $direct32 = Invoke-ApiProbe "http://dashboard-app:8080" $directUser32 "198.51.100.33" "t32direct$(New-RandomToken 8)"
     $directIp32 = (Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(client_ip,'') FROM audit_logs WHERE actor_username = '$directUser32' AND action_type = 'LOGIN_FAILURE' ORDER BY id DESC LIMIT 1").Output.Trim()
-    $e2eLogs.Add("[T32d] api container ($apiIp32) -> dashboard-app:8080 directly with X-Forwarded-For: 198.51.100.33, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($direct32 -replace "`r?`n", ' | ')`n       audit LOGIN_FAILURE client_ip=$directIp32")
+    $e2eLogs.Add("[T32d] api container ($apiIp32, $dataNetworkName) -> dashboard-app:8080 directly with X-Forwarded-For: 198.51.100.33, X-Forwarded-Proto: https, X-Forwarded-Port: 443:`n       $($direct32 -replace "`r?`n", ' | ')`n       audit LOGIN_FAILURE client_ip=$directIp32")
     Assert-True ($direct32 -match '(?m)^login 401' -and $directIp32 -eq $apiIp32) "[T32d] api -> 앱 직접 감사 로그 IP = api 주소 (client_ip=$directIp32)"
     Assert-True ($direct32 -match '(?m)^csrf 200 hsts=False') "[T32d] api -> 앱 직접 X-Forwarded-Proto: https는 https 판정 아님"
     Assert-True ($direct32 -match 'location=http://dashboard-app:8080/login') "[T32d] api -> 앱 직접 Location은 연결 값"
@@ -3044,7 +3157,8 @@ ORDER BY 1
     Assert-True ($authSame36.Status -eq 200 -and $meSame36.Status -eq 200 -and $spaSame36.Status -eq 200) "[T36b] 한도 중에도 /api/auth/·SPA 경로는 열림(조회는 요청 사이에 다시 채워질 수 있어 기록만)"
     Assert-True ($other36.Status -eq 401) "[T36b] 다른 IP(X-Forwarded-For)는 영향 없음"
 
-    # [T36b]/[T36c] 스택 안(DSM 경로 아님): api 컨테이너 -> nginx-waf:8443(ZAP 대상), nginx-waf:8080. 한도 없음, 8443 HSTS 하나.
+    # [T36b]/[T36c] 스택 안(DSM 경로 아님): portfolio-net 일회용 컨테이너 -> nginx-waf:8443(ZAP 대상), nginx-waf:8080. 한도 없음, 8443 HSTS 하나.
+    # T61: api 컨테이너는 portfolio-data에만 붙어 nginx-waf에 닿지 않으므로 [T32c]와 같은 일회용 컨테이너($netProbeArgs)에서 보낸다.
     $py36 = @(
         'import sys, ssl, urllib.request, urllib.error',
         'base, path, n = sys.argv[1], sys.argv[2], int(sys.argv[3])',
@@ -3061,13 +3175,13 @@ ORDER BY 1
         'print("codes", " ".join("%s=%s" % kv for kv in sorted(codes.items())), "hsts_count=%d" % len(hsts), "hsts=%s" % " | ".join(hsts))'
     ) -join "`n"
     $py36b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py36))
-    $inner36 = { param($b, $pth, $n) (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "api", "python", "-c", "import base64;exec(base64.b64decode('$py36b64'))", $b, $pth, "$n")) -IgnoreExitCode).Output.Trim() }
+    $inner36 = { param($b, $pth, $n) (Invoke-NativeCapture "docker" ($netProbeArgs + @("-c", "import base64;exec(base64.b64decode('$py36b64'))", $b, $pth, "$n")) -IgnoreExitCode).Output.Trim() }
     $n36 = $readRate36 + $readBurst36 + 10
     $tls36 = & $inner36 "https://nginx-waf:8443" $readPath36 $n36
     $tlsCsrf36 = & $inner36 "https://nginx-waf:8443" "/api/auth/csrf" 1
     $tlsRoot36 = & $inner36 "https://nginx-waf:8443" "/" 1
     $int36 = & $inner36 "http://nginx-waf:8080" $readPath36 $n36
-    $e2eLogs.Add("[T36b] api container -> https://nginx-waf:8443$readPath36 x$n36 : $tls36`n       api container -> http://nginx-waf:8080$readPath36 x$n36 (not DSM path): $int36")
+    $e2eLogs.Add("[T36b] one-off container on $networkName -> https://nginx-waf:8443$readPath36 x$n36 : $tls36`n       one-off container on $networkName -> http://nginx-waf:8080$readPath36 x$n36 (not DSM path): $int36")
     Assert-True ($tls36 -match '^codes 401=\d+ hsts_count=1' -and $tls36 -notmatch '429') "[T36b] 8443 리스너에는 조회 한도 없음 ($tls36)"
     Assert-True ($int36 -match '^codes 401=\d+' -and $int36 -notmatch '429') "[T36b] 스택 안 8080(다른 출처)에도 조회 한도 없음 ($int36)"
 
@@ -3095,12 +3209,50 @@ ORDER BY 1
         $e2eLogs.Add("[T36d] skipped (no -UsageScript)")
     }
 
+    # ───────── [T61e] nginx-waf 상태 확인이 감사 줄을 남기지 않는다 ─────────
+    # 상태 확인(compose healthcheck)은 이름 Host(localhost)를 보낸다. 숫자 주소 Host는 CRS 920350에 걸려 200이어도 감사 줄이 남았다.
+    # [T36]이 nginx-waf를 다시 만들었으므로 먼저 그 컨테이너가 뜬 지 60초 이상이고 상태 확인이 여러 번 돌았는지 본다(창이 짧으면 기다린다).
+    # 대조: 호스트에서 숫자 주소 Host(curl 기본 Host 127.0.0.1:<포트>)로 /healthz?probe=<표식>을 한 번 보내 그 감사 줄이 남는지 본다
+    # (WAF 규칙을 끄지 않았다는 증거이자 아래 0건이 빈 단언이 아니라는 증거).
+    Write-Host "=== [T61e] nginx-waf 상태 확인 감사 줄 ==="
+    $wafCid61e = Get-ServiceContainer "nginx-waf"
+    $startedOf61e = {
+        $s = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.StartedAt}}", $wafCid61e)).Output.Trim()
+        $m = [regex]::Match($s, '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})')
+        if (-not $m.Success) { throw "[T61e] nginx-waf StartedAt을 읽지 못했다 ($s)" }
+        return [DateTime]::SpecifyKind([DateTime]::ParseExact($m.Groups[1].Value, "yyyy-MM-ddTHH:mm:ss", [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Utc)
+    }
+    $started61e = & $startedOf61e
+    $age61e = ([DateTime]::UtcNow - $started61e).TotalSeconds
+    $waited61e = 0
+    if ($age61e -lt 70) { $waited61e = [int][Math]::Ceiling(70 - $age61e); Start-Sleep -Seconds $waited61e }
+    $age61e = [Math]::Round(([DateTime]::UtcNow - $started61e).TotalSeconds)
+    $health61e = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .State.Health}}", $wafCid61e)).Output | ConvertFrom-Json
+    $hlog61e = @($health61e.Log | Where-Object { $_ })
+    $hcmd61e = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .Config.Healthcheck.Test}}", $wafCid61e)).Output.Trim()
+    $probe61e = "t61health$(New-RandomToken 8)"
+    $code61e = (Invoke-NativeCapture "curl.exe" @("-sS", "--max-time", "20", "-o", "NUL", "-w", "%{http_code}", "http://127.0.0.1:$WafHttpPort/healthz?probe=$probe61e") -IgnoreExitCode).Output.Trim()
+    $healthAudit61e = @(); $mark61e = @()
+    for ($i = 0; $i -lt 10; $i++) {
+        $logs61e = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+        $healthAudit61e = @($logs61e -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_ -match '"uri":"/healthz(\?|")' })
+        $mark61e = @($healthAudit61e | Where-Object { Test-ProbeMark $_ $probe61e })
+        if ($mark61e.Count) { break }
+        Start-Sleep -Seconds 1
+    }
+    $other61e = @($healthAudit61e | Where-Object { -not (Test-ProbeMark $_ $probe61e) })
+    $rules61e = @($mark61e | ForEach-Object { [regex]::Matches($_, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } } | Select-Object -Unique)
+    $e2eLogs.Add("[T61e] nginx-waf container started $($started61e.ToString('yyyy-MM-ddTHH:mm:ssZ')) (age ${age61e}s, waited ${waited61e}s); healthcheck test=$hcmd61e; health status=$($health61e.Status), last $($hlog61e.Count) checks exit=[$(($hlog61e | ForEach-Object { $_.ExitCode }) -join ',')]`n       control: host GET http://127.0.0.1:$WafHttpPort/healthz?probe=<marker> (numeric Host) -> HTTP $code61e; its audit lines=$($mark61e.Count) rules=[$($rules61e -join ', ')]`n       /healthz audit lines in this container's log other than the marker request = $($other61e.Count)$(if ($other61e.Count) { "`n       first: " + $other61e[0].Substring(0, [Math]::Min(400, $other61e[0].Length)) })")
+    Assert-True ($age61e -ge 60 -and $hlog61e.Count -ge 3 -and $health61e.Status -eq 'healthy') "[T61e] nginx-waf가 뜬 지 60초 이상이고 상태 확인이 여러 번 돌았다 (age ${age61e}s, checks $($hlog61e.Count), $($health61e.Status))"
+    Assert-True ($code61e -eq '200' -and $mark61e.Count -ge 1) "[T61e] (대조) 숫자 주소 Host로 보낸 /healthz?probe= 의 감사 줄이 남음 (HTTP $code61e, lines $($mark61e.Count))"
+    Assert-True ($other61e.Count -eq 0) "[T61e] 상태 확인의 /healthz 감사 줄 0건 (표식 요청 것 말고 $($other61e.Count)건)"
+
     $e2eReport = $e2eLogs -join "`n`n"
     Save-Evidence "portfolio-e2e.txt" $e2eReport
-    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·재시드·[T33]·[T25]·[T27]·[T39]·[T40]·[T29]·[T32]·[T47]·[T36] 통과"
+    Write-Host "-> 포트폴리오 리허설 E2E [0]~[8]·[T61a~d]·재시드·[T33]·[T25]·[T27]·[T39]·[T40]·[T29]·[T32]·[T47]·[T36]·[T61e] 통과"
 
     if (-not $SkipZap) {
-        Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택 네트워크 안) ==="
+        Write-Host "=== [9] OWASP ZAP 베이스라인 (https://nginx-waf:8443/, 리허설 스택의 portfolio-net 안) ==="
         $zapDir = Join-Path $ReportFullDir "zap"
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $zapDir
         New-Item -ItemType Directory -Force -Path $zapDir | Out-Null

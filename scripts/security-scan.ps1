@@ -2794,6 +2794,56 @@ ORDER BY 1, 2
                     Assert-True ($n23 -eq 0) "[23c] nginx-waf 로그 전체에 $($v23.Name) 0번 (실제 $($n23)번)"
                 }
 
+                # [T61d] 컨테이너 권한(T61): compose.yml의 두 서비스(dashboard-app, nginx-waf)는 cap_drop ALL + no-new-privileges다.
+                #        PID 1의 /proc/1/status에서 CapBnd·CapEff 0, NoNewPrivs 1을 본다(검증용 verify-postgres는 compose.verify.yml의 것이라 보지 않는다).
+                $caps61 = [System.Collections.Generic.List[string]]::new()
+                $capBad61 = [System.Collections.Generic.List[string]]::new()
+                foreach ($svc61 in @("dashboard-app", "nginx-waf")) {
+                    $cid61 = (Invoke-NativeCapture "docker" ($composeArgs + @("ps", "-q", $svc61))).Output.Trim()
+                    $hc61 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .HostConfig.CapDrop}} {{json .HostConfig.SecurityOpt}}", $cid61) -IgnoreExitCode).Output.Trim()
+                    $st61 = (Invoke-NativeCapture "docker" @("exec", $cid61, "cat", "/proc/1/status") -IgnoreExitCode).Output
+                    $bnd61 = [regex]::Match($st61, '(?m)^CapBnd:\s*([0-9a-fA-F]+)').Groups[1].Value
+                    $eff61 = [regex]::Match($st61, '(?m)^CapEff:\s*([0-9a-fA-F]+)').Groups[1].Value
+                    $nnp61 = [regex]::Match($st61, '(?m)^NoNewPrivs:\s*(\d+)').Groups[1].Value
+                    $caps61.Add("$svc61 CapDrop SecurityOpt=$hc61 | PID 1 CapBnd=$bnd61 CapEff=$eff61 NoNewPrivs=$nnp61")
+                    if ($bnd61 -ne '0000000000000000' -or $eff61 -ne '0000000000000000' -or $nnp61 -ne '1') { $capBad61.Add("$svc61 CapBnd=$bnd61 CapEff=$eff61 NoNewPrivs=$nnp61") }
+                }
+                $e2eLogs.Add("[T61d] privileges (docker inspect | /proc/1/status):`n      $($caps61 -join "`n      ")")
+                Assert-True ($capBad61.Count -eq 0) "[T61d] dashboard-app·nginx-waf PID 1 CapBnd·CapEff 0, NoNewPrivs 1 ($($capBad61 -join '; '))"
+
+                # [T61e] nginx-waf 상태 확인이 감사 줄을 남기지 않는다(T61). 상태 확인은 이름 Host(localhost)를 보낸다.
+                #        먼저 컨테이너가 뜬 지 60초 이상이고 상태 확인이 여러 번 돌았는지 보고(짧으면 기다린다), 대조로 호스트에서 숫자 주소 Host
+                #        (curl 기본 Host 127.0.0.1:<포트>)로 /healthz?probe=<표식>을 한 번 보내 그 감사 줄이 남는지 본다(/healthz는 두 리스너 모두
+                #        리다이렉트 없이 200). 그 뒤 표식 요청 것 말고 요청 주소가 /healthz(또는 /healthz?…)인 감사 줄이 0건이어야 한다.
+                $wafCid61 = (Invoke-NativeCapture "docker" ($composeArgs + @("ps", "-q", "nginx-waf"))).Output.Trim()
+                $startedText61 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{.State.StartedAt}}", $wafCid61)).Output.Trim()
+                $startedM61 = [regex]::Match($startedText61, '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})')
+                Assert-True $startedM61.Success "[T61e] nginx-waf StartedAt 읽기 ($startedText61)"
+                $started61 = [DateTime]::SpecifyKind([DateTime]::ParseExact($startedM61.Groups[1].Value, "yyyy-MM-ddTHH:mm:ss", [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Utc)
+                $waited61 = 0
+                $age61 = ([DateTime]::UtcNow - $started61).TotalSeconds
+                if ($age61 -lt 70) { $waited61 = [int][Math]::Ceiling(70 - $age61); Start-Sleep -Seconds $waited61 }
+                $age61 = [Math]::Round(([DateTime]::UtcNow - $started61).TotalSeconds)
+                $health61 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .State.Health}}", $wafCid61)).Output | ConvertFrom-Json
+                $hlog61 = @($health61.Log | Where-Object { $_ })
+                $hcmd61 = (Invoke-NativeCapture "docker" @("inspect", "--format", "{{json .Config.Healthcheck.Test}}", $wafCid61)).Output.Trim()
+                $probe61 = "t61health$(New-RandomToken 8)"
+                $code61 = (Invoke-NativeCapture "curl.exe" @("-sS", "--max-time", "20", "-o", "NUL", "-w", "%{http_code}", "http://127.0.0.1:$WafHttpPort/healthz?probe=$probe61") -IgnoreExitCode).Output.Trim()
+                $healthAudit61 = @(); $mark61 = @()
+                for ($try61 = 0; $try61 -lt 10; $try61++) {
+                    $logs61 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                    $healthAudit61 = @($logs61 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and $_ -match '"uri":"/healthz(\?|")' })
+                    $mark61 = @($healthAudit61 | Where-Object { Test-ProbeMark $_ $probe61 })
+                    if ($mark61.Count) { break }
+                    Start-Sleep -Seconds 1
+                }
+                $other61 = @($healthAudit61 | Where-Object { -not (Test-ProbeMark $_ $probe61) })
+                $rules61 = @($mark61 | ForEach-Object { [regex]::Matches($_, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } } | Select-Object -Unique)
+                $e2eLogs.Add("[T61e] nginx-waf started $($started61.ToString('yyyy-MM-ddTHH:mm:ssZ')) (age ${age61}s, waited ${waited61}s); healthcheck test=$hcmd61; health status=$($health61.Status), last $($hlog61.Count) checks exit=[$(($hlog61 | ForEach-Object { $_.ExitCode }) -join ',')]`n      control: host GET http://127.0.0.1:$WafHttpPort/healthz?probe=<marker> (numeric Host) -> HTTP $code61; its audit lines=$($mark61.Count) rules=[$($rules61 -join ', ')]`n      /healthz audit lines other than the marker request = $($other61.Count)")
+                Assert-True ($age61 -ge 60 -and $hlog61.Count -ge 3 -and $health61.Status -eq 'healthy') "[T61e] nginx-waf가 뜬 지 60초 이상이고 상태 확인이 여러 번 돌았다 (age ${age61}s, checks $($hlog61.Count), $($health61.Status))"
+                Assert-True ($code61 -eq '200' -and $mark61.Count -ge 1) "[T61e] (대조) 숫자 주소 Host로 보낸 /healthz?probe= 의 감사 줄이 남음 (HTTP $code61, lines $($mark61.Count))"
+                Assert-True ($other61.Count -eq 0) "[T61e] 상태 확인의 /healthz 감사 줄 0건 (표식 요청 것 말고 $($other61.Count)건)"
+
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")
                 Assert-True ($accuracyHits.Count -eq 0) "모든 응답에 '정확도' 문구 없음"
