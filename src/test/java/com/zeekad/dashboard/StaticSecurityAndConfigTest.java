@@ -882,6 +882,149 @@ class StaticSecurityAndConfigTest {
         assertThat(resetSh).doesNotContain("response_actions_reset", "incident_response_actions");
     }
 
+    @Test
+    void t61PortfolioNetworksSplitCapabilitiesDroppedHealthcheckSendsNameHostAndDeviceFactsMasked() throws IOException {
+        String compose = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8).replace("\r", "");
+        String vmCompose = Files.readString(Path.of("compose.yml"), StandardCharsets.UTF_8).replace("\r", "");
+
+        // 서비스별 네트워크: 인터넷 요청을 받는 nginx-waf는 portfolio-net에만, DB·근거 API·초기화·시드 도구는 portfolio-data에만 붙는다.
+        // 두 네트워크에 붙는 것은 앱뿐이다(WAF의 요청을 받고 DB·근거 API를 부른다).
+        record ServiceNetworks(String service, List<String> networks) { }
+        for (ServiceNetworks expected : List.of(
+                new ServiceNetworks("postgres", List.of("portfolio-data")),
+                new ServiceNetworks("api", List.of("portfolio-data")),
+                new ServiceNetworks("dashboard-app", List.of("portfolio-net", "portfolio-data")),
+                new ServiceNetworks("nginx-waf", List.of("portfolio-net")),
+                new ServiceNetworks("demo-seed", List.of("portfolio-data")),
+                new ServiceNetworks("sandbox-setup", List.of("portfolio-data")),
+                new ServiceNetworks("sandbox-reset", List.of("portfolio-data")))) {
+            assertThat(serviceNetworks(serviceBlock(compose, expected.service())))
+                    .as("%s 네트워크", expected.service()).containsExactlyElementsOf(expected.networks());
+        }
+
+        // 네트워크는 둘이다. portfolio-net은 이미 NAS에 있는 네트워크라 정의 글을 바꾸지 않는다(바뀌면 다시 만들어야 하고 옛 Compose는
+        // 차이를 보지 않는다). portfolio-data는 내부 전용(바깥 길 없음)이고 서브넷은 변수로 바꿀 수 있다.
+        String networksPart = compose.substring(compose.indexOf("\nnetworks:\n") + 1);
+        networksPart = networksPart.substring(0, indexOfNextTopLevelKey(networksPart));
+        assertThat(networksPart.lines().filter(line -> line.matches("^  [A-Za-z0-9_-]+:\\s*$")).map(String::trim).toList())
+                .containsExactly("portfolio-net:", "portfolio-data:");
+        assertThat(networkDefinition(networksPart, "portfolio-net")).isEqualTo(String.join("\n",
+                "  portfolio-net:",
+                "    driver: bridge",
+                "    ipam:",
+                "      config:",
+                "        # 고정 서브넷: nginx-waf 고정 주소(PORTFOLIO_WAF_IP)와 게이트웨이(PORTFOLIO_GATEWAY_IP)가 이 안에 있어야 한다.",
+                "        # NAS의 기존 Docker 네트워크와 겹치지 않게 배포 전에 확인한다(docs/portfolio-deployment.md).",
+                "        # 바꾸면 PORTFOLIO_SUBNET과 함께 PORTFOLIO_WAF_IP·PORTFOLIO_GATEWAY_IP도 그 서브넷 안으로 바꾼다.",
+                "        - subnet: ${PORTFOLIO_SUBNET:-10.203.48.0/24}",
+                ""));
+        assertThat(networkDefinition(networksPart, "portfolio-data")).contains(
+                "    driver: bridge\n", "    internal: true\n", "        - subnet: ${PORTFOLIO_DATA_SUBNET:-10.203.47.0/24}\n");
+        assertThat(Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8)).contains("PORTFOLIO_DATA_SUBNET=");
+
+        // 권한: 공개 스택의 모든 서비스와 VMware 스택의 두 서비스가 capability 없이(cap_drop ALL, 되돌리는 cap_add 없음) 권한 상승 금지로 돈다.
+        // postgres는 root로 시작하지 않는다(sandbox-*와 같은 꼴. 진입 스크립트가 chown·gosu를 건너뛴다).
+        record ComposeServices(String name, String text, List<String> services) { }
+        for (ComposeServices file : List.of(
+                new ComposeServices("compose.portfolio.yml", compose, List.of("postgres", "api", "dashboard-app", "nginx-waf",
+                        "demo-seed", "sandbox-setup", "sandbox-reset")),
+                new ComposeServices("compose.yml", vmCompose, List.of("dashboard-app", "nginx-waf")))) {
+            for (String service : file.services()) {
+                assertThat(serviceBlock(file.text(), service)).as("%s %s 권한", file.name(), service)
+                        .contains("    cap_drop: [ALL]\n", "    security_opt: [\"no-new-privileges:true\"]\n")
+                        .doesNotContain("cap_add", "privileged");
+            }
+        }
+        assertThat(serviceBlock(compose, "postgres")).contains("    user: postgres\n");
+
+        // WAF 상태 확인 세 곳은 이름 Host를 보낸다(숫자 주소 Host는 CRS 920350에 걸려 200이어도 감사 줄이 남았다). 접속 주소는 127.0.0.1 그대로.
+        String healthTest = "test: [\"CMD\", \"wget\", \"-q\", \"--spider\", \"--header\", \"Host: localhost\", \"http://127.0.0.1:8080/healthz\"]";
+        assertThat(serviceBlock(compose, "nginx-waf")).contains(healthTest);
+        assertThat(serviceBlock(vmCompose, "nginx-waf")).contains(healthTest);
+        String wafDockerfile = Files.readString(Path.of("docker/nginx-waf/Dockerfile"), StandardCharsets.UTF_8);
+        assertThat(wafDockerfile).contains("CMD wget -q --spider --header \"Host: localhost\" http://127.0.0.1:8080/healthz || exit 1");
+        Pattern oldHealthcheck = Pattern.compile("--spider(\"\\s*,\\s*\"|\\s+)http://127\\.0\\.0\\.1:8080/healthz");
+        for (String text : List.of(compose, vmCompose, wafDockerfile)) {
+            assertThat(oldHealthcheck.matcher(text).find()).as("Host 없이 /healthz를 치는 옛 상태 확인").isFalse();
+        }
+        // 규칙을 끄거나 예외를 두어 줄을 없애지 않았다.
+        for (Path p : List.of(Path.of("docker/nginx-waf/templates/includes/location_common.conf.template"),
+                Path.of("docker/nginx-waf/templates/modsecurity.d/modsecurity-override.conf.template"),
+                Path.of("docker/portfolio/nginx/zeekad-portfolio-http.conf.template"))) {
+            assertThat(Files.readString(p, StandardCharsets.UTF_8)).as(p.toString())
+                    .doesNotContain("modsecurity off").doesNotContain("SecRuleRemoveById").doesNotContain("920350");
+        }
+
+        // 운영 기기 정보(모델명, DSM·Docker·Compose 판, 절대 경로, 여유 자원 수치)는 배포 문서와 설정에 적지 않는다.
+        // 대상은 명시 목록이다(저장소 전체를 훑으면 node_modules·build·로컬 handoff/·이 시험 파일 자신이 걸린다).
+        List<Path> targets = new java.util.ArrayList<>(List.of(Path.of("compose.portfolio.yml"), Path.of("compose.yml"),
+                Path.of("README.md"), Path.of(".env.portfolio.example"), Path.of(".env.example")));
+        try (Stream<Path> files = Files.walk(Path.of("docs"))) {
+            files.filter(Files::isRegularFile).filter(p -> p.toString().endsWith(".md")).forEach(targets::add);
+        }
+        for (Path root : List.of(Path.of("scripts"), Path.of("docker"))) {
+            try (Stream<Path> files = Files.walk(root)) {
+                files.filter(Files::isRegularFile).filter(StaticSecurityAndConfigTest::isDeviceFactsTextFile).forEach(targets::add);
+            }
+        }
+        assertThat(targets).hasSizeGreaterThan(20);
+        Pattern deviceFacts = Pattern.compile("DS920|/volume1|DSM 7\\.\\d|Compose v2\\.\\d|Docker 24|17GB|1\\.5TB");
+        for (Path file : targets) {
+            assertThat(file).exists();
+            assertThat(Files.readString(file, StandardCharsets.UTF_8)).as("%s에 운영 기기 정보", file).doesNotContainPattern(deviceFacts);
+        }
+    }
+
+    /** 서비스 블록의 networks: 아래 이름들(목록 꼴 "- 이름"과 지도 꼴 "이름:" 모두). */
+    private static List<String> serviceNetworks(String block) {
+        List<String> names = new java.util.ArrayList<>();
+        boolean inside = false;
+        for (String line : block.lines().toList()) {
+            if (line.equals("    networks:")) {
+                inside = true;
+                continue;
+            }
+            if (!inside || line.isBlank() || line.trim().startsWith("#")) {
+                continue;
+            }
+            if (!line.startsWith("      ")) {
+                break;
+            }
+            java.util.regex.Matcher m = Pattern.compile("^      (?:- )?([A-Za-z0-9_-]+):?\\s*$").matcher(line);
+            if (m.matches()) {
+                names.add(m.group(1));
+            }
+        }
+        return names;
+    }
+
+    /** 최상위 networks: 아래 한 네트워크의 정의 글(이름 줄부터 들여쓰기 4칸 이상인 줄까지, 줄 끝 \n 포함). */
+    private static String networkDefinition(String networksPart, String name) {
+        StringBuilder block = new StringBuilder();
+        boolean inside = false;
+        for (String line : networksPart.lines().toList()) {
+            if (line.equals("  " + name + ":")) {
+                inside = true;
+                block.append(line).append('\n');
+                continue;
+            }
+            if (inside && !line.startsWith("    ")) {
+                break;
+            }
+            if (inside) {
+                block.append(line).append('\n');
+            }
+        }
+        return block.toString();
+    }
+
+    private static boolean isDeviceFactsTextFile(Path path) {
+        String name = path.getFileName().toString();
+        return name.equals("Dockerfile") || name.endsWith(".sh") || name.endsWith(".sql") || name.endsWith(".template")
+                || name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".py") || name.endsWith(".ps1")
+                || name.endsWith(".conf") || name.endsWith(".md") || name.endsWith(".txt") || name.endsWith(".json");
+    }
+
     /** services: 줄로 시작하는 글에서 다음 최상위 키(들여쓰기 없는 줄. 주석 제외)가 시작하는 위치. 없으면 끝. */
     private static int indexOfNextTopLevelKey(String fromServicesLine) {
         int pos = fromServicesLine.indexOf('\n') + 1;
