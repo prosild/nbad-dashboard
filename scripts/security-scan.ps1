@@ -2683,6 +2683,60 @@ ORDER BY 1, 2
                 Assert-Status $k22 200 "[22k] 기록 없이 오탐 종결"
                 Assert-True ($after22k -eq "closed/false_positive|1") "[22k] 종결 반영(closed/false_positive)" $k22
 
+                # [T53a]~[T53e] 다시 열기(T53, zeek_AD migration 018의 계약을 따르는 검증 스택 대역 dashboard.reopen_incident).
+                #      [22g]가 정탐으로 종결하고 조치 기록이 있는 $job22/2를 다시 열고 같은 판정(정탐)으로 다시 종결해 끝 상태를 원래대로 둔다.
+                #      뒤 단계와 [12f]·[20]·[22c]가 쓰는 101/3·211/1은 상태를 바꾸지 않는다(211/1은 허용 밖 거부만 본다).
+                $reopen53 = { param([int]$Rank) "$baseHttps/api/incidents/$job22/rank/$Rank/reopen" }
+                $before53 = & $status22 1
+                # [T53a] 조회자 403(허용 캡처라 IDOR 감사 없음), 화면의 판정이 지금과 다르면 409(고정 문장, DB 문구 없음). 상태·이력 그대로
+                $a53v = Invoke-Http -Url (& $reopen53 2) -Method POST -CookieJar $q22V -SaveCookies -Csrf -JsonBody ([ordered]@{ reason = "T53 E2E 조회자"; expectedResolution = "true_positive" })
+                $idor53vMid = & $audit22 "ACCESS_DENIED_IDOR" "viewer1"
+                $a53w = Invoke-Http -Url (& $reopen53 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ reason = "T53 E2E 틀린 판정"; expectedResolution = "false_positive" })
+                $mid53 = & $status22 1
+                $e2eLogs.Add("[T53a] viewer1 POST $job22/2 reopen: $(Format-Resp $a53v 200); viewer1 IDOR rows since [22] = $idor53vMid`n      analyst1 POST $job22/2 reopen expectedResolution=false_positive (지금 true_positive): $(Format-Resp $a53w 300)`n      zeekad status|history rows before=$before53 after=$mid53")
+                Assert-Status $a53v 403 "[T53a] viewer1 다시 열기"
+                Assert-True ($idor53vMid -eq $idor22v) "[T53a] viewer1 허용 캡처 요청은 IDOR 감사를 더하지 않음 ([22c] 뒤 $idor22v -> $idor53vMid)"
+                Assert-ApiError $a53w 409 "CONFLICT" "[T53a] 화면의 판정이 지금과 다르면 409"
+                Assert-True ($a53w.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요." -and -not $a53w.Body.Contains("지금 결론") -and -not $a53w.Body.Contains("true_positive")) "[T53a] 409는 고정 문장, DB 문구·판정 코드 없음" $a53w
+                Assert-True ($before53 -eq "closed/true_positive|1" -and $mid53 -eq $before53) "[T53a] 거부된 요청은 상태·이력을 바꾸지 않음 ($before53 -> $mid53)"
+
+                # [T53b] 허용 밖 캡처(syn1-wed 211/1): analyst1 403 + ACCESS_DENIED_IDOR. 211/1의 상태는 그대로
+                $state211 = { Invoke-ZeekadSelect "SELECT COALESCE((SELECT zeekad_status || '/' || COALESCE(zeekad_resolution, '-') FROM dashboard.raw_incident_status s JOIN dashboard.raw_incident_queue q ON q.incident_id = s.incident_id WHERE q.job_id = 211 AND q.queue_rank = 1), 'none')" }
+                $s211Before = & $state211
+                $idor53aBefore = & $audit22 "ACCESS_DENIED_IDOR" "analyst1"
+                $b53 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/reopen" -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ reason = "T53 E2E 허용 밖"; expectedResolution = "false_positive" })
+                $idor53a = & $audit22 "ACCESS_DENIED_IDOR" "analyst1"
+                $s211After = & $state211
+                $e2eLogs.Add("[T53b] analyst1 POST 211/1 reopen (허용 밖): $(Format-Resp $b53 200); analyst1 IDOR rows $idor53aBefore -> $idor53a; 211/1 status $s211Before -> $s211After")
+                Assert-Status $b53 403 "[T53b] analyst1 허용 밖 다시 열기"
+                Assert-True ($idor53a -eq $idor53aBefore + 1 -and $s211After -eq $s211Before) "[T53b] 허용 밖 요청은 IDOR 감사 1건, 211/1 상태 그대로"
+
+                # [T53c] 다시 열기 성공: 분석 중·판정 없음, 이력 closed → investigating(행위자·사유), 감사(operation=reopen, previousResolution), nginx-waf 통과
+                $c53 = Invoke-Http -Url (& $reopen53 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ reason = "  T53 E2E 다시 열기  "; expectedResolution = " True_Positive " }) -ProbeId "e2e-t53-reopen"
+                $after53 = & $status22 1
+                $hist53 = Invoke-ZeekadSelect "SELECT from_status || '>' || to_status || '|' || COALESCE(zeekad_resolution, '-') || '|' || actor || '|' || reason FROM dashboard.raw_incident_status_history WHERE incident_id = '$($inc22[1])' ORDER BY changed_at DESC LIMIT 1"
+                $audit53 = Invoke-AuditSelect "SELECT actor_username, target_capture_id, target_job_id, target_incident_id, detail_json FROM audit_logs WHERE id > $auditBase22 AND action_type = 'INCIDENT_STATUS_TRANSITION' AND (detail_json::jsonb ->> 'operation') = 'reopen' ORDER BY id"
+                $d53 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2" -CookieJar $q22A
+                $wafHits53 = Get-WafInterrupted "e2e-t53-reopen"
+                $e2eLogs.Add("[T53c] analyst1 POST $job22/2 reopen (true_positive): $(Format-Resp $c53 300)`n      zeekad status|history rows after=$after53; last history row: $hist53`n      audit INCIDENT_STATUS_TRANSITION (reopen) rows:`n      $($audit53 -replace "`n", "`n      ")`n      detail currentStatus=$($d53.Json.detail.currentStatus) canReopen=$($d53.Json.canReopen) assignee=$($d53.Json.assignment.assignee.username) WAF interrupted=$($wafHits53.Count)")
+                Assert-Status $c53 200 "[T53c] 다시 열기"
+                Assert-True ($c53.Json.succeeded -eq $true -and ([string]$c53.Json.message).StartsWith("인시던트를 다시 열었습니다. 상태는 분석 중입니다.")) "[T53c] 응답 문장" $c53
+                Assert-True ($after53 -eq "investigating/-|2" -and $hist53 -eq "closed>investigating|-|analyst1|T53 E2E 다시 열기") "[T53c] 분석 중·판정 없음, 이력 한 행(closed → investigating, 행위자, 다듬은 사유) ($after53; $hist53)"
+                Assert-True ($audit53 -match "^analyst1\|cic17-wed\|$job22\|$([regex]::Escape($inc22[1]))\|" -and $audit53 -match '"operation":"reopen"' -and $audit53 -match '"toStatus":"investigating"' -and $audit53 -match '"previousResolution":"true_positive"' -and $audit53.Contains('"reason":"T53 E2E 다시 열기"') -and @($audit53 -split "`n").Count -eq 1) "[T53c] 감사 INCIDENT_STATUS_TRANSITION 한 건(operation=reopen, previousResolution)"
+                Assert-True ($d53.Json.detail.currentStatus -eq "investigating" -and $d53.Json.canReopen -eq $false -and $d53.Json.detail.nextAllowedStatus -eq "closed") "[T53c] 상세: 분석 중, canReopen false, 다음 단계 종결" $d53
+                Assert-True ((Get-WafProbeLineCount "e2e-t53-reopen") -ge 1) "[T53c] 다시 열기 POST의 표식이 nginx-waf 로그에 남음(아래 0건이 빈 단언이 아님)"
+                Assert-True ($wafHits53.Count -eq 0) "[T53c] 다시 열기 POST가 nginx-waf(CRS)에 차단되지 않음"
+
+                # [T53d] 같은 요청을 한 번 더(이미 분석 중) → 409. [T53e] 정탐으로 다시 종결(조치 기록이 있어 통과)해 끝 상태를 원래대로
+                $d53b = Invoke-Http -Url (& $reopen53 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ reason = "T53 E2E 두 번째"; expectedResolution = "true_positive" })
+                $e53 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2/transition" -Method POST -CookieJar $q22A -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "T53 E2E 정탐으로 다시 종결" }
+                $final53 = & $status22 1
+                $e2eLogs.Add("[T53d] analyst1 POST $job22/2 reopen again (분석 중): $(Format-Resp $d53b 300)`n[T53e] analyst1 POST $job22/2 transition closed/true_positive: $(Format-Resp $e53 300)`n      zeekad status|history rows after=$final53")
+                Assert-ApiError $d53b 409 "CONFLICT" "[T53d] 종결이 아닌 건(이미 다시 연 건)은 409"
+                Assert-Status $e53 200 "[T53e] 정탐으로 다시 종결"
+                Assert-True ($final53 -eq "closed/true_positive|3") "[T53e] 끝 상태가 원래 판정(closed/true_positive), 이력 3행 ($final53)"
+
                 # [23] WAF 감사 로그에 남는 값(T59). WAF 이미지가 감사 로그의 부분을 AHZ로 줄였다(docker/nginx-waf/Dockerfile).
                 #      없는 사용자 이름 + 표식 비밀번호로 로그인 실패(401)를, 로그인한 analyst1 세션으로 403과 409를 만든 뒤
                 #      nginx-waf 컨테이너 로그 전체(stdout + stderr)에 그 표식 비밀번호·세션 쿠키 값·CSRF 토큰 값이 0번 나온다.

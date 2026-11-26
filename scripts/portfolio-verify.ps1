@@ -1630,6 +1630,8 @@ try {
         @("zeekad", "CREATE TABLE public.t33_probe (id int)"),
         @("zeekad", "CREATE TABLE sandbox_baseline.t33_probe (id int)"),
         @("zeekad", "SELECT dashboard.transition_incident(1, 'x', 'investigating', 'x', 'x')"),
+        # T53: 다시 열기 함수(zeek_AD migration 018)도 초기화 계정은 부를 수 없다(실행 권한은 dashboard_rw뿐)
+        @("zeekad", "SELECT dashboard.reopen_incident(1, 'x', 'x', 'x', NULL)"),
         @("zeekad_dashboard", "SELECT count(*) FROM public.incident_assignments"),
         @("zeekad_dashboard", "SELECT count(*) FROM public.audit_logs"),
         @("zeekad_dashboard", "DELETE FROM public.audit_logs"),
@@ -1923,6 +1925,82 @@ try {
     Assert-True (@($dA54.Json.responseActions).Count -ge 1 -and $notes54.Count -eq 0) "[T54d] demo에게 대응 조치 메모가 내려가지 않음 (기록 $(@($dA54.Json.responseActions).Count), 메모 $($notes54.Count))"
     Assert-True ($pos54.Count -eq 3 -and $missing54.Count -eq 0) "[T54d] 큐 종결 필터(전체 기간)에 예시 셋 (빠진 것 $($missing54 -join ', '))"
 
+    # ───────── [T53a]~[T53d] 다시 열기(종결 건 재개, zeek_AD migration 018의 dashboard.reopen_incident) ─────────
+    # 이 시점은 [T33i]·[T54c] 뒤라 세 표 = 기준선(T54 예시 셋 포함)이고 상주 sandbox-reset은 멈춰 있다. 끝에 한 번 초기화해 기준선으로 되돌린다.
+    # 대상은 체험 계정이 볼 수 있는 첫 종결 건이다(T54 예시일 수 있다. 초기화가 예시도 기준선으로 되돌린다).
+    # [T53a] 권한 목록: dashboard_rw에 EXECUTE가 명시된 함수는 정확히 셋(transition_incident·decide_review·reopen_incident).
+    #        reopen_incident는 하나이고 소유 zeekad_owner, SECURITY DEFINER, PUBLIC·초기화 계정은 실행할 수 없다.
+    $rwFns53 = (Invoke-Psql "zeekad" ("SELECT count(*) || '|' || string_agg(n.nspname || '.' || p.proname, ',' ORDER BY n.nspname || '.' || p.proname) " +
+        "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL aclexplode(p.proacl) a " +
+        "WHERE a.grantee = 'dashboard_rw'::regrole AND a.privilege_type = 'EXECUTE'")).Output.Trim()
+    $reopenFn53 = (Invoke-Psql "zeekad" ("SELECT count(*) OVER () || ' owner=' || pg_get_userbyid(p.proowner) || ' secdef=' || p.prosecdef || " +
+        "' public_exec=' || COALESCE((SELECT bool_or(a.grantee = 0) FROM aclexplode(p.proacl) a WHERE a.privilege_type = 'EXECUTE'), false) || " +
+        "' reset_exec=' || has_function_privilege('zeekad_sandbox_reset', p.oid, 'EXECUTE') || ' rw_exec=' || has_function_privilege('dashboard_rw', p.oid, 'EXECUTE') " +
+        "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dashboard' AND p.proname = 'reopen_incident'")).Output.Trim()
+    $e2eLogs.Add("[T53a] functions with an explicit EXECUTE grant to dashboard_rw (count|names): $rwFns53`n       dashboard.reopen_incident: $reopenFn53")
+    Assert-True ($rwFns53 -eq '3|dashboard.decide_review,dashboard.reopen_incident,dashboard.transition_incident') "[T53a] dashboard_rw가 실행할 수 있는 함수는 정확히 셋 ($rwFns53)"
+    Assert-True ($reopenFn53 -eq '1 owner=zeekad_owner secdef=true public_exec=false reset_exec=false rw_exec=true') "[T53a] reopen_incident: 하나, 소유 zeekad_owner, SECURITY DEFINER, PUBLIC·초기화 계정 실행 불가 ($reopenFn53)"
+
+    # [T53b] 체험 분석가가 종결 건을 다시 연다. 체험 계정이 볼 수 있는(공개 캡처) 종결 건이 있으면 그것을 쓰고, 없으면 신규 건 하나를
+    #        먼저 종결해 쓴다(어느 쪽인지 로그에 적는다). 틀린 판정은 409(아무것도 안 바뀜, 응답에 DB 문구 없음), 맞는 판정은 200
+    #        (분석 중·판정 없음·이력 한 행: closed → investigating, 행위자, 사유). [T53c] 조회자(demo)는 상세의 canReopen이 false이고 요청은 403.
+    $like53 = ($demoPatterns | ForEach-Object { "'" + ($_ -replace '\*', '%') + "'" }) -join ', '
+    $closed53 = (Invoke-Psql "zeekad" ("SELECT lq.job_id || '|' || lq.queue_rank || '|' || s.resolution || '|' || lq.incident_id " +
+        "FROM dashboard.latest_incident_queue lq JOIN zeekad.incident_status s ON s.incident_id = lq.incident_id " +
+        "WHERE s.status = 'closed' AND lq.capture_id LIKE ANY (ARRAY[$like53]) ORDER BY lq.job_id, lq.queue_rank LIMIT 1")).Output.Trim()
+    $t53 = New-Client "198.51.100.243"
+    Assert-Status (Login-Api $t53 $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T53b] $trialUser 로그인"
+    if ($closed53) {
+        $p53 = $closed53 -split '\|', 4
+        $r53 = [pscustomobject]@{ Job = $p53[0]; Rank = $p53[1]; Resolution = $p53[2]; Id = $p53[3]; Source = "closed incident already in the baseline" }
+    } else {
+        $r53 = [pscustomobject]@{ Job = $inc[5].Job; Rank = $inc[5].Rank; Resolution = "benign"; Id = $inc[5].Id; Source = "no visible closed incident; $trialUser closed an open one first" }
+    }
+    $id53 = $r53.Id -replace "'", "''"
+    $state53Sql = "SELECT COALESCE((SELECT s.status || '|' || COALESCE(s.resolution, 'null') FROM zeekad.incident_status s WHERE s.incident_id = '$id53'), 'open|null') || '|' || (SELECT count(*) FROM zeekad.incident_status_history h WHERE h.incident_id = '$id53')"
+    $base53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    if (-not $closed53) {
+        $c53a = Invoke-Http -Path "/api/incidents/$($r53.Job)/rank/$($r53.Rank)/transition" -Method POST -Client $t53 -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T53 리허설: 조사 시작" }
+        $c53b = Invoke-Http -Path "/api/incidents/$($r53.Job)/rank/$($r53.Rank)/transition" -Method POST -Client $t53 -Csrf -JsonBody @{ toStatus = "closed"; resolution = "benign"; reason = "T53 리허설: 정상으로 종결" }
+        Assert-Status $c53a 200 "[T53b] $trialUser 신규 → 분석 중"
+        Assert-Status $c53b 200 "[T53b] $trialUser 분석 중 → 종결(정상)"
+    }
+    $before53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    $detailPath53 = "/api/incidents/$($r53.Job)/rank/$($r53.Rank)"
+    $tDetail53 = Invoke-Http -Path $detailPath53 -Client $t53
+    $v53 = New-Client "198.51.100.244"
+    Assert-Status (Login-Api $v53 "demo" $env:DEMO_PASSWORD) 200 "[T53c] demo 로그인"
+    $vDetail53 = Invoke-Http -Path $detailPath53 -Client $v53
+    $wrong53 = if ($r53.Resolution -eq "true_positive") { "false_positive" } else { "true_positive" }
+    $x53a = Invoke-Http -Path "$detailPath53/reopen" -Method POST -Client $t53 -Csrf -JsonBody @{ reason = "T53 리허설: 틀린 판정"; expectedResolution = $wrong53 }
+    $mid53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    $x53v = Invoke-Http -Path "$detailPath53/reopen" -Method POST -Client $v53 -Csrf -JsonBody @{ reason = "T53 리허설: 조회자"; expectedResolution = $r53.Resolution }
+    $midV53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    $x53b = Invoke-Http -Path "$detailPath53/reopen" -Method POST -Client $t53 -Csrf -JsonBody @{ reason = "T53 리허설: 다시 열기"; expectedResolution = $r53.Resolution }
+    $after53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    $last53 = (Invoke-Psql "zeekad" "SELECT h.from_status || '>' || h.to_status || '|' || COALESCE(h.resolution, 'null') || '|' || h.actor || '|' || h.reason FROM zeekad.incident_status_history h WHERE h.incident_id = '$id53' ORDER BY h.changed_at DESC, h.history_id DESC LIMIT 1").Output.Trim()
+    $histN53 = [int](($before53 -split '\|')[2])
+    $e2eLogs.Add("[T53b] target: job $($r53.Job) rank $($r53.Rank) ($($r53.Source)); state (status|resolution|history rows) baseline=$base53 before=$before53 after wrong expected=$mid53 after viewer=$midV53 after reopen=$after53`n       detail canReopen: $trialUser=$($tDetail53.Json.canReopen) demo=$($vDetail53.Json.canReopen)`n       wrong expectedResolution ($wrong53): $(Format-Resp $x53a 200)`n       demo: $(Format-Resp $x53v 200)`n       reopen: $(Format-Resp $x53b 200)`n       last history row: $last53")
+    Assert-True ($before53 -match '^closed\|(true_positive|false_positive|benign)\|\d+$' -and ($before53 -split '\|')[1] -eq $r53.Resolution) "[T53b] 대상은 종결 건 ($before53)"
+    Assert-True ($tDetail53.Json.canReopen -eq $true -and $vDetail53.Json.canReopen -eq $false) "[T53b] 상세의 canReopen: $trialUser true, demo false"
+    Assert-ApiError $x53a 409 "CONFLICT" "[T53b] 화면의 판정이 지금과 다르면 409"
+    Assert-True ($x53a.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요." -and $x53a.Body -notmatch '지금 결론|true_positive|false_positive|benign') "[T53b] 409 응답은 고정 문장이고 DB 문구·판정 코드가 없다" $x53a
+    Assert-True ($mid53 -eq $before53) "[T53b] 틀린 판정의 요청은 아무것도 바꾸지 않음 ($before53 -> $mid53)"
+    Assert-Status $x53v 403 "[T53c] 조회자(demo)의 다시 열기는 403"
+    Assert-True ($midV53 -eq $before53) "[T53c] 조회자의 요청은 아무것도 바꾸지 않음 ($midV53)"
+    Assert-Status $x53b 200 "[T53b] $trialUser 다시 열기"
+    Assert-True ($x53b.Json.message -like "인시던트를 다시 열었습니다. 상태는 분석 중입니다.*") "[T53b] 다시 열기 응답 문장" $x53b
+    Assert-True ($after53 -eq "investigating|null|$($histN53 + 1)") "[T53b] 다시 연 뒤 분석 중·판정 없음·이력 한 행 더 ($before53 -> $after53)"
+    Assert-True ($last53 -eq "closed>investigating|null|${trialUser}|T53 리허설: 다시 열기") "[T53b] 이력 행: closed → investigating, 판정 없음, 행위자·사유 ($last53)"
+
+    # [T53d] 초기화(한 번 실행) 뒤 그 건이 기준선의 상태·판정·이력 행 수로 돌아오고 세 표 = 기준선이다.
+    $rst53 = & $runResetOnce
+    $final53 = (Invoke-Psql "zeekad" $state53Sql).Output.Trim()
+    $diff53 = & $baselineDiff
+    $e2eLogs.Add("[T53d] reset --once exit=$($rst53.ExitCode) $(($rst53.Output -split "`r?`n" | Where-Object { $_ -match 'sandbox-reset:' }) -join ' ')`n       target state after reset=$final53 (baseline $base53); three tables: $diff53")
+    Assert-True ($rst53.ExitCode -eq 0 -and $final53 -eq $base53) "[T53d] 초기화 뒤 그 건이 기준선 상태로 ($after53 -> $final53, 기준선 $base53)"
+    Assert-True (& $isBaseline $diff53) "[T53d] 초기화 뒤 세 표 = 기준선 ($diff53)"
+
     # [T33j] trial-analyst 잠금 없음(요청마다 다른 클라이언트 IP, 로그인 속도 제한 회피)
     $auditBase33 = [long](Invoke-Psql "zeekad_dashboard" "SELECT COALESCE(MAX(id),0) FROM audit_logs").Output.Trim()
     $codes33 = @()
@@ -1934,7 +2012,8 @@ try {
     Assert-True (($codes33 -join ',') -eq '401,401,401,401,401,401' -and $ok33.Status -eq 200 -and $state33 -eq '0|t') "[T33j] $trialUser 6번 틀려도 잠기지 않음"
     Assert-True ($aud33 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $aud33 -notmatch 'ACCOUNT_LOCKED') "[T33j] 실패 감사 6건(lockoutExempt), 잠금 감사 없음"
 
-    # [T33k] 쓰기 속도 제한: 다섯 경로(T56: 대응 조치 기록이 더해졌다) 각각 새 클라이언트 IP에서 12번(DB를 바꾸지 않는 입력) → 429. GET은 제한 밖.
+    # [T33k] 쓰기 속도 제한: 여섯 경로(T56: 대응 조치 기록, T53: 다시 열기가 더해졌다) 각각 새 클라이언트 IP에서 12번(DB를 바꾸지 않는 입력) → 429. GET은 제한 밖.
+    #        다시 열기 탐침은 화면의 판정(expectedResolution)이 세 값 밖이라 서비스가 400으로 끝낸다(DB 함수를 부르지 않는다).
     $rl = New-Client "198.51.100.230"
     Assert-Status (Login-Api $rl $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T33k] $trialUser 로그인"
     $rlPaths = @(
@@ -1942,7 +2021,8 @@ try {
         @{ Label = "assignment"; Ip = "198.51.100.232"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/assignment"; Body = @{ assignee = $trialUser; expected = "rate-limit-probe-nobody" } },
         @{ Label = "review-decision"; Ip = "198.51.100.233"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/review-decision"; Body = @{ action = "rate-limit-probe" } },
         @{ Label = "reviews/decide"; Ip = "198.51.100.234"; Path = "/api/reviews/decide"; Body = @{ jobId = $rev[1].Job; incidentId = $rev[1].Id; action = "rate-limit-probe" } },
-        @{ Label = "response-actions"; Ip = "198.51.100.235"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/response-actions"; Body = @{ action = "rate-limit-probe"; note = "x" } }
+        @{ Label = "response-actions"; Ip = "198.51.100.235"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/response-actions"; Body = @{ action = "rate-limit-probe"; note = "x" } },
+        @{ Label = "reopen"; Ip = "198.51.100.236"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/reopen"; Body = @{ reason = "x"; expectedResolution = "rate-limit-probe" } }
     )
     $raBeforeProbes = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
     $rlBefore = & $baselineDiff
