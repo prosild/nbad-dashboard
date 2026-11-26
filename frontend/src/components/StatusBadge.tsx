@@ -358,7 +358,7 @@ export function UserRoleBadge({ role }: { role: string | null | undefined }) {
 export const PRIORITY_TOOLTIP =
   '자동 분류 우선순위: 파이프라인 결과와 중요 자산 등록으로 서버가 계산한 값이며 분석가 판정이 아닙니다';
 /** 데스크톱 인시던트 목록 표의 우선순위 열 머리 툴팁(T62: 그 칸의 중요 자산 표지는 왕관 아이콘만 보인다) */
-export const PRIORITY_COLUMN_TOOLTIP = `${PRIORITY_TOOLTIP}.\n왕관 아이콘: 중요 자산으로 등록된 호스트입니다(우선순위를 한 단계 올립니다. 이미 High면 그대로). 아이콘의 툴팁에 자세한 설명이 있습니다`;
+export const PRIORITY_COLUMN_TOOLTIP = `${PRIORITY_TOOLTIP}.\n왕관 아이콘: 중요 자산으로 등록된 호스트입니다(미종결이면 우선순위를 한 단계 올립니다. 이미 High면 그대로). 아이콘의 툴팁에 자세한 설명이 있습니다`;
 export const NO_PRIORITY_TOOLTIP = '종결된 인시던트는 우선순위를 매기지 않습니다';
 
 /**
