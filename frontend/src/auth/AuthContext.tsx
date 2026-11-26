@@ -21,6 +21,14 @@ interface AuthContextValue {
   refreshMe: () => Promise<AuthUserDto | null>;
   setAuthenticatedUser: (user: AuthUserDto | null) => void;
   logout: () => Promise<void>;
+  /** T60: 로그인 화면의 오류 자리에 보일 글(서버가 세션을 끝내며 준 메시지). 없으면 null */
+  authError: string | null;
+  clearAuthError: () => void;
+  /**
+   * T60: 서버가 이 세션을 끝냈을 때(TOTP 확인의 423 계정 잠김). 인증 상태를 비우고 로그인 화면으로 옮겨 서버 메시지를 보인다.
+   * 인증 상태를 비우지 않으면 로그인 화면이 다시 TOTP 화면으로 보낸다. from은 로그인 뒤 돌아갈 원래 주소다.
+   */
+  endSessionWithError: (message: string, from?: string | null) => void;
   /** T23: 기준 시각·고정 스냅샷(로그인한 사용자 허용 캡처 기준). 불러오기 전·실패면 null */
   timeContext: TimeContextResponse | null;
 }
@@ -31,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUserDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [timeContext, setTimeContext] = useState<TimeContextResponse | null>(null);
   const navigate = useNavigate();
 
@@ -97,15 +106,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(nextUser);
     if (nextUser) {
       setSessionExpired(false);
+      setAuthError(null);
     }
     setLoading(false);
   }, []);
+
+  const clearAuthError = useCallback(() => {
+    setAuthError(null);
+  }, []);
+
+  const endSessionWithError = useCallback(
+    (message: string, from?: string | null) => {
+      setSessionExpired(false);
+      setAuthError(message);
+      setUser(null);
+      navigate('/login', { replace: true, state: from ? { from } : undefined });
+    },
+    [navigate],
+  );
 
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
     } finally {
       setSessionExpired(false);
+      setAuthError(null);
       setUser(null);
       navigate('/login?logout', { replace: true });
     }
@@ -120,9 +145,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshMe,
       setAuthenticatedUser,
       logout,
+      authError,
+      clearAuthError,
+      endSessionWithError,
       timeContext,
     }),
-    [user, loading, sessionExpired, clearSessionExpired, refreshMe, setAuthenticatedUser, logout, timeContext],
+    [
+      user,
+      loading,
+      sessionExpired,
+      clearSessionExpired,
+      refreshMe,
+      setAuthenticatedUser,
+      logout,
+      authError,
+      clearAuthError,
+      endSessionWithError,
+      timeContext,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

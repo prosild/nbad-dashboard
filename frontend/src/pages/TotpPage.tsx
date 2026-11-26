@@ -10,7 +10,7 @@ import type { TotpSetupResponse } from '../types/api';
 import { returnPathFromState } from '../utils/returnTo';
 
 export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
-  const { user, setAuthenticatedUser, logout } = useAuth();
+  const { user, setAuthenticatedUser, logout, endSessionWithError } = useAuth();
   const { notify } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -81,6 +81,11 @@ export function TotpPage({ mode }: { mode: 'setup' | 'verify' }) {
       notify(res.message || 'TOTP 인증이 완료되었습니다.', 'success');
       navigate(returnTo ?? '/', { replace: true });
     } catch (err) {
+      if (err instanceof ApiError && err.status === 423) {
+        // T60: 계정이 잠겼고 서버가 이 세션을 끝냈다. 로그인 화면으로 옮겨 서버 메시지를 그 화면의 오류 자리에 보인다
+        endSessionWithError(err.message, returnTo);
+        return;
+      }
       setErrorMsg(err instanceof ApiError ? err.message : '인증 코드를 확인하지 못했습니다.');
     } finally {
       setSubmitting(false);

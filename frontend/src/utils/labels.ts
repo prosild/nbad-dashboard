@@ -140,6 +140,7 @@ export const LABEL_DICTIONARIES = {
     LOGIN_FAILURE: '로그인 실패',
     ACCOUNT_LOCKED: '계정 잠김',
     TOTP_VERIFIED: '2단계 인증 성공',
+    TOTP_FAILURE: '2단계 인증 실패',
     ACCESS_DENIED_IDOR: '허용 범위 밖 접근 거부',
     INCIDENT_VIEW_UNMASKED: '마스킹 없이 인시던트 열람',
     INCIDENT_STATUS_TRANSITION: '인시던트 상태 변경',

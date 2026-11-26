@@ -58,7 +58,7 @@ function safeNoticeLink(value: unknown): LoginNoticeLink | null {
 }
 
 export function LoginPage() {
-  const { user, sessionExpired, setAuthenticatedUser } = useAuth();
+  const { user, sessionExpired, authError, clearAuthError, setAuthenticatedUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -81,11 +81,14 @@ export function LoginPage() {
   }
 
   const isExpired = searchParams.has('expired') || sessionExpired;
+  // T60: TOTP 화면이 423(계정 잠김)을 받아 넘긴 서버 메시지. 다시 로그인을 시도하면 지워지고 그 응답의 메시지가 보인다
+  const shownError = errorMsg ?? authError;
   const isLogout = searchParams.has('logout');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
+    clearAuthError();
     setSubmitting(true);
     try {
       const res = await authApi.login(username.trim(), password);
@@ -164,13 +167,13 @@ export function LoginPage() {
             </div>
           )}
 
-          {errorMsg && (
+          {shownError && (
             <div
               role="alert"
               className="mb-5 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-200"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-              <span>{errorMsg}</span>
+              <span>{shownError}</span>
             </div>
           )}
 
