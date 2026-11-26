@@ -66,7 +66,8 @@ class T53ReopenStaticTest {
             List<String> names = top.filter(Files::isRegularFile).map(p -> p.getFileName().toString()).sorted().toList();
             assertThat(names).noneMatch(n -> n.toLowerCase(Locale.ROOT).endsWith(".sql")
                     || n.toLowerCase(Locale.ROOT).endsWith(".sql.gz") || n.toLowerCase(Locale.ROOT).endsWith(".sql.xz"));
-            assertThat(names).containsExactly("01-roles-databases.sh", "02-restore-snapshot.sh", "03-zeekad-functions.sh");
+            // T57(설계자 결정 2026-11-27): 넷째 스크립트(계약 뷰를 빠르게 하는 인덱스)를 더했다. 검사는 T57InitdbIndexStaticTest
+            assertThat(names).containsExactly("01-roles-databases.sh", "02-restore-snapshot.sh", "03-zeekad-functions.sh", "04-zeekad-indexes.sh");
         }
         assertThat(COPY).exists();
         assertThat(SOURCE).exists();

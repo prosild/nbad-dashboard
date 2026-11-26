@@ -91,6 +91,7 @@
 | `docker/portfolio/initdb/01-roles-databases.sh` | 역할·DB·DB 수준 ACL 생성(zeek_AD `01-roles-databases.sh`와 같은 역할 집합) |
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
 | `docker/portfolio/initdb/03-zeekad-functions.sh` | 스냅샷에 없는 zeek_AD 함수 넣기(`T53`): `dashboard.reopen_incident`라는 이름의 함수가 없을 때만 아래 사본을 `zeekad` DB에 한 트랜잭션으로 실행. 실패하면 복원 표지를 지우고 멈춤. 2026-11-26 스냅샷(`T66`)에는 함수가 있어 건너뛴다 |
+| `docker/portfolio/initdb/04-zeekad-indexes.sh` | 계약 뷰를 빠르게 하는 인덱스(`T57`): `CREATE INDEX IF NOT EXISTS agent_report_incident_job_idx ON zeekad.agent_report (incident_id, job_id DESC)` 다음 `ANALYZE`. 로그 한 줄 `portfolio-indexes: agent_report_incident_job_idx created`(이미 있으면 `already exists`). 실패하면 복원 표지를 지우고 멈춤. 까닭은 아래 "계약 뷰의 리포트 찾기" |
 | `docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql` | zeek_AD migration 018(종결한 사건 다시 열기)의 바이트 그대로 사본. 출처 commit과 sha256은 같은 폴더의 `SOURCE.md`. 하위 폴더라 이미지가 자동 실행하지 않는다 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음). 분석이 끝난 예시 셋을 시연 분석가 `demo-analyst`로 기록(`T54`, 1.4). 중요 자산 목록을 자료 파일과 같게 맞춤(`T52`, 1.5) |
@@ -100,6 +101,8 @@
 | `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`). 매 주기 기준선 뒤에 덧붙은 대응 조치 기록 삭제(`T56`) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(로컬 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
 | `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T54] 분석이 끝난 예시 셋, [T52a]~[T52d] 중요 자산, [T33] 초기화(주기 1분), [T61] 네트워크 둘·capability·상태 확인 감사 줄, ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
+
+- **계약 뷰의 리포트 찾기(`T57`, 성능)**: 탐지 저장소의 계약 뷰 `dashboard.latest_incident_queue`는 행마다 그 인시던트의 가장 최근 리포트를 `zeekad.agent_report`에서 `incident_id`로 찾는다(`LATERAL … WHERE r.incident_id = q.incident_id ORDER BY r.job_id DESC LIMIT 1`). 그 표의 인덱스는 기본 키 `(job_id, incident_id)`뿐이라 찾을 때마다 인덱스 전체를 훑는다. 2026-11-26 스냅샷(`T66`)에서 숨김 캡처 `lab-20261123`의 리포트가 늘어 `agent_report`가 333 → 2,857행이 되자 목록·상세·이웃 응답이 약 3배 느려졌다(로컬 리허설 스택, 조회자 전체 기간 목록 180 → 663ms). 넷째 스크립트의 인덱스 `(incident_id, job_id DESC)`가 이 찾기를 한두 쪽 읽기로 바꾼다. 결과는 바뀌지 않는다(같은 질의 아홉과 뷰 전체의 결과가 인덱스 앞뒤로 같았다). 볼륨 안에서만 생기고 스냅샷 덤프·탐지 저장소에는 닿지 않는다. 이미 볼륨이 있는 스택에는 initdb가 돌지 않으므로 같은 문장을 `postgres`에서 한 번 실행하면 된다(`IF NOT EXISTS`).
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
@@ -935,10 +938,11 @@ docker volume rm zeekad-portfolio_pgdata || exit 5
 6) 로컬 PC에서 새 `zeekad.dump`·`zeekad.dump.sha256`·`manifest.json`과 바뀐 배포 파일을 `scp -O`로 보낸다(3.2). NAS에서 `(cd snapshot && sha256sum -c zeekad.dump.sha256)`가 `OK`인지 보고 `chmod 755 snapshot && chmod 644 snapshot/*`로 권한을 맞춘다(T13: 상속 ACL 때문에 컨테이너 postgres가 덤프를 못 읽는다).
 
 ```sh
-# 7) 올리기(nginx-waf·sandbox-reset은 빼고): 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)·03(스냅샷에 없는 zeek_AD 함수, T53)이 다시 돈다. 공개 경로는 아직 열지 않는다
+# 7) 올리기(nginx-waf·sandbox-reset은 빼고): 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)·03(스냅샷에 없는 zeek_AD 함수, T53)·04(계약 뷰 인덱스, T57)가 다시 돈다. 공개 경로는 아직 열지 않는다
 $C up -d --wait postgres api dashboard-app < /dev/null || exit 7
-$C logs postgres < /dev/null | grep -E 'portfolio-restore|pg_restore: error|portfolio-functions'   # "portfolio-restore: done", 오류 줄 없음
+$C logs postgres < /dev/null | grep -E 'portfolio-restore|pg_restore: error|portfolio-functions|portfolio-indexes'   # "portfolio-restore: done", 오류 줄 없음
 #    03은 "dashboard.reopen_incident created" 또는 (새 스냅샷에 이미 있으면) "already exists ... skipping" 한 줄. 실패하면 표지를 지워 healthy가 되지 않는다
+#    04는 "portfolio-indexes: agent_report_incident_job_idx created" 한 줄(T57). 실패하면 03과 같게 멈춘다
 # 8) 시드 두 번(시드는 dashboard-app에 직접 붙으므로 nginx-waf가 없어도 된다): 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
 #    T54: 첫 실행이 분석이 끝난 예시 셋을 기록한다(examples: applied=3 kept=0 skipped=0). 새 스냅샷에 그 인시던트가 없으면 skipped로 남는다(1.4)
 $C --profile seed run --rm demo-seed < /dev/null || exit 8

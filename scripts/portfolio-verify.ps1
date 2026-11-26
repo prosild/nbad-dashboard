@@ -523,6 +523,13 @@ try {
         "SELECT count(*) || '|' || count(*) FILTER (WHERE last_analyze IS NOT NULL) FROM pg_stat_user_tables WHERE schemaname = 'zeekad'")) -IgnoreExitCode).Output.Trim()
     $e2eLogs.Add("[restore] ANALYZE lines=[$($analyzeLines -join ' / ')]; zeekad tables (all|last_analyze set)=$lastAnalyzed")
     Assert-True ($analyzeLines.Count -ge 2 -and $lastAnalyzed -match '^(\d+)\|\1$') "[T39] 복원 끝 ANALYZE 실행, zeekad 표 모두 통계 있음 ($lastAnalyzed)"
+    # [T57i] initdb 넷째 스크립트(04-zeekad-indexes.sh)가 계약 뷰의 리포트 찾기용 인덱스를 만들었다: 로그 한 줄과 인덱스 정의 그대로
+    #        (계약 뷰 dashboard.latest_incident_queue가 행마다 zeekad.agent_report를 incident_id로 찾는다. handoff/T57/evidence/slowdown-diagnosis.md)
+    $idxLines57 = @($pgLogs -split "`r?`n" | Where-Object { $_ -match 'portfolio-indexes:' } | ForEach-Object { $_.Trim() })
+    $idxDef57 = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "zeekad", "-At", "-c",
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'zeekad' AND tablename = 'agent_report' AND indexname = 'agent_report_incident_job_idx'")) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[T57i] initdb index log=[$($idxLines57 -join ' / ')]; indexdef=$idxDef57")
+    Assert-True ($idxLines57.Count -eq 1 -and $idxLines57[0] -match 'portfolio-indexes: agent_report_incident_job_idx (created|already exists)$' -and $idxDef57 -ceq 'CREATE INDEX agent_report_incident_job_idx ON zeekad.agent_report USING btree (incident_id, job_id DESC)') "[T57i] 복원 뒤 계약 뷰 인덱스 agent_report_incident_job_idx (incident_id, job_id DESC)가 있고 initdb 로그 한 줄 ($($idxLines57 -join ' / '); $idxDef57)"
 
     # T54: 분석이 끝난 예시 셋(시드 자료 파일). 시드 전 값: 예시가 최신 큐에 있고 상태 행·담당 행이 없으며(신규), 세 표의 행 수를 적어 둔다
     #      (기준선의 행 수를 이 값과 견준다: [T54b]). incident_id에 '|'가 있어 결과 칸 구분자와 겹치므로 ID는 결과로 꺼내지 않는다.
