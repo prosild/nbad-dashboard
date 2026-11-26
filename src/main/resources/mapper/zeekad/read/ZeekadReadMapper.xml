@@ -631,12 +631,16 @@
          #{}만 쓰고 정렬 키·방향은 choose 허용 목록으로 고른다(달러 치환 금지).
          탐지 시각(detected_at) = 그 incident_id가 처음 나온 성공 작업(finished_at 있음)의 완료 시각 최소값.
          incident_id의 첫 부분이 캡처 ID라 캡처 사이에 겹치지 않는다(기존 조인도 incident_id만 쓴다).
-         우선순위는 옛 화면 규칙(triage.ts computePriority)과 같다: 종결 = NULL / 발송 판단 발송 또는 에스컬레이션 대기 = high /
-         교차 탐지 1개 이상(NULL·빈 배열은 0) 또는 AI 리포트 있음 = medium / 그 밖 = low. 상태 NULL·빈 값은 open, 대소문자 무시. -->
+         기본 우선순위(priority_base)는 옛 화면 규칙(triage.ts computePriority)과 같다: 종결 = NULL / 발송 판단 발송 또는 에스컬레이션 대기 = high /
+         교차 탐지 1개 이상(NULL·빈 배열은 0) 또는 AI 리포트 있음 = medium / 그 밖 = low. 상태 NULL·빈 값은 open, 대소문자 무시.
+         T52: 중요 자산(앱 DB critical_assets의 주소, 서버가 c.criticalHostIps로 넘김)이 호스트인 행은 한 단계 올린다
+         (low → medium, medium → high, high·종결은 그대로). 이 값이 priority이고 필터·정렬·착수 지연·요약이 모두 이것을 쓴다. -->
 
     <resultMap id="unifiedQueueMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord" extends="incidentQueueMap">
         <result property="detectedAt" column="detected_at"/>
         <result property="priority" column="priority"/>
+        <result property="priorityBase" column="priority_base"/>
+        <result property="assetCritical" column="asset_critical"/>
     </resultMap>
 
     <resultMap id="unifiedQueueSummaryMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow">
@@ -664,12 +668,25 @@
     </sql>
 
     <!-- T51: 이 조각이 든 문장에는 SQL 주석 표지 /* unifiedQueueBase */가 남는다(시험과 문장 로그가 이 표지로 기반 실행을 센다).
-         우선순위 판정 CASE는 안쪽 p에 한 번만 두고 정렬용 priority_order는 그 값에서 유도한다(high 0, medium 1, low 2, 종결 NULL).
-         안쪽 p는 PostgreSQL이 바깥 SELECT에 합쳐 계획하고, 최적화 경계(OFFSET 0 ROWS)는 전처럼 조각의 맨 끝(바깥 SELECT)에 있다. -->
+         세 층이다(T52):
+         - 안쪽 p: 기본 규칙 CASE 하나(priority_base)와 중요 자산 여부(asset_critical, 늘 참·거짓. host_ip가 NULL이어도 거짓).
+           자산 배열은 비어 있지 않을 때만 이 자리에서 한 번 묶고, 비었으면 배열 없이 FALSE다.
+         - 가운데 q: priority = priority_base를 중요 자산이면 한 단계 올린 값(종결은 NULL 그대로).
+         - 바깥: 정렬용 priority_order(high 0, medium 1, low 2, 종결 NULL)는 올린 priority에서 유도한다.
+         안쪽 층들은 PostgreSQL이 바깥 SELECT에 합쳐 계획하고, 최적화 경계(OFFSET 0 ROWS)는 전처럼 조각의 맨 끝(바깥 SELECT)에 있다. -->
     <sql id="unifiedQueueBase">
         /* unifiedQueueBase */
+        SELECT q.*,
+               CASE q.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END AS priority_order
+        FROM (
         SELECT p.*,
-               CASE p.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END AS priority_order
+               CASE
+                   WHEN p.priority_base = 'high' THEN 'high'
+                   WHEN p.priority_base = 'medium' AND p.asset_critical THEN 'high'
+                   WHEN p.priority_base = 'medium' THEN 'medium'
+                   WHEN p.priority_base = 'low' AND p.asset_critical THEN 'medium'
+                   WHEN p.priority_base = 'low' THEN 'low'
+               END AS priority
         FROM (
         SELECT lq.job_id,
                lq.capture_id,
@@ -710,7 +727,13 @@
                    WHEN COALESCE(lq.zeekad_would_send, FALSE) = TRUE OR COALESCE(lq.zeekad_review_pending, FALSE) = TRUE THEN 'high'
                    WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) &gt;= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN 'medium'
                    ELSE 'low'
-               END AS priority,
+               END AS priority_base,
+               <!-- T52 중요 자산: 서버가 앱 DB에서 읽은 주소 배열(요청 하나에 한 번 읽은 스냅샷)과 원문 host_ip가 같은지 -->
+               <if test="c.hasCriticalHostIps">
+                   CASE WHEN lq.host_ip = ANY(#{c.criticalHostIps, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
+                        THEN TRUE ELSE FALSE END
+               </if>
+               <if test="!c.hasCriticalHostIps">FALSE</if> AS asset_critical,
                <!-- 상태 정렬 순서: 신규 0, 분석 중 1, 등록 안 된 값 2, 종결 3 -->
                CASE
                    WHEN TRIM(COALESCE(lq.zeekad_status, '')) = '' OR LOWER(TRIM(lq.zeekad_status)) = 'open' THEN 0
@@ -733,6 +756,7 @@
                ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
         WHERE lq.capture_id IN <include refid="unifiedCaptureIn"/>
         ) p
+        ) q
         <!-- T24: 최적화 경계(결과는 같다). 이 부분 질의를 바깥 b.detected_at 기간 조건과 합치지 않게 한다.
              합치면 PostgreSQL이 fs 집계 행 수를 아주 작게 잡아 중첩 반복 계획을 고른다. 통계 없는 스냅샷 복원(리허설·공개 데모)에서
              기간 30일 큐가 60초를 넘겼다(경계를 두면 0.2초 안쪽, T24 측정). 표준 문법이라 H2도 받는다. -->
@@ -838,7 +862,9 @@
     </sql>
 
     <!-- 정렬: 고른 키(방향, 값 없음은 방향과 상관없이 맨 뒤) → 탐지 시각 최근 → 캡처 ID → 캡처 안 순위.
-         캡처 ID + queue_rank는 최신 큐 안에서 유일하므로 쪽을 넘겨도 빠지거나 겹치는 행이 없다. -->
+         캡처 ID + queue_rank는 최신 큐 안에서 유일하므로 쪽을 넘겨도 빠지거나 겹치는 행이 없다.
+         T52: 우선순위 키 바로 다음이 중요 자산이다. High가 먼저인 방향(오름)이면 중요 자산이 먼저, 반대 방향이면 나중이고
+         종결(우선순위 없음) 무리 안에도 같은 키가 걸린다. -->
     <sql id="unifiedQueueOrder">
         ORDER BY
         <choose>
@@ -862,8 +888,8 @@
                 b.detected_at DESC NULLS LAST,
             </when>
             <otherwise>
-                <if test="c.sortAsc">b.priority_order ASC NULLS LAST,</if>
-                <if test="!c.sortAsc">b.priority_order DESC NULLS LAST,</if>
+                <if test="c.sortAsc">b.priority_order ASC NULLS LAST, b.asset_critical DESC,</if>
+                <if test="!c.sortAsc">b.priority_order DESC NULLS LAST, b.asset_critical ASC,</if>
                 b.detected_at DESC NULLS LAST,
             </otherwise>
         </choose>
@@ -930,7 +956,7 @@
                    b.zeekad_status, b.status_norm, b.zeekad_resolution, b.status_updated_at, b.zeekad_report_job_id,
                    b.has_report, b.zeekad_report_kind, b.zeekad_verification_passed, b.zeekad_would_send,
                    b.zeekad_review_action, b.zeekad_review_pending, b.alerted, b.detected_at, b.priority,
-                   b.priority_order, b.status_order,
+                   b.priority_base, b.asset_critical, b.priority_order, b.status_order,
                    CASE WHEN 1 = 1 <include refid="unifiedQueuePeriodFilters"/> THEN 1 ELSE 0 END AS in_period,
                    CASE WHEN 1 = 1 <include refid="unifiedQueueStripFilters"/> THEN 1 ELSE 0 END AS in_strip
             FROM (<include refid="unifiedQueueBase"/>) b
@@ -989,7 +1015,8 @@
                 LIMIT 1) AS host_name,
                r.zeekad_status, r.zeekad_resolution, r.status_updated_at, r.zeekad_report_job_id,
                r.has_report, r.zeekad_report_kind, r.zeekad_verification_passed, r.zeekad_would_send,
-               r.zeekad_review_action, r.zeekad_review_pending, r.alerted, r.detected_at, r.priority
+               r.zeekad_review_action, r.zeekad_review_pending, r.alerted, r.detected_at, r.priority,
+               r.priority_base, r.asset_critical
         FROM pg a
         LEFT JOIN ranked r
                ON r.queue_pos &gt; (a.page_no - 1) * CAST(#{size} AS BIGINT)

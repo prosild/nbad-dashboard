@@ -32,6 +32,7 @@ import java.util.TreeSet;
  *   <li>위험도는 새 점수가 아니라 미종결 우선순위 건수로 줄 세운 순서다. 우선순위·탐지 시각은 큐 식이 계산한 값을 그대로 쓴다.</li>
  *   <li>질의 수는 호스트 수와 무관하다: 큐 행 한 번, asset_names 한 번, 그 밖에 조건 조립용 조회.</li>
  *   <li>정상 조회는 감사 로그를 남기지 않는다(허용 밖 captureId만 resolveCondition이 403과 IDOR 감사를 남긴다).</li>
+ *   <li>T52: 중요 자산은 줄 표지(assetCritical)와 이름(분석가·관리자만)으로만 싣는다. 위험도 정렬의 키가 아니다.</li>
  * </ul>
  */
 @Service
@@ -119,7 +120,11 @@ public class HostRiskService {
         int page = clampPage(p.page(), pageCount);
         int from = Math.min(filtered.size(), (page - 1) * size);
         int to = Math.min(filtered.size(), from + size);
-        List<HostRiskResponse.Item> items = filtered.subList(from, to).stream().map(Group::toItem).toList();
+        // T52 중요 자산 이름: 조건을 만든 같은 스냅샷에서 붙인다(분석가·관리자의 원문 주소 줄만. 조회자 대역 줄은 null)
+        CriticalAssetService.Snapshot assets = cond.assets();
+        List<HostRiskResponse.Item> items = filtered.subList(from, to).stream()
+                .map(g -> g.toItem(g.assetCritical ? assets.nameFor(g.hostIp, masked) : null))
+                .toList();
 
         List<UnifiedQueueResponse.Source> sources = cond.allowed().stream()
                 .map(c -> new UnifiedQueueResponse.Source(c, timeContextService.sourceType(c), null, null))
@@ -239,6 +244,8 @@ public class HostRiskService {
         long connections;
         OffsetDateTime lastDetectedAt;
         boolean roleTransition;
+        /** T52 이 줄의 행 가운데 중요 자산이 하나라도 있는지(조회자 대역 줄은 대역 안의 호스트 하나라도) */
+        boolean assetCritical;
 
         Group(String hostIp) {
             this.hostIp = hostIp;
@@ -246,6 +253,9 @@ public class HostRiskService {
 
         void add(UnifiedQueueRecord r, boolean masked, MaskingService masking) {
             incidents++;
+            if (r.isAssetCritical()) {
+                assetCritical = true;
+            }
             if ("high".equals(r.getPriority())) {
                 high++;
             } else if ("medium".equals(r.getPriority())) {
@@ -308,7 +318,7 @@ public class HostRiskService {
             return false;
         }
 
-        HostRiskResponse.Item toItem() {
+        HostRiskResponse.Item toItem(String criticalAssetName) {
             List<String> modelIds = models.entrySet().stream()
                     .sorted(Map.Entry.<String, Long>comparingByValue(Comparator.reverseOrder())
                             .thenComparing(Map.Entry.comparingByKey()))
@@ -317,7 +327,8 @@ public class HostRiskService {
             return new HostRiskResponse.Item(hostIp,
                     hostNames.stream().limit(NAME_LIMIT).toList(), hostNames.size(),
                     accounts.stream().limit(NAME_LIMIT).toList(), accounts.size(),
-                    high, medium, low, incidents, connections, modelIds, lastDetectedAt, roleTransition);
+                    high, medium, low, incidents, connections, modelIds, lastDetectedAt, roleTransition,
+                    assetCritical, criticalAssetName);
         }
     }
 

@@ -27,6 +27,7 @@ import java.util.Map;
  *       조회 키는 가린 값이 아니라 권한 검사가 돌려준 원본 행에서 읽는다.</li>
  *   <li>자기 자신은 원문 incident_id로 뺀다(상세가 옛 작업 행을 보고 있어도 최신 큐의 자신이 남지 않는다).</li>
  *   <li>읽기 질의는 정해진 횟수다: 분석가·관리자 1회, 조회자는 대역의 원문 주소를 고르는 조회까지 2회. 번호는 읽기만 한다.</li>
+ *   <li>T52: 중요 자산 스냅샷(앱 DB)을 한 번 읽어 우선순위 식의 주소 배열과 항목의 이름(분석가·관리자만)에 같은 것을 쓴다.</li>
  * </ul>
  */
 @Service
@@ -40,12 +41,15 @@ public class RelatedHostIncidentService {
     private final ZeekadReadMapper zeekadReadMapper;
     private final MaskingService maskingService;
     private final IncidentRefService incidentRefService;
+    private final CriticalAssetService criticalAssetService;
 
     public RelatedHostIncidentService(CaptureAccessService captureAccessService,
                                       HostReadMapper hostReadMapper,
                                       ZeekadReadMapper zeekadReadMapper,
                                       MaskingService maskingService,
-                                      IncidentRefService incidentRefService) {
+                                      IncidentRefService incidentRefService,
+                                      CriticalAssetService criticalAssetService) {
+        this.criticalAssetService = criticalAssetService;
         this.captureAccessService = captureAccessService;
         this.hostReadMapper = hostReadMapper;
         this.zeekadReadMapper = zeekadReadMapper;
@@ -71,8 +75,11 @@ public class RelatedHostIncidentService {
             return new RelatedHostIncidentsResponse(shownHost, 0, List.of(), masked);
         }
 
+        // T52: 이 요청의 중요 자산 스냅샷을 한 번 읽어 우선순위 식의 주소 배열과 항목의 이름에 같은 것을 쓴다
+        CriticalAssetService.Snapshot assets = criticalAssetService.snapshot();
         UnifiedQueueCriteria c = new UnifiedQueueCriteria();
         c.setCaptureIds(List.copyOf(allowed));
+        c.setCriticalHostIps(assets.hostIps());
         List<UnifiedQueueRecord> rows = hostReadMapper.findLatestQueueByHostIps(c, hostIps, rawIncident.getIncidentId());
 
         Instant self = instant(rawIncident.getEventStart());
@@ -101,7 +108,10 @@ public class RelatedHostIncidentService {
                     r.getZeekadStatus(),
                     r.getZeekadResolution(),
                     r.getZeekadPickedBy(),
-                    r.getConnectionCount()));
+                    r.getConnectionCount(),
+                    r.isAssetCritical(),
+                    r.getPriorityBase(),
+                    r.isAssetCritical() ? assets.nameFor(r.getHostIp(), masked) : null));
         }
         return new RelatedHostIncidentsResponse(shownHost, rows.size(), items, masked);
     }

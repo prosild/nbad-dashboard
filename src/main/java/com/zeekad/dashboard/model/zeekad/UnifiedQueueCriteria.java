@@ -37,6 +37,12 @@ public class UnifiedQueueCriteria {
     private String[] hostIps;
     /** T45 ATT&amp;CK 조건: 리포트 후보가 맞는 incident_id(배열 바인드 하나). null이면 조건 없음. 빈 배열로는 부르지 않는다 */
     private String[] attackIncidentIds;
+    /**
+     * T52 중요 자산 주소(앱 DB critical_assets의 host_ip, 요청 하나에 한 번 읽은 스냅샷). 비었으면 SQL에 배열을 넘기지 않고
+     * 모든 행이 중요 자산이 아니다. criteria를 만드는 곳(IncidentQueueService.findLatestRow·resolveScope,
+     * RelatedHostIncidentService.load)이 모두 채운다(정적 시험 T52StaticTest).
+     */
+    private String[] criticalHostIps = new String[0];
     /** T25 착수 지연 식: 실습망 캡처(captureIds 안)와 우선순위별 경계(기준 시각 − 목표). 하나라도 없으면 지연 0 */
     private List<String> liveCaptureIds = List.of();
     private OffsetDateTime ackHighBefore;
@@ -68,6 +74,7 @@ public class UnifiedQueueCriteria {
         c.threadIncidentIds = threadIncidentIds;
         c.hostIps = hostIps;
         c.attackIncidentIds = attackIncidentIds;
+        c.criticalHostIps = criticalHostIps;
         c.liveCaptureIds = liveCaptureIds;
         c.ackHighBefore = ackHighBefore;
         c.ackMediumBefore = ackMediumBefore;
@@ -116,6 +123,10 @@ public class UnifiedQueueCriteria {
     public String[] getAttackIncidentIds() { return attackIncidentIds; }
     public void setAttackIncidentIds(String[] attackIncidentIds) { this.attackIncidentIds = attackIncidentIds; }
     public boolean isHasAssigneeIds() { return assigneeIncidentIds != null && assigneeIncidentIds.length > 0; }
+    public String[] getCriticalHostIps() { return criticalHostIps; }
+    public void setCriticalHostIps(String[] criticalHostIps) { this.criticalHostIps = criticalHostIps == null ? new String[0] : criticalHostIps; }
+    /** 자산 배열을 SQL에 묶을지(비어 있지 않을 때만) */
+    public boolean isHasCriticalHostIps() { return criticalHostIps != null && criticalHostIps.length > 0; }
     public List<String> getLiveCaptureIds() { return liveCaptureIds; }
     public void setLiveCaptureIds(List<String> liveCaptureIds) { this.liveCaptureIds = liveCaptureIds; }
     public OffsetDateTime getAckHighBefore() { return ackHighBefore; }

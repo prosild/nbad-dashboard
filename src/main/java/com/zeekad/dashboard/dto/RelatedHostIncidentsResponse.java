@@ -15,7 +15,10 @@ public record RelatedHostIncidentsResponse(
         List<Item> items,
         boolean maskedView
 ) {
-    /** incidentNo는 번호 행이 있을 때만(없으면 null이고 화면은 jobId·queueRank로 잇는다). priority는 종결이면 null */
+    /**
+     * incidentNo는 번호 행이 있을 때만(없으면 null이고 화면은 jobId·queueRank로 잇는다). priority는 종결이면 null.
+     * T52: assetCritical·priorityBase는 두 역할 모두에게, criticalAssetName은 분석가·관리자에게만(조회자는 null).
+     */
     public record Item(
             Long incidentNo,
             Long jobId,
@@ -29,7 +32,10 @@ public record RelatedHostIncidentsResponse(
             String zeekadStatus,
             String zeekadResolution,
             String zeekadPickedBy,
-            Long connectionCount
+            Long connectionCount,
+            boolean assetCritical,
+            String priorityBase,
+            String criticalAssetName
     ) {
     }
 }

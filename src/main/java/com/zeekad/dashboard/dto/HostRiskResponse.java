@@ -31,6 +31,8 @@ public record HostRiskResponse(
      * high·medium·low는 미종결 우선순위별 건수(종결은 우선순위가 없다), incidents는 종결 포함 전체다.
      * models는 탐지 모델 식별자(건수 많은 순, 같으면 식별자 오름차순)다.
      * roleTransition은 같은 캡처에서 목적지로 탐지된 뒤 출발지로 탐지됐는지다(조회자는 늘 false).
+     * T52 assetCritical은 이 줄의 호스트(조회자는 대역 안의 호스트 하나라도)가 중요 자산인지, criticalAssetName은 그 이름이다
+     * (분석가·관리자만. 조회자는 늘 null). 줄이 우선순위 하나가 아니라 수의 묶음이라 기본 우선순위는 싣지 않는다.
      */
     public record Item(
             String hostIp,
@@ -45,7 +47,9 @@ public record HostRiskResponse(
             long connections,
             List<String> models,
             OffsetDateTime lastDetectedAt,
-            boolean roleTransition
+            boolean roleTransition,
+            boolean assetCritical,
+            String criticalAssetName
     ) {
     }
 }

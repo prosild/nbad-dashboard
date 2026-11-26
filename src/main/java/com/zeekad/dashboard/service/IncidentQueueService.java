@@ -19,6 +19,7 @@ import com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueuePage;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -79,7 +80,10 @@ public class IncidentQueueService {
     private final IncidentAssignmentService incidentAssignmentService;
     private final IncidentRefService incidentRefService;
     private final SlackThreadService slackThreadService;
+    /** T52 중요 자산(null이면 자산 없음: 아래 호환 생성자로 시험이 직접 만든 경우) */
+    private final CriticalAssetService criticalAssetService;
 
+    /** T52 앞 호출 호환(중요 자산 없음). 시험이 서비스를 직접 만들 때만 쓴다 */
     public IncidentQueueService(ZeekadReadMapper zeekadReadMapper,
                                 CaptureAccessService captureAccessService,
                                 MaskingService maskingService,
@@ -88,6 +92,21 @@ public class IncidentQueueService {
                                 IncidentAssignmentService incidentAssignmentService,
                                 IncidentRefService incidentRefService,
                                 SlackThreadService slackThreadService) {
+        this(zeekadReadMapper, captureAccessService, maskingService, timeContextService, ackTargetService,
+                incidentAssignmentService, incidentRefService, slackThreadService, null);
+    }
+
+    @Autowired
+    public IncidentQueueService(ZeekadReadMapper zeekadReadMapper,
+                                CaptureAccessService captureAccessService,
+                                MaskingService maskingService,
+                                TimeContextService timeContextService,
+                                AckTargetService ackTargetService,
+                                IncidentAssignmentService incidentAssignmentService,
+                                IncidentRefService incidentRefService,
+                                SlackThreadService slackThreadService,
+                                CriticalAssetService criticalAssetService) {
+        this.criticalAssetService = criticalAssetService;
         this.incidentRefService = incidentRefService;
         this.slackThreadService = slackThreadService;
         this.zeekadReadMapper = zeekadReadMapper;
@@ -165,7 +184,10 @@ public class IncidentQueueService {
         }
     }
 
-    /** 요청마다 정해지는 공통 맥락(허용 캡처·기준 시각·조회 범위) */
+    /**
+     * 요청마다 정해지는 공통 맥락(허용 캡처·기준 시각·조회 범위).
+     * T52 assets: 이 요청이 한 번 읽은 중요 자산 스냅샷(criteria의 주소 배열과 응답의 이름에 같은 것을 쓴다)
+     */
     private record Scope(List<String> allowed,
                          List<String> captureIds,
                          OffsetDateTime anchor,
@@ -174,7 +196,13 @@ public class IncidentQueueService {
                          OffsetDateTime periodEnd,
                          UnifiedQueueCriteria criteria,
                          String asset,
-                         UserRole role) {
+                         UserRole role,
+                         CriticalAssetService.Snapshot assets) {
+    }
+
+    /** T52 중요 자산 스냅샷을 한 번 읽는다(요청의 입구에서만 부른다) */
+    private CriticalAssetService.Snapshot readAssets() {
+        return criticalAssetService == null ? CriticalAssetService.Snapshot.EMPTY : criticalAssetService.snapshot();
     }
 
     /* ───────────────────────── 큐 ───────────────────────── */
@@ -319,7 +347,11 @@ public class IncidentQueueService {
                     AckTargetService.isOverdue(due, scope.anchor()),
                     numbers.get(record.getIncidentId()),
                     badge == null ? null : badge.headNo(),
-                    badge == null ? null : badge.memberCount()));
+                    badge == null ? null : badge.memberCount(),
+                    record.isAssetCritical(),
+                    record.getPriorityBase(),
+                    // 이름은 SQL이 아니라 같은 요청의 스냅샷에서 붙인다(조회자는 null)
+                    record.isAssetCritical() ? scope.assets().nameFor(record.getHostIp(), masked) : null));
         }
 
         return new UnifiedQueueResponse(items, total, page, size, pageCount, summary, scope.anchor(),
@@ -364,7 +396,7 @@ public class IncidentQueueService {
         IncidentQueueItem viewed = captureAccessService.requireIncidentAccessByRank(principal, jobId, queueRank, clientIp);
         Scope scope = resolveScope(principal, params, clientIp, true);
 
-        UnifiedQueueRecord latest = findLatestRow(scope.allowed(), viewed.getCaptureId(), viewed.getIncidentId());
+        UnifiedQueueRecord latest = findLatestRow(scope.allowed(), viewed.getCaptureId(), viewed.getIncidentId(), scope.assets());
         if (scope.captureIds().isEmpty()) {
             QueueNeighborsResponse.Key current = latest == null ? null
                     : key(latest, scope.role(), incidentRefService.numbersFor(List.of(latest.getIncidentId())));
@@ -461,18 +493,24 @@ public class IncidentQueueService {
         }
         String sourceType = timeContextService.sourceType(incident.getCaptureId());
         List<String> allowed = captureAccessService.listAllowedCaptures(principal);
-        UnifiedQueueRecord latest = findLatestRow(allowed, incident.getCaptureId(), incident.getIncidentId());
+        // T52: 이 요청의 중요 자산 스냅샷(우선순위 식의 주소 배열과 이름에 같은 것을 쓴다)
+        CriticalAssetService.Snapshot assets = readAssets();
+        UnifiedQueueRecord latest = findLatestRow(allowed, incident.getCaptureId(), incident.getIncidentId(), assets);
         OffsetDateTime anchor = timeContextService.anchorFor(allowed);
         if (latest == null) {
-            return new IncidentQueueMeta(sourceType, null, null, false, null, null, anchor, null, false);
+            return new IncidentQueueMeta(sourceType, null, null, false, null, null, anchor, null, false,
+                    false, null, null);
         }
         CaptureQueueStat stat = zeekadReadMapper.findCaptureQueueStats(List.of(incident.getCaptureId())).stream()
                 .findFirst().orElse(null);
         OffsetDateTime due = ackTargetService.dueAt(latest.getCaptureId(), latest.getZeekadStatus(), latest.getPriority(),
                 latest.getDetectedAt());
+        boolean masked = maskingService.shouldMask(principal.getRole());
         return new IncidentQueueMeta(sourceType, latest.getDetectedAt(), latest.getPriority(),
                 isOngoing(latest, stat, anchor), latest.getJobId(), latest.getQueueRank(),
-                anchor, due, AckTargetService.isOverdue(due, anchor));
+                anchor, due, AckTargetService.isOverdue(due, anchor),
+                latest.isAssetCritical(), latest.getPriorityBase(),
+                latest.isAssetCritical() ? assets.nameFor(latest.getHostIp(), masked) : null);
     }
 
     /**
@@ -491,6 +529,7 @@ public class IncidentQueueService {
      * allowed = 허용 캡처 전체, captureIds = 허용 ∩ 수집원 ∩ 고른 캡처, after = 기간 시작(불포함, all이면 null),
      * until = 기간 끝(포함, all이면 null). 프리셋은 기준 시각이고 T34 지정 기간은 받은 끝이라 기준 시각 뒤일 수 있다.
      * criteria = 같은 조건 큐(띠 축 없음)의 조회 조건. 잘못된 값은 큐와 같은 400, 허용 밖 captureId는 403·감사 기록이다.
+     * assets = criteria의 중요 자산 주소 배열을 만든 같은 스냅샷(T52. 호스트 위험도가 이름을 붙일 때 쓴다).
      */
     public record Condition(List<String> allowed,
                             List<String> captureIds,
@@ -498,7 +537,8 @@ public class IncidentQueueService {
                             String period,
                             OffsetDateTime after,
                             OffsetDateTime until,
-                            UnifiedQueueCriteria criteria) {
+                            UnifiedQueueCriteria criteria,
+                            CriticalAssetService.Snapshot assets) {
     }
 
     public Condition resolveCondition(DashboardUserPrincipal principal, String period, String source, String captureId,
@@ -514,7 +554,8 @@ public class IncidentQueueService {
                 null, null, null, null, null, null, null, start, end, null, null, null);
         Scope scope = resolveScope(principal, p, clientIp, true);
         return new Condition(scope.allowed(), scope.captureIds(), scope.anchor(), scope.period(),
-                scope.criteria().getDetectedAfter(), scope.criteria().getDetectedUntil(), scope.criteria());
+                scope.criteria().getDetectedAfter(), scope.criteria().getDetectedUntil(), scope.criteria(),
+                scope.assets());
     }
 
     /** 기간 이름 → 길이(all·custom이면 null) */
@@ -527,13 +568,16 @@ public class IncidentQueueService {
     private record Masked(UnifiedQueueRecord record, IncidentQueueItem item) {
     }
 
-    private UnifiedQueueRecord findLatestRow(List<String> allowed, String captureId, String incidentId) {
+    /** 최신 큐의 그 인시던트 한 행. assets는 부른 요청이 이미 읽은 중요 자산 스냅샷이다(다시 읽지 않는다) */
+    private UnifiedQueueRecord findLatestRow(List<String> allowed, String captureId, String incidentId,
+                                             CriticalAssetService.Snapshot assets) {
         if (captureId == null || incidentId == null || !allowed.contains(captureId)) {
             return null;
         }
         UnifiedQueueCriteria c = new UnifiedQueueCriteria();
         c.setCaptureIds(List.of(captureId));
         c.setIncidentId(incidentId);
+        c.setCriticalHostIps(assets.hostIps());
         c.setLimit(1);
         List<UnifiedQueueRecord> rows = zeekadReadMapper.findUnifiedQueue(c);
         return rows.isEmpty() ? null : rows.get(0);
@@ -710,9 +754,12 @@ public class IncidentQueueService {
         c.setAlerted("true".equalsIgnoreCase(trimToNull(p.alerted())));
         c.setSortKey(sortKey);
         c.setSortAsc(asc);
+        // T52 중요 자산: 이 요청에서 한 번 읽은 스냅샷의 주소 배열(우선순위 식)과 같은 스냅샷을 Scope에 둔다(이름 붙이기)
+        CriticalAssetService.Snapshot assets = readAssets();
+        c.setCriticalHostIps(assets.hostIps());
 
         return new Scope(allowed, c.getCaptureIds(), anchor, period, periodStart, periodEnd, c,
-                trimToNull(p.asset()), role);
+                trimToNull(p.asset()), role, assets);
     }
 
     /**
