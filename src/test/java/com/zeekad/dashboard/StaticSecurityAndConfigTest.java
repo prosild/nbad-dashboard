@@ -1042,6 +1042,107 @@ class StaticSecurityAndConfigTest {
         return fromServicesLine.length();
     }
 
+    @Test
+    void t54SeedRecordsExamplesOnlyThroughTheAppApiAndKeepsNoNewSecret() throws IOException {
+        String seedPy = Files.readString(Path.of("docker/portfolio/seed/seed_demo.py"), StandardCharsets.UTF_8);
+
+        // (a) 시드가 SQL로 쓰는 표는 users와 그 감사 행(audit_logs)뿐이다. zeek_AD 표·대응 조치·담당·번호 표에는 SQL로 쓰지 않고
+        //     zeek_AD 쓰기 함수도 부르지 않는다(예시의 기록은 모두 앱 API를 거친다).
+        java.util.regex.Matcher dml = Pattern.compile("(?i)\\b(insert\\s+into|update|delete\\s+from|truncate(?:\\s+table)?)\\s+([a-z_][a-z0-9_.]*)")
+                .matcher(seedPy);
+        java.util.Set<String> written = new java.util.TreeSet<>();
+        while (dml.find()) {
+            written.add(dml.group(2).toLowerCase(java.util.Locale.ROOT));
+        }
+        assertThat(written).as("시드가 SQL로 쓰는 표").containsExactlyInAnyOrder("users", "audit_logs");
+        assertThat(seedPy).doesNotContainPattern("(?i)transition_incident|decide_review|reset_pipeline|reset_assignments"
+                + "|reset_response_actions|response_actions_reset|incident_refs|set_config");
+        // users 표를 바꾸는 문장은 모두 sql_change(같은 트랜잭션의 감사 행)로 넘긴다. execute에 바로 넘기는 문장은 SELECT와 감사 INSERT뿐이다.
+        java.util.regex.Matcher updUsers = Pattern.compile("UPDATE users SET").matcher(seedPy);
+        int userUpdates = 0;
+        while (updUsers.find()) {
+            userUpdates++;
+            String before = seedPy.substring(Math.max(0, updUsers.start() - 400), updUsers.start());
+            assertThat(before).as("UPDATE users #%d는 sql_change 호출 안에 있어야 한다", userUpdates).contains("sql_change(");
+        }
+        assertThat(userUpdates).isGreaterThanOrEqualTo(5);
+        java.util.regex.Matcher exec = Pattern.compile("conn\\.execute\\(\\s*(\"[^\"]*|[a-z_]+)").matcher(seedPy);
+        List<String> execHeads = new java.util.ArrayList<>();
+        while (exec.find()) {
+            execHeads.add(exec.group(1));
+        }
+        assertThat(execHeads).isNotEmpty().allSatisfy(head -> assertThat(head)
+                .matches("\"SELECT .*|\"INSERT INTO audit_logs .*|statement"));
+        assertThat(execHeads.stream().filter("statement"::equals).count()).isEqualTo(1);
+        // zeekad는 앱과 같은 읽기 계정으로 읽기 전용 연결에서만 읽는다.
+        assertThat(seedPy).contains("user=\"dashboard_ro\"", "password=env(\"DASHBOARD_RO_PASSWORD\")", "conn.read_only = True");
+
+        // (b) demo-analyst의 비밀번호는 실행마다 무작위로 만들고 출력·저장하지 않는다: 로그·print에 비밀번호·비밀값 변수가 없고 쓰는 파일이 없다.
+        java.util.regex.Matcher logCall = Pattern.compile("(?s)\\b(log|print)\\((.*?)\\)\\s*\\n").matcher(seedPy);
+        int logCalls = 0;
+        while (logCall.find()) {
+            logCalls++;
+            assertThat(logCall.group(2)).as("로그 호출 %s", logCall.group(2))
+                    .doesNotContainPattern("\\{[^}]*(?i:password|secret|token|cookie)[^}]*}")
+                    .doesNotContain("startReason", "closeReason", "responseAction", "\"note\"", "cookies");
+        }
+        assertThat(logCalls).isGreaterThan(20);
+        assertThat(seedPy).contains("secrets.token_urlsafe(32)").doesNotContainPattern("open\\([^)]*[\"'][wax]b?\\+?[\"']")
+                .doesNotContain("os.environ[\"DEMO_ANALYST", "DEMO_ANALYST_PASSWORD", "sys.argv");
+        String envExample = Files.readString(Path.of(".env.portfolio.example"), StandardCharsets.UTF_8);
+        assertThat(envExample).doesNotContain("DEMO_ANALYST").doesNotContain("demo-analyst");
+        // 시연 분석가는 잠금 제외가 아니다(비밀번호를 공개한 공유 계정만 뺀다).
+        String compose = Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8);
+        assertThat(compose).contains("DASHBOARD_LOCKOUT_EXEMPT_USERNAMES: ${DASHBOARD_LOCKOUT_EXEMPT_USERNAMES:-demo,trial-analyst}");
+
+        // (c) demo-seed 블록의 환경 값: T54는 읽기 계정 비밀번호 하나만 더했다(새 비밀값이 아니다. 앱의 ZEEKAD_RO_PASSWORD와 같은 값).
+        String seedBlock = serviceBlock(compose, "demo-seed");
+        List<String> envKeys = seedBlock.lines().filter(line -> line.matches("^ {6}[A-Z0-9_]+: .*"))
+                .map(line -> line.trim().substring(0, line.trim().indexOf(':'))).toList();
+        assertThat(envKeys).containsExactlyInAnyOrder("SEED_API_BASE_URL", "SEED_DB_HOST", "SEED_DB_PORT",
+                "DASHBOARD_APP_PASSWORD", "DASHBOARD_RO_PASSWORD", "DEMO_PASSWORD", "DEMO_DISPLAY_NAME",
+                "TRIAL_ANALYST_PASSWORD", "TRIAL_ANALYST_DISPLAY_NAME", "DEMO_CAPTURE_PATTERNS",
+                "BOOTSTRAP_VIEWER1_PASSWORD", "BOOTSTRAP_ANALYST1_PASSWORD", "BOOTSTRAP_ANALYST2_PASSWORD",
+                "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_TOTP_SECRET");
+        assertThat(seedBlock).contains("      DASHBOARD_RO_PASSWORD: ${DASHBOARD_RO_PASSWORD:-}",
+                "./docker/portfolio/seed:/seed:ro");
+        assertThat(serviceBlock(compose, "dashboard-app")).contains("ZEEKAD_RO_PASSWORD: ${DASHBOARD_RO_PASSWORD:-}");
+
+        // (d) 자료 파일: 인시던트 ID 꼴, 판정 값, 정탐은 대응 조치(메모 필수인 종류면 메모), 글 끝 "(시연)" 관례, 500자 이하, ID 중복 없음.
+        com.fasterxml.jackson.databind.JsonNode doc = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(Path.of("docker/portfolio/seed/demo_examples.json").toFile());
+        com.fasterxml.jackson.databind.JsonNode examples = doc.get("examples");
+        assertThat(examples).isNotNull();
+        assertThat(examples.isArray()).isTrue();
+        assertThat(examples.size()).isEqualTo(3);
+        Pattern idShape = Pattern.compile("^lab-\\d{8}\\|10\\.10\\.0\\.\\d{1,3}\\|(originator|responder)\\|\\d{10}$");
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        java.util.Map<String, Integer> byResolution = new java.util.TreeMap<>();
+        for (com.fasterxml.jackson.databind.JsonNode ex : examples) {
+            String id = ex.path("incidentId").asText();
+            String resolution = ex.path("resolution").asText();
+            assertThat(id).as("예시 %s의 인시던트 ID", ex.path("key").asText()).matches(idShape);
+            assertThat(ids.add(id)).as("중복 ID %s", id).isTrue();
+            assertThat(resolution).isIn("true_positive", "false_positive", "benign");
+            byResolution.merge(resolution, 1, Integer::sum);
+            List<String> texts = new java.util.ArrayList<>(List.of(ex.path("startReason").asText(), ex.path("closeReason").asText()));
+            com.fasterxml.jackson.databind.JsonNode action = ex.get("responseAction");
+            if ("true_positive".equals(resolution)) {
+                assertThat(action).as("정탐 예시 %s의 대응 조치", id).isNotNull();
+            }
+            if (action != null) {
+                assertThat(action.path("action").asText()).isIn("block_ip", "isolate_host", "lock_account", "handover",
+                        "monitor", "none", "other");
+                texts.add(action.path("note").asText());
+            }
+            for (String text : texts) {
+                assertThat(text).as("예시 %s의 글", id).isNotBlank().endsWith("(시연)");
+                assertThat(text.codePointCount(0, text.length())).isLessThanOrEqualTo(500);
+            }
+        }
+        assertThat(byResolution).containsEntry("true_positive", 2).containsEntry("false_positive", 1);
+    }
+
     private static String serviceBlock(String compose, String service) {
         List<String> lines = compose.lines().toList();
         StringBuilder block = new StringBuilder();
