@@ -53,6 +53,12 @@
 - **착수 목표(`T25`)**: 앱 기본값(High 30분·Medium 4시간·Low 24시간, 실습망 신규 인시던트만)을 쓴다. 고정 스냅샷이라 경과·착수 지연·처리 시간 지표는 기준 시각 기준으로 센다. `compose.portfolio.yml`은 넘기지 않는다(`DASHBOARD_SLA_ACK_HIGH`·`DASHBOARD_SLA_ACK_MEDIUM`·`DASHBOARD_SLA_ACK_LOW`, `docs/deployment-guide.md`). 담당 기록(앱 DB `V2` 표)은 공개 데모에 지어 넣지 않으므로 처음에는 모두 "미배정"으로 보인다. 체험 계정이 지정한 담당은 매시 정각에 해제된다(1.3).
 - **세션 쿠키**: `DASHBOARD_COOKIE_SECURE=true` 그대로다(`Secure`·`HttpOnly`·`SameSite=Lax`). 브라우저는 DSM과 HTTPS로 통신하므로 문제없다.
 - **8443 리스너**: `nginx-waf`의 HTTPS 리스너(이미지 기본 자체 서명 인증서)는 스택 네트워크 안에서만 쓰인다(리허설 ZAP 대상). 바깥에 열지 않는다.
+- **WAF 로그에 남기는 것(`T59`)**: `nginx-waf` 컨테이너 로그에는 두 가지 줄이 나간다.
+  - 접근 로그는 모든 요청을 적는다: 연결 주소, 시각, 요청 줄(메서드·경로·쿼리), 응답 코드, 크기, Referer, User-Agent, 받은 `X-Forwarded-For` 원문. 쿠키와 본문은 적지 않는다.
+  - ModSecurity 감사 로그(JSON 한 줄)는 `404`가 아닌 `4xx`와 `5xx` 응답, 그리고 규칙이 걸린 요청을 적는다. WAF 이미지가 부분을 `AHZ`로 줄여(`docker/nginx-waf/Dockerfile`의 `MODSEC_AUDIT_LOG_PARTS`) 접속 주소·시각·`unique_id`·메서드·요청 주소·응답 코드와 걸린 규칙의 메시지만 남긴다. 요청·응답의 헤더와 본문은 남기지 않는다.
+  - 줄이기 전(기반 기본값 `ABIJDEFHZ`)에는 로그인 실패(`401`)·권한 거부(`403`)·충돌(`409`) 같은 응답마다 요청 헤더와 응답 헤더가 통째로 남아 세션 쿠키 `ZEEKAD_SESSION`, CSRF 토큰, 응답의 `Set-Cookie` 값이 컨테이너 로그에 들어갔다. 요청 본문(아이디·비밀번호)은 그때도 남지 않았다(`scripts/waf-audit-log-check.ps1`로 확인).
+  - 남는 것: 걸린 규칙의 메시지에는 규칙이 잡은 요청의 일부가 그대로 들어간다(공격 꼴 글이 비밀번호 칸에 들어오면 그 글). 요청 주소의 쿼리(검색어, 호스트 주소 조건)는 두 줄 모두에 남는다. 차단된 요청의 User-Agent와 `X-Forwarded-For` 원문은 감사 줄에 없으므로 접근 로그에서 같은 시각·요청 주소의 줄로 찾는다.
+  - 이 값은 compose에서 덮지 않는다(`MODSEC_AUDIT_LOG_PARTS`를 주면 이미지의 값을 덮는다. 정적 시험이 막는다).
 - **잔여 위험(고치지 않음)**: `dashboard_app` 계정은 관리용 `postgres` DB에도 접속할 수 있다(PostgreSQL 기본 `PUBLIC` CONNECT. 시드가 그 DB의 `pgcrypto`를 쓴다). 슈퍼유저가 아니고 `public` 스키마 CREATE 권한도 없다. `postgres` 컨테이너에는 바깥 포트가 없어 스택 네트워크 안의 컨테이너만 접속할 수 있다(`T13` 확인).
 
 ### 1.2 관련 파일
@@ -601,6 +607,21 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --pr
 - **반영 뒤 확인**: `sandbox-reset … --once`의 줄에 `responses[OK] removed=0`이 있다. `trial-analyst`로 분석 중인 인시던트에 대응 조치를 하나 기록하고 다음 정각 뒤에 사라졌는지, 감사 로그 화면에 "대응 조치 기록" 행이 남았는지 본다. 같은 주소에서 기록 요청을 잇달아 보내면 `429`가 나오는지 본다.
 - **롤백**: 파일 셋을 `*.pre-t56`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 서비스를 `up`한다. 옛 `sandbox-reset.sh`는 대응 조치 초기화 함수를 부르지 않는다. 앱 DB의 `V5`(표와 트리거), 기준선 표식, 초기화 함수는 그대로 남는다. `V5`를 둔 채 앞 앱 이미지가 뜨는지는 `T57`이 리허설에서 확인한다.
 
+#### WAF 감사 로그의 부분을 줄이는 갱신(`T59`)
+
+`T59`는 WAF 이미지 하나를 바꾼다(감사 로그의 부분 `AHZ`, 1.1). 값이 이미지에 있으므로 WAF 이미지를 다시 만들어 바꿔야 걸린다. `compose.portfolio.yml`은 주석 한 줄만 달라졌고 서비스 설정은 같다. NAS 반영은 통합 작업 `T57`이 한다.
+
+- **절차**: 위 "서비스 하나의 이미지 갱신"을 `SVC=nginx-waf`, `IMG=zeek-ad-dashboard-waf`로 한다. 새 절차는 없다.
+- **반영 뒤 확인**: 렌더된 설정의 값과 새 감사 줄을 본다.
+  ```sh
+  C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+  $C exec -T nginx-waf grep -n '^SecAuditLogParts' /etc/modsecurity.d/modsecurity.conf < /dev/null   # SecAuditLogParts AHZ
+  $C logs --no-log-prefix --since 5m nginx-waf < /dev/null | grep -c '"headers":{'                    # 0
+  ```
+  이어서 4.4를 한다.
+- **롤백**: 옛 WAF 이미지(`zeek-ad-dashboard-waf:pre-<작업 ID>`)로 되돌리면 요청 헤더와 응답 헤더 기록이 다시 켜진다. 세션 쿠키·CSRF 토큰·`Set-Cookie` 값이 컨테이너 로그에 다시 남으므로 되돌린 채 두지 않는다.
+- **이미 쌓인 로그**(`T57`이 NAS에서 확인한 뒤 확정할 문장): 반영 전의 `nginx-waf` 컨테이너 로그에는 옛 감사 줄(쿠키 값 포함)이 들어 있다. 로그 드라이버가 `json-file`이면 서비스를 다시 만들 때 옛 컨테이너의 로그가 함께 사라진다. NAS의 드라이버는 이 문서를 쓸 때 확인하지 않았다. `docker inspect --format '{{.HostConfig.LogConfig.Type}}' zeekad-portfolio-nginx-waf-1`로 확인한다. `json-file`이 아니면 옛 로그가 남는 곳과 지우는 방법을 여기에 적는다. 옛 줄에 남은 세션 쿠키 값은 그 세션이 끝나면(유휴 30분, 절대 8시간) 쓸 수 없다.
+
 ### 3.9 스냅샷(공개 데이터) 교체
 
 스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다. 이 백업은 되돌리기용이고 그 시점의 감사 로그가 통째로 들어 있으므로 감사 로그와 같은 기한을 둔다: 90일 넘은 백업은 배포 절차가 지운다(아래 3a. 자동이 아니라 다음 배포 때 지우므로 배포가 뜸하면 90일보다 오래 남는다). 체험 계정 변경의 매시 정각 초기화(1.3)는 새 볼륨에서 다시 설정한다(아래 8c).
@@ -719,7 +740,7 @@ DSM 7.3 기준 메뉴 경로다. `T13`에서 이 절의 메뉴 경로와 값으�
 | HSTS 활성화 | 켬 |
 | 대상 프로토콜 / 호스트 이름 / 포트 | `HTTP` / `localhost` / `18480` (`.env`의 `PORTFOLIO_HTTP_PORT`) |
 
-- **사용자 지정 헤더는 넣지 않는다.** `T13`에서 기본 규칙(사용자 지정 헤더 없음)이 넘기는 헤더를 `nginx-waf` ModSecurity 감사 로그로 확인했다: `Host`는 소스 호스트 이름, `X-Forwarded-For`는 방문자가 보낸 값 뒤에 실제 접속 IP를 **덧붙인다**(덮어쓰지 않음, 예: `203.0.113.9, <접속 IP>`), `X-Forwarded-Proto`는 방문자 값과 관계없이 `https`로 **덮어쓴다**, `X-Real-IP`는 실제 접속 IP다. nginx가 가장 오른쪽 비신뢰 주소를 쓰므로(1.1) 방문자가 앞부분을 꾸며도 감사 로그 IP·속도 제한 키·`Location`이 바뀌지 않는다. WebSocket 헤더는 필요 없다.
+- **사용자 지정 헤더는 넣지 않는다.** `T13`에서 기본 규칙(사용자 지정 헤더 없음)이 넘기는 헤더를 `nginx-waf` ModSecurity 감사 로그로 확인했다: `Host`는 소스 호스트 이름, `X-Forwarded-For`는 방문자가 보낸 값 뒤에 실제 접속 IP를 **덧붙인다**(덮어쓰지 않음, 예: `203.0.113.9, <접속 IP>`), `X-Forwarded-Proto`는 방문자 값과 관계없이 `https`로 **덮어쓴다**, `X-Real-IP`는 실제 접속 IP다. nginx가 가장 오른쪽 비신뢰 주소를 쓰므로(1.1) 방문자가 앞부분을 꾸며도 감사 로그 IP·속도 제한 키·`Location`이 바뀌지 않는다. WebSocket 헤더는 필요 없다. `T13` 때는 감사 줄에 요청 헤더가 통째로 들어 있어 이렇게 볼 수 있었다. `T59`부터 WAF는 감사 줄에 요청 헤더를 남기지 않아 같은 방법은 쓸 수 없다. 지금은 4.3의 접근 로그 줄로 `X-Forwarded-For`만 본다.
 - `localhost`가 IPv6 `::1`로 풀려 연결되지 않으면 대상 호스트 이름을 `127.0.0.1`로 바꾼다(`T13`에서는 이 문제가 없었다).
 - **인증서 연결**: **제어판 > 보안 > 인증서 > 설정**에서 서비스 `soc.<DDNS 이름>.synology.me`에 4.1의 인증서를 고른다.
 - DSM은 HSTS를 켜면 `Strict-Transport-Security: max-age=15768000; includeSubdomains; preload`를 붙인다. 앱도 `max-age=31536000 ; includeSubDomains`를 보내지만 `T36`부터 공개 WAF가 앱의 HSTS를 내보내지 않는다(`proxy_hide_header`). 그래서 공개 응답에는 DSM 값 하나만 있다(`T35`까지는 두 개였고 동작 영향은 없었다). 스택 안 8443 리스너(ZAP 대상)는 자기 HSTS 하나를 그대로 붙인다. DSM 앞단은 `Server: nginx`(버전 없음)를 붙이며 이 스택에서 바꿀 수 없다.
@@ -738,7 +759,10 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - `occurred_at`은 UTC다. 외부망에서 로그인한 시각(한국 시간이면 9시간을 뺀다)으로 줄을 구분한다.
 - `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 스택 서브넷 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다(`T13`에서는 필요 없었다).
 - `docker compose ... logs nginx-waf`: 접근 로그 줄의 마지막 칸은 받은 `X-Forwarded-For` 원문이다(DSM이 덧붙인 마지막 주소 = 방문자 IP). ModSecurity JSON 로그(`"client_ip"`)는 차단·오류 응답 등 관련 있는 요청만 남으므로 성공한 로그인(200)은 접근 로그로 본다.
-- DSM이 넘기는 헤더를 직접 보려면 실패하는 로그인(401) 요청에 `X-E2E-Probe: <표지>` 헤더를 붙여 보내고, ModSecurity JSON 로그에서 그 표지가 있는 줄의 `request.headers`를 본다.
+- DSM이 넘기는 `X-Forwarded-For`를 직접 보려면 요청 주소에 표지를 붙여 보낸다(예: 외부망에서 `https://soc.<DDNS 이름>.synology.me/login?probe=<표지>`). `docker compose ... logs --no-log-prefix nginx-waf`에서 `{`로 시작하지 않고 `probe=<표지>`가 든 접근 로그 줄을 찾는다.
+  - 줄의 꼴(기반 이미지의 `log_format main`): `<연결 주소> - - [시각] "<메서드> <요청 주소> HTTP/1.1" <응답 코드> <크기> "<Referer>" "<User-Agent>" "<받은 X-Forwarded-For 원문>"`.
+  - 첫 칸은 WAF에 붙은 연결의 주소다(DSM 경로면 게이트웨이 `10.203.48.1`). 방문자 주소는 마지막 칸의 가장 오른쪽 값이다.
+  - `Host`·`X-Forwarded-Proto`·`X-Real-IP`는 접근 로그 서식에 없다. `T59`부터 ModSecurity 감사 줄은 요청 헤더를 남기지 않으므로(1.1) `T13` 때처럼 감사 줄의 `request.headers`로 볼 수 없다. 이 셋을 다시 봐야 하면 공개 스택의 감사 부분을 넓히지 말고(세션 쿠키가 로그에 남는다) 다른 방법을 따로 정한다.
 
 ### 4.4 공개 주소 확인 체크리스트
 
