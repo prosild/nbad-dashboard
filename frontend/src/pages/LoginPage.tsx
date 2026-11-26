@@ -5,29 +5,56 @@ import { ApiError } from '../api/client';
 import { authApi } from '../api/endpoints';
 import { useAuth } from '../auth/AuthContext';
 import { PRODUCT_NAME } from '../components/AppShell';
+import type { LoginNoticeLink } from '../types/api';
 import { returnPathFromState } from '../utils/returnTo';
+
+interface LoginNotice {
+  notice: string;
+  link: LoginNoticeLink | null;
+}
+
+const NO_NOTICE: LoginNotice = { notice: '', link: null };
 
 /**
  * 로그인 화면 안내 문구(T21, 설정값 DASHBOARD_LOGIN_NOTICE). 값이 있을 때만 로그인 폼 위에 보인다.
  * 일반 텍스트로만 그린다(텍스트 노드, 줄바꿈은 CSS whitespace-pre-line). 불러오지 못하면 아무것도 보이지 않는다.
+ * T50: 설정한 링크 하나가 있으면 안내 문구 아래에 새 창으로 여는 링크로 붙는다(라벨도 텍스트 노드).
  */
-function useLoginNotice(): string {
-  const [notice, setNotice] = useState('');
+function useLoginNotice(): LoginNotice {
+  const [state, setState] = useState<LoginNotice>(NO_NOTICE);
   useEffect(() => {
     let alive = true;
     authApi
       .loginNotice()
       .then((res) => {
-        if (alive) setNotice(typeof res?.notice === 'string' ? res.notice.trim() : '');
+        if (!alive) return;
+        const notice = typeof res?.notice === 'string' ? res.notice.trim() : '';
+        setState({ notice, link: notice ? safeNoticeLink(res?.link) : null });
       })
       .catch(() => {
-        if (alive) setNotice('');
+        if (alive) setState(NO_NOTICE);
       });
     return () => {
       alive = false;
     };
   }, []);
-  return notice;
+  return state;
+}
+
+/**
+ * T50 안내문 링크: 서버가 검사한 값(https 주소, 일반 텍스트 라벨)만 내려오지만 화면도 https 주소와 빈 라벨을 한 번 더 본다.
+ * 안내문이 없으면 링크도 보이지 않는다.
+ */
+function safeNoticeLink(value: unknown): LoginNoticeLink | null {
+  if (!value || typeof value !== 'object') return null;
+  const { url, label } = value as { url?: unknown; label?: unknown };
+  if (typeof url !== 'string' || typeof label !== 'string' || !label.trim()) return null;
+  try {
+    if (new URL(url).protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return { url, label: label.trim() };
 }
 
 export function LoginPage() {
@@ -35,7 +62,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const loginNotice = useLoginNotice();
+  const { notice: loginNotice, link: noticeLink } = useLoginNotice();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -100,7 +127,20 @@ export function LoginPage() {
               className="mb-5 flex items-start gap-2.5 rounded-lg border border-slate-700 bg-slate-900/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-300"
             >
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-              <span className="whitespace-pre-line">{loginNotice}</span>
+              <span className="min-w-0">
+                <span className="block whitespace-pre-line">{loginNotice}</span>
+                {noticeLink && (
+                  <a
+                    href={noticeLink.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${noticeLink.label} (새 창)`}
+                    className="mt-1.5 inline-flex items-center gap-1 rounded font-medium text-cyan-300 underline underline-offset-2 hover:text-cyan-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70"
+                  >
+                    {noticeLink.label}
+                  </a>
+                )}
+              </span>
             </p>
           )}
 

@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import {
   AuthProvider,
   RequireAdmin,
@@ -13,6 +13,7 @@ import { HostsPage } from './pages/HostsPage';
 import { IncidentDetailPage } from './pages/IncidentDetailPage';
 import { IncidentQueuePage } from './pages/IncidentQueuePage';
 import { LoginPage } from './pages/LoginPage';
+import { NotFoundPage } from './pages/NotFoundPage';
 import { OperationsPage } from './pages/OperationsPage';
 import { ReviewsPage } from './pages/ReviewsPage';
 import { TotpPage } from './pages/TotpPage';
@@ -115,7 +116,15 @@ export function AppRoutes() {
           </RequireAuth>
         }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* T50 없는 주소: 현황판으로 돌려보내지 않고 NotFound 화면을 보인다. 로그인 전이면 다른 보호 경로와 같게 로그인으로 간다 */}
+      <Route
+        path="*"
+        element={
+          <RequireAuth>
+            <NotFoundPage />
+          </RequireAuth>
+        }
+      />
     </Routes>
   );
 }

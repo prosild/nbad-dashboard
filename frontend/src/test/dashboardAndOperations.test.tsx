@@ -337,10 +337,12 @@ describe('라우팅과 사이드바(T20)', () => {
     expect(within(nav).getByRole('link', { name: '현황판' })).not.toHaveAttribute('aria-current');
   });
 
-  it('모르는 경로는 현황판으로 간다', async () => {
+  // T50: 모르는 경로를 현황판으로 돌려보내지 않고 NotFound 화면을 보인다(설계 변경, 기대값을 새 동작으로 고쳤다)
+  it('모르는 경로는 NotFound 화면을 보이고 현황판으로 가지 않는다', async () => {
     renderAt('/nowhere');
-    expect(await screen.findByRole('heading', { name: '현황판' })).toBeInTheDocument();
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    expect(await screen.findByRole('heading', { name: '페이지를 찾을 수 없습니다' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/nowhere$/);
+    expect(screen.queryByRole('heading', { name: '현황판' })).toBeNull();
   });
 });
 
@@ -716,6 +718,57 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expect(ended).toHaveTextContent('실습망 2026-11-19 · Kali 공격 + 정상 배경 · 캡처 ID: lab-20261119');
     const failed = table.querySelector('[data-capture-row="syn1-thu"]') as HTMLElement;
     expect(failed).toHaveTextContent('근거 API 시간 초과 10.0.0.*');
+  });
+
+  it('T50 수집원 상태 표: 가져온 데이터 캡처 행의 "마지막 이상 활동"은 상대 시각이 아니라 날짜와 "원본 시각" 표지다. 센서 쪽 행은 상대 시각 그대로다', async () => {
+    // 가져온 데이터의 발생 시각은 원본 데이터셋의 시각이다(2017-07). 상태가 실패·기록 없음이어도 가져온 데이터면 같다
+    const captures: CaptureRow[] = [
+      CAPTURES[0],
+      { ...CAPTURES[1], lastActivityAt: minutesAgo(2000) },
+      { ...CAPTURES[2], lastActivityAt: '2017-07-05T19:10:00Z' },
+      { ...CAPTURES[3], lastActivityAt: '2017-07-06T20:00:05Z' },
+      { captureId: 'syn1-fri', sourceType: 'imported', sensorKey: null, state: 'none', latestJob: null, lastScoredAt: null, lastActivityAt: null, total: 0, high: 0, alerted: 0, failedJobs: 0 },
+    ];
+    renderAt('/operations', { overview: (url) => json(fakeOverview(url, { captures })) });
+    const section = await screen.findByRole('region', { name: '수집원 상태 표' });
+    const table = await within(section).findByRole('table');
+    const headers = within(table).getAllByRole('columnheader').map((th) => th.textContent);
+    const activityCol = headers.indexOf('마지막 이상 활동');
+    expect(activityCol).toBe(3);
+    const activityCell = (rowSelector: string) =>
+      (table.querySelector(rowSelector) as HTMLElement).querySelectorAll('td')[activityCol] as HTMLElement;
+
+    const TOOLTIP = '가져온 데이터의 발생 시각은 원본 데이터셋의 시각입니다.';
+    const imported = activityCell('[data-capture-row="cic17-wed"]');
+    expect(imported.textContent).not.toMatch(/일 전|시간 전|분 전|방금/);
+    expect(imported).toHaveTextContent('2017-07-06 04:10:00');
+    const badge = within(imported).getByText('원본 시각');
+    expect(badge).toHaveAttribute('title', TOOLTIP);
+    expect(imported.textContent).toBe('2017-07-06 04:10:00원본 시각');
+
+    // 상태가 실패인 가져온 데이터 캡처도 같다(state가 아니라 sourceType으로 가른다)
+    const failedImported = activityCell('[data-capture-row="syn1-thu"]');
+    expect(failedImported.textContent).toBe('2017-07-07 05:00:05원본 시각');
+    expect(within(failedImported).getByText('원본 시각')).toHaveAttribute('title', TOOLTIP);
+
+    // 발생 시각이 없으면 지금처럼 "-"이고 표지가 없다
+    const none = activityCell('[data-capture-row="syn1-fri"]');
+    expect(none.textContent).toBe('-');
+    expect(within(none).queryByText('원본 시각')).toBeNull();
+
+    // 센서 행과 센서의 캡처 행(실습망)은 상대 시각 그대로다
+    const sensor = activityCell('[data-sensor-row="lab-*"]');
+    expect(sensor.textContent).toBe('12분 전');
+    const live = activityCell('[data-capture-row="lab-20261120"]');
+    expect(live.textContent).toBe('12분 전');
+    const ended = activityCell('[data-capture-row="lab-20261119"]');
+    expect(ended.textContent).toBe('1일 전');
+    for (const cell of [sensor, live, ended]) expect(within(cell).queryByText('원본 시각')).toBeNull();
+    expect(within(table).getAllByText('원본 시각')).toHaveLength(2);
+
+    // "마지막 채점"(채점한 시각)은 가져온 데이터 행도 상대 시각 그대로다
+    const scored = (table.querySelector('[data-capture-row="cic17-wed"]') as HTMLElement).querySelectorAll('td')[2] as HTMLElement;
+    expect(scored.textContent).toBe('6일 전');
   });
 
   it('T26 휴대폰 폭: 운영 현황의 모든 표(접힌 영역 포함)는 가로 스크롤 상자 안에 있다', async () => {

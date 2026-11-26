@@ -17,9 +17,16 @@ export interface AuthUserDto {
   allowedCapturePatterns: string[];
 }
 
-/** T21: 로그인 화면 안내 문구(설정이 없으면 빈 문자열) */
+/** T50: 안내 문구 아래에 붙는 링크 하나(서버가 검사한 https 주소와 일반 텍스트 라벨) */
+export interface LoginNoticeLink {
+  url: string;
+  label: string;
+}
+
+/** T21: 로그인 화면 안내 문구(설정이 없으면 빈 문자열). T50: 링크가 없으면 link 필드 자체가 없다 */
 export interface LoginNoticeResponse {
   notice: string;
+  link?: LoginNoticeLink;
 }
 
 export interface AuthMeResponse {

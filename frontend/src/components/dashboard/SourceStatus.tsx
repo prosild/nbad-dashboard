@@ -127,6 +127,31 @@ export function RelativeTime({
 
 export const NO_ACTIVITY_TITLE = '마지막 채점에 인시던트 없음';
 
+export const SOURCE_TIME_LABEL = '원본 시각';
+export const SOURCE_TIME_TOOLTIP = '가져온 데이터의 발생 시각은 원본 데이터셋의 시각입니다.';
+
+/**
+ * T50 가져온 데이터 캡처의 발생 시각: 원본 데이터셋의 시각이라(예: 2017-07) 기준 시각에서 센 상대 시각("3,425일 전")이
+ * 뜻이 없다. 날짜·시각(KST)과 "원본 시각" 표지로 보인다.
+ */
+export function SourceDatasetTime({ iso, emptyTitle }: { iso: string | null | undefined; emptyTitle?: string }) {
+  if (!iso) {
+    return (
+      <span className="text-slate-500" title={emptyTitle}>
+        -
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="tabular-nums">{formatDateTime(iso)}</span>
+      <SocBadge tone="muted" title={SOURCE_TIME_TOOLTIP}>
+        {SOURCE_TIME_LABEL}
+      </SocBadge>
+    </span>
+  );
+}
+
 /** 가져온 데이터 캡처 정렬: 실패 → 기록 없음 → 나머지(캡처 ID) */
 export function sortImportedCaptures(rows: CaptureRow[]): CaptureRow[] {
   const rank = (r: CaptureRow) => (r.state === 'failed' ? 0 : r.state === 'none' ? 1 : 2);
@@ -546,7 +571,12 @@ function CaptureTableRow({
         <RelativeTime iso={row.lastScoredAt} anchor={anchor} label="마지막 채점" />
       </td>
       <td className="soc-td text-slate-200">
-        <RelativeTime iso={row.lastActivityAt} anchor={anchor} label="마지막 이상 활동" emptyTitle={NO_ACTIVITY_TITLE} />
+        {/* T50: 가져온 데이터인지는 상태(state)가 아니라 수집원 종류로 가른다(실패·기록 없음인 가져온 캡처도 같다) */}
+        {row.sourceType === 'imported' ? (
+          <SourceDatasetTime iso={row.lastActivityAt} emptyTitle={NO_ACTIVITY_TITLE} />
+        ) : (
+          <RelativeTime iso={row.lastActivityAt} anchor={anchor} label="마지막 이상 활동" emptyTitle={NO_ACTIVITY_TITLE} />
+        )}
       </td>
       <td className="soc-td">
         <JobCell job={row.latestJob} />
