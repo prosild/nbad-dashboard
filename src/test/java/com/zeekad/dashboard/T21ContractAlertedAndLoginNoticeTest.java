@@ -185,7 +185,11 @@ class T21ContractAlertedAndLoginNoticeTest {
                 .andExpect(jsonPath("$.detail.incident.alerted").value(false));
     }
 
-    /** 로그인 안내 문구: 로그인 전 GET으로 읽고, 응답에는 문구만 있다. 테스트 설정은 기본 빈 값. */
+    /**
+     * 로그인 안내 문구: 로그인 전 GET으로 읽는다. 응답 필드는 notice, 그리고 검사를 통과한 link뿐이다(T50).
+     * 테스트 설정은 기본 빈 값이고 링크 설정도 없으므로 필드는 notice 하나다(link는 null로도 내려가지 않는다).
+     * 링크가 있을 때의 응답은 T50LoginNoticeLinkIntegrationTest가 본다.
+     */
     @Test
     void loginNoticeIsPublicGetOnlyAndEmptyByDefault() throws Exception {
         MvcResult res = mockMvc.perform(get("/api/auth/login-notice"))
@@ -193,7 +197,8 @@ class T21ContractAlertedAndLoginNoticeTest {
                 .andExpect(jsonPath("$.notice").value(""))
                 .andReturn();
         JsonNode body = objectMapper.readTree(res.getResponse().getContentAsString());
-        assertThat(body.size()).as("응답 필드는 notice 하나").isEqualTo(1);
+        assertThat(body.size()).as("기본 설정(링크 없음)의 응답 필드는 notice 하나").isEqualTo(1);
+        assertThat(body.has("link")).as("link 필드 자체가 없다").isFalse();
 
         // 공개는 GET 하나뿐이다(POST는 CSRF·인증에 막힌다)
         int postStatus = mockMvc.perform(post("/api/auth/login-notice")).andReturn().getResponse().getStatus();

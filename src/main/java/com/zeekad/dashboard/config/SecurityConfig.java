@@ -132,7 +132,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/index.html", "/assets/**", "/favicon.ico", "/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/login", "/api/auth/csrf", "/api/auth/me").permitAll()
-                        // T21: 로그인 화면 안내 문구(로그인 전 GET 하나만, 응답은 문구뿐)
+                        // T21: 로그인 화면 안내 문구(로그인 전 GET 하나만, 응답은 문구와 T50의 검사한 링크 하나뿐)
                         .requestMatchers(HttpMethod.GET, "/api/auth/login-notice").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/logout").permitAll()
                         .requestMatchers("/api/auth/totp/**", "/api/admin/**").hasRole("ADMIN")

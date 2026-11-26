@@ -23,6 +23,12 @@ public class DashboardProperties {
     /** 로그인 화면 안내 문구(T21, 환경 변수 DASHBOARD_LOGIN_NOTICE). 일반 텍스트, 기본 빈 값. */
     private String loginNotice = "";
     /**
+     * 안내 문구 아래에 붙는 링크 하나(T50, 환경 변수 DASHBOARD_LOGIN_NOTICE_LINK_URL·DASHBOARD_LOGIN_NOTICE_LINK_LABEL).
+     * 둘 다 있고 검사(https, 호스트 있음, 사용자 정보 없음, 제어·양방향 문자 없음, 길이)를 통과하고 안내 문구도 있을 때만 보인다.
+     */
+    private String loginNoticeLinkUrl = "";
+    private String loginNoticeLinkLabel = "";
+    /**
      * 기준 시각 모드(T23, 환경 변수 DASHBOARD_TIME_ANCHOR). now = 서버 현재 시각,
      * latest-data = 사용자 허용 캡처 안 성공 작업 완료 시각의 최대값(고정 스냅샷). 다른 값이면 시작 때 실패한다.
      */
@@ -95,6 +101,22 @@ public class DashboardProperties {
 
     public void setLoginNotice(String loginNotice) {
         this.loginNotice = loginNotice;
+    }
+
+    public String getLoginNoticeLinkUrl() {
+        return loginNoticeLinkUrl;
+    }
+
+    public void setLoginNoticeLinkUrl(String loginNoticeLinkUrl) {
+        this.loginNoticeLinkUrl = loginNoticeLinkUrl;
+    }
+
+    public String getLoginNoticeLinkLabel() {
+        return loginNoticeLinkLabel;
+    }
+
+    public void setLoginNoticeLinkLabel(String loginNoticeLinkLabel) {
+        this.loginNoticeLinkLabel = loginNoticeLinkLabel;
     }
 
     public Datasource getDatasource() {

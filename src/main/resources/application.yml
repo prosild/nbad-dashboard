@@ -32,6 +32,10 @@ server:
 dashboard:
   # 로그인 화면 안내 문구(일반 텍스트, 최대 300자. 넘으면 시작 때 실패). 기본 빈 값이면 화면에 아무것도 보이지 않는다.
   login-notice: ${DASHBOARD_LOGIN_NOTICE:}
+  # 안내 문구 아래에 붙는 링크 하나(T50). 둘 다 있고 안내 문구도 있을 때만 보인다. URL은 https 주소(호스트 있음, user@ 없음, 200자 이하),
+  # 라벨은 일반 텍스트(40자 이하)다. 제어 문자와 양방향·서식 문자는 받지 않는다. 검사에 걸리면 링크만 내리지 않고 로그에 이유를 남긴다.
+  login-notice-link-url: ${DASHBOARD_LOGIN_NOTICE_LINK_URL:}
+  login-notice-link-label: ${DASHBOARD_LOGIN_NOTICE_LINK_LABEL:}
   # 기준 시각(T23). 인시던트 큐의 상대 기간(최근 24시간 등)을 이 시각에서 거꾸로 센다.
   #   now(기본): 서버 현재 시각. 데이터가 계속 들어오는 운영 배포.
   #   latest-data: 그 사용자가 볼 수 있는 캡처의 성공 작업 완료 시각 최대값. 데이터가 더 늘지 않는 고정 스냅샷 배포

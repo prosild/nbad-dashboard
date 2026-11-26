@@ -605,7 +605,20 @@ try {
     $pwShaped = [regex]::Matches($noticeText, '[A-Za-z0-9!@#$%^&*_+=-]{12,}') | ForEach-Object { $_.Value } | Where-Object { $_ -cne 'trial-analyst' }
     $e2eLogs.Add("[1d] unauthenticated GET /api/auth/login-notice -> HTTP $($noticeRes.Status) keys=[$($noticeKeys -join ',')] notice=$noticeText password-shaped tokens=$(@($pwShaped).Count)")
     Assert-Status $noticeRes 200 "비인증 GET /api/auth/login-notice"
-    Assert-True (($noticeKeys -join ',') -eq 'notice') "로그인 안내 응답은 notice 하나뿐" $noticeRes
+    # T50: 응답 필드는 notice, 그리고 검사를 통과한 link뿐이다. link가 있으면 키는 url·label뿐이고 url은 스택의 설정값과 같다.
+    #   스택이 링크 URL을 설정했으면(compose.portfolio.yml DASHBOARD_LOGIN_NOTICE_LINK_URL) link가 내려와야 한다.
+    $noticeKeySet = ($noticeKeys -join ',')
+    $noticeLink = if ($noticeKeys -contains 'link') { $noticeRes.Json.link } else { $null }
+    $noticeLinkKeys = if ($null -ne $noticeLink) { (@($noticeLink.PSObject.Properties.Name) -join ',') } else { "" }
+    $noticeLinkEnv = (Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "dashboard-app", "sh", "-c", 'printf "%s" "${DASHBOARD_LOGIN_NOTICE_LINK_URL-}"')) -IgnoreExitCode).Output.Trim()
+    $e2eLogs.Add("[1d] login notice link: keys=[$noticeLinkKeys] url=$(if ($null -ne $noticeLink) { [string]$noticeLink.url }) label=$(if ($null -ne $noticeLink) { [string]$noticeLink.label }); app env DASHBOARD_LOGIN_NOTICE_LINK_URL='$noticeLinkEnv'")
+    Assert-True ($noticeKeySet -ceq 'notice' -or $noticeKeySet -ceq 'notice,link') "로그인 안내 응답의 필드는 notice, 그리고 link뿐" $noticeRes
+    if ($null -ne $noticeLink) {
+        Assert-True ($noticeLinkKeys -ceq 'url,label') "로그인 안내 link의 키는 url·label뿐" $noticeRes
+        Assert-True (([string]$noticeLink.url) -ceq $noticeLinkEnv -and ([string]$noticeLink.url).StartsWith("https://")) "로그인 안내 link.url이 스택 설정값과 같고 https 주소" $noticeRes
+        Assert-True (([string]$noticeLink.label).Trim().Length -gt 0) "로그인 안내 link.label이 비어 있지 않음" $noticeRes
+    }
+    Assert-True (($noticeKeys -contains 'link') -eq [bool]$noticeLinkEnv) "스택이 링크 URL을 설정했을 때만(그리고 그때는 반드시) link가 내려옴" $noticeRes
     Assert-True ($noticeText.StartsWith("포트폴리오 공개 데모입니다.") -and $noticeText.Contains("읽기 전용 계정 demo")) "로그인 안내 문구(포트폴리오 공개 데모) 응답" $noticeRes
     Assert-True ((@($pwShaped).Count -eq 0) -and -not $noticeRes.Body.Contains($env:DEMO_PASSWORD)) "로그인 안내 응답에 비밀번호 형태 문자열·demo 비밀번호 없음" $noticeRes
 
