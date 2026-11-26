@@ -12,7 +12,7 @@
     # T36 빠른 사람 사용 흉내·429 회복 확인 도구(handoff/T36/tools/read-usage.js, playwright-core). 주면 [T36d]를 돌린다.
     [string]$UsageScript = "",
     # T47 응답 시간 비교의 앞 이미지(지금 공개 중인 앱 이미지). 로컬에 없거나 시험 이미지와 같으면 새 이미지 값만 적는다.
-    [string]$BaselineAppImage = "zeek-ad-dashboard-app:t48",
+    [string]$BaselineAppImage = "zeek-ad-dashboard-app:t49",
     [switch]$SkipZap
 )
 
