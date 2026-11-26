@@ -3,9 +3,13 @@
  * 둘 다 이미 받은 응답만 쓴다(추가 요청 없음). 그래서 조회자는 화면과 같은 가려진 값만 가져간다.
  * 값은 호스트 이름처럼 관측 대상이 정할 수 있는 글이라, 붙여 넣는 쪽에서 뜻이 바뀌지 않게 막는다
  * (마크다운은 코드 표기·기호 이스케이프, CSV는 수식 시작 문자 앞 작은따옴표).
+ * T64: 내보낸 파일은 앱 밖에서 열린다. 칸마다 숨은 문자를 먼저 표지로 바꾼다(분석가가 쓴 메모 포함, 여러 줄 모드).
+ * 순서는 숨은 문자 → `plain`(마크다운) → 이스케이프, CSV는 숨은 문자 → 수식 검사(`csvCell`). 길이는 서버 상한을 따른다(더 자르지 않는다).
  */
 import type { IncidentDetailView, IncidentQueueMeta, ResponseActionItem, UnifiedQueueItem } from '../types/api';
+import { splitAttackCandidates } from './attackCandidates';
 import { DISPLAY_TIME_ZONE_LABEL, formatBytes, formatDateTime, formatDateTimeRange, formatNumber } from './format';
+import { markHiddenChars } from './hiddenChars';
 import { captureText, labelText } from './labels';
 
 function cellText(value: unknown): string | null {
@@ -38,9 +42,12 @@ function plain(value: string, hidden: string[]): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/** 서술 글: 내부 이름을 빼고 마크다운 기호와 HTML 꺾쇠를 글자 그대로 보이게 한다 */
+/**
+ * 서술 글: 내부 이름을 빼고 마크다운 기호와 HTML 꺾쇠를 글자 그대로 보이게 한다.
+ * T64: `_`·`~`(강조·취소선), `|`(표), `&`(`&#x202E;` 같은 문자 참조를 렌더러가 글자로 풀지 않게)도 이스케이프한다.
+ */
 function mdText(value: string, hidden: string[]): string {
-  return plain(value, hidden).replace(INTERNAL_NAME, OMITTED).replace(/[\\`*[\]<>]/g, '\\$&');
+  return plain(value, hidden).replace(INTERNAL_NAME, OMITTED).replace(/[\\`*[\]<>_~|&]/g, '\\$&');
 }
 
 /**
@@ -74,9 +81,10 @@ export function incidentMarkdown(
   responseActions?: ResponseActionItem[],
 ): string {
   const { incident, evidence, report } = detail;
-  const hidden = [incident.incidentId, incident.bundleId];
-  const text = (value: string) => mdText(value, hidden);
-  const code = (value: string) => mdCode(value, hidden);
+  // 뺄 식별자도 같은 처리를 거쳐야 처리한 글 안에서 찾힌다
+  const hidden = [incident.incidentId, incident.bundleId].map((id) => (id ? markHiddenChars(id) : id));
+  const text = (value: string) => mdText(markHiddenChars(value), hidden);
+  const code = (value: string) => mdCode(markHiddenChars(value), hidden);
 
   const host = [incident.hostIp, ...incident.hostName].filter(Boolean).map(code).join(' · ');
   const sessions = (evidence.available ? evidence.connectionCount : null) ?? incident.connectionCount;
@@ -127,10 +135,18 @@ export function incidentMarkdown(
     if (report.verificationPassed !== null) {
       lines.push(`- 검증: ${labelText('verification', report.verificationPassed)}`);
     }
+    // T64: ATT&CK 후보는 화면과 같이 앞 3개와 해석이 인용한 후보만 싣고 나머지는 "외 N개"
+    const attack = splitAttackCandidates(report);
     const sections: Array<[string, string[]]> = [
       ['관측 요약', report.observationSummary ? [report.observationSummary] : []],
       ['확인된 사실', report.claims.map((item) => item.claim)],
-      ['관련 ATT&CK 기법 후보', report.attackCandidates.map((item) => `${item.attackId} ${item.name}`)],
+      [
+        '관련 ATT&CK 기법 후보',
+        [
+          ...attack.shown.map(({ candidate }) => `${candidate.attackId} ${candidate.name}`),
+          ...(attack.folded.length > 0 ? [`외 ${attack.folded.length}개`] : []),
+        ],
+      ],
       ['추가 확인 권고', report.followUp],
     ];
     for (const [label, values] of sections) {
@@ -194,6 +210,11 @@ function time(iso: string | null | undefined): string {
   return iso ? formatDateTime(iso) : '';
 }
 
+/** CSV 칸 하나의 값: 글이면 숨은 문자를 표지로(T64. 수식 검사는 csvCell이 이 값으로 한다), 수·빈 값은 그대로 */
+function csvValue(value: unknown): unknown {
+  return typeof value === 'string' ? markHiddenChars(value) : value;
+}
+
 /** 큐 한 쪽의 CSV. 화면과 같은 표시 이름·시각(KST)을 쓰고, 엑셀이 한글을 읽게 UTF-8 BOM과 CRLF를 쓴다. */
 export function queueCsv(items: UnifiedQueueItem[]): string {
   const rows = items.map((item) => [
@@ -218,7 +239,7 @@ export function queueCsv(items: UnifiedQueueItem[]): string {
     // T52 중요 자산: 예/아니요만(이름은 넣지 않는다. 조회자도 같다). 앞 칸 번호를 바꾸지 않게 맨 뒤에 둔다
     item.assetCritical ? '예' : '아니요',
   ]);
-  return `﻿${[QUEUE_CSV_HEADERS, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+  return `﻿${[QUEUE_CSV_HEADERS, ...rows].map((row) => row.map((value) => csvCell(csvValue(value))).join(',')).join('\r\n')}\r\n`;
 }
 
 /** 파일 이름: `incidents-YYYYMMDD-HHmm.csv`(KST) */
