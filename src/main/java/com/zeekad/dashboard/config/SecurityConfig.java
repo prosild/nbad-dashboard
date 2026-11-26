@@ -137,7 +137,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/logout").permitAll()
                         .requestMatchers("/api/auth/totp/**", "/api/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET,
-                                "/login/totp", "/login/totp/setup", "/admin/users", "/admin/audit-logs")
+                                "/login/totp", "/login/totp/setup", "/admin/users", "/admin/audit-logs",
+                                // T52 중요 자산 관리 화면. 정적 파일 경로 /assets/** 와 겹치지 않는 이름
+                                "/admin/critical-assets")
                         .hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )

@@ -19,6 +19,8 @@ public enum AuditActionType {
     /** T56 대응 조치 기록(상세 {action, note}) */
     INCIDENT_RESPONSE_ACTION,
     USER_ADMIN_CHANGE,
+    /** T52 중요 자산 등록·고치기·지우기(상세 {operation: CREATE·UPDATE·DELETE, hostIp, name}) */
+    CRITICAL_ASSET_CHANGE,
     /**
      * T58 보관 기한이 지난 감사 행 삭제. 앱은 이 값을 쓰지 않는다(조회와 화면 필터에만 쓴다).
      * 행은 DB 함수 purge_expired_audit_logs가 남긴다(행위자 audit-retention, 역할 SYSTEM).

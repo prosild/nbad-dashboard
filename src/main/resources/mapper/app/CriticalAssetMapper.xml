@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- T52 중요 자산. #{}만 쓴다. -->
+<mapper namespace="com.zeekad.dashboard.mapper.app.CriticalAssetMapper">
+
+    <resultMap id="criticalAssetMap" type="com.zeekad.dashboard.model.CriticalAsset">
+        <id property="id" column="id"/>
+        <result property="hostIp" column="host_ip"/>
+        <result property="name" column="name"/>
+        <result property="description" column="description"/>
+        <result property="createdBy" column="created_by"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedBy" column="updated_by"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <sql id="columns">
+        id, host_ip, name, description, created_by, created_at, updated_by, updated_at
+    </sql>
+
+    <select id="findAll" resultMap="criticalAssetMap">
+        SELECT <include refid="columns"/>
+        FROM critical_assets
+        ORDER BY id
+    </select>
+
+    <!-- 인시던트 응답용 스냅샷: 주소와 이름만 -->
+    <select id="findHostNames" resultMap="criticalAssetMap">
+        SELECT id, host_ip, name
+        FROM critical_assets
+        ORDER BY id
+    </select>
+
+    <select id="findById" resultMap="criticalAssetMap">
+        SELECT <include refid="columns"/>
+        FROM critical_assets
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByHostIp" resultMap="criticalAssetMap">
+        SELECT <include refid="columns"/>
+        FROM critical_assets
+        WHERE host_ip = #{hostIp}
+    </select>
+
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM critical_assets
+    </select>
+
+    <!-- 동시에 같은 주소를 넣어도 예외 없이 0행이다(UNIQUE 위반 예외가 PostgreSQL 트랜잭션을 망가뜨리지 않게).
+         H2도 PostgreSQL 모드에서 같은 문법을 받는다(Gradle 시험). -->
+    <insert id="insertIfAbsent" parameterType="com.zeekad.dashboard.model.CriticalAsset">
+        INSERT INTO critical_assets (host_ip, name, description, created_by, created_at, updated_by, updated_at)
+        VALUES (#{hostIp}, #{name}, #{description}, #{createdBy}, #{createdAt}, #{updatedBy}, #{updatedAt})
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <update id="updateNameAndDescription">
+        UPDATE critical_assets
+        SET name = #{name},
+            description = #{description},
+            updated_by = #{updatedBy},
+            updated_at = #{updatedAt}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM critical_assets WHERE id = #{id}
+    </delete>
+</mapper>

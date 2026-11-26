@@ -148,6 +148,7 @@ export const LABEL_DICTIONARIES = {
     INCIDENT_ASSIGNMENT: '담당 지정',
     INCIDENT_RESPONSE_ACTION: '대응 조치 기록',
     USER_ADMIN_CHANGE: '사용자 계정 변경',
+    CRITICAL_ASSET_CHANGE: '중요 자산 변경',
     AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',
   },
   /** 증적 표의 열 이름 (zeek_AD evidence.v1 하위 키) */

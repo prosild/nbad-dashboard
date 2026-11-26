@@ -24,7 +24,9 @@ public class SpaForwardController {
             "/reviews",
             "/operations",
             "/admin/users",
-            "/admin/audit-logs"
+            "/admin/audit-logs",
+            // T52 중요 자산(관리자만. 정적 파일 경로 /assets/** 와 겹치지 않는 이름)
+            "/admin/critical-assets"
     })
     public String forwardToSpaShell() {
         return "forward:/index.html";
