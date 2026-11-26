@@ -65,7 +65,7 @@
      - 바닥값은 30일입니다. 함수는 30일보다 짧은 기한을 예외로 거부하고 트리거도 30일 안의 행은 표식이 켜져 있어도 지우지 못하게 합니다. 이 값은 SQL에 있고 설정으로 줄일 수 없습니다.
      - 실행 권한은 부를 계정에 따로 줍니다: `GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO <역할>;`. 표 권한은 필요 없습니다(함수가 소유자 권한으로 지웁니다).
      - 표식은 권한 경계가 아니라 실수 방지입니다. 사용자 정의 설정은 어느 역할이든 세션에서 켤 수 있습니다. 권한 경계는 표 소유권(표를 지울 권한이 있는 계정은 소유자 `dashboard_app`뿐)과 바닥값입니다. 표 소유자는 트리거를 끌 수 있습니다(남은 위험, [`security-verification-report.md`](security-verification-report.md)).
-     - 공개 데모 스택은 초기화 서비스가 하루 한 번 90일로 부릅니다([`portfolio-deployment.md`](portfolio-deployment.md) 1.3). PostgreSQL에서 이 동작을 직접 보는 시험은 `scripts/audit-retention-check.ps1`입니다(일회용 컨테이너, H2 시험은 이 SQL을 보지 못합니다).
+     - 공개 데모 스택은 초기화 서비스가 하루 한 번 90일로 부릅니다([`portfolio-deployment.md`](portfolio-deployment.md) 1.3). PostgreSQL에서 이 동작을 직접 보는 시험은 `scripts/audit-retention-check.ps1`입니다(일회용 컨테이너. H2 시험은 이 SQL을 보지 못합니다).
 2. **`zeekad` 읽기 전용 계정 (`dashboard_ro`)**
    - `zeekad` 데이터베이스의 `dashboard` 스키마에 있는 데이터 계약 뷰 14종(v1 5종 · v2 7종 · v2.1 `latest_incident_queue` 1종 · migration 017 `feedback_summary` 1종)의 `SELECT` 권한만 줍니다.
      - v1 (5종): `incident_queue`, `incident_model_scores`, `asset_names`, `scoring_jobs`, `model_bundles`

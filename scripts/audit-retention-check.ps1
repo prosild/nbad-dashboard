@@ -11,8 +11,10 @@
 #   docker exec로만 쓰고 끝나면 그 이름의 컨테이너만 지운다. 다른 컨테이너·compose 프로젝트·네트워크·볼륨은 건드리지 않는다.
 # - 실제와 같게 적용한다: 슈퍼유저가 아닌 역할 dashboard_app이 소유한 DB에 저장소의 V1~V4 파일을 그대로,
 #   파일마다 한 트랜잭션(psql -1 -v ON_ERROR_STOP=1)으로 그 역할로 적용한다.
-# - 이어서 docker/portfolio/sandbox/sandbox-reset.sh --once를 같은 컨테이너에서 돌려 한 줄 로그의 감사 칸을 확인하고,
-#   scripts/sandbox-reset-daily-test.sh(하루 한 번 판정)를 컨테이너의 bash로 돌린다.
+# - 이어서 저장소의 docker/portfolio/sandbox/sandbox-setup.sh와 sandbox-reset.sh --once를 그대로 같은 컨테이너에서 돌린다
+#   (zeek_AD 표 다섯은 열만 맞춘 빈 표로 둔다. 초기화 함수 둘·기준선·전용 역할·권한은 설정 도구가 실제로 만든다).
+#   설정 도구가 V4 전에는 멈추는지, 삭제 함수의 EXECUTE만 주는지, 한 줄 로그의 감사 칸이 상태마다 어떻게 나오는지 본다.
+#   scripts/sandbox-reset-daily-test.sh(하루 한 번 판정)는 컨테이너의 bash로 돌린다.
 # - 컨테이너 안 접속은 유닉스 소켓(이미지 기본 trust)이다. 슈퍼유저 비밀번호는 무작위로 만들어 환경 변수로만 넘기고 출력·기록하지 않는다.
 # - 결과: <OutDir>/pg-check.txt, reset-once.txt, once-a-day.txt(줄마다 PASS 또는 FAIL). FAIL이 있으면 종료 코드 1.
 
@@ -28,8 +30,9 @@ if ([IO.Path]::IsPathRooted($OutDir)) { $OutFullDir = $OutDir } else { $OutFullD
 $MigrationDir = Join-Path $RepoRoot "src/main/resources/db/migration/postgresql"
 $Migrations = @("V1__init_dashboard_auth_audit.sql", "V2__incident_assignments.sql", "V3__incident_refs.sql", "V4__audit_retention.sql")
 $ResetScript = Join-Path $RepoRoot "docker/portfolio/sandbox/sandbox-reset.sh"
+$SetupScript = Join-Path $RepoRoot "docker/portfolio/sandbox/sandbox-setup.sh"
 $DailyTest = Join-Path $RepoRoot "scripts/sandbox-reset-daily-test.sh"
-foreach ($f in @($Migrations | ForEach-Object { Join-Path $MigrationDir $_ }) + @($ResetScript, $DailyTest)) {
+foreach ($f in @($Migrations | ForEach-Object { Join-Path $MigrationDir $_ }) + @($ResetScript, $SetupScript, $DailyTest)) {
     if (-not (Test-Path $f)) { throw "파일이 없습니다: $f" }
 }
 
@@ -126,22 +129,36 @@ try {
     $r = Invoke-Sql "postgres" "postgres" @'
 CREATE ROLE dashboard_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
 CREATE ROLE zeekad_owner NOLOGIN;
-CREATE ROLE zeekad_sandbox_reset LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 CREATE ROLE t58_exec_only LOGIN NOSUPERUSER NOINHERIT;
 CREATE ROLE t58_public_only LOGIN NOSUPERUSER NOINHERIT;
 CREATE DATABASE zeekad OWNER zeekad_owner;
 CREATE DATABASE zeekad_dashboard OWNER dashboard_app;
 REVOKE ALL ON DATABASE zeekad FROM PUBLIC;
 REVOKE ALL ON DATABASE zeekad_dashboard FROM PUBLIC;
-GRANT CONNECT ON DATABASE zeekad TO zeekad_sandbox_reset;
-GRANT CONNECT ON DATABASE zeekad_dashboard TO zeekad_sandbox_reset, t58_exec_only, t58_public_only;
+GRANT CONNECT ON DATABASE zeekad_dashboard TO t58_exec_only, t58_public_only;
 '@ -StopOnError
     if ($r.Code -ne 0) { throw "역할·DB 만들기 실패`n$($r.Out)" }
+    # zeek_AD 스냅샷 대신: 설정 도구와 초기화 함수가 읽는 표 다섯을 같은 열로 빈 채 둔다(초기화 계정 zeekad_sandbox_reset은 설정 도구가 만든다).
+    $r = Invoke-Sql "postgres" "zeekad" @'
+CREATE SCHEMA zeekad AUTHORIZATION zeekad_owner;
+CREATE TABLE zeekad.incident (incident_id text PRIMARY KEY);
+CREATE TABLE zeekad.scoring_job (job_id bigint PRIMARY KEY);
+CREATE TABLE zeekad.incident_status (last_job_id bigint, incident_id text PRIMARY KEY, status text, resolution text, updated_at timestamptz, updated_by text);
+CREATE TABLE zeekad.incident_status_history (history_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, job_id bigint, incident_id text, from_status text, to_status text, resolution text, actor text, reason text, changed_at timestamptz);
+CREATE TABLE zeekad.analyst_review (job_id bigint, incident_id text, requested_at timestamptz, reason text, action text, analyst text, note text, decided_at timestamptz, resumed_at timestamptz, resume_error text, PRIMARY KEY (job_id, incident_id));
+ALTER TABLE zeekad.incident OWNER TO zeekad_owner;
+ALTER TABLE zeekad.scoring_job OWNER TO zeekad_owner;
+ALTER TABLE zeekad.incident_status OWNER TO zeekad_owner;
+ALTER TABLE zeekad.incident_status_history OWNER TO zeekad_owner;
+ALTER TABLE zeekad.analyst_review OWNER TO zeekad_owner;
+'@ -StopOnError
+    if ($r.Code -ne 0) { throw "zeekad 빈 표 만들기 실패`n$($r.Out)" }
 
     # --- migration 파일을 그대로 넣고 dashboard_app으로 하나씩(파일마다 한 트랜잭션) 적용한다 ---
     [void](Invoke-Docker @("exec", $ContainerName, "mkdir", "-p", "/t58/mig"))
     foreach ($m in $Migrations) { [void](Invoke-Docker @("cp", (Join-Path $MigrationDir $m), "${ContainerName}:/t58/mig/$m")) }
     [void](Invoke-Docker @("cp", $ResetScript, "${ContainerName}:/t58/sandbox-reset.sh"))
+    [void](Invoke-Docker @("cp", $SetupScript, "${ContainerName}:/t58/sandbox-setup.sh"))
     [void](Invoke-Docker @("cp", $DailyTest, "${ContainerName}:/t58/sandbox-reset-daily-test.sh"))
     [void](Invoke-Docker @("exec", $ContainerName, "chmod", "-R", "a+rX", "/t58"))
 
@@ -158,39 +175,25 @@ GRANT CONNECT ON DATABASE zeekad_dashboard TO zeekad_sandbox_reset, t58_exec_onl
         return Invoke-Docker $a -IgnoreExitCode
     }
 
+    # sandbox-setup.sh를 슈퍼유저로(소켓). 소켓 접속은 trust라 두 비밀번호 값은 인증에 쓰이지 않는다(스크립트가 빈 값을 거부해서 넣는다).
+    function Invoke-Setup {
+        return Invoke-Docker @("exec", "--user", "postgres", "-e", "PGUSER=postgres", "-e", "PGPASSWORD=$($env:SANDBOX_RESET_DB_PASSWORD_T58)",
+            "-e", "SANDBOX_RESET_DB_PASSWORD=$($env:SANDBOX_RESET_DB_PASSWORD_T58)", "-e", "SANDBOX_TRIAL_USERNAME=trial-analyst",
+            $ContainerName, "sh", "-c", "bash /t58/sandbox-setup.sh 2>&1") -IgnoreExitCode
+    }
+    function Get-SetupLines($Result) { return (@($Result.Out -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: ' }) -join ' / ') }
+
     foreach ($m in $Migrations[0..2]) {
         $r = Invoke-Migration $m
         Assert-Check "[적용] $m (dashboard_app, 한 트랜잭션)" ($r.Code -eq 0) "exit=$($r.Code) $($r.Out)"
     }
 
-    # 초기화 서비스가 쓰는 기존 두 함수의 빈 대역과 권한(sandbox-setup.sh가 주는 것과 같은 종류: 스키마 USAGE, 함수 EXECUTE)
-    $r = Invoke-Sql "postgres" "zeekad" @'
-CREATE SCHEMA sandbox AUTHORIZATION zeekad_owner;
-REVOKE ALL ON SCHEMA sandbox FROM PUBLIC;
-CREATE FUNCTION sandbox.reset_pipeline() RETURNS TABLE (table_name text, deleted bigint, inserted bigint, reverted bigint)
-    LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-    AS $$ SELECT 'stub'::text, 0::bigint, 0::bigint, 0::bigint $$;
-ALTER FUNCTION sandbox.reset_pipeline() OWNER TO zeekad_owner;
-REVOKE ALL ON FUNCTION sandbox.reset_pipeline() FROM PUBLIC;
-GRANT USAGE ON SCHEMA sandbox TO zeekad_sandbox_reset;
-GRANT EXECUTE ON FUNCTION sandbox.reset_pipeline() TO zeekad_sandbox_reset;
-'@ -StopOnError
-    if ($r.Code -ne 0) { throw "zeekad 대역 함수 만들기 실패`n$($r.Out)" }
-    $r = Invoke-Sql "postgres" "zeekad_dashboard" @'
-CREATE SCHEMA sandbox AUTHORIZATION dashboard_app;
-REVOKE ALL ON SCHEMA sandbox FROM PUBLIC;
-CREATE FUNCTION sandbox.reset_assignments() RETURNS TABLE (released bigint, history_rows bigint)
-    LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-    AS $$ SELECT 0::bigint, 0::bigint $$;
-ALTER FUNCTION sandbox.reset_assignments() OWNER TO dashboard_app;
-REVOKE ALL ON FUNCTION sandbox.reset_assignments() FROM PUBLIC;
-GRANT USAGE ON SCHEMA sandbox TO zeekad_sandbox_reset;
-GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;
-'@ -StopOnError
-    if ($r.Code -ne 0) { throw "zeekad_dashboard 대역 함수 만들기 실패`n$($r.Out)" }
-
-    # V4 전(앱이 아직 V4를 적용하지 않음)의 초기화 한 번: 뒤의 reset-once.txt에 적는다.
-    $resetBeforeV4 = Invoke-ResetOnce "90"
+    # V4 전(앱이 아직 V4를 적용하지 않음): 설정 도구는 멈추고 아무것도 만들지 않는다. 초기화 한 번은 역할이 없어 미설정이다. 뒤의 reset-once.txt에 적는다.
+    $setupBeforeV4 = Invoke-Setup
+    $afterRefusedSetup = Get-Scalar "postgres" "SELECT 'role=' || (SELECT count(*) FROM pg_roles WHERE rolname = 'zeekad_sandbox_reset');"
+    $afterRefusedSetup += " " + (Get-Scalar "zeekad" "SELECT 'zeekad_schemas=' || (SELECT count(*) FROM pg_namespace WHERE nspname IN ('sandbox', 'sandbox_baseline'));")
+    $afterRefusedSetup += " " + (Get-Scalar "zeekad_dashboard" "SELECT 'app_schemas=' || (SELECT count(*) FROM pg_namespace WHERE nspname = 'sandbox');")
+    $resetBeforeSetup = Invoke-ResetOnce "90"
 
     $r = Invoke-Migration $Migrations[3]
     Assert-Check "[적용] $($Migrations[3]) (dashboard_app, 한 트랜잭션)" ($r.Code -eq 0) "exit=$($r.Code) $($r.Out)"
@@ -275,8 +278,6 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type, cl
     # --- 6. 권한: PUBLIC은 실행 불가, 실행 권한만 받은 역할은 함수는 부르지만 표는 못 읽고 못 지운다 ---
     $r = Invoke-Sql "t58_public_only" "zeekad_dashboard" "SELECT * FROM public.purge_expired_audit_logs(90);"
     Assert-Check "[6b] 권한을 받지 않은 역할(PUBLIC)은 삭제 함수를 못 부른다" ($r.Out -match 'ERROR:\s+permission denied for function purge_expired_audit_logs') $r.Out
-    $r = Invoke-Sql "zeekad_sandbox_reset" "zeekad_dashboard" "SELECT * FROM public.purge_expired_audit_logs(90);"
-    Assert-Check "[6b] 초기화 계정도 실행 권한을 받기 전에는 못 부른다" ($r.Out -match 'ERROR:\s+permission denied for function purge_expired_audit_logs') $r.Out
     Assert-Check "[6b] 거부된 호출 뒤 행이 그대로(여섯)" ((Get-Scalar "zeekad_dashboard" $actorsSql) -eq $allActors) (Get-Scalar "zeekad_dashboard" $actorsSql)
     $r = Invoke-Sql "postgres" "zeekad_dashboard" "GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO t58_exec_only;" -StopOnError
     if ($r.Code -ne 0) { throw "실행 권한 주기 실패`n$($r.Out)" }
@@ -356,17 +357,33 @@ ROLLBACK;
     Assert-Check "[환경] 컨테이너에 볼륨 마운트가 없고 데이터 경로는 tmpfs, 네트워크 없음" ($mounts -match '^\|tmpfs=\{"/var/lib/postgresql/data":""\}\|net=none$') $mounts
     $totalFailed += Save-Lines "pg-check.txt"
 
-    # ================= sandbox-reset.sh --once: 한 줄 로그의 감사 칸 =================
-    Add-Line "# T58 초기화 서비스(sandbox-reset.sh --once)의 한 줄 로그: 같은 일회용 PostgreSQL 컨테이너에서 초기화 계정 zeekad_sandbox_reset으로 실행"
-    Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. 기존 두 함수(reset_pipeline, reset_assignments)는 빈 대역이다."
+    # ================= 설정 도구와 초기화 서비스(저장소의 두 스크립트 그대로) =================
+    Add-Line "# T58 설정 도구(sandbox-setup.sh)와 초기화 서비스(sandbox-reset.sh --once): 저장소의 두 스크립트를 그대로 같은 일회용 PostgreSQL 컨테이너에서 실행"
+    Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. zeek_AD 표 다섯은 열만 맞춘 빈 표다. 초기화 함수 둘·기준선·역할·권한은 설정 도구가 만든 실제 것이다."
     $lineRx = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z sandbox-reset: '
-    $base = 'pipeline\[OK\] stub\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0'
+    $base = 'pipeline\[OK\] analyst_review\(-0 \+0 ~0\) incident_status\(-0 \+0 ~0\) incident_status_history\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0'
+    $purgeFnRx = 'public\.purge_expired_audit_logs\(integer\)'
+    $resetPrivSql = "SELECT 'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset') || ' purge_execute=' || COALESCE(has_function_privilege('zeekad_sandbox_reset', to_regprocedure('public.purge_expired_audit_logs(integer)')::oid, 'EXECUTE')::text, '(no function)') || ' reset_assignments_execute=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_assignments()', 'EXECUTE') || ' public_create=' || has_schema_privilege('zeekad_sandbox_reset', 'public', 'CREATE');"
 
-    Add-Line "[R0] V4 적용 전(삭제 함수 없음), 기한 90: exit=$($resetBeforeV4.Code) $($resetBeforeV4.Out)"
-    Assert-Check "[R0] 삭제 함수가 없으면 audit[NOT_CONFIGURED], 전체는 OK(ERROR 아님), 종료 코드 0" `
-        ($resetBeforeV4.Code -eq 0 -and $resetBeforeV4.Out -match ($lineRx + 'OK ' + $base + '; audit\[NOT_CONFIGURED\] public\.purge_expired_audit_logs\(integer\) is missing')) $resetBeforeV4.Out
+    Add-Line "[S1] V4 적용 전의 sandbox-setup: exit=$($setupBeforeV4.Code) $(Get-SetupLines $setupBeforeV4) | 뒤 상태: $afterRefusedSetup"
+    Assert-Check "[S1] 삭제 함수가 없으면(앱이 V4를 적용하기 전) 설정 도구는 건너뛰지 않고 멈춘다. 역할·스키마를 만들지 않는다" `
+        ($setupBeforeV4.Code -eq 1 -and $setupBeforeV4.Out -match ("function $purgeFnRx is missing in zeekad_dashboard; start dashboard-app with migration V4") -and $setupBeforeV4.Out -notmatch 'RESULT: OK' -and $afterRefusedSetup -eq "role=0 zeekad_schemas=0 app_schemas=0") "exit=$($setupBeforeV4.Code) $(Get-SetupLines $setupBeforeV4) | $afterRefusedSetup"
+    Add-Line "[S2] 설정 전(초기화 계정 없음)의 sandbox-reset --once, 기한 90: exit=$($resetBeforeSetup.Code) $($resetBeforeSetup.Out)"
+    Assert-Check "[S2] 설정 전에는 세 칸 모두 미설정이고 ERROR 줄이 아니다(종료 코드 0)" `
+        ($resetBeforeSetup.Code -eq 0 -and $resetBeforeSetup.Out -match ($lineRx + 'NOT_CONFIGURED_OR_LOGIN_FAILED pipeline\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; assignments\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; audit\[NOT_CONFIGURED\] ') -and $resetBeforeSetup.Out -notmatch ' ERROR ') $resetBeforeSetup.Out
 
-    # 100일 전 행 둘, 29일 전 행 하나를 새로 넣는다(앞 시험이 남긴 30일 안의 행 셋과 삭제 기록 둘은 그대로 있다).
+    # V4가 적용된 지금(위 pg-check가 끝난 상태) 설정 도구를 두 번 돌린다.
+    $setup1 = Invoke-Setup
+    Add-Line "[S3] V4 적용 뒤 sandbox-setup 1차: exit=$($setup1.Code) $(Get-SetupLines $setup1)"
+    Assert-Check "[S3] 설정 도구 1차: 기준선 생성, 삭제 함수 EXECUTE 부여, 권한 점검 통과(표 권한 0, PUBLIC 실행 불가)" `
+        ($setup1.Code -eq 0 -and $setup1.Out -match 'baseline created' -and $setup1.Out -match ("EXECUTE on $purgeFnRx granted to zeekad_sandbox_reset") -and $setup1.Out -match 'zeekad_dashboard\[public_create=false sandbox_create=false db_create=false db_temp=false table_grants=0 purge_public_execute=false\]' -and $setup1.Out -match 'RESULT: OK') "exit=$($setup1.Code) $(Get-SetupLines $setup1)"
+    $setup2 = Invoke-Setup
+    Add-Line "[S4] sandbox-setup 2차: exit=$($setup2.Code) $(Get-SetupLines $setup2)"
+    Assert-Check "[S4] 설정 도구 2차(멱등): 기준선 유지, 같은 권한 점검 통과" ($setup2.Code -eq 0 -and $setup2.Out -match 'baseline kept' -and $setup2.Out -match 'purge_public_execute=false' -and $setup2.Out -match 'RESULT: OK') "exit=$($setup2.Code) $(Get-SetupLines $setup2)"
+    $priv = Get-Scalar "zeekad_dashboard" $resetPrivSql
+    Assert-Check "[S4] 초기화 계정(앱 DB): 표 권한 0, 삭제 함수와 담당 해제 함수 EXECUTE, public CREATE 없음" ($priv -eq "table_grants=0 purge_execute=true reset_assignments_execute=true public_create=false") $priv
+
+    # 시험 행: 100일 전·91일 전·89일 전(앞 시험이 남긴 30일 안의 행 셋과 삭제 기록 둘은 그대로 있다).
     $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" @'
 INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VALUES
   (now() - interval '100 days', 't58-reset-old-1', 'VIEWER', 'LOGIN_SUCCESS'),
@@ -377,14 +394,36 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
     $resetActorsSql = "SELECT COALESCE(string_agg(actor_username, ',' ORDER BY actor_username), '(none)') FROM audit_logs WHERE actor_username LIKE 't58-reset-%';"
     $countBefore = Get-Scalar "zeekad_dashboard" $countSql
 
-    $r1 = Invoke-ResetOnce "90"
-    Add-Line "[R1] V4 적용 뒤, 실행 권한을 주기 전, 기한 90: exit=$($r1.Code) $($r1.Out)"
-    Assert-Check "[R1] 실행 권한이 없으면 audit[NOT_CONFIGURED], 전체는 OK(ERROR 아님), 종료 코드 0, 지운 행 없음" `
-        ($r1.Code -eq 0 -and $r1.Out -match ($lineRx + 'OK ' + $base + '; audit\[NOT_CONFIGURED\] no EXECUTE on public\.purge_expired_audit_logs\(integer\) \(run sandbox-setup\)$') -and (Get-Scalar "zeekad_dashboard" $countSql) -eq $countBefore) $r1.Out
+    # NAS에 반영할 때의 틈을 흉내 낸다: 초기화 계정과 초기화 함수 둘은 이미 있고(옛 설정) 삭제 함수만 아직 없다(앱이 V4를 적용하기 전).
+    # 슈퍼유저로 삭제 함수를 없앤 뒤 본다. 이어서 V4 파일을 다시 적용한다(되돌린 뒤 V4가 다시 도는 경우와 같다).
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" "DROP FUNCTION public.purge_expired_audit_logs(integer);" -StopOnError
+    if ($r.Code -ne 0) { throw "삭제 함수 없애기(틈 흉내) 실패`n$($r.Out)" }
+    $r0 = Invoke-ResetOnce "90"
+    Add-Line "[R0] 초기화 계정은 있고 삭제 함수가 없을 때(앱 V4 전), 기한 90: exit=$($r0.Code) $($r0.Out)"
+    Assert-Check "[R0] 삭제 함수가 없으면 audit[NOT_CONFIGURED], 전체는 OK(ERROR 아님), 종료 코드 0, 지운 행 없음" `
+        ($r0.Code -eq 0 -and $r0.Out -match ($lineRx + 'OK ' + $base + "; audit\[NOT_CONFIGURED\] $purgeFnRx is missing \(start the app with migration V4 first\)`$") -and (Get-Scalar "zeekad_dashboard" $countSql) -eq $countBefore) $r0.Out
+    $setupNoFn = Invoke-Setup
+    Add-Line "[S5] 같은 상태의 sandbox-setup: exit=$($setupNoFn.Code) $(Get-SetupLines $setupNoFn)"
+    Assert-Check "[S5] 이미 설정된 스택에서도 삭제 함수가 없으면 설정 도구는 멈춘다" ($setupNoFn.Code -eq 1 -and $setupNoFn.Out -match ("function $purgeFnRx is missing") -and $setupNoFn.Out -notmatch 'RESULT: OK') "exit=$($setupNoFn.Code) $(Get-SetupLines $setupNoFn)"
 
-    # sandbox-setup.sh가 주는 것과 같은 문장(정적 시험이 그 파일에 이 문장이 있는지 본다)
-    $r = Invoke-Sql "postgres" "zeekad_dashboard" "GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_sandbox_reset;" -StopOnError
-    if ($r.Code -ne 0) { throw "초기화 계정 실행 권한 주기 실패`n$($r.Out)" }
+    $reapply = Invoke-Migration $Migrations[3]
+    $purgeMeta2 = Get-Scalar "zeekad_dashboard" ($metaSql -f "public.purge_expired_audit_logs(integer)")
+    $triggers2 = Get-Scalar "zeekad_dashboard" "SELECT string_agg(tgname, ',' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'public.audit_logs'::regclass AND NOT tgisinternal;"
+    Add-Line "[V4 다시] $($Migrations[3])을 dashboard_app으로 다시 적용: exit=$($reapply.Code) $($reapply.Out) | $purgeMeta2 | triggers=$triggers2"
+    Assert-Check "[V4 다시] V4 파일은 다시 적용해도 된다(CREATE OR REPLACE): 함수 설정이 처음과 같고 트리거는 둘 그대로" `
+        ($reapply.Code -eq 0 -and $purgeMeta2 -eq $purgeMeta -and $triggers2 -eq "trg_audit_logs_immutable,trg_audit_logs_no_truncate") "exit=$($reapply.Code) $($reapply.Out) | $purgeMeta2 | $triggers2"
+
+    $r1 = Invoke-ResetOnce "90"
+    Add-Line "[R1] 앱이 V4를 적용한 뒤, sandbox-setup이 실행 권한을 주기 전, 기한 90: exit=$($r1.Code) $($r1.Out)"
+    Assert-Check "[R1] 실행 권한이 없으면 audit[NOT_CONFIGURED], 전체는 OK(ERROR 아님), 종료 코드 0, 지운 행 없음" `
+        ($r1.Code -eq 0 -and $r1.Out -match ($lineRx + 'OK ' + $base + "; audit\[NOT_CONFIGURED\] no EXECUTE on $purgeFnRx \(run sandbox-setup\)`$") -and (Get-Scalar "zeekad_dashboard" $countSql) -eq $countBefore) $r1.Out
+    $r = Invoke-Sql "zeekad_sandbox_reset" "zeekad_dashboard" "SELECT * FROM public.purge_expired_audit_logs(90);"
+    Assert-Check "[R1] 그때 초기화 계정이 함수를 직접 불러도 거부된다" ($r.Out -match 'ERROR:\s+permission denied for function purge_expired_audit_logs' -and (Get-Scalar "zeekad_dashboard" $countSql) -eq $countBefore) $r.Out
+
+    $setup3 = Invoke-Setup
+    $priv3 = Get-Scalar "zeekad_dashboard" $resetPrivSql
+    Add-Line "[S6] sandbox-setup을 다시 실행: exit=$($setup3.Code) $(Get-SetupLines $setup3) | $priv3"
+    Assert-Check "[S6] 설정 도구를 다시 돌리면 실행 권한이 붙는다(기준선 유지, 표 권한 0)" ($setup3.Code -eq 0 -and $setup3.Out -match 'baseline kept' -and $setup3.Out -match 'RESULT: OK' -and $priv3 -eq "table_grants=0 purge_execute=true reset_assignments_execute=true public_create=false") "exit=$($setup3.Code) $(Get-SetupLines $setup3) | $priv3"
 
     $r2 = Invoke-ResetOnce "" -NoDaysVariable
     Add-Line "[R2] 기한 변수 없음: exit=$($r2.Code) $($r2.Out)"
@@ -414,8 +453,9 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
         $r = Invoke-Sql "zeekad_sandbox_reset" "zeekad_dashboard" $stmt
         Assert-Check "[R6] 초기화 계정 거부: $stmt" ($r.Out -match 'ERROR:\s+permission denied for table audit_logs') $r.Out
     }
-    $grants = Get-Scalar "zeekad_dashboard" "SELECT 'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset') || ' purge_execute=' || has_function_privilege('zeekad_sandbox_reset', 'public.purge_expired_audit_logs(integer)', 'EXECUTE') || ' public_create=' || has_schema_privilege('zeekad_sandbox_reset', 'public', 'CREATE');"
-    Assert-Check "[R6] 초기화 계정: 표 권한 0, 삭제 함수 EXECUTE만" ($grants -eq "table_grants=0 purge_execute=true public_create=false") $grants
+    $grants = Get-Scalar "zeekad_dashboard" $resetPrivSql
+    $grantsZ = Get-Scalar "zeekad" "SELECT 'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset') || ' baseline_usage=' || has_schema_privilege('zeekad_sandbox_reset', 'sandbox_baseline', 'USAGE');"
+    Assert-Check "[R6] 초기화 계정: 두 DB 모두 표 권한 0, 함수 EXECUTE만" ($grants -eq "table_grants=0 purge_execute=true reset_assignments_execute=true public_create=false" -and $grantsZ -eq "table_grants=0 baseline_usage=false") "zeekad_dashboard[$grants] zeekad[$grantsZ]"
 
     # 실패 경로(실제 DB 오류): 삭제 함수가 잠금을 5초 안에 못 잡으면 audit[ERROR]이고 전체가 ERROR다. 다른 연결이 표를 ACCESS EXCLUSIVE로 잡는다.
     $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" "INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VALUES (now() - interval '100 days', 't58-reset-locked', 'VIEWER', 'LOGIN_SUCCESS');" -StopOnError
