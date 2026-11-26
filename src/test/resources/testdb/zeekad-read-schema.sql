@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS dashboard.raw_incident_queue (
     zeekad_picked_by VARCHAR(64) NOT NULL,
     zeekad_also_flagged_by VARCHAR(64) ARRAY,
     connection_count BIGINT NOT NULL,
-    host_name VARCHAR(255) ARRAY,
+    -- T63: 이름 칸은 4,039자 공격 문장(zeek_AD 인젝션 시험 12번)이 들어가게 넓혔다(검증 스택·실제 DB는 TEXT[]로 제한 없음)
+    host_name VARCHAR(8192) ARRAY,
     PRIMARY KEY (job_id, incident_id)
 );
 
@@ -50,14 +51,15 @@ CREATE TABLE IF NOT EXISTS dashboard.raw_incident_model_scores (
 CREATE TABLE IF NOT EXISTS dashboard.raw_asset_names (
     capture_id VARCHAR(128) NOT NULL,
     host_ip VARCHAR(64) NOT NULL,
-    kerberos_user VARCHAR(128),
-    ntlm_user VARCHAR(128),
+    -- T63: 관측 계정 세 칸은 4,039자 공격 문장이 들어가게 넓혔다(검증 스택·실제 DB는 TEXT)
+    kerberos_user VARCHAR(8192),
+    ntlm_user VARCHAR(8192),
     source_log VARCHAR(64),
     observation_count INTEGER,
     first_seen TIMESTAMP WITH TIME ZONE,
     last_seen TIMESTAMP WITH TIME ZONE,
     -- T46: 운영 뷰의 관측 계정 이름 열(화면 '관측 계정'이 먼저 읽는 값)
-    zeekad_name VARCHAR(128),
+    zeekad_name VARCHAR(8192),
     zeekad_name_kind VARCHAR(64)
 );
 
