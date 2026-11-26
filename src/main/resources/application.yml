@@ -89,7 +89,7 @@ dashboard:
     trusted-proxies: ${DASHBOARD_TRUSTED_PROXIES:}
     idle-timeout-minutes: ${DASHBOARD_IDLE_TIMEOUT_MINUTES:30}
     absolute-timeout-minutes: ${DASHBOARD_ABSOLUTE_TIMEOUT_MINUTES:480}
-    totp-issuer: "zeek_AD Dashboard"
+    totp-issuer: "NBAD Dashboard"
   bootstrap:
     common-password: ${DASHBOARD_BOOTSTRAP_PASSWORD:}
     viewer1-password: ${BOOTSTRAP_VIEWER1_PASSWORD:}

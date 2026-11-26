@@ -174,7 +174,7 @@ describe('T41 화면의 429 안내', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(RATE_LIMITED_MESSAGE);
     expect(alert).not.toHaveTextContent(/비밀번호|아이디/);
-    expect(screen.getByRole('heading', { name: 'zeek_AD 보안 관제' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'NBAD 보안 관제' })).toBeInTheDocument();
 
     loginResponse = () => json({ status: 423, code: 'ACCOUNT_LOCKED', message: '계정이 잠겼습니다.' }, 423);
     await user.click(screen.getByRole('button', { name: /로그인/ }));

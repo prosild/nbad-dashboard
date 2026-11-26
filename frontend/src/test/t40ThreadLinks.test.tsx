@@ -157,7 +157,7 @@ describe('T40 검증 실패 사유·문제 항목 한국어', () => {
   it('화면: 아는 사유는 한국어(원문은 툴팁), 모르는 사유는 원문(data-raw)', () => {
     const { rerender } = render(<ReportVerificationProblems report={failed({ verificationReason: 'verification' })} />);
     const known = screen.getByText('리포트 내용이 근거와 맞지 않음(숫자·가명·ATT&CK ID)');
-    expect(known).toHaveAttribute('title', 'zeek_AD 값: verification');
+    expect(known).toHaveAttribute('title', '원래 값: verification');
     expect(known).not.toHaveAttribute('data-raw');
     rerender(<ReportVerificationProblems report={failed({ verificationReason: 'brand_new' })} />);
     expect(screen.getByText('brand_new')).toHaveAttribute('data-raw');

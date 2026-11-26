@@ -924,7 +924,7 @@ describe('관제 표준 용어(T18b)', () => {
 describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () => {
   it('로그인 화면', async () => {
     const { container } = renderAt('/login', null);
-    expect(await screen.findByRole('heading', { name: 'zeek_AD 보안 관제' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'NBAD 보안 관제' })).toBeInTheDocument();
     expect(screen.getByText('로그인을 여러 번 실패하면 잠시 로그인이 제한될 수 있습니다. 관리자 계정은 2단계 인증을 거칩니다.')).toBeInTheDocument();
     expect(container.textContent).not.toContain('15분간 잠깁니다');
     expect(screen.getByLabelText('아이디')).not.toHaveAttribute('placeholder', '예: analyst1');

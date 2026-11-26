@@ -198,7 +198,7 @@ function VerificationReasonText({ reason }: { reason: string | null }) {
   const view = describeVerificationReason(reason);
   if (view === null) return <>-</>;
   if (view.known) {
-    return <span title={`zeek_AD 값: ${view.raw}`}>{view.text}</span>;
+    return <span title={`원래 값: ${view.raw}`}>{view.text}</span>;
   }
   return (
     <span className="font-mono" data-raw="">

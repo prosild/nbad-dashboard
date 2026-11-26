@@ -544,7 +544,7 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     const rows = within(imported).getAllByRole('link');
     expect(rows.map((r) => r.getAttribute('data-capture'))).toEqual(['syn1-thu', 'cic17-wed']);
     expect(within(rows[0]).getByText('실패')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('CIC+APT 목')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('CIC+합성 목')).toBeInTheDocument();
     expect(rows[0]).toHaveAttribute('href', '/incidents?period=24h&captureId=syn1-thu');
     expect(rows[0].getAttribute('title')).toContain('오류: 근거 API 시간 초과');
     expect(within(rows[1]).getByText('가져온 데이터')).toBeInTheDocument();
@@ -830,7 +830,7 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     }
     const select = screen.getByLabelText('수집원');
     expect(within(select).getByRole('option', { name: 'CIC-IDS2017 수요일' })).toHaveAttribute('value', 'cap:cic17-wed');
-    expect(within(select).getByRole('option', { name: 'CIC 목요일 + 합성 APT' })).toHaveAttribute(
+    expect(within(select).getByRole('option', { name: 'CIC 목요일 + 합성 패턴' })).toHaveAttribute(
       'title',
       expect.stringContaining('캡처 ID: syn1-thu'),
     );

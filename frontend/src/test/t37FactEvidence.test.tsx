@@ -232,7 +232,7 @@ describe('T37 근거 화면', () => {
     const first = within(list).getByText('근거 번호 F01').closest('li') as HTMLElement;
     expect(within(first).getByText('세션 수')).toBeInTheDocument();
     expect(within(first).getByText('155,261')).toBeInTheDocument();
-    expect(first).toHaveAttribute('title', expect.stringContaining('zeek_AD 이름: connection_count'));
+    expect(first).toHaveAttribute('title', expect.stringContaining('원문 이름: connection_count'));
     expect(within(list).getByText('X1(203.0.*.*) · 세션 210건')).toBeInTheDocument();
     const more = screen.getByRole('button', { name: '근거 2개 더 보기' });
     expect(more).toHaveAttribute('aria-expanded', 'false');
@@ -351,7 +351,7 @@ describe('T37 근거 화면', () => {
     expect(pass).toHaveAttribute('title', VERIFICATION_DESCRIPTION.passed);
     expect(within(pass).getByText('검증 통과')).toBeInTheDocument();
     expect(VERIFICATION_DESCRIPTION.passed).toBe(
-      'AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
+      'AI 리포트 검증 통과: 탐지 파이프라인이 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
     );
     rerender(<VerificationBadge passed={false} />);
     const fail = screen.getByRole('img', { name: VERIFICATION_DESCRIPTION.failedDetail });

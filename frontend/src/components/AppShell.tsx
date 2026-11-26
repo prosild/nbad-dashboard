@@ -23,7 +23,7 @@ import { DISPLAY_TIME_ZONE_LABEL, formatDateTime } from '../utils/format';
 import { labelText } from '../utils/labels';
 import { SocBadge, UserRoleBadge } from './StatusBadge';
 
-export const PRODUCT_NAME = 'zeek_AD 보안 관제';
+export const PRODUCT_NAME = 'NBAD 보안 관제';
 
 /**
  * T21: 고정 띠(stickyBar)가 있는 화면(인시던트 상세)은 넓은 화면(xl)에서 상단 바 줄을 접지 않는다.

@@ -265,7 +265,7 @@ public class DashboardProperties {
         private long lockoutMinutes = 15;
         private long idleTimeoutMinutes = 30;
         private long absoluteTimeoutMinutes = 480;
-        private String totpIssuer = "zeek_AD Dashboard";
+        private String totpIssuer = "NBAD Dashboard";
         /**
          * T29·T33 잠금 제외 계정(쉼표 목록, 기본 비어 있음). 비밀번호를 공개한 공유 계정(VIEWER 또는 ANALYST)만 넣는다.
          * 역할 판정은 로그인 때 DB 역할로 하며 VIEWER·ANALYST가 아니면(ADMIN) 목록에 있어도 잠긴다(DashboardAuthenticationProvider).

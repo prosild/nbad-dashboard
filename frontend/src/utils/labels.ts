@@ -390,7 +390,7 @@ export function detectionModelInfo(id: string | null | undefined): DetectionMode
  * 검증이 리포트의 해석까지 보증한다고 읽히는 말은 쓰지 않는다(SPEC 2026-11-23 T37 결정).
  */
 export const VERIFICATION_DESCRIPTION = {
-  passed: 'AI 리포트 검증 통과: zeek_AD가 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
+  passed: 'AI 리포트 검증 통과: 탐지 파이프라인이 리포트 글을 근거 사실과 대조했습니다(글 속 숫자·가명 등). 해석이 맞다는 뜻은 아닙니다',
   // T43: 목록 응답에는 사유가 없으므로 검증 실패·호출 실패 가운데 어느 것인지 단정하지 않는다
   failedQueue: 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세에서 봅니다',
   failedDetail: 'AI 리포트 검증 실패: 리포트 글에 근거 사실과 맞지 않는 내용이 있습니다. 검증 실패 사유를 확인합니다',
@@ -420,13 +420,15 @@ const CAPTURE_WEEKDAY: Record<string, string> = { mon: '월', tue: '화', wed: '
 const CAPTURE_FORMAT_TOOLTIP = {
   cic17: '공개 데이터셋 CIC-IDS2017의 원본 트래픽(평가용). 월요일 정상만 학습에 썼다.',
   syn1: (day: string) =>
-    `CIC ${day}요일 Zeek 로그 사본에 합성 APT 패턴 5종(beacon, 느린 유출, DNS 터널, 측면 이동, 느린 정찰)을 하나씩 코드로 끼워 넣었다. 네트워크로 보낸 트래픽이 아니다(zeek_AD 설계 결정 DD-008).`,
+    `CIC ${day}요일 Zeek 로그 사본에 합성 패턴 5종(beacon, 느린 유출, DNS 터널, 측면 이동, 느린 정찰)을 하나씩 코드로 끼워 넣었다. 네트워크로 보낸 트래픽이 아니다(탐지 저장소 설계 결정 DD-008).`,
   lab: '배포 VM이 격리 실습망에서 실제로 수집한 트래픽(날짜는 UTC). 하루가 처리 단위다.',
 };
 
 /**
- * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-23). 키는 캡처 ID다.
- * 내용 문구의 호스트 주소는 옮기지 않는다(화면 번들은 조회자 마스킹을 거치지 않는다). 호스트 구분은 zeek_AD 문서를 가리킨다.
+ * 실습망 캡처별 덧붙일 표시와 내용(zeek_AD 표, 배포 VM DB 기준 2026-11-23, 이름은 2026-11-26 판). 키는 캡처 ID다.
+ * 덧붙임(note)은 계약 표와 글자 그대로다. 내용(description)은 계약의 '내용' 칸을 T62 규칙으로 옮긴 글이다:
+ * 호스트 주소는 옮기지 않고(화면 번들은 조회자 마스킹을 거치지 않는다) 그 자리는 "주소는 탐지 저장소 데이터 계약 v2 …"로 가리킨다.
+ * 마크다운 링크는 글자만, 백틱·굵은 글씨는 빼고, 문장 끝에 마침표를 붙이고, 탐지 저장소 문서를 가리키는 출처 앞머리는 "탐지 저장소"다.
  * 캡처 표시 이름 사전에 한해 실습망 캡처 ID를 앱 코드에 둔다(2026-11-21 결정, StaticSecurityAndConfigTest 허용 파일).
  * 표에 없는 새 lab-*는 덧붙임 없이 보인다.
  */
@@ -434,12 +436,12 @@ export const LAB_CAPTURE_NOTES: Record<string, { note: string; description: stri
   'lab-20261119': {
     note: 'Kali 공격 + 정상 배경',
     description:
-      'Kali 공격만(실행 1), 정상 배경 35분(월요일 재생 + 합성 정상 클라이언트) 사이에 공격(실행 2). 시험 호스트 구분은 zeek_AD 2026-11-19 전달 글 5절.',
+      'Kali 공격만(실행 1), 정상 배경 35분(월요일 재생 + 합성 정상 클라이언트) 사이에 공격(실행 2). 시험 호스트 구분은 탐지 저장소 2026-11-19 전달 글 5절.',
   },
   'lab-20261122': {
-    note: 'Kali 공격 7종 + 타깃 VM',
+    note: 'Kali 공격 6종 + 타깃 VM',
     description:
-      '세그먼트 센서 확장(DD-020) 뒤의 공격 시험: 빠른·느린 스캔, 비커닝, 느린 유출, 측면 이동, SSH 무차별 대입, DNS 터널. 호스트는 Kali(공격자)와 그 별칭(정상 배경용 서버), 타깃 VM과 그 IP 별칭(측면 이동용)이다(주소는 zeek_AD 데이터 계약 v2 "실습망 캡처별 표시"). 스레드 묶음이 처음 기록된 캡처다.',
+      '세그먼트 센서 확장(DD-020) 뒤의 공격 시험: 느린 스캔, 비커닝, 분할 유출, SMB 공유 탐색, SSH 무차별 대입, DNS 터널(빠른 스캔은 lab-20261119에 있다. 정답은 탐지 저장소 configs/ground-truth/lab-attacks.v1.json, 단계 7 진행 기록 열두째 작업). 호스트는 Kali(공격자)와 그 별칭(정상 배경용 서버), 타깃 VM과 그 IP 별칭(공유 탐색용)이다(주소는 탐지 저장소 데이터 계약 v2 "실습망 캡처별 표시"). 스레드 묶음이 처음 기록된 캡처다.',
   },
   'lab-20261123': {
     note: '시험(위 캡처의 뒤 시간)',
@@ -475,7 +477,7 @@ export function captureInfo(id: string | null | undefined): CaptureLookup {
     if (weekday[1] === 'cic17') {
       return { text: `CIC-IDS2017 ${day}요일`, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.cic17}\n${idLine}` };
     }
-    return { text: `CIC ${day}요일 + 합성 APT`, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.syn1(day)}\n${idLine}` };
+    return { text: `CIC ${day}요일 + 합성 패턴`, known: true, raw, tooltip: `${CAPTURE_FORMAT_TOOLTIP.syn1(day)}\n${idLine}` };
   }
   const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw);
   if (lab) {
@@ -501,7 +503,7 @@ export function captureText(id: string | null | undefined): string {
 
 /**
  * 짧은 수집원 이름(T24). 좁은 칸(인시던트 큐 수집원 칸, 현황판, 운영 현황 수집원 상태)에 쓴다.
- * 전체 이름·캡처 ID는 툴팁·화면 판독기 글자에 둔다. 규칙: `cic17-<요일>` → "CIC 수", `syn1-<요일>` → "CIC+APT 수",
+ * 전체 이름·캡처 ID는 툴팁·화면 판독기 글자에 둔다. 규칙: `cic17-<요일>` → "CIC 수", `syn1-<요일>` → "CIC+합성 수"(T62),
  * `lab-YYYYMMDD` → "실습 MM-DD", 규칙 밖 → 캡처 ID 그대로. 실습망 날짜는 UTC다(전체 이름 툴팁의 설명 유지).
  */
 export function captureShortName(id: string | null | undefined): string {
@@ -512,7 +514,7 @@ export function captureShortName(id: string | null | undefined): string {
   const weekday = /^(cic17|syn1)-(mon|tue|wed|thu|fri)$/.exec(raw);
   if (weekday) {
     const day = CAPTURE_WEEKDAY[weekday[2]];
-    return weekday[1] === 'cic17' ? `CIC ${day}` : `CIC+APT ${day}`;
+    return weekday[1] === 'cic17' ? `CIC ${day}` : `CIC+합성 ${day}`;
   }
   const lab = /^lab-(\d{4})(\d{2})(\d{2})$/.exec(raw);
   if (lab) {

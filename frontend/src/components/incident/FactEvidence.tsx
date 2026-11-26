@@ -21,7 +21,7 @@ import { SocBadge } from '../StatusBadge';
 export const FACT_PREVIEW_COUNT = 4;
 
 function rawTooltip(fact: FactItem, view: FactView): string {
-  const lines = [`근거 번호 ${view.id}`, `zeek_AD 이름: ${view.rawName}`];
+  const lines = [`근거 번호 ${view.id}`, `원문 이름: ${view.rawName}`];
   if (!view.missing) lines.push(`원문 값: ${fact.value ?? '-'}`);
   return lines.join('\n');
 }

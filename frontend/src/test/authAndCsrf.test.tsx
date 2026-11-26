@@ -79,7 +79,7 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
     const user = userEvent.setup();
     renderAt('/incidents');
 
-    expect(await screen.findByRole('heading', { name: 'zeek_AD 보안 관제' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'NBAD 보안 관제' })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('아이디'), 'analyst1');
     await user.type(screen.getByLabelText('비밀번호'), 'Pass!1234');
@@ -165,8 +165,8 @@ describe('인증, CSRF, 세션 만료 및 TOTP QR 등록', () => {
         return new Response(
           JSON.stringify({
             secret: 'JBSWY3DPEHPK3PXP',
-            otpauthUri: 'otpauth://totp/zeek_AD:admin?secret=JBSWY3DPEHPK3PXP&issuer=zeek_AD',
-            issuer: 'zeek_AD',
+            otpauthUri: 'otpauth://totp/NBAD%20Dashboard:admin?secret=JBSWY3DPEHPK3PXP&issuer=NBAD%20Dashboard',
+            issuer: 'NBAD Dashboard',
             accountName: 'admin',
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
