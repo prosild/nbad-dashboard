@@ -49,7 +49,7 @@ function New-RandomBase32([int]$Length = 32) {
     return $sb.ToString()
 }
 
-function Get-TotpCode([string]$Base32Secret) {
+function Get-TotpCode([string]$Base32Secret, [int]$StepOffset = 0) {
     $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
     $clean = $Base32Secret.Trim().ToUpperInvariant() -replace '[\s=]+', ''
     $bytes = New-Object System.Collections.Generic.List[byte]
@@ -65,7 +65,7 @@ function Get-TotpCode([string]$Base32Secret) {
             $bitsLeft -= 8
         }
     }
-    $step = [long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30)
+    $step = [long][Math]::Floor([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() / 30) + $StepOffset
     $msg = New-Object byte[] 8
     for ($i = 7; $i -ge 0; $i--) {
         $msg[$i] = [byte]($step -band 0xFF)
@@ -2277,6 +2277,134 @@ ORDER BY 1, 2
                 Assert-True ($loginPart16 -match '401') "[16c] 앱 직접 로그인(없는 계정) 401"
                 Assert-True ($ip16c -eq $pgIp16 -and $ip16c -ne "203.0.113.17") "[16c] 앱 직접 감사 로그 IP = verify-postgres 주소 (client_ip=$ip16c, 기대 $pgIp16)"
                 Assert-True ($nopeLoc16 -eq "http://dashboard-app:8080/login") "[16c] 앱 직접 Location은 연결 값(http, 8080) ($nopeLoc16)"
+
+                # [T60] 관리자 TOTP 확인의 실패 제한(T60). 기존 단계가 쓰는 admin을 잠그지 않게 이 단계 전용 관리자를 만든다:
+                #       확인을 마친 admin 세션으로 POST /api/admin/users(ADMIN) -> 그 계정으로 로그인 -> GET /api/auth/totp/setup이 준 비밀키로
+                #       POST /api/auth/totp/setup 등록. 감사 수는 이 단계의 기준 id 뒤에 생긴 이 계정의 행만 센다.
+                #       비밀번호·비밀키·코드는 로그에 적지 않는다(등록 정보 응답은 상태만 적는다). 이 스택(compose.yml)에는 속도 제한이 없다.
+                #       끝에서 전용 계정을 비활성으로 돌려 뒤 단계의 목록에 영향을 주지 않게 한다. admin은 맞는 코드만 보내므로 횟수가 오르지 않는다.
+                $user60 = ("e2e-t60-" + (New-RandomToken 6)).ToLowerInvariant()
+                $pwd60 = New-RandomToken 20
+                $auditBase60 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                function Login-T60([string]$CookieJar, [string]$Password) {
+                    $null = Invoke-Http -Url "$baseHttps/api/auth/csrf" -CookieJar $CookieJar -SaveCookies
+                    return Invoke-Http -Url "$baseHttps/api/auth/login" -Method POST -CookieJar $CookieJar -SaveCookies -Csrf `
+                        -JsonBody @{ username = $user60; password = $Password }
+                }
+                function Send-TotpT60([string]$CookieJar, [string]$Code) {
+                    return Invoke-Http -Url "$baseHttps/api/auth/totp/verify" -Method POST -CookieJar $CookieJar -SaveCookies -Csrf -JsonBody @{ code = $Code }
+                }
+                # 지금 허용 창(앞뒤 1창)과 그 바깥 한 창씩 어디에도 맞지 않는 6자리 숫자(시계 차이와 단계가 도는 시간을 넉넉히 뺀다)
+                function Get-WrongTotpCodeT60([string]$Secret) {
+                    $valid = @(-2, -1, 0, 1, 2 | ForEach-Object { Get-TotpCode $Secret $_ })
+                    foreach ($n in 0..9) {
+                        $candidate = $n.ToString("D6")
+                        if ($valid -notcontains $candidate) { return $candidate }
+                    }
+                    throw "[T60] 틀린 코드를 고르지 못했다"
+                }
+                function Get-UserStateT60 {
+                    return Invoke-AuditSelect "SELECT failed_attempts, (locked_until IS NOT NULL), enabled, totp_enabled FROM users WHERE username = '$user60'"
+                }
+                function Get-AuditCountsT60 {
+                    return Invoke-AuditSelect "SELECT action_type, count(*) FROM audit_logs WHERE id > $auditBase60 AND actor_username = '$user60' GROUP BY action_type ORDER BY action_type"
+                }
+
+                # [T60a] 전용 관리자 만들기와 TOTP 등록
+                $op60 = Join-Path $tmpDir "t60-operator.cookies"
+                Assert-Status (Login-Api "admin" $op60) 200 "[T60a] admin 1차 로그인"
+                $opTotp60 = $null
+                for ($try = 0; $try -lt 3; $try++) {
+                    $opTotp60 = Invoke-Http -Url "$baseHttps/api/auth/totp/verify" -Method POST -CookieJar $op60 -SaveCookies -Csrf -JsonBody @{ code = (Get-TotpCode $adminTotpSecret) }
+                    if ($opTotp60.Status -eq 200) { break }
+                    Start-Sleep -Seconds 31
+                }
+                Assert-Status $opTotp60 200 "[T60a] admin TOTP"
+                $create60 = Invoke-Http -Url "$baseHttps/api/admin/users" -Method POST -CookieJar $op60 -SaveCookies -Csrf `
+                    -JsonBody ([ordered]@{ username = $user60; displayName = "E2E T60 관리자"; password = $pwd60; role = "ADMIN"; capturePatterns = @("*") })
+                Assert-Status $create60 201 "[T60a] 전용 관리자 만들기(POST /api/admin/users)"
+                $id60 = $create60.Json.user.id
+                Assert-True ($create60.Json.user.username -eq $user60 -and $create60.Json.user.role -eq "ADMIN" -and $null -ne $id60) "[T60a] 전용 관리자 응답(이름·역할·id)" $create60
+                $setupJar60 = Join-Path $tmpDir "t60-setup.cookies"
+                $setupLogin60 = Login-T60 $setupJar60 $pwd60
+                Assert-Status $setupLogin60 200 "[T60a] 전용 관리자 1차 로그인"
+                Assert-True ($setupLogin60.Json.nextRoute -eq "/login/totp/setup") "[T60a] 등록 전 관리자는 등록 화면으로(nextRoute=/login/totp/setup)" $setupLogin60
+                $setupInfo60 = Invoke-Http -Url "$baseHttps/api/auth/totp/setup" -CookieJar $setupJar60
+                $secret60 = [string]$setupInfo60.Json.secret
+                Assert-True ($setupInfo60.Status -eq 200 -and $secret60.Length -ge 16) "[T60a] GET /api/auth/totp/setup 200과 비밀키 (HTTP $($setupInfo60.Status))"
+                $setupDone60 = $null
+                for ($try = 0; $try -lt 3; $try++) {
+                    $setupDone60 = Invoke-Http -Url "$baseHttps/api/auth/totp/setup" -Method POST -CookieJar $setupJar60 -SaveCookies -Csrf -JsonBody @{ code = (Get-TotpCode $secret60) }
+                    if ($setupDone60.Status -eq 200) { break }
+                    Start-Sleep -Seconds 31
+                }
+                Assert-Status $setupDone60 200 "[T60a] 전용 관리자 TOTP 등록(POST /api/auth/totp/setup)"
+                $state60a = Get-UserStateT60
+                $e2eLogs.Add("[T60a] dedicated admin '$user60' created by admin (HTTP $($create60.Status), id=$id60), login nextRoute=$($setupLogin60.Json.nextRoute), GET totp/setup -> HTTP $($setupInfo60.Status) (secret not logged), POST totp/setup -> HTTP $($setupDone60.Status); users row failed_attempts|locked|enabled|totp_enabled = $state60a")
+                Assert-True ($state60a -eq "0|f|t|t") "[T60a] 등록 뒤 횟수 0·잠금 없음·등록됨 ($state60a)"
+
+                # [T60b] 틀린 코드: 400 INVALID_TOTP_CODE, 감사 TOTP_FAILURE(행위자, 접속 IP, reason invalid_code), 횟수 1
+                $jar60a = Join-Path $tmpDir "t60-first.cookies"
+                $login60a = Login-T60 $jar60a $pwd60
+                Assert-Status $login60a 200 "[T60b] 전용 관리자 로그인"
+                Assert-True ($login60a.Json.nextRoute -eq "/login/totp" -and $login60a.Json.user.totpVerified -eq $false) "[T60b] 등록 뒤 로그인은 TOTP 화면으로" $login60a
+                $wrong60 = Send-TotpT60 $jar60a (Get-WrongTotpCodeT60 $secret60)
+                $fail60b = Invoke-AuditSelect "SELECT actor_role, COALESCE(client_ip,''), detail_json FROM audit_logs WHERE id > $auditBase60 AND actor_username = '$user60' AND action_type = 'TOTP_FAILURE' ORDER BY id"
+                $state60b = Get-UserStateT60
+                $e2eLogs.Add("[T60b] wrong code: $(Format-Resp $wrong60 200)`n       audit TOTP_FAILURE rows: $($fail60b -replace "`r?`n", '; ')`n       users row = $state60b")
+                Assert-ApiError $wrong60 400 "INVALID_TOTP_CODE" "[T60b] 틀린 코드 400"
+                $failRows60b = @($fail60b -split "`r?`n" | Where-Object { $_ })
+                Assert-True ($failRows60b.Count -eq 1 -and $failRows60b[0] -match '^ADMIN\|[0-9a-fA-F:.]+\|' -and $failRows60b[0] -match 'invalid_code' -and $failRows60b[0] -match '"failedAttempts"\s*:\s*1') "[T60b] TOTP_FAILURE 감사 1건(역할·접속 IP·reason invalid_code·횟수 1)"
+                Assert-True ($state60b -eq "1|f|t|t") "[T60b] 횟수 1, 잠금 없음 ($state60b)"
+
+                # [T60c] 비밀번호 재로그인으로 횟수가 되돌아가지 않는다: 틀린 코드 3번 더(합 4) -> 비밀번호 로그인 200 -> 횟수는 4 그대로
+                $codes60 = [System.Collections.Generic.List[string]]::new()
+                $codes60.Add("$($wrong60.Status)")
+                for ($k = 2; $k -le 4; $k++) {
+                    $codes60.Add("$((Send-TotpT60 $jar60a (Get-WrongTotpCodeT60 $secret60)).Status)")
+                }
+                $jar60b = Join-Path $tmpDir "t60-second.cookies"
+                $login60b = Login-T60 $jar60b $pwd60
+                $state60c = Get-UserStateT60
+                $e2eLogs.Add("[T60c] wrong codes 1..4 -> HTTP [$($codes60 -join ', ')]; password re-login -> HTTP $($login60b.Status) nextRoute=$($login60b.Json.nextRoute); users row = $state60c")
+                Assert-True (($codes60 -join ',') -eq '400,400,400,400') "[T60c] 한도 전 틀린 코드 4번은 400"
+                Assert-Status $login60b 200 "[T60c] 비밀번호 재로그인"
+                Assert-True ($state60c -eq "4|f|t|t") "[T60c] 비밀번호 재로그인 뒤에도 횟수 4 ($state60c)"
+
+                # [T60d] 한도: 새 세션의 틀린 코드 1번(합 5)에서 423·잠금·잠금 감사 1건, 그 세션은 끝남, 잠긴 동안 맞는 비밀번호도 423
+                $lock60 = Send-TotpT60 $jar60b (Get-WrongTotpCodeT60 $secret60)
+                $after60 = Invoke-Http -Url "$baseHttps/api/incidents" -CookieJar $jar60b
+                $again60 = Send-TotpT60 $jar60b (Get-TotpCode $secret60)
+                $lockedLogin60 = Login-T60 (Join-Path $tmpDir "t60-locked.cookies") $pwd60
+                $state60d = Get-UserStateT60
+                $audit60d = Get-AuditCountsT60
+                $e2eLogs.Add("[T60d] 5th wrong code: $(Format-Resp $lock60 200)`n       same session GET /api/incidents: $(Format-Resp $after60 160)`n       same session POST totp/verify: HTTP $($again60.Status)`n       correct password while locked: $(Format-Resp $lockedLogin60 200)`n       users row = $state60d; audit: $($audit60d -replace "`r?`n", '; ')")
+                Assert-ApiError $lock60 423 "ACCOUNT_LOCKED" "[T60d] 5번째 틀린 코드에 423 잠금"
+                Assert-ApiError $after60 401 "UNAUTHENTICATED" "[T60d] 잠금 뒤 그 세션의 업무 API는 401"
+                Assert-Status $again60 401 "[T60d] 잠금 뒤 그 세션의 TOTP 확인은 401"
+                Assert-ApiError $lockedLogin60 423 "ACCOUNT_LOCKED" "[T60d] 잠긴 동안 맞는 비밀번호도 423"
+                Assert-True ($state60d -eq "5|t|t|t") "[T60d] 횟수 5, 잠김 ($state60d)"
+                Assert-True ($audit60d -match '(?m)^TOTP_FAILURE\|5\s*$' -and $audit60d -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[T60d] 감사 TOTP_FAILURE 5건, ACCOUNT_LOCKED 1건"
+
+                # [T60e] 다른 세션: 잠금 전에 비밀번호 로그인만 해 둔 세션($jar60a)이 잠긴 뒤 맞는 코드를 보내도 코드를 보지 않고 423
+                $other60 = Send-TotpT60 $jar60a (Get-TotpCode $secret60)
+                $otherAfter60 = Invoke-Http -Url "$baseHttps/api/admin/users" -CookieJar $jar60a
+                $audit60e = Get-AuditCountsT60
+                $lockedReason60 = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase60 AND actor_username = '$user60' AND action_type = 'TOTP_FAILURE' AND detail_json LIKE '%account_locked%'")
+                $verified60 = [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase60 AND actor_username = '$user60' AND action_type = 'TOTP_VERIFIED' AND detail_json LIKE '%verify%'")
+                $e2eLogs.Add("[T60e] other session (password login before lock) correct code after lock: $(Format-Resp $other60 200)`n       that session GET /api/admin/users: HTTP $($otherAfter60.Status); audit: $($audit60e -replace "`r?`n", '; '); TOTP_FAILURE reason account_locked = $lockedReason60; TOTP_VERIFIED mode verify = $verified60")
+                Assert-ApiError $other60 423 "ACCOUNT_LOCKED" "[T60e] 잠긴 뒤 다른 세션의 맞는 코드도 423"
+                Assert-Status $otherAfter60 401 "[T60e] 그 세션도 끝남(관리 API 401)"
+                Assert-True ($lockedReason60 -eq 1 -and $verified60 -eq 0) "[T60e] TOTP_FAILURE(reason account_locked) 1건, TOTP_VERIFIED(mode verify) 0건"
+                Assert-True ($audit60e -match '(?m)^TOTP_FAILURE\|6\s*$' -and $audit60e -match '(?m)^ACCOUNT_LOCKED\|1\s*$') "[T60e] 감사 TOTP_FAILURE 6건, ACCOUNT_LOCKED 그대로 1건"
+
+                # [T60f] 정리: 전용 계정을 비활성으로 돌리고 admin 세션을 끝낸다. admin의 횟수와 잠금은 그대로 0·없음이다
+                $disable60 = Invoke-Http -Url "$baseHttps/api/admin/users/$id60/toggle-enabled" -Method POST -CookieJar $op60 -SaveCookies -Csrf
+                $adminState60 = Invoke-AuditSelect "SELECT failed_attempts, (locked_until IS NOT NULL) FROM users WHERE username = 'admin'"
+                $null = Invoke-Http -Url "$baseHttps/api/auth/logout" -Method POST -CookieJar $op60 -SaveCookies -Csrf
+                $e2eLogs.Add("[T60f] cleanup: toggle-enabled -> HTTP $($disable60.Status) enabled=$($disable60.Json.user.enabled); admin users row failed_attempts|locked = $adminState60")
+                Assert-True ($disable60.Status -eq 200 -and $disable60.Json.user.enabled -eq $false) "[T60f] 전용 관리자 비활성" $disable60
+                Assert-True ($adminState60 -eq "0|f") "[T60f] 기존 admin 계정은 잠기지 않았고 횟수 0 ($adminState60)"
 
                 # [17] 사유·메모 길이 상한(T33): 앞뒤 공백을 뺀 500자(코드 포인트)까지. 501자면 400 JSON·한국어 문장이고 DB 함수를 부르지 않으며
                 #      감사도 남지 않는다(세 쓰기 경로). 500자는 성공. 검증 DB에 이 단계 전용 작업·인시던트·보고서·검토 요청을 넣는다(cic17-wed, analyst1 허용).

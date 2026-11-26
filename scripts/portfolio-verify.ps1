@@ -1182,6 +1182,23 @@ try {
     $e2eLogs.Add("[7d] demo login with X-Forwarded-For: 1.2.3.4, $auditIp + Forwarded: for=192.0.2.66 + X-Real-IP: 192.0.2.67 + X-Forwarded-Prefix: /evil -> HTTP $($acRes.Status); latest LOGIN_SUCCESS audit client_ip=$auditRow")
     Assert-True ($auditRow -eq $auditIp) "감사 로그 IP가 위조 값이 아니라 클라이언트 IP($auditIp)"
 
+    # [T60] 관리자 TOTP 확인 경로(POST /api/auth/totp/verify)도 로그인 속도 제한에 든다(T60). 인증 없이 새 클라이언트 주소 하나에서
+    #       버스트를 넘겨 보낸다([7a]의 판정 꼴). 한도 전 응답은 401(로그인하지 않음)이고 한도를 넘으면 429다.
+    #       리허설을 위해 admin을 켜지 않는다(공개 스택의 admin은 [5]처럼 비활성이다). 인증 없는 요청이라 실패 횟수·감사에 닿지 않는다.
+    $totpIp60 = "203.0.113.160"
+    $tc60 = New-Client $totpIp60
+    [void](Invoke-Http -Path "/api/auth/csrf" -Client $tc60)
+    $totpStatuses60 = @()
+    for ($k = 1; $k -le 12; $k++) {
+        $totpStatuses60 += (Invoke-Http -Path "/api/auth/totp/verify" -Method POST -Client $tc60 -Csrf -JsonBody @{ code = "000000" }).Status
+    }
+    $totpFirst429 = [Array]::IndexOf($totpStatuses60, 429) + 1
+    # 로그인과 영역 하나를 같이 쓴다: 같은 주소의 로그인 POST도 바로 429다
+    $totpSameIpLogin60 = Invoke-Http -Path "/api/auth/login" -Method POST -Client $tc60 -Csrf -JsonBody @{ username = "rate-limit-probe"; password = "x" }
+    $e2eLogs.Add("[T60] 12 x unauthenticated POST /api/auth/totp/verify from $totpIp60 -> [$($totpStatuses60 -join ', ')] (first 429 at #$totpFirst429); right after, POST /api/auth/login from the same IP -> HTTP $($totpSameIpLogin60.Status)")
+    Assert-True ($totpFirst429 -ge 2 -and $totpFirst429 -le 8 -and @($totpStatuses60 | Where-Object { $_ -ne 429 -and $_ -ne 401 }).Count -eq 0) "[T60] 관리자 TOTP 확인 경로도 한 클라이언트 IP 한도 초과 시 429(그 전은 401)"
+    Assert-Status $totpSameIpLogin60 429 "[T60] TOTP 확인과 로그인이 속도 제한 영역 하나를 같이 쓴다"
+
     Write-Host "=== [8] WAF 차단 ==="
     $wafProbes = @(
         @{ Id = "pf-q-sqli"; Label = "query SQLi (?asset=' OR 1=1--)"; Path = "/api/incidents?asset=%27%20OR%201%3D1--" },
