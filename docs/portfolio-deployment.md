@@ -65,21 +65,22 @@
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음) |
-| `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 둘, `--rebuild-baseline`. 감사 로그 삭제 함수의 실행 권한(`T58`) |
-| `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`) |
+| `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 셋, `--rebuild-baseline`. 감사 로그 삭제 함수의 실행 권한(`T58`). 대응 조치 기준선 표식과 그 초기화 함수(`T56`) |
+| `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`). 매 주기 기준선 뒤에 덧붙은 대응 조치 기록 삭제(`T56`) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(로컬 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
 | `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T33] 초기화(주기 1분), ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
-- **무엇을 되돌리나**: 분석가 쓰기는 넷(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 둘(`dashboard.transition_incident`, `dashboard.decide_review`)만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다. 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 초기화는 감사 로그와 담당 이력(추가만 하는 기록)을 지우지 않는다. 감사 로그는 보관 기한(90일)이 지난 행만 같은 서비스가 하루 한 번 따로 지운다(아래 "감사 로그 보관 기한").
-- **어디서 하나**: 앱 밖 운영 서비스 `sandbox-reset`(상주, `psql`만)이 매시 정각(UTC·KST 모두 정각)에 `sandbox.reset_pipeline()` 다음 `sandbox.reset_assignments()`를 부르고 결과 한 줄을 남긴다. 시작할 때는 돌리지 않는다. 하루에 한 번은 이어서 감사 로그 삭제 함수도 부른다(`T58`, 아래). 앱에는 데모 전용 동작(모드 플래그, 앱 안 예약 작업, 체험 계정 이름을 아는 코드, 배너)이 없다.
-- **권한**: 초기화 함수 둘은 `SECURITY DEFINER`(소유 `zeekad_owner`·`dashboard_app`)이고 `search_path`를 고정하며 모든 객체를 스키마로 한정한다. 접속 계정 `zeekad_sandbox_reset`은 두 DB `CONNECT`, 함수가 든 `sandbox` 스키마 `USAGE`, 초기화 함수 둘과 감사 로그 삭제 함수(`public.purge_expired_audit_logs(integer)`, `T58`)의 `EXECUTE`만 가진다. 표(감사 로그 포함)·기준선(`sandbox_baseline`)·`CREATE` 권한은 없다(기준선을 바꿀 수 있으면 실제 표를 고른 값으로 되돌릴 수 있다). `dashboard_rw` 권한은 바꾸지 않는다.
+- **무엇을 되돌리나**: 분석가 쓰기는 다섯(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정·대응 조치 기록)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 둘(`dashboard.transition_incident`, `dashboard.decide_review`)만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다. 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 대응 조치 기록(`T56`, 방문자가 쓰는 자유 글이다)은 기준선 표식(설정할 때의 최대 `id`)보다 뒤에 덧붙은 행을 지운다. 그 기록을 남긴 감사 행(`INCIDENT_RESPONSE_ACTION`)은 그대로 둔다. 초기화는 감사 로그와 담당 이력(추가만 하는 기록)을 지우지 않는다. 감사 로그는 보관 기한(90일)이 지난 행만 같은 서비스가 하루 한 번 따로 지운다(아래 "감사 로그 보관 기한").
+- **어디서 하나**: 앱 밖 운영 서비스 `sandbox-reset`(상주, `psql`만)이 매시 정각(UTC·KST 모두 정각)에 `sandbox.reset_pipeline()` 다음 `sandbox.reset_assignments()`와 `sandbox.reset_response_actions()`를 부르고 결과 한 줄을 남긴다. 시작할 때는 돌리지 않는다. 하루에 한 번은 이어서 감사 로그 삭제 함수도 부른다(`T58`, 아래). 앱에는 데모 전용 동작(모드 플래그, 앱 안 예약 작업, 체험 계정 이름을 아는 코드, 배너)이 없다.
+- **권한**: 초기화 함수 셋은 `SECURITY DEFINER`(소유 `zeekad_owner`·`dashboard_app`)이고 `search_path`를 고정하며 모든 객체를 스키마로 한정한다. 접속 계정 `zeekad_sandbox_reset`은 두 DB `CONNECT`, 함수가 든 `sandbox` 스키마 `USAGE`, 초기화 함수 셋과 감사 로그 삭제 함수(`public.purge_expired_audit_logs(integer)`, `T58`)의 `EXECUTE`만 가진다. 표(감사 로그·대응 조치 기록·대응 조치 기준선 표식 포함)·기준선(`sandbox_baseline`)·`CREATE` 권한은 없다(기준선을 바꿀 수 있으면 실제 표를 고른 값으로 되돌릴 수 있다). `dashboard_rw` 권한은 바꾸지 않는다.
 - **동시 쓰기**: `reset_pipeline()`은 처음에 세 표를 `SHARE ROW EXCLUSIVE`로 잠가 진행 중인 쓰기를 기다리고 새 쓰기를 막는다. 5초 안에 잠그지 못하면 아무것도 바꾸지 않고 오류로 끝내고 다음 정각에 다시 한다.
 - **옛 기준선 거부**: 기준선에 표지(인시던트 수·탐지 작업 수·최대 `job_id`·세 표의 열 정의 해시)를 함께 둔다. 새 스냅샷을 올렸는데 기준선이 옛것이면 표지가 맞지 않아 초기화가 아무것도 바꾸지 않고 오류를 남긴다(3.10).
-- **설정 도구 `sandbox-setup`**(`--profile seed`, 슈퍼유저로 접속): 전용 역할·두 스키마·기준선·초기화 함수 둘을 만들고 감사 로그 삭제 함수의 `EXECUTE`를 준 뒤 권한을 점검한다. 삭제 함수는 앱이 만든 것이라(migration `V4`) 앱이 `V4`를 적용하기 전이면 아무것도 바꾸지 않고 멈춘다. 멱등이다. 기준선은 처음과 `--rebuild-baseline`일 때만 만든다. 그때 체험 계정 이름이 세 표의 행위자(`updated_by`·`actor`·`analyst`)나 현재 담당자에 하나라도 있으면 멈춘다(방문자 변경이 기준선이 되는 것을 막는다. 새 스냅샷이 그 이름을 이미 쓰는 경우도 잡는다. 공개 스냅샷에는 zeek_AD 기록의 행위자 `demo-analyst`가 있어 체험 계정 이름을 `trial-analyst`로 정했다). 처음 만들 때는 담당자가 있는 담당 행이 0이어야 한다. 다시 만들 때는 `sandbox-reset`을 먼저 멈춘다(초기화 계정 접속이 있으면 멈춘다).
+- **설정 도구 `sandbox-setup`**(`--profile seed`, 슈퍼유저로 접속): 전용 역할·두 스키마·기준선·초기화 함수 셋을 만들고 감사 로그 삭제 함수의 `EXECUTE`를 준 뒤 권한을 점검한다. 삭제 함수와 대응 조치 표는 앱이 만든 것이라(migration `V4`, `V5`) 앱이 그 migration을 적용하기 전이면 아무것도 바꾸지 않고 멈춘다. 멱등이다. 기준선은 처음과 `--rebuild-baseline`일 때만 만든다. 그때 체험 계정 이름이 세 표의 행위자(`updated_by`·`actor`·`analyst`)나 현재 담당자에 하나라도 있으면 멈춘다(방문자 변경이 기준선이 되는 것을 막는다. 새 스냅샷이 그 이름을 이미 쓰는 경우도 잡는다. 공개 스냅샷에는 zeek_AD 기록의 행위자 `demo-analyst`가 있어 체험 계정 이름을 `trial-analyst`로 정했다). 처음 만들 때는 담당자가 있는 담당 행이 0이어야 한다. 다시 만들 때는 `sandbox-reset`을 먼저 멈춘다(초기화 계정 접속이 있으면 멈춘다).
+- **대응 조치 기준선 표식(`T56`)**: 표식은 앱 DB의 한 행짜리 표 `sandbox.response_action_baseline`(소유 `dashboard_app`)이고 값은 설정할 때 `incident_response_actions`의 최대 `id`다. zeek_AD 기준선과 따로 정한다. 표식이 없으면 만들고 `--rebuild-baseline`이면 다시 잡고 그 밖에는 그대로 둔다. 그래서 zeek_AD 기준선이 이미 있는 스택에 `sandbox-setup`을 다시 돌려도 표식이 생긴다. 표식을 만들거나 다시 잡을 때 체험 계정이 쓴 대응 조치 행이 하나라도 있으면 멈춘다(방문자가 쓴 글이 기준선이 되어 남는 것을 막는다). 그때는 그 행을 지우고 다시 돌린다(3.8의 `T56` 절). 초기화 함수는 표식이 없으면 0건으로 넘어가지 않고 오류를 낸다. 대응 조치 표의 트리거는 `UPDATE`·`TRUNCATE`를 늘 거부하고 `DELETE`는 초기화 함수가 트랜잭션 안에서 켠 표식(`dashboard.response_actions_reset`)이 있을 때만 통과시킨다. 이 표식은 실수 방지이고 권한 경계가 아니다(표 소유자는 직접 켤 수 있다). 권한 경계는 표 소유권이다.
 - **결정을 소비하는 주체 없음**: 공개 스택의 `api`는 `run_api.py` 하나뿐이고 `zeekad_api`에는 `zeekad` 표 쓰기 권한이 없다. 쓰기 권한이 있는 `zeekad_worker`는 NOLOGIN이고 워커가 없다. 그래서 검토 결정 뒤 재개·보고서·Slack 같은 후속 쓰기가 없다(리허설 `[T33f]`가 세 표 밖 `zeekad` 표 전부의 행 수·내용 해시를 쓰기 전·직후·2분 뒤에 비교한다).
-- **쓰기 속도 제한**: nginx가 네 쓰기 경로의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
+- **쓰기 속도 제한**: nginx가 다섯 쓰기 경로(대응 조치 기록 포함)의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
 - **감사 로그 보관 기한(`T58`)**: 공개 데모는 방문자의 접속 기록(감사 로그의 계정·시각·접속 주소)을 90일 보관한다. 90일은 이 스택의 값이다. 앱의 기본값이 아니고 앱은 기한을 모른다(기한을 주지 않은 배포에서는 아무것도 지워지지 않는다, [`deployment-guide.md`](deployment-guide.md) 2.1).
   - **누가 지우나**: 앱이 아니라 `sandbox-reset`이 지운다. `compose.portfolio.yml`이 `SANDBOX_AUDIT_RETENTION_DAYS: "90"`을 고정 값으로 넘긴다(`.env` 변수가 아니다). 서비스는 하루에 한 번, 곧 서비스가 뜬 뒤 첫 주기와 UTC 날짜가 바뀐 뒤 첫 주기(KST 09:00 정각)에 앱 DB의 `public.purge_expired_audit_logs(90)`을 부른다. 그날 몫은 결과가 `OK`일 때만 쓴 것으로 친다. 실패했거나 아직 설정 전이면 다음 정각에 다시 부른다. `--once`는 늘 부른다.
   - **값**: 비우거나 `0`이면 지우지 않는다. 그 밖에는 정수 30~3650만 받고 아니면 서비스가 시작하지 않는다(종료 코드 2).
@@ -339,14 +340,15 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml logs postgres | grep
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm demo-seed
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm demo-seed
 # 체험 계정 초기화 설정(T33): 첫 실행은 "baseline created", 두 번째는 "baseline kept", 둘 다 RESULT: OK
+# 대응 조치 기준선 표식(T56)도 같다: 첫 실행은 "response action baseline created: max_id=0", 두 번째는 "response action baseline kept"
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm sandbox-setup
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm sandbox-setup
-# 한 번만 초기화: 방금 복원한 DB라 바뀐 행이 모두 0이어야 한다(OK pipeline[OK] ...(-0 +0 ~0) ...; assignments[OK] released=0)
+# 한 번만 초기화: 방금 복원한 DB라 바뀐 행이 모두 0이어야 한다(OK pipeline[OK] ...(-0 +0 ~0) ...; assignments[OK] released=0 history+=0; responses[OK] removed=0; audit[...])
 docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T sandbox-reset bash /sandbox/sandbox-reset.sh --once
 ```
 
 - 설정 전에는 `sandbox-reset`이 정각마다 `NOT_CONFIGURED…` 한 줄만 남긴다(오류가 아니다). 역할이 아직 없어 postgres 로그에 `password authentication failed for user "zeekad_sandbox_reset"`이 함께 남는다.
-- 초기화 확인: `docker compose -p zeekad-portfolio -f compose.portfolio.yml logs --since 2h sandbox-reset`에 정각마다 `OK pipeline[OK] analyst_review(-지운 +넣은 ~되돌린) incident_status(…) incident_status_history(…); assignments[OK] released=… history+=…; audit[…]` 줄이 있고 `ERROR`가 없어야 한다. 줄 끝의 감사 칸은 하루에 한 번 `audit[OK] purged=… cutoff=…`이고 나머지 정각은 `audit[SKIP]`이다(1.3).
+- 초기화 확인: `docker compose -p zeekad-portfolio -f compose.portfolio.yml logs --since 2h sandbox-reset`에 정각마다 `OK pipeline[OK] analyst_review(-지운 +넣은 ~되돌린) incident_status(…) incident_status_history(…); assignments[OK] released=… history+=…; responses[OK] removed=…; audit[…]` 줄이 있고 `ERROR`가 없어야 한다. `responses` 칸은 그 주기에 지운 대응 조치 기록 수다(`T56`). 줄 끝의 감사 칸은 하루에 한 번 `audit[OK] purged=… cutoff=…`이고 나머지 정각은 `audit[SKIP]`이다(1.3).
 
 - 첫 기동 때 `postgres`가 스냅샷을 복원한다(리허설에서 수십 초). 복원이 성공해야만 데이터 폴더에 표지 파일(`portfolio-restore.ok`)이 생기고 헬스체크가 통과한다. 복원이 실패하면 `postgres`가 healthy가 되지 않으므로 `down -v`로 지우고 원인을 고친 뒤 다시 올린다.
 - `postgres`는 PostgreSQL 이미지 기본 설정 그대로 컨테이너 안 로컬 소켓에 `trust` 인증을 쓴다(`initdb: warning: enabling "trust" authentication for local connections`). 바깥 포트가 없어 NAS에서 `docker exec` 권한이 있는 사용자만 쓸 수 있다.
@@ -581,6 +583,23 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 - **반영 뒤 확인**: `sandbox-reset … --once`의 줄 끝이 `audit[OK] purged=<수> cutoff=<UTC>`다. 처음에는 90일 넘은 행이 한꺼번에 지워진다(지운 수를 기록한다). 서비스마다 `docker inspect --format '{{json .HostConfig.LogConfig}}'`가 `json-file`·`10m`·`5`다. 이어서 4.4를 한다.
 - **되돌리기용 백업**: `backup/app-pre-*.dump` 가운데 90일 넘은 것을 지운다(3.9의 3a와 같은 명령). 처음 지우는 것은 `T57`의 NAS 단계다.
 - **롤백**: 파일 셋을 `*.pre-t58`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 서비스를 `up`한다. 옛 `sandbox-reset.sh`는 삭제 함수를 부르지 않으므로 그 뒤로는 아무것도 지워지지 않는다. 앱 DB의 `V4`(좁힌 트리거, `TRUNCATE` 차단, 삭제 함수)를 그대로 둔 채 앞 앱 이미지가 뜨는지는 `T57`이 리허설에서 확인한다. 이미 지워진 감사 행은 되돌리지 않는다.
+
+#### 대응 조치 기록을 넣는 갱신(`T56`)
+
+`T56`은 앱 이미지 하나와 파일 셋(`docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`, `docker/portfolio/nginx/zeekad-portfolio-http.conf.template`)을 바꾼다. `compose.portfolio.yml`, `.env`, 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이다.
+
+- **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V5`를 적용한다. `flyway_schema_history`에 버전 5가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(대응 조치 기준선 표식과 초기화 함수를 만든다. `response action baseline created: max_id=<수>`와 `RESULT: OK`) → ③ nginx 템플릿이 걸리게 `nginx-waf`를 다시 만든다(새 쓰기 경로의 속도 제한). ①보다 ②를 먼저 하면 `sandbox-setup`이 `table public.incident_response_actions is missing`으로 멈춘다(아무것도 바꾸지 않는다).
+- **틈의 로그**: 새 `sandbox-reset.sh`가 ②보다 먼저 돌면 그 줄의 대응 조치 칸이 `responses[NOT_CONFIGURED]`다. 줄 전체는 `ERROR`가 되지 않는다. ② 뒤의 첫 정각부터 `responses[OK] removed=<수>`다.
+- **①과 ② 사이에 방문자가 대응 조치를 기록했을 때**: `sandbox-setup`이 `REFUSED: <수> response action rows recorded by 'trial-analyst' exist`로 멈춘다(그 글을 기준선으로 굳히지 않는다). 아래처럼 그 행을 지우고 다시 돌린다. 표의 트리거가 `DELETE`를 막으므로 트랜잭션 안에서만 표식을 켠다. 감사 로그의 기록은 남는다.
+
+```bash
+docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d zeekad_dashboard \
+  -c "BEGIN; SET LOCAL dashboard.response_actions_reset = 'on'; DELETE FROM public.incident_response_actions WHERE actor_username = 'trial-analyst'; COMMIT;"
+docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --profile seed run --rm sandbox-setup
+```
+
+- **반영 뒤 확인**: `sandbox-reset … --once`의 줄에 `responses[OK] removed=0`이 있다. `trial-analyst`로 분석 중인 인시던트에 대응 조치를 하나 기록하고 다음 정각 뒤에 사라졌는지, 감사 로그 화면에 "대응 조치 기록" 행이 남았는지 본다. 같은 주소에서 기록 요청을 잇달아 보내면 `429`가 나오는지 본다.
+- **롤백**: 파일 셋을 `*.pre-t56`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 서비스를 `up`한다. 옛 `sandbox-reset.sh`는 대응 조치 초기화 함수를 부르지 않는다. 앱 DB의 `V5`(표와 트리거), 기준선 표식, 초기화 함수는 그대로 남는다. `V5`를 둔 채 앞 앱 이미지가 뜨는지는 `T57`이 리허설에서 확인한다.
 
 ### 3.9 스냅샷(공개 데이터) 교체
 

@@ -59,6 +59,7 @@
      - `V2`(`T25`): 담당자 `incident_assignments`와 추가만 하는 이력 `incident_assignment_history`(변경·삭제 차단 트리거)
      - `V3`(`T27`): 인시던트 번호 `incident_refs`(추가만, 변경·삭제 차단 트리거)
      - `V4`(`T58`): 감사 로그 보관 기한. `audit_logs` 트리거 함수가 `DELETE`를 한 경우에만 통과시킵니다(표식 `dashboard.audit_retention_purge`가 `on`이고 행이 30일보다 오래됨). `UPDATE`는 늘 거부하고 `TRUNCATE`도 새 트리거 `trg_audit_logs_no_truncate`가 거부합니다. 기한이 지난 행을 지우는 함수 `public.purge_expired_audit_logs(<일>)`를 만듭니다(`SECURITY DEFINER`, `search_path` 고정, `PUBLIC` 실행 불가).
+     - `V5`(`T56`): 대응 조치 기록 `incident_response_actions`(분석가가 인시던트에 한 조치를 적은 기록. 종류는 일곱 값만 받습니다). 기록은 고칠 수 없습니다. 트리거가 `UPDATE`와 `TRUNCATE`를 늘 거부하고 `DELETE`는 표식 `dashboard.response_actions_reset`이 `on`일 때만 통과시킵니다. 앱에는 이 표를 고치거나 지우는 API와 SQL이 없고 표식을 켜는 코드도 없습니다. 공개 데모에서만 배포 도구(`sandbox-setup.sh`)가 만든 초기화 함수가 기준선 뒤에 덧붙은 기록을 지웁니다([`portfolio-deployment.md`](portfolio-deployment.md) 1.3). 다른 배포에서는 기록이 지워지지 않습니다.
    - `dashboard_app` 계정은 `zeekad_dashboard` 데이터베이스의 DDL/DML 권한만 있습니다.
    - **감사 로그 보관 기한(`T58`)**: 앱은 기한을 모르고 감사 로그를 지우지 않습니다(앱 코드와 설정에 삭제가 없습니다). 기한을 설정하지 않으면 아무것도 지워지지 않습니다. 실제 관제에서는 접속 기록을 오래 남겨야 하므로 이것이 기본입니다.
      - 기한을 두려면 앱 밖의 예약 작업이 하루 한 번 `SELECT * FROM public.purge_expired_audit_logs(<일>);`를 부릅니다(예: cron이 `psql -d zeekad_dashboard -c "SELECT * FROM public.purge_expired_audit_logs(365)"`). 함수는 지운 수와 기준 시각을 돌려주고 한 행이라도 지웠으면 감사 행 하나(`AUDIT_RETENTION_PURGE`, 행위자 `audit-retention`, 역할 `SYSTEM`)를 남깁니다.
