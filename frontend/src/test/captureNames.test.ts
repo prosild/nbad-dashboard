@@ -31,6 +31,48 @@ describe('캡처 표시 이름', () => {
     ]);
   });
 
+  it('T66: 실습망 덧붙임 셋(lab-20261126 오탐 규칙 뒤 재실행, lab-20261124·25 유휴(규칙 전))은 인계의 글자 그대로다', () => {
+    // 탐지 저장소 data-contract-v2 "실습망 캡처별 표시"(2026-11-23, 2026-11-26 갱신)를 T62 규칙으로 옮긴 글(handoff/T66.md 5절)
+    expect(captureText('lab-20261126')).toBe('실습망 2026-11-26 · 오탐 규칙 뒤 재실행');
+    expect(captureText('lab-20261124')).toBe('실습망 2026-11-24 · 유휴(규칙 전)');
+    expect(captureText('lab-20261125')).toBe('실습망 2026-11-25 · 유휴(규칙 전)');
+    expect(LAB_CAPTURE_NOTES['lab-20261126']).toEqual({
+      note: '오탐 규칙 뒤 재실행',
+      description:
+        '브로드캐스트뿐인 창을 조사 큐에서 빼는 규칙(탐지 저장소 설계 결정 DD-021)을 배포한 뒤의 실습망. ' +
+        '02:15~04:45 UTC는 유휴(브로드캐스트만, 사건 0건). 04:50~05:00 연결 확인, 05:05~05:20 타깃 정상 배경, ' +
+        '05:25~05:40 비커닝, 05:45~06:00 분할 유출(정답 lab-ep-012·013). 연결 확인과 정상 배경 창도 사건이 된다(새 자산의 한계). ' +
+        '탐지 저장소 실습망 공격 탐지 결과 "규칙 전과 뒤".',
+    });
+    expect(LAB_CAPTURE_NOTES['lab-20261124']).toEqual({
+      note: '유휴(규칙 전)',
+      description:
+        '공격이 없는 날. 타깃 VM의 NetBIOS 브로드캐스트 한 건이 5분마다 사건이 됐다(규칙 전, 사건 118건). ' +
+        '시연 화면에서는 숨기길 권한다(규칙 전의 오탐 사례는 lab-20261122의 사건으로 충분하다).',
+    });
+    expect(LAB_CAPTURE_NOTES['lab-20261125']).toEqual({
+      note: '유휴(규칙 전)',
+      description:
+        '공격이 없는 날. 타깃 VM의 NetBIOS 브로드캐스트 한 건이 5분마다 사건이 됐다(규칙 전, 사건 35건). ' +
+        '시연 화면에서는 숨기길 권한다(규칙 전의 오탐 사례는 lab-20261122의 사건으로 충분하다).',
+    });
+    const info = captureInfo('lab-20261126');
+    expect(info.known).toBe(true);
+    expect(info.tooltip).toContain('탐지 저장소 설계 결정 DD-021');
+    expect(info.tooltip).toContain('캡처 ID: lab-20261126');
+    // 사전 키는 여덟(옛 다섯 + 셋)
+    expect(Object.keys(LAB_CAPTURE_NOTES).sort()).toEqual([
+      'lab-20261118',
+      'lab-20261119',
+      'lab-20261122',
+      'lab-20261123',
+      'lab-20261124',
+      'lab-20261125',
+      'lab-20261126',
+      'lab-20261201',
+    ]);
+  });
+
   it('실습망 덧붙임 5개와 표에 없는 새 lab-*', () => {
     expect(captureText('lab-20261119')).toBe('실습망 2026-11-19 · Kali 공격 + 정상 배경');
     expect(captureText('lab-20261118')).toBe('실습망 2026-11-18 · 시험');
@@ -90,12 +132,14 @@ describe('짧은 수집원 이름(T24)', () => {
     expect(captureShortName(null)).toBe('-');
   });
 
-  it('공개 캡처 10개가 서로 다른 짧은 이름이고, 허용 목록 안에서 겹치면 연도를 붙인다', () => {
-    const publicIds = ['cic17-tue', 'cic17-wed', 'cic17-thu', 'cic17-fri', 'syn1-tue', 'syn1-wed', 'syn1-thu', 'syn1-fri', 'lab-20261119', 'lab-20261122'];
+  it('공개 캡처 11개가 서로 다른 짧은 이름이고, 허용 목록 안에서 겹치면 연도를 붙인다', () => {
+    // T66: 공개 캡처에 lab-20261126을 더했다(10 → 11)
+    const publicIds = ['cic17-tue', 'cic17-wed', 'cic17-thu', 'cic17-fri', 'syn1-tue', 'syn1-wed', 'syn1-thu', 'syn1-fri', 'lab-20261119', 'lab-20261122', 'lab-20261126'];
     const names = captureShortNames(publicIds);
-    expect(new Set(publicIds.map((id) => names.get(id))).size).toBe(10);
+    expect(new Set(publicIds.map((id) => names.get(id))).size).toBe(11);
     expect(names.get('lab-20261119')).toBe('실습 11-19');
     expect(names.get('lab-20261122')).toBe('실습 11-22');
+    expect(names.get('lab-20261126')).toBe('실습 11-26');
     const clash = captureShortNames(['lab-20251119', 'lab-20261119', 'lab-20261120']);
     expect(clash.get('lab-20251119')).toBe('실습 2025-11-19');
     expect(clash.get('lab-20261119')).toBe('실습 2026-11-19');
