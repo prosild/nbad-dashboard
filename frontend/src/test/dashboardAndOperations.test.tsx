@@ -745,11 +745,14 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     const badge = within(imported).getByText('원본 시각');
     expect(badge).toHaveAttribute('title', TOOLTIP);
     expect(imported.textContent).toBe('2017-07-06 04:10:00원본 시각');
+    // 날짜에는 같은 열의 상대 시각 칸과 같은 꼴의 툴팁("마지막 이상 활동 <날짜>")이 붙는다
+    expect(within(imported).getByText('2017-07-06 04:10:00')).toHaveAttribute('title', '마지막 이상 활동 2017-07-06 04:10:00');
 
     // 상태가 실패인 가져온 데이터 캡처도 같다(state가 아니라 sourceType으로 가른다)
     const failedImported = activityCell('[data-capture-row="syn1-thu"]');
     expect(failedImported.textContent).toBe('2017-07-07 05:00:05원본 시각');
     expect(within(failedImported).getByText('원본 시각')).toHaveAttribute('title', TOOLTIP);
+    expect(within(failedImported).getByText('2017-07-07 05:00:05')).toHaveAttribute('title', '마지막 이상 활동 2017-07-07 05:00:05');
 
     // 발생 시각이 없으면 지금처럼 "-"이고 표지가 없다
     const none = activityCell('[data-capture-row="syn1-fri"]');

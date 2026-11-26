@@ -132,9 +132,17 @@ export const SOURCE_TIME_TOOLTIP = '가져온 데이터의 발생 시각은 원�
 
 /**
  * T50 가져온 데이터 캡처의 발생 시각: 원본 데이터셋의 시각이라(예: 2017-07) 기준 시각에서 센 상대 시각("3,425일 전")이
- * 뜻이 없다. 날짜·시각(KST)과 "원본 시각" 표지로 보인다.
+ * 뜻이 없다. 날짜·시각(KST)과 "원본 시각" 표지로 보인다. 날짜의 툴팁은 상대 시각 칸(`RelativeTime`)과 같은 꼴이다.
  */
-export function SourceDatasetTime({ iso, emptyTitle }: { iso: string | null | undefined; emptyTitle?: string }) {
+export function SourceDatasetTime({
+  iso,
+  label,
+  emptyTitle,
+}: {
+  iso: string | null | undefined;
+  label: string;
+  emptyTitle?: string;
+}) {
   if (!iso) {
     return (
       <span className="text-slate-500" title={emptyTitle}>
@@ -144,7 +152,9 @@ export function SourceDatasetTime({ iso, emptyTitle }: { iso: string | null | un
   }
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <span className="tabular-nums">{formatDateTime(iso)}</span>
+      <span className="tabular-nums" title={`${label} ${formatDateTime(iso)}`}>
+        {formatDateTime(iso)}
+      </span>
       <SocBadge tone="muted" title={SOURCE_TIME_TOOLTIP}>
         {SOURCE_TIME_LABEL}
       </SocBadge>
@@ -573,7 +583,7 @@ function CaptureTableRow({
       <td className="soc-td text-slate-200">
         {/* T50: 가져온 데이터인지는 상태(state)가 아니라 수집원 종류로 가른다(실패·기록 없음인 가져온 캡처도 같다) */}
         {row.sourceType === 'imported' ? (
-          <SourceDatasetTime iso={row.lastActivityAt} emptyTitle={NO_ACTIVITY_TITLE} />
+          <SourceDatasetTime iso={row.lastActivityAt} label="마지막 이상 활동" emptyTitle={NO_ACTIVITY_TITLE} />
         ) : (
           <RelativeTime iso={row.lastActivityAt} anchor={anchor} label="마지막 이상 활동" emptyTitle={NO_ACTIVITY_TITLE} />
         )}
