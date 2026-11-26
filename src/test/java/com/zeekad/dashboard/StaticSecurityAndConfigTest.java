@@ -543,7 +543,7 @@ class StaticSecurityAndConfigTest {
         assertThat(resetSh).contains("PGUSER=zeekad_sandbox_reset", "NOT_CONFIGURED", "--once")
                 .doesNotContain("PGPASSWORD=\"${POSTGRES");
 
-        // 쓰기 속도 제한: 다섯 쓰기 경로(T56: 대응 조치 기록이 더해졌다)의 POST만 정규화된 $uri로, 로그인 제한과 다른 영역
+        // 쓰기 속도 제한: 여섯 쓰기 경로(T56: 대응 조치 기록, T53: 다시 열기가 더해졌다)의 POST만 정규화된 $uri로, 로그인 제한과 다른 영역
         assertThat(serviceBlock(compose, "nginx-waf")).contains("ZEEKAD_WRITE_RATE: ${PORTFOLIO_WRITE_RATE:-10r/m}",
                 "ZEEKAD_WRITE_BURST: ${PORTFOLIO_WRITE_BURST:-5}");
         String template = Files.readString(
@@ -561,13 +561,15 @@ class StaticSecurityAndConfigTest {
         for (String key : List.of("POST:/api/incidents/42/rank/1/transition", "POST:/api/incidents/42/rank/1/assignment",
                 "POST:/api/incidents/42/rank/1/review-decision", "POST:/api/reviews/decide",
                 "POST:/api/incidents/42/rank/1/transition/", "POST:/api/reviews/decide/",
-                "POST:/api/incidents/42/rank/1/response-actions", "POST:/api/incidents/42/rank/1/response-actions/")) {
+                "POST:/api/incidents/42/rank/1/response-actions", "POST:/api/incidents/42/rank/1/response-actions/",
+                "POST:/api/incidents/42/rank/1/reopen", "POST:/api/incidents/42/rank/1/reopen/")) {
             assertThat(limited.test(key)).as("쓰기 제한 대상 %s", key).isTrue();
         }
         for (String key : List.of("GET:/api/incidents/42/rank/1/transition", "GET:/api/reviews/decide",
                 "POST:/api/auth/login", "GET:/api/incidents/42/rank/1/assignees", "POST:/api/admin/users",
                 "POST:/api/incidents/42/rank/1/transition/x", "GET:/api/incidents/42/rank/1/response-actions",
-                "POST:/api/incidents/42/rank/1/response-actions/x", "POST:/api/incidents/42/rank/1/response-action")) {
+                "POST:/api/incidents/42/rank/1/response-actions/x", "POST:/api/incidents/42/rank/1/response-action",
+                "GET:/api/incidents/42/rank/1/reopen", "POST:/api/incidents/42/rank/1/reopen/x")) {
             assertThat(limited.test(key)).as("쓰기 제한 밖 %s", key).isFalse();
         }
 
