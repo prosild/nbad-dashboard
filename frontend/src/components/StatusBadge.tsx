@@ -435,7 +435,7 @@ export function criticalAssetTooltip({
  * 툴팁만으로는 휴대폰·키보드 사용자가 볼 수 없어 같은 설명을 화면 읽기 글로도 둔다.
  * showRaise면 올림을 보이는 글로 붙인다(상세 머리줄: "중요 자산 · Medium → High").
  * masked면 이름을 쓰지 않는다(조회자. 서버도 이름을 주지 않는다).
- * iconOnly면 보이는 글 없이 작은 원 안의 왕관 아이콘만 둔다(데스크톱 인시던트 목록 표의 우선순위 칸, T62). 글 표지가 칸을
+ * iconOnly면 보이는 글 없이 작은 원(12px) 안의 왕관 아이콘만 둔다(데스크톱 인시던트 목록 표의 우선순위 칸, T62). 글 표지가 칸을
  * 96px에서 177px로 넓혀 1280px 표가 넘쳤고, 배지 꼴의 아이콘도 칸에 34px를 더해 1536px에서 넘쳤다. 그래서 놓는 쪽(큐 칸)이
  * 우선순위 배지 모서리에 겹쳐 둔다. 툴팁과 화면 읽기 글은 같고, 왕관의 뜻은 우선순위 열 머리 툴팁에도 적는다.
  */
@@ -463,9 +463,9 @@ export function CriticalAssetBadge({
       <span
         title={tooltip}
         data-critical-asset="icon"
-        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-sky-500/60 bg-slate-950 text-sky-200"
+        className="inline-flex h-3 w-3 items-center justify-center rounded-full border border-sky-500/60 bg-slate-950 text-sky-200"
       >
-        <Crown className="h-2.5 w-2.5" aria-hidden="true" />
+        <Crown className="h-2 w-2" aria-hidden="true" />
         <span className="sr-only">{tooltip.replace('\n', '. ')}</span>
       </span>
     );

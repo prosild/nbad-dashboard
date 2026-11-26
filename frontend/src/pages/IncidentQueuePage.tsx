@@ -1255,11 +1255,12 @@ function QueueTable({
                 </td>
                 <td className="soc-td-compact px-1.5 2xl:px-2">
                   <div className="flex items-center gap-1">
-                    {/* T62: 중요 자산 왕관은 우선순위 배지 오른쪽 위 모서리에 겹쳐 둔다(칸 폭을 늘리지 않는다. 배지 오른쪽 여백 안에 걸친다) */}
-                    <span className={`relative inline-flex ${item.assetCritical ? 'mr-1.5' : ''}`}>
+                    {/* T62: 중요 자산 왕관(12px 원)은 우선순위 배지 오른쪽 위 모서리에 겹쳐 둔다. 칸 폭을 늘리지 않는다:
+                        배지 안쪽으로는 배지 오른쪽 여백(8px)만큼, 바깥으로는 옆 표지와의 간격(4px)만큼 걸친다 */}
+                    <span className="relative inline-flex">
                       <PriorityBadge priority={item.priority} />
                       {item.assetCritical && (
-                        <span className="absolute -right-1.5 -top-1.5 inline-flex">
+                        <span className="absolute -right-1 -top-1.5 inline-flex">
                           <QueueCriticalBadge item={item} masked={masked} iconOnly />
                         </span>
                       )}
