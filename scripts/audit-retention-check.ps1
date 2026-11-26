@@ -6,17 +6,20 @@
     [string]$ContainerName = "zeekad-t58-pg"
 )
 
-# 감사 로그 보관 기한(T58)의 SQL을 PostgreSQL에서 직접 시험한다(Java 시험은 H2라 이 로직을 못 본다).
+# 감사 로그 보관 기한(T58)과 대응 조치 기록(T56)의 SQL을 PostgreSQL에서 직접 시험한다(Java 시험은 H2라 이 로직을 못 본다).
 # - 일회용 PostgreSQL 컨테이너 하나(-ContainerName)를 네트워크 없이, 데이터 경로는 tmpfs로 띄운다(볼륨을 만들지 않는다).
 #   docker exec로만 쓰고 끝나면 그 이름의 컨테이너만 지운다. 다른 컨테이너·compose 프로젝트·네트워크·볼륨은 건드리지 않는다.
-# - 실제와 같게 적용한다: 슈퍼유저가 아닌 역할 dashboard_app이 소유한 DB에 저장소의 V1~V4 파일을 그대로,
+# - 실제와 같게 적용한다: 슈퍼유저가 아닌 역할 dashboard_app이 소유한 DB에 저장소의 V1~V5 파일을 그대로,
 #   파일마다 한 트랜잭션(psql -1 -v ON_ERROR_STOP=1)으로 그 역할로 적용한다.
 # - 이어서 저장소의 docker/portfolio/sandbox/sandbox-setup.sh와 sandbox-reset.sh --once를 그대로 같은 컨테이너에서 돌린다
 #   (zeek_AD 표 다섯은 열만 맞춘 빈 표로 둔다. 초기화 함수 둘·기준선·전용 역할·권한은 설정 도구가 실제로 만든다).
 #   설정 도구가 V4 전에는 멈추는지, 삭제 함수의 EXECUTE만 주는지, 한 줄 로그의 감사 칸이 상태마다 어떻게 나오는지 본다.
+#   T56: V5 전에도 멈추는지, 대응 조치 표의 트리거(UPDATE·TRUNCATE 거부, 표식 없는 DELETE 거부), 기준선 표식이 zeek_AD 기준선과 따로
+#   정해지는지(NAS 갱신 경우), 체험 계정의 행이 있으면 표식을 만들지 않는지, 초기화가 기준선 뒤의 행만 지우는지,
+#   함수나 표식이 없을 때의 responses 칸(NOT_CONFIGURED / ERROR)을 본다.
 #   scripts/sandbox-reset-daily-test.sh(하루 한 번 판정)는 컨테이너의 bash로 돌린다.
 # - 컨테이너 안 접속은 유닉스 소켓(이미지 기본 trust)이다. 슈퍼유저 비밀번호는 무작위로 만들어 환경 변수로만 넘기고 출력·기록하지 않는다.
-# - 결과: <OutDir>/pg-check.txt, reset-once.txt, once-a-day.txt(줄마다 PASS 또는 FAIL). FAIL이 있으면 종료 코드 1.
+# - 결과: <OutDir>/pg-check.txt, reset-once.txt, response-actions.txt, once-a-day.txt(줄마다 PASS 또는 FAIL). FAIL이 있으면 종료 코드 1.
 
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
@@ -28,7 +31,8 @@ if ([IO.Path]::IsPathRooted($OutDir)) { $OutFullDir = $OutDir } else { $OutFullD
 [void](New-Item -ItemType Directory -Force -Path $OutFullDir)
 
 $MigrationDir = Join-Path $RepoRoot "src/main/resources/db/migration/postgresql"
-$Migrations = @("V1__init_dashboard_auth_audit.sql", "V2__incident_assignments.sql", "V3__incident_refs.sql", "V4__audit_retention.sql")
+$Migrations = @("V1__init_dashboard_auth_audit.sql", "V2__incident_assignments.sql", "V3__incident_refs.sql", "V4__audit_retention.sql",
+    "V5__incident_response_actions.sql")
 $ResetScript = Join-Path $RepoRoot "docker/portfolio/sandbox/sandbox-reset.sh"
 $SetupScript = Join-Path $RepoRoot "docker/portfolio/sandbox/sandbox-setup.sh"
 $DailyTest = Join-Path $RepoRoot "scripts/sandbox-reset-daily-test.sh"
@@ -176,10 +180,12 @@ ALTER TABLE zeekad.analyst_review OWNER TO zeekad_owner;
     }
 
     # sandbox-setup.sh를 슈퍼유저로(소켓). 소켓 접속은 trust라 두 비밀번호 값은 인증에 쓰이지 않는다(스크립트가 빈 값을 거부해서 넣는다).
-    function Invoke-Setup {
+    # -SetupArgs: 설정 도구에 줄 인자(고정 글 "--rebuild-baseline"만 쓴다).
+    function Invoke-Setup([string]$SetupArgs = "") {
+        if ($SetupArgs -ne "" -and $SetupArgs -ne "--rebuild-baseline") { throw "Invoke-Setup: 모르는 인자 $SetupArgs" }
         return Invoke-Docker @("exec", "--user", "postgres", "-e", "PGUSER=postgres", "-e", "PGPASSWORD=$($env:SANDBOX_RESET_DB_PASSWORD_T58)",
             "-e", "SANDBOX_RESET_DB_PASSWORD=$($env:SANDBOX_RESET_DB_PASSWORD_T58)", "-e", "SANDBOX_TRIAL_USERNAME=trial-analyst",
-            $ContainerName, "sh", "-c", "bash /t58/sandbox-setup.sh 2>&1") -IgnoreExitCode
+            $ContainerName, "sh", "-c", "bash /t58/sandbox-setup.sh $SetupArgs 2>&1") -IgnoreExitCode
     }
     function Get-SetupLines($Result) { return (@($Result.Out -split "`r?`n" | Where-Object { $_ -match 'sandbox-setup: ' }) -join ' / ') }
 
@@ -197,6 +203,21 @@ ALTER TABLE zeekad.analyst_review OWNER TO zeekad_owner;
 
     $r = Invoke-Migration $Migrations[3]
     Assert-Check "[적용] $($Migrations[3]) (dashboard_app, 한 트랜잭션)" ($r.Code -eq 0) "exit=$($r.Code) $($r.Out)"
+
+    # T56: V4는 있고 V5가 없을 때(앱이 아직 V5를 적용하지 않음) 설정 도구는 멈춘다. 뒤의 response-actions.txt에 적는다.
+    $setupBeforeV5 = Invoke-Setup
+    $afterRefusedSetupV5 = Get-Scalar "postgres" "SELECT 'role=' || (SELECT count(*) FROM pg_roles WHERE rolname = 'zeekad_sandbox_reset');"
+    $afterRefusedSetupV5 += " " + (Get-Scalar "zeekad" "SELECT 'zeekad_schemas=' || (SELECT count(*) FROM pg_namespace WHERE nspname IN ('sandbox', 'sandbox_baseline'));")
+    $afterRefusedSetupV5 += " " + (Get-Scalar "zeekad_dashboard" "SELECT 'app_schemas=' || (SELECT count(*) FROM pg_namespace WHERE nspname = 'sandbox');")
+    $r = Invoke-Migration $Migrations[4]
+    Assert-Check "[적용] $($Migrations[4]) (dashboard_app, 한 트랜잭션)" ($r.Code -eq 0) "exit=$($r.Code) $($r.Out)"
+    # T56: 대응 조치의 기준선이 될 행 둘(체험 계정이 아닌 분석가). 설정 도구 1차가 이 둘의 최대 id를 표식으로 잡는다.
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" @'
+INSERT INTO incident_response_actions (incident_id, capture_id, job_id, action_type, note, actor_username, recorded_at) VALUES
+  ('t56-inc', 't56-cap', 1, 'block_ip', 'baseline 1', 'analyst-a', now() - interval '2 days'),
+  ('t56-inc', 't56-cap', 1, 'none', 'baseline 2', 'analyst-a', now() - interval '1 day');
+'@ -StopOnError
+    if ($r.Code -ne 0) { throw "대응 조치 기준선 행 넣기 실패`n$($r.Out)" }
 
     # --- 적용 뒤 함수의 소유자·정의자 권한·설정·PUBLIC 실행 권한(pg_proc에서 읽는다) ---
     $metaSql = "SELECT p.oid::regprocedure || ' owner=' || pg_get_userbyid(p.proowner) || ' prosecdef=' || p.prosecdef || ' proconfig=' || COALESCE(array_to_string(p.proconfig, ','), '(none)') || ' public_execute=' || EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE x.grantee = 0) FROM pg_proc p WHERE p.oid = '{0}'::regprocedure;"
@@ -361,7 +382,8 @@ ROLLBACK;
     Add-Line "# T58 설정 도구(sandbox-setup.sh)와 초기화 서비스(sandbox-reset.sh --once): 저장소의 두 스크립트를 그대로 같은 일회용 PostgreSQL 컨테이너에서 실행"
     Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. zeek_AD 표 다섯은 열만 맞춘 빈 표다. 초기화 함수 둘·기준선·역할·권한은 설정 도구가 만든 실제 것이다."
     $lineRx = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z sandbox-reset: '
-    $base = 'pipeline\[OK\] analyst_review\(-0 \+0 ~0\) incident_status\(-0 \+0 ~0\) incident_status_history\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0'
+    # T56: assignments 칸 다음에 responses 칸이 온다(설계 변경으로 줄의 꼴이 바뀌었다). 이 구간에서는 기준선 뒤의 대응 조치 행이 없어 늘 removed=0이다.
+    $base = 'pipeline\[OK\] analyst_review\(-0 \+0 ~0\) incident_status\(-0 \+0 ~0\) incident_status_history\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0; responses\[OK\] removed=0'
     $purgeFnRx = 'public\.purge_expired_audit_logs\(integer\)'
     $resetPrivSql = "SELECT 'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset') || ' purge_execute=' || COALESCE(has_function_privilege('zeekad_sandbox_reset', to_regprocedure('public.purge_expired_audit_logs(integer)')::oid, 'EXECUTE')::text, '(no function)') || ' reset_assignments_execute=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_assignments()', 'EXECUTE') || ' public_create=' || has_schema_privilege('zeekad_sandbox_reset', 'public', 'CREATE');"
 
@@ -369,8 +391,8 @@ ROLLBACK;
     Assert-Check "[S1] 삭제 함수가 없으면(앱이 V4를 적용하기 전) 설정 도구는 건너뛰지 않고 멈춘다. 역할·스키마를 만들지 않는다" `
         ($setupBeforeV4.Code -eq 1 -and $setupBeforeV4.Out -match ("function $purgeFnRx is missing in zeekad_dashboard; start dashboard-app with migration V4") -and $setupBeforeV4.Out -notmatch 'RESULT: OK' -and $afterRefusedSetup -eq "role=0 zeekad_schemas=0 app_schemas=0") "exit=$($setupBeforeV4.Code) $(Get-SetupLines $setupBeforeV4) | $afterRefusedSetup"
     Add-Line "[S2] 설정 전(초기화 계정 없음)의 sandbox-reset --once, 기한 90: exit=$($resetBeforeSetup.Code) $($resetBeforeSetup.Out)"
-    Assert-Check "[S2] 설정 전에는 세 칸 모두 미설정이고 ERROR 줄이 아니다(종료 코드 0)" `
-        ($resetBeforeSetup.Code -eq 0 -and $resetBeforeSetup.Out -match ($lineRx + 'NOT_CONFIGURED_OR_LOGIN_FAILED pipeline\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; assignments\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; audit\[NOT_CONFIGURED\] ') -and $resetBeforeSetup.Out -notmatch ' ERROR ') $resetBeforeSetup.Out
+    Assert-Check "[S2] 설정 전에는 네 칸 모두 미설정이고 ERROR 줄이 아니다(종료 코드 0)" `
+        ($resetBeforeSetup.Code -eq 0 -and $resetBeforeSetup.Out -match ($lineRx + 'NOT_CONFIGURED_OR_LOGIN_FAILED pipeline\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; assignments\[NOT_CONFIGURED_OR_LOGIN_FAILED\] .*; responses\[NOT_CONFIGURED\] .*; audit\[NOT_CONFIGURED\] ') -and $resetBeforeSetup.Out -notmatch ' ERROR ') $resetBeforeSetup.Out
 
     # V4가 적용된 지금(위 pg-check가 끝난 상태) 설정 도구를 두 번 돌린다.
     $setup1 = Invoke-Setup
@@ -480,9 +502,211 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
     Assert-Check "[R8] 잠금이 풀리면 다음 실행이 지운다(audit[OK] purged=1)" ($r8.Code -eq 0 -and $r8.Out -match ($lineRx + 'OK ' + $base + '; audit\[OK\] purged=1 cutoff=')) $r8.Out
     $totalFailed += Save-Lines "reset-once.txt"
 
+    # ================= T56 대응 조치 기록: V5의 트리거, 기준선 표식, 초기화 함수(저장소의 두 스크립트 그대로) =================
+    Add-Line "# T56 대응 조치 기록: V5(incident_response_actions)의 트리거와 설정 도구의 기준선 표식·초기화 함수를 같은 일회용 PostgreSQL 컨테이너에서 직접 본 결과"
+    Add-Line "# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 이미지 $Image. 모의가 아니라 실제 PostgreSQL이다. 기준선 행 둘(analyst-a)은 설정 도구 1차 전에 넣었다."
+    $raTable = "incident_response_actions"
+    $raRowsSql = "SELECT COALESCE(string_agg(note, ',' ORDER BY id), '(none)') FROM public.incident_response_actions;"
+    $raMarkerSql = "SELECT CASE WHEN to_regclass('sandbox.response_action_baseline') IS NULL THEN 'no table' ELSE (SELECT COALESCE((SELECT 'max_id=' || max_id FROM sandbox.response_action_baseline WHERE id = 1), 'no row')) END;"
+    $raMaxSql = "SELECT COALESCE(max(id), 0) FROM public.incident_response_actions;"
+    $raInsert = "INSERT INTO incident_response_actions (incident_id, capture_id, job_id, action_type, note, actor_username, recorded_at) VALUES ('t56-inc', 't56-cap', 1, '{0}', '{1}', '{2}', now());"
+    # 운영자가 체험 계정의 행을 손으로 지우는 방법(docs/portfolio-deployment.md의 안내와 같은 문장). 표식을 트랜잭션 안에서만 켠다.
+    $raOperatorDelete = "BEGIN; SET LOCAL dashboard.response_actions_reset = 'on'; DELETE FROM public.incident_response_actions WHERE actor_username = 'trial-analyst'; COMMIT;"
+    $head = 'pipeline\[OK\] analyst_review\(-0 \+0 ~0\) incident_status\(-0 \+0 ~0\) incident_status_history\(-0 \+0 ~0\); assignments\[OK\] released=0 history\+=0'
+    $raFnRx = 'sandbox\.reset_response_actions\(\)'
+
+    # --- V5 전(앱이 아직 V5를 적용하지 않음): 설정 도구는 멈춘다 ---
+    Add-Line "[T56-0] V5 적용 전의 sandbox-setup: exit=$($setupBeforeV5.Code) $(Get-SetupLines $setupBeforeV5) | 뒤 상태: $afterRefusedSetupV5"
+    Assert-Check "[T56-0] 대응 조치 표가 없으면(앱이 V5를 적용하기 전) 설정 도구는 건너뛰지 않고 멈춘다. 역할·스키마를 만들지 않는다" `
+        ($setupBeforeV5.Code -eq 1 -and $setupBeforeV5.Out -match 'table public\.incident_response_actions is missing in zeekad_dashboard; start dashboard-app with migration V5' -and $setupBeforeV5.Out -notmatch 'RESULT: OK' -and $afterRefusedSetupV5 -eq "role=0 zeekad_schemas=0 app_schemas=0") "exit=$($setupBeforeV5.Code) $(Get-SetupLines $setupBeforeV5) | $afterRefusedSetupV5"
+
+    # --- 1. 트리거와 CHECK ---
+    $raTrigMeta = Get-Scalar "zeekad_dashboard" ($metaSql -f "public.prevent_response_action_mutation()")
+    $raTriggers = Get-Scalar "zeekad_dashboard" "SELECT string_agg(tgname || ':' || pg_get_triggerdef(oid), ' ; ' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'public.incident_response_actions'::regclass AND NOT tgisinternal;"
+    $raOwner = Get-Scalar "zeekad_dashboard" "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'public.incident_response_actions'::regclass;"
+    Add-Line "# 트리거 함수: $raTrigMeta"
+    Add-Line "# $raTable 트리거: $raTriggers"
+    Assert-Check "[T56-1] 표 소유자는 슈퍼유저가 아닌 dashboard_app, 트리거 함수는 search_path 고정이고 정의자 권한이 아니다" `
+        ($raOwner -eq "dashboard_app" -and $raTrigMeta -eq "prevent_response_action_mutation() owner=dashboard_app prosecdef=false proconfig=search_path=pg_catalog, pg_temp public_execute=true") "table owner=$raOwner | $raTrigMeta"
+    Assert-Check "[T56-1] 트리거 둘: 행 수준 UPDATE·DELETE, 문장 수준 TRUNCATE" `
+        ($raTriggers -match 'trg_incident_response_actions_immutable:.*BEFORE DELETE OR UPDATE ON public\.incident_response_actions FOR EACH ROW' -and $raTriggers -match 'trg_incident_response_actions_no_truncate:.*BEFORE TRUNCATE ON public\.incident_response_actions FOR EACH STATEMENT') $raTriggers
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ($raInsert -f "shutdown", "bad kind", "analyst-a")
+    Assert-Check "[T56-1] 종류가 일곱 값 밖이면 CHECK가 거부한다" ($r.Out -match 'ERROR:.*violates check constraint') $r.Out
+    $raBaseRows = "baseline 1,baseline 2"
+    Assert-Check "[T56-준비] 기준선 행 둘(설정 도구 1차 전에 넣음)" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows) (Get-Scalar "zeekad_dashboard" $raRowsSql)
+
+    # --- 2. 고칠 수 없다: UPDATE·TRUNCATE는 늘 거부, DELETE는 표식 없이는 거부 (앱 계정 = 표 소유자, 슈퍼유저도) ---
+    foreach ($stmt in @(
+            "UPDATE incident_response_actions SET note = 'tampered';",
+            "UPDATE incident_response_actions SET action_type = 'none' WHERE note = 'baseline 1';",
+            "SET dashboard.response_actions_reset = 'on'; UPDATE incident_response_actions SET note = 'tampered';")) {
+        $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" $stmt
+        Assert-Check "[T56-2] UPDATE 거부 (dashboard_app: $stmt)" ($r.Out -match 'ERROR:\s+incident_response_actions is append-only: UPDATE is forbidden') $r.Out
+    }
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" "DELETE FROM incident_response_actions;"
+    Assert-Check "[T56-2] 표식 없는 DELETE 거부 (dashboard_app)" ($r.Out -match 'ERROR:\s+incident_response_actions is append-only: DELETE is forbidden') $r.Out
+    foreach ($value in @("off", "ON", "true", "1")) {
+        $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" "SET dashboard.response_actions_reset = '$value'; DELETE FROM incident_response_actions;"
+        Assert-Check "[T56-2] 표식 값이 정확히 'on'이 아니면 DELETE 거부 (값 '$value')" ($r.Out -match 'ERROR:\s+incident_response_actions is append-only: DELETE is forbidden') $r.Out
+    }
+    foreach ($stmt in @("TRUNCATE incident_response_actions;", "TRUNCATE TABLE public.incident_response_actions RESTART IDENTITY CASCADE;", "SET dashboard.response_actions_reset = 'on'; TRUNCATE incident_response_actions;")) {
+        $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" $stmt
+        Assert-Check "[T56-2] TRUNCATE 거부 (dashboard_app: $stmt)" ($r.Out -match 'ERROR:\s+incident_response_actions is append-only: TRUNCATE is forbidden') $r.Out
+    }
+    foreach ($probe in @(
+            @("UPDATE public.incident_response_actions SET note = 'tampered';", "UPDATE"),
+            @("DELETE FROM public.incident_response_actions;", "DELETE"),
+            @("TRUNCATE public.incident_response_actions;", "TRUNCATE"))) {
+        $r = Invoke-Sql "postgres" "zeekad_dashboard" $probe[0]
+        Assert-Check "[T56-2] 슈퍼유저도 거부: $($probe[0])" ($r.Out -match "ERROR:\s+incident_response_actions is append-only: $($probe[1]) is forbidden") $r.Out
+    }
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" "BEGIN; SET LOCAL dashboard.response_actions_reset = 'on'; DELETE FROM incident_response_actions WHERE note = 'baseline 1' RETURNING 'deleted ' || note; ROLLBACK;"
+    Assert-Check "[T56-2] (대조) 표식을 켠 트랜잭션에서는 DELETE가 통과한다(되돌림). 표식은 권한 경계가 아니라 실수 방지다" ($r.Out -eq "deleted baseline 1") $r.Out
+    Assert-Check "[T56-2] 거부·되돌림 뒤 행이 그대로(둘, 값도 그대로)" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows) (Get-Scalar "zeekad_dashboard" $raRowsSql)
+
+    # --- 3. 설정 도구가 만든 것: 기준선 표식(설정 시점의 최대 id), 초기화 함수, 권한 ---
+    $raFnMeta = Get-Scalar "zeekad_dashboard" ($metaSql -f "sandbox.reset_response_actions()")
+    $raMarkerMeta = Get-Scalar "zeekad_dashboard" "SELECT 'owner=' || pg_get_userbyid(c.relowner) || ' rows=' || (SELECT count(*) FROM sandbox.response_action_baseline) || ' ' || (SELECT 'max_id=' || max_id FROM sandbox.response_action_baseline WHERE id = 1) || ' grants=' || (SELECT count(*) FROM information_schema.role_table_grants g WHERE g.table_schema = 'sandbox' AND g.table_name = 'response_action_baseline' AND g.grantee <> 'dashboard_app') FROM pg_class c WHERE c.oid = 'sandbox.response_action_baseline'::regclass;"
+    Add-Line "# 초기화 함수: $raFnMeta"
+    Add-Line "# 기준선 표식: $raMarkerMeta"
+    Add-Line "[T56-3] sandbox-setup 1차의 대응 조치 줄: $(@($setup1.Out -split "`r?`n" | Where-Object { $_ -match 'response' }) -join ' / ')"
+    Assert-Check "[T56-3] 설정 도구 1차: 기준선 표식 생성(max_id = 그때의 최대 id 2), 초기화 함수 준비, 권한 점검 줄" `
+        ($setup1.Out -match 'response action baseline created: max_id=2' -and $setup1.Out -match "zeekad_dashboard: $raFnRx ready" -and $setup1.Out -match 'response_actions\[actions_select=false marker_select=false reset_public_execute=false\]') (@($setup1.Out -split "`r?`n" | Where-Object { $_ -match 'response' }) -join ' / ')
+    Assert-Check "[T56-3] 설정 도구 2차(멱등): 표식을 그대로 둔다" ($setup2.Out -match 'response action baseline kept: max_id=2 ') (@($setup2.Out -split "`r?`n" | Where-Object { $_ -match 'response action baseline' }) -join ' / ')
+    Assert-Check "[T56-3] 기준선 표식 표: 소유 dashboard_app, 한 행, 다른 역할에 준 권한 0" ($raMarkerMeta -eq "owner=dashboard_app rows=1 max_id=2 grants=0") $raMarkerMeta
+    Assert-Check "[T56-3] 초기화 함수: 소유 dashboard_app, SECURITY DEFINER, search_path·lock_timeout 고정, PUBLIC 실행 불가" `
+        ($raFnMeta -eq "sandbox.reset_response_actions() owner=dashboard_app prosecdef=true proconfig=search_path=pg_catalog, pg_temp,lock_timeout=5s public_execute=false") $raFnMeta
+    $raPriv = Get-Scalar "zeekad_dashboard" "SELECT 'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = 'zeekad_sandbox_reset') || ' reset_execute=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_response_actions()', 'EXECUTE') || ' actions_any=' || has_table_privilege('zeekad_sandbox_reset', 'public.incident_response_actions', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') || ' marker_any=' || has_table_privilege('zeekad_sandbox_reset', 'sandbox.response_action_baseline', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE');"
+    Assert-Check "[T56-3] 초기화 계정: 표 권한 0, 초기화 함수 EXECUTE만(대응 조치 표와 표식 표의 어떤 권한도 없음)" ($raPriv -eq "table_grants=0 reset_execute=true actions_any=false marker_any=false") $raPriv
+    foreach ($probe in @(
+            @("SELECT count(*) FROM public.incident_response_actions;", "permission denied for table incident_response_actions"),
+            @("INSERT INTO public.incident_response_actions (incident_id, capture_id, job_id, action_type, actor_username, recorded_at) VALUES ('x', 'x', 1, 'none', 'forged', now());", "permission denied for table incident_response_actions"),
+            @("UPDATE public.incident_response_actions SET note = 'tampered';", "permission denied for table incident_response_actions"),
+            @("DELETE FROM public.incident_response_actions;", "permission denied for table incident_response_actions"),
+            @("SET dashboard.response_actions_reset = 'on'; DELETE FROM public.incident_response_actions;", "permission denied for table incident_response_actions"),
+            @("TRUNCATE public.incident_response_actions;", "permission denied for table incident_response_actions"),
+            @("SELECT max_id FROM sandbox.response_action_baseline;", "permission denied for table response_action_baseline"),
+            @("UPDATE sandbox.response_action_baseline SET max_id = 0;", "permission denied for table response_action_baseline"),
+            @("DELETE FROM sandbox.response_action_baseline;", "permission denied for table response_action_baseline"),
+            @("DROP TABLE sandbox.response_action_baseline;", "must be owner of table response_action_baseline"))) {
+        $r = Invoke-Sql "zeekad_sandbox_reset" "zeekad_dashboard" $probe[0]
+        Assert-Check "[T56-3] 초기화 계정 거부: $($probe[0])" ($r.Out -match "ERROR:\s+$([regex]::Escape($probe[1]))") $r.Out
+    }
+    $r = Invoke-Sql "t58_public_only" "zeekad_dashboard" "SELECT removed FROM sandbox.reset_response_actions();"
+    Assert-Check "[T56-3] 권한을 받지 않은 역할(PUBLIC)은 초기화 함수를 못 부른다" ($r.Out -match 'ERROR:\s+permission denied') $r.Out
+    Assert-Check "[T56-3] 거부 뒤 행과 표식이 그대로" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=2") "$(Get-Scalar 'zeekad_dashboard' $raRowsSql) | $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+
+    # --- 4. 초기화: 기준선 뒤에 덧붙은 행만 지운다. 감사 로그의 기록은 남는다 ---
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ((($raInsert -f "block_ip", "trial 1", "trial-analyst"), ($raInsert -f "none", "trial 2", "trial-analyst"), ($raInsert -f "monitor", "analyst after baseline", "analyst-b"),
+            "INSERT INTO audit_logs (actor_username, actor_role, action_type, target_incident_id, detail_json) VALUES ('trial-analyst', 'ANALYST', 'INCIDENT_RESPONSE_ACTION', 't56-inc', '{`"action`":`"block_ip`",`"note`":`"trial 1`"}');") -join "`n") -StopOnError
+    if ($r.Code -ne 0) { throw "T56 시험 행 넣기 실패`n$($r.Out)" }
+    $raAuditSql = "SELECT count(*) FROM audit_logs WHERE action_type = 'INCIDENT_RESPONSE_ACTION';"
+    Assert-Check "[T56-4 준비] 기준선 뒤에 세 행(체험 계정 둘, 다른 분석가 하나)과 감사 행 하나" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,trial 1,trial 2,analyst after baseline" -and (Get-Scalar "zeekad_dashboard" $raAuditSql) -eq "1") (Get-Scalar "zeekad_dashboard" $raRowsSql)
+    $t1 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-4] 기준선 뒤에 세 행이 있을 때 sandbox-reset --once: exit=$($t1.Code) $($t1.Out)"
+    Assert-Check "[T56-4] 로그 줄의 responses[OK] removed=3(assignments 칸과 audit 칸 사이), 전체 OK" `
+        ($t1.Code -eq 0 -and $t1.Out -match ($lineRx + 'OK ' + $head + '; responses\[OK\] removed=3; audit\[OFF\]$')) $t1.Out
+    Assert-Check "[T56-4] 기준선 뒤의 행만 지워지고 기준선 안의 행 둘은 남는다. 감사 로그의 기록도 남는다" `
+        ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows -and (Get-Scalar "zeekad_dashboard" $raAuditSql) -eq "1") "$(Get-Scalar 'zeekad_dashboard' $raRowsSql) | audit=$(Get-Scalar 'zeekad_dashboard' $raAuditSql)"
+    $t2 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-4] 다시 한 번: exit=$($t2.Code) $($t2.Out)"
+    Assert-Check "[T56-4] 다시 부르면 responses[OK] removed=0" ($t2.Code -eq 0 -and $t2.Out -match ($lineRx + 'OK ' + $base + '; audit\[OFF\]$')) $t2.Out
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" @'
+BEGIN;
+INSERT INTO incident_response_actions (incident_id, capture_id, job_id, action_type, note, actor_username, recorded_at) VALUES ('t56-inc', 't56-cap', 1, 'other', 'tx row', 'trial-analyst', now());
+SELECT 'removed=' || removed FROM sandbox.reset_response_actions();
+SELECT 'marker=' || current_setting('dashboard.response_actions_reset', true);
+DELETE FROM incident_response_actions WHERE note = 'baseline 1' RETURNING 'deleted ' || note;
+ROLLBACK;
+'@
+    Assert-Check "[T56-4] 같은 트랜잭션: 함수가 지운 뒤 표식은 off이고 이어지는 DELETE는 거부된다" `
+        ($r.Out -match '(?s)^removed=1\s+marker=off\s+.*ERROR:\s+incident_response_actions is append-only: DELETE is forbidden' -and $r.Out -notmatch 'deleted baseline') $r.Out
+    Assert-Check "[T56-4] 되돌린 뒤 행이 그대로(둘)" ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows) (Get-Scalar "zeekad_dashboard" $raRowsSql)
+
+    # --- 5. 설정 도구를 다시 돌려도 표식은 움직이지 않는다(그 뒤의 행은 여전히 기준선 뒤다) ---
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ($raInsert -f "handover", "after rerun", "analyst-b") -StopOnError
+    $setupKeep = Invoke-Setup
+    Add-Line "[T56-5] 기준선 뒤에 행이 있을 때 sandbox-setup: exit=$($setupKeep.Code) $(@($setupKeep.Out -split "`r?`n" | Where-Object { $_ -match 'baseline' }) -join ' / ')"
+    Assert-Check "[T56-5] 표식이 있으면 설정 도구는 그대로 둔다(max_id=2). zeek_AD 기준선도 그대로다" `
+        ($setupKeep.Code -eq 0 -and $setupKeep.Out -match 'sandbox-setup: baseline kept' -and $setupKeep.Out -match 'response action baseline kept: max_id=2 ' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=2") "exit=$($setupKeep.Code) $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    $t3 = Invoke-ResetOnce "" -NoDaysVariable
+    Assert-Check "[T56-5] 그 행은 다음 초기화가 지운다(responses[OK] removed=1)" ($t3.Code -eq 0 -and $t3.Out -match ($lineRx + 'OK ' + $head + '; responses\[OK\] removed=1; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq $raBaseRows) $t3.Out
+
+    # --- 6. NAS 갱신 경우: zeek_AD 기준선은 있고 대응 조치 표식은 없다(설정 뒤 슈퍼유저로 표식 표만 지움) ---
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" "DROP TABLE sandbox.response_action_baseline;" -StopOnError
+    if ($r.Code -ne 0) { throw "표식 표 지우기(NAS 갱신 흉내) 실패`n$($r.Out)" }
+    $zBaselineBefore = Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;"
+    $t4 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-6] 표식이 없는데 함수가 불릴 때: exit=$($t4.Code) $($t4.Out)"
+    Assert-Check "[T56-6] 표식이 없으면 0건이 아니라 responses[ERROR]이고 전체 ERROR, 종료 코드 1" `
+        ($t4.Code -eq 1 -and $t4.Out -match ($lineRx + 'ERROR ' + $head + '; responses\[ERROR\] ERROR: +relation "sandbox\.response_action_baseline" does not exist.*; audit\[OFF\]$')) $t4.Out
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ((($raInsert -f "block_ip", "visitor before setup", "trial-analyst"), ($raInsert -f "isolate_host", "analyst before setup", "analyst-b")) -join "`n") -StopOnError
+    $setupRefused = Invoke-Setup
+    Add-Line "[T56-6] 체험 계정의 행이 있을 때 sandbox-setup: exit=$($setupRefused.Code) $(Get-SetupLines $setupRefused)"
+    Assert-Check "[T56-6] 체험 계정의 행이 하나라도 있으면 표식을 만들지 않고 멈춘다(방문자 글을 기준선으로 굳히지 않는다)" `
+        ($setupRefused.Code -eq 1 -and $setupRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $setupRefused.Out -notmatch 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "no table") "exit=$($setupRefused.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    Assert-Check "[T56-6] 거부된 실행은 행도 zeek_AD 기준선도 바꾸지 않는다" `
+        ((Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,visitor before setup,analyst before setup" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) (Get-Scalar "zeekad_dashboard" $raRowsSql)
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" $raOperatorDelete -StopOnError
+    Assert-Check "[T56-6] 운영자가 체험 계정의 행을 지운다(슈퍼유저, 트랜잭션 안에서만 표식을 켬)" ($r.Code -eq 0 -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") "exit=$($r.Code) $($r.Out) | $(Get-Scalar 'zeekad_dashboard' $raRowsSql)"
+    $raMaxNow = Get-Scalar "zeekad_dashboard" $raMaxSql
+    $setupNas = Invoke-Setup
+    Add-Line "[T56-6] 그 행을 지운 뒤 sandbox-setup: exit=$($setupNas.Code) $(Get-SetupLines $setupNas)"
+    Assert-Check "[T56-6] zeek_AD 기준선은 그대로 두고(baseline kept) 대응 조치 표식만 새로 만든다(max_id = 지금의 최대 id $raMaxNow)" `
+        ($setupNas.Code -eq 0 -and $setupNas.Out -match 'sandbox-setup: baseline kept' -and $setupNas.Out -match "response action baseline created: max_id=$raMaxNow(\s|`$)" -and $setupNas.Out -match 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($setupNas.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    $t5 = Invoke-ResetOnce "" -NoDaysVariable
+    Assert-Check "[T56-6] 그 뒤 초기화는 responses[OK] removed=0이고 표식 안의 행(셋)은 남는다" ($t5.Code -eq 0 -and $t5.Out -match ($lineRx + 'OK ' + $base + '; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") "$($t5.Out) | $(Get-Scalar 'zeekad_dashboard' $raRowsSql)"
+    # 표식 표는 있는데 행이 없을 때도 표식이 없는 것이다(함수는 오류, 설정 도구는 만든다).
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" "DROP TABLE sandbox.response_action_baseline; CREATE TABLE sandbox.response_action_baseline (id integer PRIMARY KEY CHECK (id = 1), max_id bigint NOT NULL, created_at timestamptz NOT NULL DEFAULT now()); ALTER TABLE sandbox.response_action_baseline OWNER TO dashboard_app; REVOKE ALL ON TABLE sandbox.response_action_baseline FROM PUBLIC;" -StopOnError
+    $t6 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-6] 표식 표는 있고 행이 없을 때: exit=$($t6.Code) $($t6.Out)"
+    Assert-Check "[T56-6] 표식 행이 없으면 함수가 예외를 낸다(responses[ERROR], 전체 ERROR, 행은 그대로)" `
+        ($t6.Code -eq 1 -and $t6.Out -match ($lineRx + 'ERROR ' + $head + '; responses\[ERROR\] ERROR: +sandbox response action baseline is missing; run sandbox-setup.*; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") $t6.Out
+    $setupEmpty = Invoke-Setup
+    Assert-Check "[T56-6] 그 상태의 설정 도구는 표식을 만든다" ($setupEmpty.Code -eq 0 -and $setupEmpty.Out -match "response action baseline created: max_id=$raMaxNow" -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow") "exit=$($setupEmpty.Code) $(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+
+    # --- 7. 옛 설정 + 새 스크립트: 초기화 함수가 아직 없거나 실행 권한이 없다(sandbox-setup을 다시 돌리기 전) ---
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" "DROP FUNCTION sandbox.reset_response_actions();" -StopOnError
+    if ($r.Code -ne 0) { throw "초기화 함수 없애기(옛 설정 흉내) 실패`n$($r.Out)" }
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ($raInsert -f "block_ip", "visitor in the gap", "trial-analyst") -StopOnError
+    $t7 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-7] 초기화 함수가 없을 때(옛 설정 + 새 스크립트): exit=$($t7.Code) $($t7.Out)"
+    Assert-Check "[T56-7] 함수가 없으면 responses[NOT_CONFIGURED]이고 전체는 OK(ERROR 아님), 종료 코드 0, 지운 행 없음" `
+        ($t7.Code -eq 0 -and $t7.Out -match ($lineRx + 'OK ' + $head + "; responses\[NOT_CONFIGURED\] $raFnRx is missing \(run sandbox-setup\); audit\[OFF\]`$") -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup,visitor in the gap") $t7.Out
+    $setupGap = Invoke-Setup
+    Add-Line "[T56-7] 그 틈에 방문자 기록이 생긴 뒤의 sandbox-setup(표식은 이미 있음): exit=$($setupGap.Code) $(@($setupGap.Out -split "`r?`n" | Where-Object { $_ -match 'response' }) -join ' / ')"
+    Assert-Check "[T56-7] 표식이 이미 있으면 설정 도구는 함수와 권한만 다시 만든다(표식 그대로)" ($setupGap.Code -eq 0 -and $setupGap.Out -match "response action baseline kept: max_id=$raMaxNow " -and $setupGap.Out -match 'RESULT: OK') "exit=$($setupGap.Code)"
+    $t8 = Invoke-ResetOnce "" -NoDaysVariable
+    Assert-Check "[T56-7] 그 뒤 초기화가 틈에 생긴 방문자 기록을 지운다(responses[OK] removed=1)" ($t8.Code -eq 0 -and $t8.Out -match ($lineRx + 'OK ' + $head + '; responses\[OK\] removed=1; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup") $t8.Out
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" "REVOKE EXECUTE ON FUNCTION sandbox.reset_response_actions() FROM zeekad_sandbox_reset;" -StopOnError
+    $t9 = Invoke-ResetOnce "" -NoDaysVariable
+    Add-Line "[T56-7] 실행 권한이 없을 때: exit=$($t9.Code) $($t9.Out)"
+    Assert-Check "[T56-7] 실행 권한이 없으면 responses[NOT_CONFIGURED]이고 전체는 OK, 종료 코드 0" `
+        ($t9.Code -eq 0 -and $t9.Out -match ($lineRx + 'OK ' + $head + "; responses\[NOT_CONFIGURED\] no EXECUTE on $raFnRx \(run sandbox-setup\); audit\[OFF\]`$")) $t9.Out
+    $r = Invoke-Sql "zeekad_sandbox_reset" "zeekad_dashboard" "SELECT removed FROM sandbox.reset_response_actions();"
+    Assert-Check "[T56-7] 그때 초기화 계정이 함수를 직접 불러도 거부된다" ($r.Out -match 'ERROR:\s+permission denied for function reset_response_actions') $r.Out
+    $setupRegrant = Invoke-Setup
+    Assert-Check "[T56-7] 설정 도구를 다시 돌리면 실행 권한이 붙는다" ($setupRegrant.Code -eq 0 -and (Get-Scalar "zeekad_dashboard" "SELECT has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_response_actions()', 'EXECUTE')::text;") -eq "true") "exit=$($setupRegrant.Code)"
+
+    # --- 8. --rebuild-baseline: 표식을 다시 잡는다. 체험 계정의 행이 있으면 아무것도 바꾸지 않고 멈춘다 ---
+    $r = Invoke-Sql "dashboard_app" "zeekad_dashboard" ((($raInsert -f "monitor", "analyst new baseline", "analyst-b"), ($raInsert -f "block_ip", "visitor at rebuild", "trial-analyst")) -join "`n") -StopOnError
+    $rebuildRefused = Invoke-Setup "--rebuild-baseline"
+    Add-Line "[T56-8] 체험 계정의 행이 있을 때 sandbox-setup --rebuild-baseline: exit=$($rebuildRefused.Code) $(Get-SetupLines $rebuildRefused)"
+    Assert-Check "[T56-8] 다시 잡을 때도 체험 계정의 행이 있으면 멈추고 zeek_AD 기준선과 표식을 바꾸지 않는다" `
+        ($rebuildRefused.Code -eq 1 -and $rebuildRefused.Out -match "REFUSED: 1 response action rows recorded by 'trial-analyst' exist" -and $rebuildRefused.Out -notmatch 'baseline rebuilt' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxNow" -and (Get-Scalar "zeekad" "SELECT created_at::text FROM sandbox_baseline.marker WHERE id = 1;") -eq $zBaselineBefore) "exit=$($rebuildRefused.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    $r = Invoke-Sql "postgres" "zeekad_dashboard" $raOperatorDelete -StopOnError
+    $raMaxRebuild = Get-Scalar "zeekad_dashboard" $raMaxSql
+    $rebuildOk = Invoke-Setup "--rebuild-baseline"
+    Add-Line "[T56-8] 그 행을 지운 뒤 sandbox-setup --rebuild-baseline: exit=$($rebuildOk.Code) $(@($rebuildOk.Out -split "`r?`n" | Where-Object { $_ -match 'baseline' }) -join ' / ')"
+    Assert-Check "[T56-8] --rebuild-baseline이면 zeek_AD 기준선과 함께 표식을 다시 잡는다(max_id $raMaxNow → $raMaxRebuild)" `
+        ($rebuildOk.Code -eq 0 -and $raMaxRebuild -ne $raMaxNow -and $rebuildOk.Out -match 'sandbox-setup: baseline rebuilt' -and $rebuildOk.Out -match "response action baseline rebuilt: max_id=$raMaxRebuild" -and $rebuildOk.Out -match 'RESULT: OK' -and (Get-Scalar "zeekad_dashboard" $raMarkerSql) -eq "max_id=$raMaxRebuild") "exit=$($rebuildOk.Code) marker=$(Get-Scalar 'zeekad_dashboard' $raMarkerSql)"
+    $t10 = Invoke-ResetOnce "" -NoDaysVariable
+    Assert-Check "[T56-8] 다시 잡은 뒤 초기화는 responses[OK] removed=0이고 새 기준선 안의 행(넷)이 남는다" ($t10.Code -eq 0 -and $t10.Out -match ($lineRx + 'OK ' + $base + '; audit\[OFF\]$') -and (Get-Scalar "zeekad_dashboard" $raRowsSql) -eq "$raBaseRows,analyst before setup,analyst new baseline") "$($t10.Out) | $(Get-Scalar 'zeekad_dashboard' $raRowsSql)"
+    $totalFailed += Save-Lines "response-actions.txt"
+
     # ================= 하루 한 번 판정(컨테이너의 bash) =================
     $daily = Invoke-Docker @("exec", "--user", "postgres", $ContainerName, "sh", "-c", "bash --version | head -n 1; bash /t58/sandbox-reset-daily-test.sh /t58/sandbox-reset.sh 2>&1") -IgnoreExitCode
-    $dailyText = "# T58 sandbox-reset.sh의 하루 한 번 판정과 한 줄 로그 시험(scripts/sandbox-reset-daily-test.sh). DB 없이 돈다(psql은 함수로 흉내).`n# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 실행한 곳: 일회용 컨테이너 $ContainerName($Image)의 bash, exit=$($daily.Code)`n$($daily.Out)`n"
+    $dailyText = "# T58·T56 sandbox-reset.sh의 하루 한 번 판정과 한 줄 로그 시험(scripts/sandbox-reset-daily-test.sh). DB 없이 돈다(psql은 함수로 흉내).`n# 실행 시각(UTC) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')), 실행한 곳: 일회용 컨테이너 $ContainerName($Image)의 bash, exit=$($daily.Code)`n$($daily.Out)`n"
     [IO.File]::WriteAllText((Join-Path $OutFullDir "once-a-day.txt"), $dailyText, $utf8NoBom)
     Write-Host $daily.Out
     if ($daily.Code -ne 0 -or $daily.Out -notmatch 'RESULT: PASS' -or $daily.Out -match '(?m)^FAIL ') { $totalFailed++ }
@@ -494,7 +718,7 @@ INSERT INTO audit_logs (occurred_at, actor_username, actor_role, action_type) VA
 
 $gone = (Invoke-Docker @("ps", "-aq", "--filter", "name=^/$ContainerName`$") -IgnoreExitCode).Out
 if ($gone) { Write-Host "경고: 컨테이너 $ContainerName 가 남아 있습니다."; $totalFailed++ }
-Write-Host "결과 파일: $OutFullDir (pg-check.txt, reset-once.txt, once-a-day.txt)"
+Write-Host "결과 파일: $OutFullDir (pg-check.txt, reset-once.txt, response-actions.txt, once-a-day.txt)"
 if ($totalFailed -gt 0) {
     Write-Host "RESULT: FAIL ($totalFailed)"
     exit 1

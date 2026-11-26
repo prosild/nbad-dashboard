@@ -8,14 +8,17 @@
 #     표지는 지금 DB가 어느 스냅샷인지 판별하는 값(인시던트 수·탐지 작업 수·최대 job_id·세 표의 열 정의 해시)이다.
 #   - 스키마 sandbox(소유 zeekad_owner): sandbox.reset_pipeline()(SECURITY DEFINER). 초기화 역할은 이 스키마 USAGE와 함수 EXECUTE만 있다
 #     (PostgreSQL은 함수를 부를 때 그 스키마 USAGE가 필요하다. 그래서 기준선은 따로 sandbox_baseline에 둔다).
-# - zeekad_dashboard DB: 스키마 sandbox(소유 dashboard_app)의 sandbox.reset_assignments()(SECURITY DEFINER).
+# - zeekad_dashboard DB: 스키마 sandbox(소유 dashboard_app)의 sandbox.reset_assignments()와 sandbox.reset_response_actions()(둘 다 SECURITY DEFINER),
+#   대응 조치 기준선 표식 sandbox.response_action_baseline(한 행: 설정 시점의 incident_response_actions 최대 id. 소유 dashboard_app, 초기화 역할 권한 없음).
 #   감사 로그 보관 기한 함수 public.purge_expired_audit_logs(integer)(T58)는 여기서 만들지 않는다. 앱의 Flyway(V4)가 만들고
 #   이 도구는 초기화 역할에 그 함수의 EXECUTE만 준다(감사 로그 표 권한은 주지 않는다). 함수가 아직 없으면(앱이 V4를 적용하기 전) 멈춘다.
 # - 전용 역할 zeekad_sandbox_reset(LOGIN, 비밀번호 SANDBOX_RESET_DB_PASSWORD): 두 DB CONNECT, 두 sandbox 스키마 USAGE,
-#   초기화 함수 둘과 위 삭제 함수의 EXECUTE만.
+#   초기화 함수 셋과 위 삭제 함수의 EXECUTE만.
 # 기준선은 처음 만들 때와 --rebuild-baseline일 때만 만든다. 그때는 체험 계정(SANDBOX_TRIAL_USERNAME) 흔적이 세 표와 담당 표에
 # 하나도 없어야 하고(방문자 변경이 기준선이 되는 것을 막는다), 처음 만들 때는 담당자가 있는 담당 행이 0이어야 하며(공개 기준선의 담당은 0),
 # 다시 만들 때는 초기화 역할의 접속이 없어야 한다(sandbox-reset을 먼저 멈춘다). 아니면 아무것도 바꾸지 않고 멈춘다.
+# 대응 조치의 기준선 표식(T56)은 zeek_AD 기준선과 따로 정한다: 표식이 없으면 만들고, --rebuild-baseline이면 다시 잡고, 그 밖에는 그대로 둔다
+# (이미 zeek_AD 기준선이 있는 스택에 이 도구를 다시 돌려도 표식이 생긴다). 표식을 만들거나 다시 잡을 때는 체험 계정이 쓴 대응 조치 행이 0이어야 한다.
 # 비밀번호는 psql 변수로만 넘기고 출력하지 않는다.
 set -euo pipefail
 
@@ -64,6 +67,10 @@ PURGE_FN='public.purge_expired_audit_logs(integer)'
 if [ "$(q zeekad_dashboard "SELECT to_regprocedure('$PURGE_FN') IS NOT NULL")" != "t" ]; then
     log "function $PURGE_FN is missing in zeekad_dashboard; start dashboard-app with migration V4 (Flyway) first"; exit 1
 fi
+# 대응 조치 표(T56)는 앱 migration V5가 만든다. 없으면 건너뛰지 않고 멈춘다(V4 다음에 본다: Flyway는 V4를 먼저 적용한다).
+if [ "$(q zeekad_dashboard "SELECT to_regclass('public.incident_response_actions') IS NOT NULL")" != "t" ]; then
+    log "table public.incident_response_actions is missing in zeekad_dashboard; start dashboard-app with migration V5 (Flyway) first"; exit 1
+fi
 
 # --- 1. 전용 역할 ---
 run postgres -v pw="$SANDBOX_RESET_DB_PASSWORD" <<SQL
@@ -107,6 +114,26 @@ SQL
 
 # --- 3. 기준선(처음 또는 --rebuild-baseline) ---
 HAS_BASELINE="$(q zeekad "SELECT to_regclass('sandbox_baseline.marker') IS NOT NULL")"
+# 대응 조치 기준선 표식(T56)은 zeek_AD 기준선과 따로 본다. 표식이 없거나 --rebuild-baseline이면 이번에 정한다.
+# 그때 체험 계정이 쓴 대응 조치 행이 있으면 아무것도 바꾸기 전에 여기서 멈춘다(방문자 글을 기준선으로 굳히지 않는다).
+# 이 검사는 안내용이다. 실제 판정은 5a에서 표를 잠근 뒤 같은 트랜잭션에서 다시 한다.
+HAS_RA_MARKER="f"
+if [ "$(q zeekad_dashboard "SELECT to_regclass('sandbox.response_action_baseline') IS NOT NULL")" = "t" ]; then
+    HAS_RA_MARKER="$(q zeekad_dashboard "SELECT EXISTS (SELECT 1 FROM sandbox.response_action_baseline WHERE id = 1)")"
+fi
+SET_RA_MARKER=0
+if [ "$HAS_RA_MARKER" != "t" ] || [ "$REBUILD" = "1" ]; then
+    SET_RA_MARKER=1
+    RA_TRACES="$(psql -X -q -v ON_ERROR_STOP=1 -At -d zeekad_dashboard -v trial="$TRIAL" <<'SQL'
+SELECT count(*) FROM public.incident_response_actions WHERE actor_username = :'trial';
+SQL
+)"
+    if [ "$RA_TRACES" != "0" ]; then
+        log "REFUSED: $RA_TRACES response action rows recorded by '$TRIAL' exist; a visitor record must not become the baseline."
+        log "         Remove them first (docs/portfolio-deployment.md, sandbox-setup section), then retry."
+        exit 1
+    fi
+fi
 if [ "$HAS_BASELINE" != "t" ] || [ "$REBUILD" = "1" ]; then
     TRACES="$(psql -X -q -v ON_ERROR_STOP=1 -At -d zeekad -v trial="$TRIAL" <<'SQL'
 SELECT (SELECT count(*) FROM zeekad.incident_status WHERE updated_by = :'trial')
@@ -327,6 +354,77 @@ GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;
 SQL
 log "zeekad_dashboard: sandbox.reset_assignments() ready"
 
+# --- 5a. zeekad_dashboard: 대응 조치 기준선 표식과 초기화 함수(T56) ---
+# 표식 = 설정 시점의 incident_response_actions 최대 id(한 행). 초기화 함수는 그보다 큰 id의 행(기준선 뒤에 덧붙은 기록)을 지운다.
+# 표를 잠근 뒤 같은 트랜잭션에서 체험 계정의 행 수를 다시 보고, 0일 때만 표식을 넣거나 다시 잡는다(위 3단계의 검사와 이 잠금 사이에 들어온 쓰기를 막는다).
+if [ "$SET_RA_MARKER" = "1" ]; then
+    RA_RESULT="$(psql -X -q -v ON_ERROR_STOP=1 -At -d zeekad_dashboard -v trial="$TRIAL" <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE public.incident_response_actions IN SHARE ROW EXCLUSIVE MODE;
+CREATE TABLE IF NOT EXISTS sandbox.response_action_baseline (
+    id integer PRIMARY KEY CHECK (id = 1),
+    max_id bigint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+-- 정의자 권한 함수(소유 dashboard_app)가 읽으므로 표 소유자를 dashboard_app으로 한다. 초기화 역할에는 이 표의 권한을 주지 않는다.
+ALTER TABLE sandbox.response_action_baseline OWNER TO dashboard_app;
+REVOKE ALL ON TABLE sandbox.response_action_baseline FROM PUBLIC;
+WITH trial AS (
+    SELECT count(*) AS n FROM public.incident_response_actions WHERE actor_username = :'trial'
+), put AS (
+    INSERT INTO sandbox.response_action_baseline (id, max_id)
+    SELECT 1, COALESCE((SELECT max(r.id) FROM public.incident_response_actions r), 0) FROM trial WHERE trial.n = 0
+    ON CONFLICT (id) DO UPDATE SET max_id = EXCLUDED.max_id, created_at = now()
+    RETURNING max_id
+)
+SELECT format('trial_rows=%s max_id=%s', (SELECT n FROM trial), COALESCE((SELECT max_id::text FROM put), 'none'));
+COMMIT;
+SQL
+)"
+    case "$RA_RESULT" in
+        "trial_rows=0 max_id="[0-9]*)
+            log "response action baseline $( [ "$HAS_RA_MARKER" = "t" ] && echo rebuilt || echo created ): ${RA_RESULT#trial_rows=0 }" ;;
+        *)
+            log "REFUSED: response action rows recorded by '$TRIAL' exist ($RA_RESULT); the baseline marker was not written"
+            exit 1 ;;
+    esac
+else
+    log "response action baseline kept: $(q zeekad_dashboard "SELECT format('max_id=%s created_at=%s', max_id, created_at) FROM sandbox.response_action_baseline WHERE id = 1")"
+fi
+run zeekad_dashboard <<'SQL'
+-- 기준선 표식보다 큰 id의 대응 조치 행(기준선 뒤에 덧붙은 기록)을 지우고 지운 수를 돌려준다. 감사 로그의 기록은 지우지 않는다.
+-- 표식이 없으면 0건이 아니라 오류를 낸다(표식 없이 조용히 넘어가면 방문자 글이 쌓인다).
+-- 표의 트리거는 표식 dashboard.response_actions_reset = 'on'일 때만 DELETE를 통과시킨다. 트랜잭션 지역 값으로 켜고 지운 뒤 끈다.
+CREATE OR REPLACE FUNCTION sandbox.reset_response_actions()
+    RETURNS TABLE (removed bigint)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    SET lock_timeout = '5s'
+AS $$
+DECLARE
+    v_max bigint;
+    v_removed bigint;
+BEGIN
+    LOCK TABLE public.incident_response_actions IN SHARE ROW EXCLUSIVE MODE;
+    SELECT b.max_id INTO v_max FROM sandbox.response_action_baseline b WHERE b.id = 1;
+    IF v_max IS NULL THEN
+        RAISE EXCEPTION 'sandbox response action baseline is missing; run sandbox-setup' USING ERRCODE = '55000';
+    END IF;
+    PERFORM set_config('dashboard.response_actions_reset', 'on', true);
+    DELETE FROM public.incident_response_actions r WHERE r.id > v_max;
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    PERFORM set_config('dashboard.response_actions_reset', 'off', true);
+    removed := v_removed;
+    RETURN NEXT;
+END
+$$;
+ALTER FUNCTION sandbox.reset_response_actions() OWNER TO dashboard_app;
+REVOKE ALL ON FUNCTION sandbox.reset_response_actions() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION sandbox.reset_response_actions() TO zeekad_sandbox_reset;
+SQL
+log "zeekad_dashboard: sandbox.reset_response_actions() ready"
+
 # --- 5b. zeekad_dashboard: 감사 로그 보관 기한 함수의 실행 권한(T58) ---
 # 함수는 앱 migration V4의 것이다(소유 dashboard_app, 정의자 권한, PUBLIC 회수). 여기서는 초기화 역할에 EXECUTE만 준다.
 # 감사 로그 표 권한은 주지 않는다. 소유자나 정의자 권한 설정이 다르면 권한을 주지 않고 멈춘다.
@@ -339,7 +437,8 @@ GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_san
 SQL
 log "zeekad_dashboard: EXECUTE on $PURGE_FN granted to $RESET_ROLE"
 
-# --- 6. 권한 점검: 초기화 역할은 초기화 함수 둘·삭제 함수의 EXECUTE와 sandbox 스키마 USAGE만(CREATE·표 권한 없음). 삭제 함수는 PUBLIC이 못 부른다 ---
+# --- 6. 권한 점검: 초기화 역할은 초기화 함수 셋·삭제 함수의 EXECUTE와 sandbox 스키마 USAGE만(CREATE·표 권한 없음). 삭제 함수는 PUBLIC이 못 부른다 ---
+# 대응 조치(T56): 초기화 역할은 대응 조치 표와 기준선 표식 표를 읽지 못하고, 초기화 함수는 PUBLIC이 못 부른다.
 CHECK_SQL="SELECT concat_ws(' ',
   'public_create=' || has_schema_privilege('$RESET_ROLE', 'public', 'CREATE'),
   'sandbox_create=' || has_schema_privilege('$RESET_ROLE', 'sandbox', 'CREATE'),
@@ -348,8 +447,12 @@ CHECK_SQL="SELECT concat_ws(' ',
   'table_grants=' || (SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = '$RESET_ROLE'))"
 Z="$(q zeekad "$CHECK_SQL") baseline_usage=$(q zeekad "SELECT has_schema_privilege('$RESET_ROLE', 'sandbox_baseline', 'USAGE')::text")"
 D="$(q zeekad_dashboard "$CHECK_SQL") purge_public_execute=$(q zeekad_dashboard "SELECT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = '$PURGE_FN'::regprocedure AND x.grantee = 0)::text")"
-log "privileges of $RESET_ROLE: zeekad[$Z] zeekad_dashboard[$D]"
-for v in $Z $D; do
+R="$(q zeekad_dashboard "SELECT concat_ws(' ',
+  'actions_select=' || has_table_privilege('$RESET_ROLE', 'public.incident_response_actions', 'SELECT'),
+  'marker_select=' || has_table_privilege('$RESET_ROLE', 'sandbox.response_action_baseline', 'SELECT'),
+  'reset_public_execute=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_response_actions()'::regprocedure AND x.grantee = 0))")"
+log "privileges of $RESET_ROLE: zeekad[$Z] zeekad_dashboard[$D] response_actions[$R]"
+for v in $Z $D $R; do
     case "$v" in
         *=true|*=t|table_grants=[1-9]*)
             log "REFUSED: unexpected privilege $v for $RESET_ROLE"; exit 1 ;;

@@ -599,6 +599,12 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True ($analystDetail.Json.detail.incident.hostIp -eq "192.168.10.50" -and $analystDetail.Json.maskedView -eq $false) "analyst1 허용 인시던트 원문(192.168.10.50) 조회" $analystDetail
                 $statusBefore = $analystDetail.Json.detail.currentStatus
 
+                # T56: 분석 중인 인시던트를 정탐으로 종결하려면 대응 조치 기록이 하나 이상 있어야 한다. 종결 앞에 기록을 넣는다(규칙 자체는 [22]가 본다).
+                $analystResponse = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/response-actions" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
+                    -JsonBody @{ action = "block_ip"; note = "PostgreSQL WAF E2E check" }
+                $e2eLogs.Add("[5b] analyst1 POST response-actions (T56, before closing as true_positive): $(Format-Resp $analystResponse)")
+                Assert-Status $analystResponse 200 "analyst1 대응 조치 기록(101/rank/1, 정탐 종결 앞)"
+
                 # T21: 시드의 101/rank1은 반영된 승인(zeek_AD 계약)이라 이미 분석 중이다. 분석 중 -> 종결(판정 필수)로 전이를 시험한다.
                 $analystTransition = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/1/transition" -Method POST -CookieJar $analystCookies -SaveCookies -Csrf `
                     -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "PostgreSQL WAF E2E check" }
@@ -668,6 +674,12 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $lr2Reasons = @($lr2.statusHistory | ForEach-Object { $_.reason })
                 $e2eLogs.Add("[6b] admin GET /api/incidents/502/rank/2 -> zeekadReportJobId=$($lr2.incident.zeekadReportJobId) windowRatioLabel=[$($lr2Ratios -join ', ')] currentStatus=$($lr2.currentStatus) statusHistory=[$(@($lr2.statusHistory | ForEach-Object { "$($_.jobId):$($_.fromStatus)->$($_.toStatus) $($_.reason)" }) -join ' | ')]")
                 Assert-True ($lr2.incident.zeekadReportJobId -eq 501 -and ($lr2Ratios -contains "5 / 6") -and $lr2.currentStatus -eq "investigating" -and ($lr2Reasons -contains "실습망 초기 조사 시작")) "v2.1 다중 작업 조인(보고 작업 501, 5 / 6) 및 상태 승계(investigating)" $labRank2
+
+                # T56: 정탐 종결 앞에 대응 조치 기록을 넣는다(관리자도 기록할 수 있다).
+                $labResponse = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/2/response-actions" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
+                    -JsonBody @{ action = "isolate_host"; note = "PG17 v2.1 multi-job transition check" }
+                $e2eLogs.Add("[6c] admin POST /api/incidents/502/rank/2/response-actions (T56, before closing as true_positive): $(Format-Resp $labResponse)")
+                Assert-Status $labResponse 200 "admin 대응 조치 기록(502/rank/2, 정탐 종결 앞)"
 
                 $labTransition = Invoke-Http -Url "$baseHttps/api/incidents/502/rank/2/transition" -Method POST -CookieJar $adminCookies -SaveCookies -Csrf `
                     -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "PG17 v2.1 multi-job transition check" }
@@ -2377,6 +2389,138 @@ ORDER BY 1, 2
                         Assert-True ($r19.Body.Contains('"198.51.100.10"') -and $all19[5].id -eq '198.51.100.14' -and $items19[0].value -eq '198.51.100.20') "[19] analyst1 원문(객체 키·id·검증 문제 값)" $r19
                     }
                 }
+
+                # [22] 대응 조치 기록(T56): 착수한 인시던트에 분석가가 한 조치를 기록한다(콘솔은 차단·격리를 실행하지 않는다).
+                #      검증 순서(접근 → 역할 → 상태 → 종류 → 메모)와 오류 코드, 감사 INCIDENT_RESPONSE_ACTION, 정탐 종결에는 기록 하나 이상,
+                #      조회자 응답에 메모 없음, 기록 표 UPDATE·DELETE·TRUNCATE 거부(psql). 다른 단계의 상태를 건드리지 않게 맨 끝에서 돌리고
+                #      검증 DB에 이 단계 전용 작업·인시던트 셋을 넣는다(cic17-wed, analyst1·viewer1 허용). 1위 신규, 2·3위 분석 중.
+                $job22 = 9400
+                $inc22 = @(
+                    "cic17-wed|192.168.10.81|originator|1763700001",
+                    "cic17-wed|192.168.10.82|originator|1763700002",
+                    "cic17-wed|192.168.10.83|originator|1763700003")
+                $sql22 = "INSERT INTO dashboard.raw_scoring_jobs (job_id, capture_id, bundle_id, status, started_at, finished_at, error, incident_count) VALUES ($job22, 'cic17-wed', 'zeekad-fusion/1', 'succeeded', now() - interval '11 minutes', now() - interval '10 minutes', NULL, 3); "
+                for ($i22 = 0; $i22 -lt 3; $i22++) {
+                    $sql22 += "INSERT INTO dashboard.raw_incident_queue (job_id, capture_id, bundle_id, queue_rank, incident_id, host_ip, zeekad_role, event_start, event_end, zeekad_picked_by, zeekad_also_flagged_by, connection_count, host_name) VALUES ($job22, 'cic17-wed', 'zeekad-fusion/1', $($i22 + 1), '$($inc22[$i22])', '192.168.10.8$($i22 + 1)', 'originator', now() - interval '30 minutes', now() - interval '12 minutes', 'iforest', NULL, 10, NULL); "
+                }
+                foreach ($i22 in 1, 2) {
+                    $sql22 += "INSERT INTO dashboard.raw_incident_status (job_id, incident_id, zeekad_status, zeekad_resolution, updated_at, updated_by) VALUES ($job22, '$($inc22[$i22])', 'investigating', NULL, now() - interval '9 minutes', 'analyst1'); "
+                }
+                $ins22 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad", "-c", $sql22)) -IgnoreExitCode
+                $e2eLogs.Add("[22] inserted job $job22 (cic17-wed, 3 incidents: rank 1 open, rank 2·3 investigating) into verify zeekad DB: exit=$($ins22.ExitCode) $($ins22.Output.Trim() -replace "`r?`n", ' ')")
+                Assert-True ($ins22.ExitCode -eq 0) "[22] 검증 DB에 대응 조치 시험 데이터 넣기"
+                $q22A = Join-Path $tmpDir "q22-analyst.cookies"
+                $q22V = Join-Path $tmpDir "q22-viewer.cookies"
+                Assert-Status (Login-Api "analyst1" $q22A) 200 "[22] analyst1 로그인"
+                Assert-Status (Login-Api "viewer1" $q22V) 200 "[22] viewer1 로그인"
+                $auditBase22 = [long](Invoke-AuditSelect "SELECT COALESCE(MAX(id),0) FROM audit_logs")
+                $url22 = { param([int]$Rank) "$baseHttps/api/incidents/$job22/rank/$Rank/response-actions" }
+                $rows22 = { Invoke-AuditSelect "SELECT count(*) FROM incident_response_actions WHERE job_id = $job22" }
+                $audit22 = { param([string]$Type, [string]$Actor) [int](Invoke-AuditSelect "SELECT count(*) FROM audit_logs WHERE id > $auditBase22 AND action_type = '$Type' AND actor_username = '$Actor'") }
+                $status22 = { param([int]$Index) Invoke-ZeekadSelect "SELECT COALESCE((SELECT zeekad_status || '/' || COALESCE(zeekad_resolution, '-') FROM dashboard.raw_incident_status WHERE incident_id = '$($inc22[$Index])'), 'none') || '|' || (SELECT count(*) FROM dashboard.raw_incident_status_history WHERE incident_id = '$($inc22[$Index])')" }
+                $memo22 = "t56-e2e-memo 방화벽 담당에 차단 요청"
+
+                # [22a] 신규(착수 전) 인시던트 → 409 INCIDENT_NOT_STARTED(종류가 틀려도 상태를 먼저 본다)
+                $a22 = Invoke-Http -Url (& $url22 1) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = $memo22 })
+                $a22b = Invoke-Http -Url (& $url22 1) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "shutdown"; note = $null })
+                $e2eLogs.Add("[22a] analyst1 POST $job22/1 response-actions (신규): $(Format-Resp $a22 300)`n      종류가 틀린 요청: $(Format-Resp $a22b 300)")
+                Assert-ApiError $a22 409 "INCIDENT_NOT_STARTED" "[22a] 신규 인시던트에는 기록하지 않는다"
+                Assert-ApiError $a22b 409 "INCIDENT_NOT_STARTED" "[22a] 상태 검사가 종류 검사보다 먼저"
+
+                # [22b] 분석 중: 틀린 종류 400, 조치 없음에 메모 없음 400, 메모 501자 400
+                $b22 = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "shutdown"; note = "x" })
+                $b22n = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "none"; note = "   " })
+                $b22l = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = ("가" * 501) })
+                $e2eLogs.Add("[22b] analyst1 POST $job22/2 action=shutdown: $(Format-Resp $b22 300)`n      action=none, 빈 메모: $(Format-Resp $b22n 300)`n      메모 501자: $(Format-Resp $b22l 300)")
+                Assert-ApiError $b22 400 "INVALID_REQUEST" "[22b] 틀린 종류"
+                Assert-ApiError $b22n 400 "INVALID_REQUEST" "[22b] 조치 없음에 메모 없음"
+                Assert-ApiError $b22l 400 "INVALID_REQUEST" "[22b] 메모 501자"
+                Assert-True ($b22l.Json.message -eq "대응 조치 메모는 500자까지 입력할 수 있습니다.") "[22b] 길이 상한 문장" $b22l
+
+                # [22c] 허용 밖 캡처(syn1-wed 211/1): analyst1·viewer1 모두 403 + ACCESS_DENIED_IDOR. viewer1 허용 캡처는 403이고 IDOR 감사 없음
+                $c22 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/response-actions" -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = $null })
+                $c22v = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22V -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = $null })
+                $idor22vMid = & $audit22 "ACCESS_DENIED_IDOR" "viewer1"
+                $c22v2 = Invoke-Http -Url "$baseHttps/api/incidents/211/rank/1/response-actions" -Method POST -CookieJar $q22V -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = $null })
+                $idor22a = & $audit22 "ACCESS_DENIED_IDOR" "analyst1"
+                $idor22v = & $audit22 "ACCESS_DENIED_IDOR" "viewer1"
+                $e2eLogs.Add("[22c] analyst1 POST 211/1 response-actions (허용 밖): $(Format-Resp $c22 200); analyst1 IDOR rows since [22] = $idor22a`n      viewer1 POST $job22/2 (허용 캡처): $(Format-Resp $c22v 200); viewer1 IDOR rows = $idor22vMid`n      viewer1 POST 211/1 (허용 밖): $(Format-Resp $c22v2 200); viewer1 IDOR rows = $idor22v")
+                Assert-Status $c22 403 "[22c] analyst1 허용 밖 기록"
+                Assert-True ($idor22a -eq 1) "[22c] analyst1 허용 밖 요청 IDOR 감사 1건"
+                Assert-Status $c22v 403 "[22c] viewer1 기록(허용 캡처)"
+                Assert-True ($idor22vMid -eq 0) "[22c] viewer1 허용 캡처 요청은 IDOR 감사 없음"
+                Assert-Status $c22v2 403 "[22c] viewer1 기록(허용 밖)"
+                Assert-True ($idor22v -eq 1) "[22c] viewer1 허용 밖 요청 IDOR 감사 1건"
+
+                # [22d] CSRF 없는 POST → 403. 여기까지 거부된 요청은 행도 감사도 남기지 않는다
+                $d22 = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -JsonBody ([ordered]@{ action = "block_ip"; note = $null })
+                $rows22d = & $rows22
+                $auditRows22d = (& $audit22 "INCIDENT_RESPONSE_ACTION" "analyst1") + (& $audit22 "INCIDENT_RESPONSE_ACTION" "viewer1")
+                $e2eLogs.Add("[22d] analyst1 POST without X-XSRF-TOKEN: $(Format-Resp $d22 200)`n      incident_response_actions rows(job $job22)=$rows22d INCIDENT_RESPONSE_ACTION audit rows=$auditRows22d")
+                Assert-Status $d22 403 "[22d] CSRF 없는 기록"
+                Assert-True ($rows22d -eq "0" -and $auditRows22d -eq 0) "[22d] 거부된 요청은 행도 감사도 남기지 않는다"
+
+                # [22e] 기록 없이 정탐 종결 → 409 RESPONSE_ACTION_REQUIRED. zeek_AD 쪽 상태와 이력은 그대로다
+                $before22e = & $status22 1
+                $e22 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2/transition" -Method POST -CookieJar $q22A -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "T56 E2E 기록 없이 정탐 종결" }
+                $after22e = & $status22 1
+                $transAudit22e = & $audit22 "INCIDENT_STATUS_TRANSITION" "analyst1"
+                $e2eLogs.Add("[22e] analyst1 POST $job22/2 transition closed/true_positive (기록 0건): $(Format-Resp $e22 400)`n      zeekad status|history rows before=$before22e after=$after22e INCIDENT_STATUS_TRANSITION audit rows=$transAudit22e")
+                Assert-ApiError $e22 409 "RESPONSE_ACTION_REQUIRED" "[22e] 기록 없이 정탐 종결"
+                Assert-True ($e22.Json.message -eq "정탐으로 종결하려면 대응 조치를 먼저 기록하세요. 조치가 없었다면 '조치 없음'을 기록하세요.") "[22e] 안내 문장" $e22
+                Assert-True ($before22e -eq "investigating/-|0" -and $after22e -eq $before22e -and $transAudit22e -eq 0) "[22e] 상태·이력·전이 감사가 그대로(zeek_AD 함수를 부르지 않음)"
+
+                # [22f] 기록 성공: 200, 행·감사(대상 캡처·작업·인시던트, 상세 action·note), 상세 응답의 목록, nginx-waf 통과
+                $f22 = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "block_ip"; note = "  $memo22  " }) -ProbeId "e2e-t56-record"
+                $f22rows = Invoke-AuditSelect "SELECT incident_id, capture_id, job_id, action_type, note, actor_username FROM incident_response_actions WHERE job_id = $job22 ORDER BY id"
+                $f22audit = Invoke-AuditSelect "SELECT action_type, actor_username, target_capture_id, target_job_id, target_incident_id, detail_json FROM audit_logs WHERE id > $auditBase22 AND action_type = 'INCIDENT_RESPONSE_ACTION' ORDER BY id"
+                $f22d = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2" -CookieJar $q22A
+                $f22list = @($f22d.Json.responseActions)
+                $wafHits22 = Get-WafInterrupted "e2e-t56-record"
+                $e2eLogs.Add("[22f] analyst1 POST $job22/2 response-actions (block_ip): $(Format-Resp $f22 300)`n      incident_response_actions:`n      $($f22rows -replace "`n", "`n      ")`n      audit INCIDENT_RESPONSE_ACTION rows:`n      $($f22audit -replace "`n", "`n      ")`n      detail responseActions=$($f22d.Json.responseActions | ConvertTo-Json -Compress -Depth 4) canRecordResponse=$($f22d.Json.canRecordResponse) WAF interrupted=$($wafHits22.Count)")
+                Assert-Status $f22 200 "[22f] 대응 조치 기록"
+                Assert-True ($f22.Json.succeeded -eq $true -and $f22.Json.code -eq "OK" -and ([string]$f22.Json.message).Contains("IP 차단")) "[22f] 응답(succeeded·OK·조치 라벨)" $f22
+                Assert-True ($f22rows -eq "$($inc22[1])|cic17-wed|$job22|block_ip|$memo22|analyst1") "[22f] 표 행(인시던트·캡처·작업·종류·앞뒤 공백을 뺀 메모·기록자)"
+                Assert-True ($f22audit -match "^INCIDENT_RESPONSE_ACTION\|analyst1\|cic17-wed\|$job22\|$([regex]::Escape($inc22[1]))\|" -and $f22audit -match '"action":"block_ip"' -and $f22audit.Contains("`"note`":`"$memo22`"")) "[22f] 감사 기록 INCIDENT_RESPONSE_ACTION(대상·action·note)"
+                Assert-True ($f22list.Count -eq 1 -and $f22list[0].action -eq "block_ip" -and $f22list[0].note -eq $memo22 -and ([string]$f22list[0].actorDisplay).Contains("analyst1") -and [bool]$f22list[0].recordedAt -and $f22d.Json.canRecordResponse -eq $true) "[22f] 상세 응답의 목록과 canRecordResponse" $f22d
+                Assert-True ($wafHits22.Count -eq 0) "[22f] 기록 POST가 nginx-waf(CRS)에 차단되지 않음"
+
+                # [22g] 기록 뒤 정탐 종결 성공. [22h] 종결 뒤에도 덧붙일 수 있다(뒤늦은 조치: 조치 없음 + 사유)
+                $g22 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2/transition" -Method POST -CookieJar $q22A -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "closed"; resolution = "true_positive"; reason = "T56 E2E 기록 뒤 정탐 종결" }
+                $after22g = & $status22 1
+                $h22 = Invoke-Http -Url (& $url22 2) -Method POST -CookieJar $q22A -SaveCookies -Csrf -JsonBody ([ordered]@{ action = "none"; note = "t56-e2e-memo 추가 조치 없음" })
+                $e2eLogs.Add("[22g] analyst1 POST $job22/2 transition closed/true_positive (기록 1건): $(Format-Resp $g22 300)`n      zeekad status|history rows after=$after22g`n[22h] analyst1 POST $job22/2 response-actions (종결 뒤, none): $(Format-Resp $h22 300)")
+                Assert-Status $g22 200 "[22g] 기록 뒤 정탐 종결"
+                Assert-True ($g22.Json.succeeded -eq $true -and $after22g -eq "closed/true_positive|1") "[22g] 종결 반영(closed/true_positive, 이력 1행)" $g22
+                Assert-Status $h22 200 "[22h] 종결 뒤 기록"
+
+                # [22i] viewer1 상세: 종류·기록자·시각만 있고 메모가 없다(응답 본문 전체에 메모 글이 없다). 기록 버튼 권한도 없다
+                $i22 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/2" -CookieJar $q22V
+                $i22list = @($i22.Json.responseActions)
+                $i22notes = @($i22list | Where-Object { $null -ne $_.note })
+                $e2eLogs.Add("[22i] viewer1 GET $job22/2 -> HTTP $($i22.Status) responseActions=$($i22.Json.responseActions | ConvertTo-Json -Compress -Depth 4) canRecordResponse=$($i22.Json.canRecordResponse) body contains memo=$($i22.Body.Contains('t56-e2e-memo'))")
+                Assert-Status $i22 200 "[22i] viewer1 상세"
+                Assert-True ($i22list.Count -eq 2 -and $i22list[0].action -eq "none" -and $i22list[1].action -eq "block_ip" -and ([string]$i22list[1].actorDisplay).Contains("analyst1") -and [bool]$i22list[1].recordedAt) "[22i] viewer1 목록(시간 역순, 종류·기록자·시각)" $i22
+                Assert-True ($i22notes.Count -eq 0 -and -not $i22.Body.Contains("t56-e2e-memo") -and -not $i22.Body.Contains("차단 요청") -and $i22.Json.canRecordResponse -eq $false) "[22i] viewer1 응답에 메모 없음·기록 권한 없음" $i22
+
+                # [22j] 기록 표 UPDATE·DELETE·TRUNCATE 거부(psql, 슈퍼유저). 행 수 그대로
+                $rows22j = & $rows22
+                $upd22 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "UPDATE incident_response_actions SET note = 'tampered'")) -IgnoreExitCode
+                $del22 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "DELETE FROM incident_response_actions")) -IgnoreExitCode
+                $trunc22 = Invoke-NativeCapture "docker" ($composeArgs + @("exec", "-T", "verify-postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "zeekad_dashboard", "-c", "TRUNCATE incident_response_actions")) -IgnoreExitCode
+                $rows22j2 = & $rows22
+                $e2eLogs.Add("[22j] psql UPDATE incident_response_actions: $($upd22.Output.Trim())`n      psql DELETE: $($del22.Output.Trim())`n      psql TRUNCATE: $($trunc22.Output.Trim())`n      rows before=$rows22j after=$rows22j2")
+                Assert-True ($upd22.Output -match "incident_response_actions is append-only: UPDATE is forbidden" -and $del22.Output -match "incident_response_actions is append-only: DELETE is forbidden" -and $trunc22.Output -match "incident_response_actions is append-only: TRUNCATE is forbidden" -and $rows22j -eq "2" -and $rows22j2 -eq "2") "[22j] 기록 표 UPDATE·DELETE·TRUNCATE 거부(PostgreSQL 트리거)"
+
+                # [22k] 오탐 종결은 기록 없이 된다(규칙은 정탐 종결에만 있다)
+                $k22 = Invoke-Http -Url "$baseHttps/api/incidents/$job22/rank/3/transition" -Method POST -CookieJar $q22A -SaveCookies -Csrf `
+                    -JsonBody @{ toStatus = "closed"; resolution = "false_positive"; reason = "T56 E2E 오탐 종결" }
+                $after22k = & $status22 2
+                $e2eLogs.Add("[22k] analyst1 POST $job22/3 transition closed/false_positive (기록 0건): $(Format-Resp $k22 300)`n      zeekad status|history rows after=$after22k")
+                Assert-Status $k22 200 "[22k] 기록 없이 오탐 종결"
+                Assert-True ($after22k -eq "closed/false_positive|1") "[22k] 종결 반영(closed/false_positive)" $k22
 
                 $accuracyHits = @($allBodies | Where-Object { $_ -and $_.Contains("정확도") })
                 $e2eLogs.Add("[*] responses checked for '정확도': $($allBodies.Count) bodies, hits=$($accuracyHits.Count)")

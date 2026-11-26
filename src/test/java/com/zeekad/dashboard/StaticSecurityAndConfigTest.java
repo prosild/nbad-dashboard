@@ -482,8 +482,9 @@ class StaticSecurityAndConfigTest {
                 "LOCK TABLE zeekad.incident_status, zeekad.incident_status_history, zeekad.analyst_review IN SHARE ROW EXCLUSIVE MODE;",
                 "SET lock_timeout = '5s'", "ALTER FUNCTION sandbox.reset_pipeline() OWNER TO zeekad_owner;",
                 "ALTER FUNCTION sandbox.reset_assignments() OWNER TO dashboard_app;", "--rebuild-baseline");
-        assertThat(setupSql.split("LANGUAGE plpgsql SECURITY DEFINER", -1)).hasSize(3);
-        assertThat(setupSql.split(Pattern.quote("SET search_path = pg_catalog, pg_temp"), -1)).hasSize(4);
+        // T56: 정의자 권한 함수가 하나 늘었다(sandbox.reset_response_actions). 설계 변경으로 두 수를 3→4, 4→5로 고쳤다.
+        assertThat(setupSql.split("LANGUAGE plpgsql SECURITY DEFINER", -1)).hasSize(4);
+        assertThat(setupSql.split(Pattern.quote("SET search_path = pg_catalog, pg_temp"), -1)).hasSize(5);
         assertThat(setupSql.toLowerCase(java.util.Locale.ROOT)).doesNotContain("dashboard_rw", "disable trigger",
                 "drop trigger", "delete from public.audit_logs", "delete from public.incident_assignment_history",
                 "truncate", "grant select", "grant update", "grant insert", "grant delete", "grant create", "grant all");
@@ -493,7 +494,7 @@ class StaticSecurityAndConfigTest {
         assertThat(resetSh).contains("PGUSER=zeekad_sandbox_reset", "NOT_CONFIGURED", "--once")
                 .doesNotContain("PGPASSWORD=\"${POSTGRES");
 
-        // 쓰기 속도 제한: 네 쓰기 경로의 POST만 정규화된 $uri로, 로그인 제한과 다른 영역
+        // 쓰기 속도 제한: 다섯 쓰기 경로(T56: 대응 조치 기록이 더해졌다)의 POST만 정규화된 $uri로, 로그인 제한과 다른 영역
         assertThat(serviceBlock(compose, "nginx-waf")).contains("ZEEKAD_WRITE_RATE: ${PORTFOLIO_WRITE_RATE:-10r/m}",
                 "ZEEKAD_WRITE_BURST: ${PORTFOLIO_WRITE_BURST:-5}");
         String template = Files.readString(
@@ -510,12 +511,14 @@ class StaticSecurityAndConfigTest {
         java.util.function.Predicate<String> limited = key -> writeKeys.stream().anyMatch(p -> p.matcher(key).find());
         for (String key : List.of("POST:/api/incidents/42/rank/1/transition", "POST:/api/incidents/42/rank/1/assignment",
                 "POST:/api/incidents/42/rank/1/review-decision", "POST:/api/reviews/decide",
-                "POST:/api/incidents/42/rank/1/transition/", "POST:/api/reviews/decide/")) {
+                "POST:/api/incidents/42/rank/1/transition/", "POST:/api/reviews/decide/",
+                "POST:/api/incidents/42/rank/1/response-actions", "POST:/api/incidents/42/rank/1/response-actions/")) {
             assertThat(limited.test(key)).as("쓰기 제한 대상 %s", key).isTrue();
         }
         for (String key : List.of("GET:/api/incidents/42/rank/1/transition", "GET:/api/reviews/decide",
                 "POST:/api/auth/login", "GET:/api/incidents/42/rank/1/assignees", "POST:/api/admin/users",
-                "POST:/api/incidents/42/rank/1/transition/x")) {
+                "POST:/api/incidents/42/rank/1/transition/x", "GET:/api/incidents/42/rank/1/response-actions",
+                "POST:/api/incidents/42/rank/1/response-actions/x", "POST:/api/incidents/42/rank/1/response-action")) {
             assertThat(limited.test(key)).as("쓰기 제한 밖 %s", key).isFalse();
         }
 
@@ -648,7 +651,8 @@ class StaticSecurityAndConfigTest {
                 "is missing in zeekad_dashboard; start dashboard-app with migration V4 (Flyway) first\"; exit 1",
                 "purge_public_execute=")
                 .doesNotContain("FUNCTION public.purge_expired_audit_logs(p_retention_days");
-        // GRANT 문은 일곱뿐이다: DB CONNECT 둘, sandbox 스키마 USAGE 둘, 함수 EXECUTE 셋(표 권한 없음)
+        // GRANT 문은 여덟뿐이다: DB CONNECT 둘, sandbox 스키마 USAGE 둘, 함수 EXECUTE 넷(표 권한 없음).
+        // T56: 대응 조치 초기화 함수의 EXECUTE가 더해져 일곱 → 여덟(설계 변경).
         List<String> grants = setupSh.lines().map(String::trim).filter(line -> line.startsWith("GRANT ")).toList();
         assertThat(grants).containsExactly(
                 "GRANT CONNECT ON DATABASE zeekad TO $RESET_ROLE;",
@@ -657,6 +661,7 @@ class StaticSecurityAndConfigTest {
                 "GRANT EXECUTE ON FUNCTION sandbox.reset_pipeline() TO zeekad_sandbox_reset;",
                 "GRANT USAGE ON SCHEMA sandbox TO zeekad_sandbox_reset;",
                 "GRANT EXECUTE ON FUNCTION sandbox.reset_assignments() TO zeekad_sandbox_reset;",
+                "GRANT EXECUTE ON FUNCTION sandbox.reset_response_actions() TO zeekad_sandbox_reset;",
                 "GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO zeekad_sandbox_reset;");
 
         // 초기화 서비스: 기한 값 검사(정수 30~3650, 아니면 exit 2), 하루 한 번 판정 함수, 있는지·실행 권한 확인 뒤 호출, 감사 칸
@@ -708,6 +713,98 @@ class StaticSecurityAndConfigTest {
         assertThat(auditDict).contains("AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',", "INCIDENT_ASSIGNMENT: '담당 지정',");
         String roleDict = labels.substring(labels.indexOf("  userRole: {"));
         assertThat(roleDict.substring(0, roleDict.indexOf("\n  },"))).contains("SYSTEM: '시스템',");
+    }
+
+    @Test
+    void t56ResponseActionMigrationResetFunctionAndNoMutationInAppCode() throws IOException {
+        // V5(PostgreSQL): 종류 일곱 CHECK, 트리거는 표식이 있을 때의 DELETE 한 경우만 통과, UPDATE·TRUNCATE는 늘 거부
+        String v5 = Files.readString(
+                Path.of("src/main/resources/db/migration/postgresql/V5__incident_response_actions.sql"), StandardCharsets.UTF_8);
+        String v5Flat = v5.replace("\r", "").replaceAll("[ \\t]+", " ");
+        assertThat(v5Flat).contains(
+                "CREATE TABLE incident_response_actions (",
+                "action_type VARCHAR(32) NOT NULL CHECK (action_type IN (\n"
+                        + " 'block_ip', 'isolate_host', 'lock_account', 'handover', 'monitor', 'none', 'other')),",
+                "note VARCHAR(500),",
+                "CREATE INDEX idx_incident_response_actions_incident ON incident_response_actions (incident_id);",
+                "SET search_path = pg_catalog, pg_temp",
+                "IF TG_OP = 'DELETE' THEN\n IF current_setting('dashboard.response_actions_reset', true) = 'on' THEN\n RETURN OLD;",
+                "RAISE EXCEPTION 'incident_response_actions is append-only: % is forbidden', TG_OP;",
+                "BEFORE UPDATE OR DELETE ON incident_response_actions\nFOR EACH ROW\nEXECUTE FUNCTION prevent_response_action_mutation();",
+                "BEFORE TRUNCATE ON incident_response_actions\nFOR EACH STATEMENT\nEXECUTE FUNCTION prevent_response_action_mutation();");
+        // UPDATE를 통과시키는 가지가 없고 migration이 표식을 켜지 않는다(켜는 것은 초기화 함수뿐). 다른 표의 트리거는 건드리지 않는다.
+        assertThat(v5).doesNotContain("RETURN NEW", "set_config", "SECURITY DEFINER", "audit_logs", "incident_assignment")
+                .doesNotContainIgnoringCase("disable trigger").doesNotContainIgnoringCase("drop trigger")
+                .doesNotContainIgnoringCase("grant ");
+        assertThat(v5.split("RETURN OLD;", -1)).hasSize(2);
+        // H2 V5: 같은 열·CHECK, 시험 소스의 트리거 클래스가 UPDATE·DELETE를 늘 거부한다
+        String h2v5 = Files.readString(
+                Path.of("src/main/resources/db/migration/h2/V5__incident_response_actions.sql"), StandardCharsets.UTF_8);
+        assertThat(h2v5.replace("\r", "").replaceAll("[ \\t]+", " ")).contains(
+                "'block_ip', 'isolate_host', 'lock_account', 'handover', 'monitor', 'none', 'other')),",
+                "BEFORE UPDATE, DELETE ON incident_response_actions\nFOR EACH ROW\n"
+                        + "CALL \"com.zeekad.dashboard.audit.H2ResponseActionImmutableTrigger\";");
+
+        // 앱 코드(Java, MyBatis 매퍼)에는 대응 조치 기록을 고치거나 지우는 문장, 표식을 켜는 문장, 초기화 함수 호출이 없다.
+        Pattern mutation = Pattern.compile(
+                "(?i)update\\s+(public\\.)?incident_response_actions|delete\\s+from\\s+(public\\.)?incident_response_actions"
+                        + "|truncate\\s+(table\\s+)?(only\\s+)?(public\\.)?incident_response_actions"
+                        + "|response_actions_reset|reset_response_actions\\s*\\(");
+        for (Path root : List.of(Path.of("src/main/java"), Path.of("src/main/resources/mapper"))) {
+            try (Stream<Path> files = Files.walk(root)) {
+                List<Path> sources = files.filter(Files::isRegularFile).toList();
+                assertThat(sources).isNotEmpty();
+                for (Path file : sources) {
+                    assertThat(Files.readString(file, StandardCharsets.UTF_8))
+                            .as("앱 코드 %s에 대응 조치 기록을 고치거나 지우는 문장이 없어야 한다", file)
+                            .doesNotContainPattern(mutation);
+                }
+            }
+        }
+        // 매퍼는 넣기와 읽기뿐이다(update·delete 태그 없음). 컨트롤러에는 POST 하나만 있다.
+        String mapperXml = Files.readString(
+                Path.of("src/main/resources/mapper/app/IncidentResponseActionMapper.xml"), StandardCharsets.UTF_8);
+        assertThat(mapperXml).contains("<insert id=\"insert\"", "<select id=\"findByIncidentId\"", "<select id=\"countByIncidentId\"")
+                .doesNotContain("<update", "<delete", "${");
+        String controller = Files.readString(
+                Path.of("src/main/java/com/zeekad/dashboard/controller/IncidentApiController.java"), StandardCharsets.UTF_8);
+        assertThat(controller.split("response-actions", -1)).hasSize(2);
+        assertThat(controller).contains("@PostMapping(\"/{jobId}/rank/{queueRank}/response-actions\")")
+                .doesNotContain("@DeleteMapping", "@PutMapping", "@PatchMapping");
+
+        // 설정 도구: 기준선 표식은 zeek_AD 기준선의 가지 밖에서 정하고(없으면 만들고 --rebuild-baseline이면 다시 잡는다),
+        // 표를 잠근 뒤 체험 계정의 행이 0일 때만 넣는다. 초기화 함수는 표식이 없으면 오류를 내고 표식을 켰다가 끈다.
+        String setupSh = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-setup.sh"), StandardCharsets.UTF_8);
+        assertThat(setupSh).contains(
+                "is missing in zeekad_dashboard; start dashboard-app with migration V5 (Flyway) first\"; exit 1",
+                "if [ \"$HAS_RA_MARKER\" != \"t\" ] || [ \"$REBUILD\" = \"1\" ]; then",
+                "LOCK TABLE public.incident_response_actions IN SHARE ROW EXCLUSIVE MODE;",
+                "ALTER TABLE sandbox.response_action_baseline OWNER TO dashboard_app;",
+                "REVOKE ALL ON TABLE sandbox.response_action_baseline FROM PUBLIC;",
+                "SELECT count(*) AS n FROM public.incident_response_actions WHERE actor_username = :'trial'",
+                "FROM trial WHERE trial.n = 0",
+                "CREATE OR REPLACE FUNCTION sandbox.reset_response_actions()",
+                "RAISE EXCEPTION 'sandbox response action baseline is missing; run sandbox-setup' USING ERRCODE = '55000';",
+                "PERFORM set_config('dashboard.response_actions_reset', 'on', true);",
+                "DELETE FROM public.incident_response_actions r WHERE r.id > v_max;",
+                "PERFORM set_config('dashboard.response_actions_reset', 'off', true);",
+                "ALTER FUNCTION sandbox.reset_response_actions() OWNER TO dashboard_app;",
+                "REVOKE ALL ON FUNCTION sandbox.reset_response_actions() FROM PUBLIC;",
+                "'marker_select=' || has_table_privilege('$RESET_ROLE', 'sandbox.response_action_baseline', 'SELECT')",
+                "for v in $Z $D $R; do");
+        // 표식을 정하는 자리는 zeek_AD 기준선 가지("baseline kept"로 끝나는 if/else)보다 뒤에 있다(그 가지 밖).
+        assertThat(setupSh.indexOf("if [ \"$SET_RA_MARKER\" = \"1\" ]; then"))
+                .isGreaterThan(setupSh.indexOf("REFUSED: the baseline does not match the current snapshot"));
+
+        // 초기화 서비스: assignments 칸과 audit 칸 사이의 responses 칸. 미설정은 전체 상태를 바꾸지 않고 ERROR만 전체를 ERROR로 만든다.
+        String resetSh = Files.readString(Path.of("docker/portfolio/sandbox/sandbox-reset.sh"), StandardCharsets.UTF_8);
+        assertThat(resetSh).contains(
+                "RESPONSES_FN='sandbox.reset_response_actions()'",
+                "has_function_privilege(current_user, to_regprocedure('$RESPONSES_FN')::oid, 'EXECUTE')",
+                "SELECT format('removed=%s', removed) FROM sandbox.reset_response_actions()",
+                "[ \"$s_state\" = ERROR ] && overall=ERROR",
+                "; assignments[$a_state] $a_result; responses[$s_state]${s_result:+ $s_result}; audit[$r_state]${r_result:+ $r_result}\"");
+        assertThat(resetSh).doesNotContain("response_actions_reset", "incident_response_actions");
     }
 
     /** services: 줄로 시작하는 글에서 다음 최상위 키(들여쓰기 없는 줄. 주석 제외)가 시작하는 위치. 없으면 끝. */

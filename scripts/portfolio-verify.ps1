@@ -1288,6 +1288,21 @@ try {
     Assert-True ($fnPriv -match 'reset_role_exec=true dashboard_rw_exec=false public_exec=false secdef=true config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_pipeline: 전용 역할만 EXECUTE, SECURITY DEFINER, search_path 고정 ($fnPriv)"
     Assert-True ($fnPrivD -match 'reset_role_exec=true app_owner=dashboard_app public_exec=false config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T33b] reset_assignments: 전용 역할만 EXECUTE ($fnPrivD)"
 
+    # [T56a] 대응 조치 초기화 함수와 기준선 표식(sandbox-setup이 만든다): 함수는 소유 dashboard_app, SECURITY DEFINER, search_path·lock_timeout 고정,
+    #        초기화 계정만 EXECUTE(PUBLIC 불가). 표식은 한 행(설정 시점의 최대 id)이고 초기화 계정에는 표식 표와 대응 조치 표의 권한이 없다.
+    #        대응 조치 표의 트리거는 둘(행 수준 UPDATE·DELETE, 문장 수준 TRUNCATE). 2차 실행은 표식을 그대로 둔다.
+    $fnPrivR = (Invoke-Psql "zeekad_dashboard" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'sandbox.reset_response_actions()', 'EXECUTE') || ' app_owner=' || (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'sandbox.reset_response_actions()'::regprocedure) || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'sandbox.reset_response_actions()'::regprocedure AND x.grantee = 0) || ' secdef=' || (SELECT prosecdef FROM pg_proc WHERE oid = 'sandbox.reset_response_actions()'::regprocedure) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'sandbox.reset_response_actions()'::regprocedure)").Output.Trim()
+    $raMarker = (Invoke-Psql "zeekad_dashboard" "SELECT 'owner=' || pg_get_userbyid(c.relowner) || ' rows=' || (SELECT count(*) FROM sandbox.response_action_baseline) || ' max_id=' || (SELECT max_id FROM sandbox.response_action_baseline WHERE id = 1) || ' table_max=' || (SELECT COALESCE(max(id), 0) FROM public.incident_response_actions) || ' reset_role_marker=' || has_table_privilege('zeekad_sandbox_reset', 'sandbox.response_action_baseline', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') || ' reset_role_actions=' || has_table_privilege('zeekad_sandbox_reset', 'public.incident_response_actions', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') FROM pg_class c WHERE c.oid = 'sandbox.response_action_baseline'::regclass").Output.Trim()
+    $raTriggers = (Invoke-Psql "zeekad_dashboard" "SELECT string_agg(tgname || ':' || pg_get_triggerdef(oid), ' ; ' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'public.incident_response_actions'::regclass AND NOT tgisinternal").Output.Trim()
+    $setupRaLines = @($setup1.Output -split "`r?`n" | Where-Object { $_ -match 'response' })
+    $setupRaLines2 = @($setup2.Output -split "`r?`n" | Where-Object { $_ -match 'response action baseline' })
+    $e2eLogs.Add("[T56a] reset_response_actions(): $fnPrivR; baseline marker: $raMarker; incident_response_actions triggers: $raTriggers`n       sandbox-setup run1: $($setupRaLines -join ' / ')`n       run2: $($setupRaLines2 -join ' / ')")
+    Assert-True ($fnPrivR -match 'reset_role_exec=true app_owner=dashboard_app public_exec=false secdef=true config=search_path=pg_catalog, pg_temp,lock_timeout=5s') "[T56a] reset_response_actions: 소유 dashboard_app, SECURITY DEFINER, search_path·lock_timeout 고정, 초기화 계정만 EXECUTE(PUBLIC 불가) ($fnPrivR)"
+    Assert-True ($raMarker -match '^owner=dashboard_app rows=1 max_id=(\d+) table_max=\1 reset_role_marker=false reset_role_actions=false$') "[T56a] 기준선 표식: 소유 dashboard_app, 한 행, 설정 시점의 최대 id, 초기화 계정은 두 표의 권한 없음 ($raMarker)"
+    Assert-True ($raTriggers -match 'trg_incident_response_actions_immutable:.*BEFORE DELETE OR UPDATE ON public\.incident_response_actions FOR EACH ROW' -and $raTriggers -match 'trg_incident_response_actions_no_truncate:.*BEFORE TRUNCATE ON public\.incident_response_actions FOR EACH STATEMENT') "[T56a] incident_response_actions 트리거 둘(UPDATE·DELETE 행 수준, TRUNCATE 문장 수준) ($raTriggers)"
+    Assert-True ($setup1.Output -match 'response action baseline created: max_id=\d+' -and $setup1.Output -match 'response_actions\[actions_select=false marker_select=false reset_public_execute=false\]') "[T56a] sandbox-setup 1차가 대응 조치 표식을 만들고 권한을 점검함"
+    Assert-True ($setup2.Output -match 'response action baseline kept: max_id=\d+ ') "[T56a] sandbox-setup 2차는 대응 조치 표식을 그대로 둠(멱등)"
+
     # [T58a] 감사 로그 삭제 함수(앱 migration V4가 만들고 sandbox-setup은 EXECUTE만 준다): 소유 dashboard_app, SECURITY DEFINER,
     #        search_path·lock_timeout 고정, 초기화 계정은 실행 가능, PUBLIC은 실행 불가. audit_logs의 트리거는 둘(행 수준 UPDATE·DELETE, 문장 수준 TRUNCATE).
     $fnPrivP = (Invoke-Psql "zeekad_dashboard" "SELECT 'reset_role_exec=' || has_function_privilege('zeekad_sandbox_reset', 'public.purge_expired_audit_logs(integer)', 'EXECUTE') || ' app_owner=' || (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure) || ' public_exec=' || EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE p.oid = 'public.purge_expired_audit_logs(integer)'::regprocedure AND x.grantee = 0) || ' secdef=' || (SELECT prosecdef FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure) || ' config=' || (SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'public.purge_expired_audit_logs(integer)'::regprocedure)").Output.Trim()
@@ -1322,6 +1337,15 @@ try {
         @("zeekad_dashboard", "DELETE FROM public.audit_logs"),
         @("zeekad_dashboard", "TRUNCATE public.audit_logs"),
         @("zeekad_dashboard", "UPDATE public.audit_logs SET action_type = action_type"),
+        # T56: 대응 조치 표와 기준선 표식 표도 읽지도 고치지도 못한다(표식을 켜도 표 권한이 없다)
+        @("zeekad_dashboard", "SELECT count(*) FROM public.incident_response_actions"),
+        @("zeekad_dashboard", "UPDATE public.incident_response_actions SET note = note"),
+        @("zeekad_dashboard", "DELETE FROM public.incident_response_actions"),
+        @("zeekad_dashboard", "SET dashboard.response_actions_reset = 'on'; DELETE FROM public.incident_response_actions"),
+        @("zeekad_dashboard", "TRUNCATE public.incident_response_actions"),
+        @("zeekad_dashboard", "SELECT max_id FROM sandbox.response_action_baseline"),
+        @("zeekad_dashboard", "UPDATE sandbox.response_action_baseline SET max_id = 0"),
+        @("zeekad_dashboard", "DELETE FROM sandbox.response_action_baseline"),
         @("zeekad_dashboard", "CREATE TABLE public.t33_probe (id int)"),
         @("zeekad_dashboard", "CREATE TABLE sandbox.t33_probe (id int)")
     )
@@ -1343,6 +1367,10 @@ try {
     $denyLines.Add("zeekad_dashboard: SELECT deleted FROM public.purge_expired_audit_logs(29) -> exit=$($lowPurge.ExitCode) $lowPurgeErr")
     Assert-True ($okPurge.ExitCode -eq 0 -and $okPurge.Output.Trim() -match '^\d+$') "[T33c] zeekad_sandbox_reset은 감사 로그 삭제 함수는 부른다 ($($okPurge.Output.Trim()))"
     Assert-True ($lowPurge.ExitCode -ne 0 -and $lowPurgeErr -match 'audit retention must be at least 30 days') "[T33c] 삭제 함수는 30일보다 짧은 기한을 거부한다 ($lowPurgeErr)"
+    # T56: 대응 조치 초기화 함수는 부를 수 있다(이 시점에는 기준선 뒤의 행이 없어 0).
+    $okResponses = Invoke-Psql "zeekad_dashboard" "SELECT removed FROM sandbox.reset_response_actions()" -User "zeekad_sandbox_reset" -PasswordEnv "SANDBOX_RESET_DB_PASSWORD"
+    $denyLines.Add("(대조) zeekad_dashboard: SELECT removed FROM sandbox.reset_response_actions() -> exit=$($okResponses.ExitCode) $($okResponses.Output.Trim())")
+    Assert-True ($okResponses.ExitCode -eq 0 -and $okResponses.Output.Trim() -eq '0') "[T33c] zeekad_sandbox_reset은 대응 조치 초기화 함수는 부른다 ($($okResponses.Output.Trim()))"
     Save-Evidence "t33-deny-probes.txt" (($denyLines -join "`n") + "`n")
     $e2eLogs.Add("[T33c] zeekad_sandbox_reset attempts:`n       $($denyLines -join "`n       ")")
 
@@ -1352,6 +1380,12 @@ try {
     Assert-True ($other0 -eq $other0b) "[T33d] 세 표 밖 zeekad 표 해시를 두 번 재면 같다(측정이 안정적)"
     $audit0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM audit_logs").Output.Trim()
     $ahist0 = [long](Invoke-Psql "zeekad_dashboard" "SELECT count(*) FROM incident_assignment_history").Output.Trim()
+    # T56: 대응 조치 표의 행 수(전체|체험 계정)와 체험 계정의 대응 조치 감사 행 수
+    $raCountSql = "SELECT count(*) || '|' || count(*) FILTER (WHERE actor_username = '$trialUser') FROM incident_response_actions"
+    $raAuditSql = "SELECT count(*) FROM audit_logs WHERE action_type = 'INCIDENT_RESPONSE_ACTION' AND actor_username = '$trialUser'"
+    $ra0 = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
+    $raAudit0 = [long](Invoke-Psql "zeekad_dashboard" $raAuditSql).Output.Trim()
+    Assert-True ($ra0 -match '^\d+\|0$') "[T33d] 쓰기 전 체험 계정의 대응 조치 기록 0 ($ra0)"
     Assert-True (& $isBaseline (& $baselineDiff)) "[T33d] 쓰기 전 세 표 = 기준선"
     # T39: 표본은 공개 실습망 캡처에서 뽑되 lab-20261122를 먼저 보고 없으면 lab-20261119에서 뽑는다(어느 캡처인지 로그에 남긴다).
     $open33 = @(); $pend33 = @(); $openCap33 = ''; $pendCap33 = ''
@@ -1372,6 +1406,10 @@ try {
 
     # [T33e] trial-analyst 쓰기 흐름: open → investigating(담당 자동 지정) → closed, 검토 결정 하나, 담당 지정 하나
     #        쓰기와 바로 뒤 확인이 주기(매분 0초) 초기화와 겹치지 않게 분의 3~15초에 시작한다.
+    #        T56: 대응 조치 기록 하나를 더한다. 같은 클라이언트 주소의 쓰기는 지금처럼 넷으로 두고(공개 설정: 분당 10회·버스트 5)
+    #        기록은 다른 클라이언트 주소로 보낸다(그 주소의 쓰기는 하나). 로그인은 기다리기 전에 해 둔다.
+    $t56c = New-Client "198.51.100.202"
+    Assert-Status (Login-Api $t56c $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T56b] $trialUser 로그인(대응 조치 기록용 클라이언트)"
     while ((Get-Date).ToUniversalTime().Second -notin 3..15) { Start-Sleep -Milliseconds 500 }
     $w1 = Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition" -Method POST -Client $tc -Csrf -JsonBody @{ toStatus = "investigating"; reason = "T33 리허설: 조사 시작" }
     $w2 = Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition" -Method POST -Client $tc -Csrf -JsonBody @{ toStatus = "closed"; resolution = "benign"; reason = "T33 리허설: 정상으로 종결" }
@@ -1381,6 +1419,13 @@ try {
         $e2eLogs.Add("[T33e] $trialUser $($w[1]): $(Format-Resp $w[0] 200)")
         Assert-Status $w[0] 200 "[T33e] $trialUser $($w[1])"
     }
+    # [T56b] 체험 계정이 방금 종결한 인시던트에 대응 조치를 기록한다(종결 뒤에도 덧붙일 수 있다): 행 하나와 감사 INCIDENT_RESPONSE_ACTION 하나.
+    $w5 = Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/response-actions" -Method POST -Client $t56c -Csrf -JsonBody @{ action = "monitor"; note = "T56 리허설: 모니터링 강화" }
+    $ra1 = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
+    $raAudit1 = [long](Invoke-Psql "zeekad_dashboard" $raAuditSql).Output.Trim()
+    $e2eLogs.Add("[T56b] $trialUser response action (monitor) from 198.51.100.202: $(Format-Resp $w5 200)`n       incident_response_actions (all|trial) $ra0 -> $ra1; INCIDENT_RESPONSE_ACTION audit rows $raAudit0 -> $raAudit1")
+    Assert-Status $w5 200 "[T56b] $trialUser 대응 조치 기록"
+    Assert-True ($ra1 -eq "$([long]($ra0 -split '\|')[0] + 1)|1" -and $raAudit1 -eq $raAudit0 + 1) "[T56b] 기록 뒤 행 하나·감사 하나 ($ra0 -> $ra1, 감사 $raAudit0 -> $raAudit1)"
     $writeAt = Get-Date
     $after33 = & $baselineDiff
     $assigned33 = (Invoke-Psql "zeekad_dashboard" "SELECT a.incident_id IN ('$($inc[0].Id)', '$($inc[1].Id)') || ':' || u.username || ':' || h.reason FROM incident_assignments a JOIN users u ON u.id = a.assignee_user_id JOIN LATERAL (SELECT reason FROM incident_assignment_history x WHERE x.incident_id = a.incident_id ORDER BY id DESC LIMIT 1) h ON TRUE ORDER BY 1").Output.Trim() -replace "`r?`n", '; '
@@ -1428,6 +1473,17 @@ try {
     Assert-True ($cellLines.Count -ge 2 -and $noAuditCell.Count -eq 0) "[T58b] 초기화 로그 줄마다 audit[ 칸이 있음(없는 줄 $($noAuditCell.Count))"
     Assert-True ($auditOk.Count -ge 1) "[T58b] audit[OK] purged=N cutoff=<UTC> 줄이 한 번 이상"
     Assert-True ($auditOrderBad.Count -eq 0 -and @($cellLines | Where-Object { $_ -match '; audit\[SKIP\]$' }).Count -ge 1) "[T58b] 그날 OK 뒤의 주기는 audit[SKIP](하루에 한 번만 부름)`n$($auditOrderBad -join "`n")"
+    # [T56c] 초기화 뒤: 체험 계정의 대응 조치 기록(기준선 뒤의 행)은 사라지고 감사 로그의 기록은 남는다.
+    #        줄마다 assignments 칸과 audit 칸 사이에 responses[ 칸이 있고, 기록을 지운 주기의 줄은 responses[OK] removed=1이다.
+    $ra2 = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
+    $raAudit2 = [long](Invoke-Psql "zeekad_dashboard" $raAuditSql).Output.Trim()
+    $noRespCell = @($cellLines | Where-Object { $_ -notmatch '; assignments\[[A-Z_]+\].*; responses\[(OK|NOT_CONFIGURED)\].*; audit\[' })
+    $respRemoved = @($cellLines | Where-Object { $_ -match '; responses\[OK\] removed=1; audit\[' })
+    $e2eLogs.Add("[T56c] after reset: incident_response_actions (all|trial) $ra1 -> $ra2 (before writes $ra0); INCIDENT_RESPONSE_ACTION audit rows $raAudit1 -> $raAudit2`n       reset log lines without a responses cell=$($noRespCell.Count); lines with responses[OK] removed=1: $($respRemoved.Count)`n       $($respRemoved | Select-Object -First 1)")
+    Assert-True ($ra2 -eq $ra0) "[T56c] 초기화 뒤 대응 조치 표 = 쓰기 전(체험 계정의 기록 0) ($ra1 -> $ra2)"
+    Assert-True ($raAudit2 -eq $raAudit1) "[T56c] 감사 로그의 대응 조치 기록은 남는다 ($raAudit1 -> $raAudit2)"
+    Assert-True ($noRespCell.Count -eq 0) "[T56c] 초기화 로그 줄마다 responses[ 칸이 assignments 칸과 audit 칸 사이에 있음(없는 줄 $($noRespCell.Count))`n$($noRespCell -join "`n")"
+    Assert-True ($respRemoved.Count -eq 1) "[T56c] responses[OK] removed=1 줄이 한 번($($respRemoved.Count))"
     if ($other0 -ne $other2) { $e2eLogs.Add("[T33f] other zeekad tables changed: $(& $otherChanged $other0 $other2)") }
     Assert-True ($other0 -eq $other2) "[T33f] 검토 결정 뒤 2분 넘게 세 표 밖 zeekad 표 그대로(후속 쓰기 없음)"
 
@@ -1531,15 +1587,17 @@ try {
     Assert-True (($codes33 -join ',') -eq '401,401,401,401,401,401' -and $ok33.Status -eq 200 -and $state33 -eq '0|t') "[T33j] $trialUser 6번 틀려도 잠기지 않음"
     Assert-True ($aud33 -match '(?m)^LOGIN_FAILURE\|6\|6\s*$' -and $aud33 -notmatch 'ACCOUNT_LOCKED') "[T33j] 실패 감사 6건(lockoutExempt), 잠금 감사 없음"
 
-    # [T33k] 쓰기 속도 제한: 네 경로 각각 새 클라이언트 IP에서 12번(DB를 바꾸지 않는 입력) → 429. GET은 제한 밖.
+    # [T33k] 쓰기 속도 제한: 다섯 경로(T56: 대응 조치 기록이 더해졌다) 각각 새 클라이언트 IP에서 12번(DB를 바꾸지 않는 입력) → 429. GET은 제한 밖.
     $rl = New-Client "198.51.100.230"
     Assert-Status (Login-Api $rl $trialUser $env:TRIAL_ANALYST_PASSWORD) 200 "[T33k] $trialUser 로그인"
     $rlPaths = @(
         @{ Label = "transition"; Ip = "198.51.100.231"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/transition"; Body = @{ toStatus = "rate-limit-probe"; reason = "x" } },
         @{ Label = "assignment"; Ip = "198.51.100.232"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/assignment"; Body = @{ assignee = $trialUser; expected = "rate-limit-probe-nobody" } },
         @{ Label = "review-decision"; Ip = "198.51.100.233"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/review-decision"; Body = @{ action = "rate-limit-probe" } },
-        @{ Label = "reviews/decide"; Ip = "198.51.100.234"; Path = "/api/reviews/decide"; Body = @{ jobId = $rev[1].Job; incidentId = $rev[1].Id; action = "rate-limit-probe" } }
+        @{ Label = "reviews/decide"; Ip = "198.51.100.234"; Path = "/api/reviews/decide"; Body = @{ jobId = $rev[1].Job; incidentId = $rev[1].Id; action = "rate-limit-probe" } },
+        @{ Label = "response-actions"; Ip = "198.51.100.235"; Path = "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)/response-actions"; Body = @{ action = "rate-limit-probe"; note = "x" } }
     )
+    $raBeforeProbes = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
     $rlBefore = & $baselineDiff
     foreach ($p in $rlPaths) {
         $st = @()
@@ -1551,6 +1609,8 @@ try {
     $gets = @(); for ($k = 1; $k -le 12; $k++) { $gets += (Invoke-Http -Path "/api/incidents/$($inc[0].Job)/rank/$($inc[0].Rank)" -Client $rl -Xff "198.51.100.231").Status }
     $e2eLogs.Add("[T33k] (대조) 같은 IP 198.51.100.231 GET 상세 12번 -> [$($gets -join ', ')]; three tables unchanged by probes=$($rlBefore -eq (& $baselineDiff))")
     Assert-True (@($gets | Where-Object { $_ -ne 200 }).Count -eq 0) "[T33k] GET은 쓰기 제한 밖"
+    $raAfterProbes = (Invoke-Psql "zeekad_dashboard" $raCountSql).Output.Trim()
+    Assert-True ($raBeforeProbes -eq $raAfterProbes) "[T33k] 속도 제한 시험 요청은 대응 조치 행을 만들지 않음 ($raBeforeProbes -> $raAfterProbes)"
 
     # [T33l] 로그인 안내 문구: 두 계정과 정각 초기화 안내, 비밀번호 없음
     $notice33 = (Invoke-Http -Path "/api/auth/login-notice").Json.notice

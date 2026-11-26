@@ -1,11 +1,13 @@
 #!/bin/bash
-# sandbox-reset.sh의 감사 로그 삭제 단계(T58) 시험. DB 없이 돈다(psql은 함수로 흉내 낸다).
+# sandbox-reset.sh의 감사 로그 삭제 단계(T58)와 대응 조치 초기화 단계(T56) 시험. DB 없이 돈다(psql은 함수로 흉내 낸다).
 #   bash scripts/sandbox-reset-daily-test.sh [sandbox-reset.sh 경로]
 # 보는 것:
 #   A. 하루 한 번 판정 함수 audit_purge_decision(오늘 날짜, 마지막으로 부른 날짜, 그때 결과)
 #   B. 주기를 이어 돌릴 때의 호출 여부(같은 날 OK 뒤에는 SKIP, 실패한 날은 다음 주기에 다시, 날짜가 바뀌면 다시, --once는 늘, 기한 없음은 OFF)
 #   C. 한 줄 로그의 감사 칸과 전체 상태(감사 칸은 ERROR일 때만 전체를 ERROR로), 칸마다 400자 자르기
 #   D. SANDBOX_AUDIT_RETENTION_DAYS 검사(비었거나 0 또는 정수 30~3650, 아니면 exit 2)
+#   E. 대응 조치 칸(T56): assignments 칸과 audit 칸 사이에 매 주기 찍힌다. 미설정(함수 없음·실행 권한 없음)은 전체 상태를 바꾸지 않고
+#      ERROR일 때만 전체를 ERROR로 만든다. 칸마다 400자 자르기
 # 줄마다 PASS 또는 FAIL을 찍고 FAIL이 있으면 종료 코드 1.
 set -uo pipefail
 
@@ -74,12 +76,18 @@ echo "# C. one-line log (run_once with a fake psql)"
 FAKE_AUDIT_CHECK=ok
 FAKE_AUDIT_RC=0
 FAKE_AUDIT_OUT="purged=3 cutoff=2026-08-28T00:00:00Z"
+FAKE_RESP_CHECK=ok
+FAKE_RESP_RC=0
+FAKE_RESP_OUT="removed=0"
 unset -f audit_call date
 # 스크립트의 원래 audit_call을 다시 가져온다.
 source "$SCRIPT"
 set +e
 psql() {
     case "$*" in
+        # 대응 조치(T56): 호출과 확인 쿼리를 감사 쪽 확인 쿼리(둘 다 has_function_privilege를 쓴다)보다 먼저 가린다.
+        *"FROM sandbox.reset_response_actions()"*) printf '%s\n' "$FAKE_RESP_OUT"; return "$FAKE_RESP_RC" ;;
+        *sandbox.reset_response_actions*) echo "$FAKE_RESP_CHECK" ;;
         *has_function_privilege*) echo "$FAKE_AUDIT_CHECK" ;;
         *"FROM public.purge_expired_audit_logs("*) printf '%s\n' "$FAKE_AUDIT_OUT"; return "$FAKE_AUDIT_RC" ;;
         *to_regprocedure*) echo t ;;
@@ -89,7 +97,9 @@ psql() {
     esac
 }
 strip_time() { sed -e 's/^[0-9TZ:-]* //'; }
-BASE="pipeline[OK] analyst_review(-0 +0 ~0) incident_status(-0 +0 ~0) incident_status_history(-0 +0 ~0); assignments[OK] released=0 history+=0"
+# T56: assignments 칸 다음에 responses 칸이 온다(설계 변경으로 줄의 꼴이 바뀌었다). 아래 C의 기대값은 이 앞머리를 그대로 쓴다.
+HEAD="pipeline[OK] analyst_review(-0 +0 ~0) incident_status(-0 +0 ~0) incident_status_history(-0 +0 ~0); assignments[OK] released=0 history+=0"
+BASE="$HEAD; responses[OK] removed=0"
 ONCE=1; AUDIT_DAYS=90
 line="$(run_once | strip_time)"; rc=$?
 check "C1 audit OK" "sandbox-reset: OK $BASE; audit[OK] purged=3 cutoff=2026-08-28T00:00:00Z" "$line"
@@ -129,6 +139,46 @@ check "C6 resident mode, first cycle" "sandbox-reset: OK $BASE; audit[OK] purged
 run_once > /dev/null
 line2="$(run_once | strip_time)"
 check "C7 resident mode, second cycle on the same day" "sandbox-reset: OK $BASE; audit[SKIP]" "$line2"
+
+echo "# E. response action cell (T56): between assignments and audit, every cycle"
+ONCE=1; AUDIT_DAYS=0
+FAKE_RESP_OUT="removed=4"
+line="$(run_once | strip_time)"
+check "E1 responses OK with the removed count" "sandbox-reset: OK $HEAD; responses[OK] removed=4; audit[OFF]" "$line"
+run_once > /dev/null; check "E1 exit code" 0 "$?"
+
+FAKE_RESP_CHECK=missing
+line="$(run_once | strip_time)"
+check "E2 function missing (new script before sandbox-setup rerun): NOT_CONFIGURED, overall stays OK" \
+    "sandbox-reset: OK $HEAD; responses[NOT_CONFIGURED] sandbox.reset_response_actions() is missing (run sandbox-setup); audit[OFF]" "$line"
+run_once > /dev/null; check "E2 exit code" 0 "$?"
+
+FAKE_RESP_CHECK=no_execute
+line="$(run_once | strip_time)"
+check "E3 no EXECUTE: NOT_CONFIGURED, overall stays OK" \
+    "sandbox-reset: OK $HEAD; responses[NOT_CONFIGURED] no EXECUTE on sandbox.reset_response_actions() (run sandbox-setup); audit[OFF]" "$line"
+
+FAKE_RESP_CHECK=ok; FAKE_RESP_RC=1
+FAKE_RESP_OUT="ERROR:  sandbox response action baseline is missing; run sandbox-setup $(printf 'y%.0s' $(seq 1 900))"
+AUDIT_DAYS=90
+line="$(run_once | strip_time)"
+case "$line" in
+    "sandbox-reset: ERROR $HEAD; responses[ERROR] ERROR: sandbox response action baseline is missing; run sandbox-setup y"*"; audit[OK] purged=0 cutoff=2026-08-28T00:00:00Z") got=yes ;;
+    *) got="no: $line" ;;
+esac
+check "E4 responses ERROR (baseline marker missing) makes the whole line ERROR; the audit cell still follows" yes "$got"
+resp_part="${line##*; responses\[ERROR\] }"; resp_part="${resp_part%; audit\[OK\]*}"
+check "E4 responses cell is cut at 400 characters (per cell)" 400 "${#resp_part}"
+run_once > /dev/null; check "E4 exit code" 1 "$?"
+
+# 설정 전(앞의 두 칸이 모두 미설정)은 전체가 미설정이다. responses 칸이 OK여도 그 규칙은 두 칸만 본다.
+FAKE_RESP_RC=0; FAKE_RESP_OUT="removed=0"; AUDIT_DAYS=0
+call() { STATE=NOT_CONFIGURED; RESULT="$2() is missing (run sandbox-setup)"; }
+line="$(run_once | strip_time)"
+check "E5 both leading cells NOT_CONFIGURED: overall NOT_CONFIGURED regardless of the responses cell" \
+    "sandbox-reset: NOT_CONFIGURED pipeline[NOT_CONFIGURED] sandbox.reset_pipeline() is missing (run sandbox-setup); assignments[NOT_CONFIGURED] sandbox.reset_assignments() is missing (run sandbox-setup); responses[OK] removed=0; audit[OFF]" "$line"
+run_once > /dev/null; check "E5 exit code" 0 "$?"
+unset -f call
 
 echo "# D. SANDBOX_AUDIT_RETENTION_DAYS validation (the script itself, --once, empty DB password so nothing is called)"
 run_env() { # run_env <값> -> 종료 코드
