@@ -168,7 +168,7 @@ Trivy는 의존성이나 Dockerfile이 바뀔 때 돌립니다. 마지막 실행
 9. **공개 스택의 네트워크와 컨테이너 권한**(`T61`):
    - 찾은 것: 공개 스택의 일곱 서비스가 Docker 네트워크 하나에 붙어 있어 인터넷 요청을 받는 `nginx-waf`가 DB(`postgres:5432`)와 근거 API(`api:8000`)에 직접 닿을 수 있었습니다. `nginx-waf`에는 권한 상승 금지만 있고 capability가 남아 있었고 `postgres`에는 권한 설정이 없었습니다(root로 시작해 진입 스크립트가 일반 계정으로 내려갑니다). VMware 구성의 두 서비스에도 권한 설정이 없었습니다. 외부 검토의 지적입니다.
    - 고친 것: 네트워크를 둘로 나눴습니다. `portfolio-net`에는 `nginx-waf`와 앱만 두고(정의는 그대로) 새 내부 전용 네트워크 `portfolio-data`에 앱·DB·근거 API·초기화와 시드 도구를 둡니다. 두 네트워크에 붙는 것은 앱뿐입니다. 공개 스택의 모든 서비스와 VMware 구성의 두 서비스가 `cap_drop: [ALL]`과 `no-new-privileges`로 돌고 `postgres`는 root로 시작하지 않습니다(`user: postgres`). 리허설 `[T61a]`~`[T61d]`가 붙은 컨테이너·`Internal`·기본 경로, `nginx-waf`에서 DB·근거 API로의 TCP 연결(연결 단계로 판정), `api`에서 WAF로의 연결, PID 1의 `CapBnd`·`NoNewPrivs`를 봅니다. 고치기 전 구성에서 같은 확인이 실패하는 것도 잽니다(결과는 위 검증 표).
-   - 남은 것: `api`·초기화·시드 도구는 앱 `8080`에 직접 닿습니다(앱이 `api`를 불러야 해 같은 네트워크입니다). 그 연결의 전달 헤더는 앱이 믿지 않습니다(4). 앱은 두 네트워크에 붙어 바깥으로 나갈 길이 남습니다. 호스트의 프로세스와 나중에 `portfolio-net`에 새로 붙인 컨테이너는 막지 못합니다. `nginx-waf`와 `postgres`에는 읽기 전용 루트 파일 시스템(`read_only`)을 걸지 않았습니다.
+   - 남은 것: `api`·초기화·시드 도구는 앱 `8080`에 직접 닿습니다(앱이 `api`를 불러야 해 같은 네트워크입니다). 그 연결의 전달 헤더는 앱이 믿지 않습니다(4). `portfolio-net`은 WAF 포트를 열어야 해서 내부 전용으로 만들 수 없으므로 `nginx-waf`와 앱에는 바깥으로 나갈 길(기본 경로)이 남습니다. `nginx-waf`가 뚫리면 스택 안에서는 앱에만 닿지만 바깥으로 연결을 낼 수는 있습니다. 호스트의 프로세스와 나중에 `portfolio-net`에 새로 붙인 컨테이너는 막지 못합니다. `nginx-waf`와 `postgres`에는 읽기 전용 루트 파일 시스템(`read_only`)을 걸지 않았습니다.
    - 로컬에서 확인할 수 없는 것: 로컬 Docker와 NAS는 Compose 판이 다릅니다. NAS의 옛 Compose가 이미 있는 `portfolio-net`을 다시 만들지 않고 쓰는지, NAS의 Docker가 내부 전용 네트워크를 받는지는 NAS 반영 때 사전 확인으로 봅니다([`docs/portfolio-deployment.md`](portfolio-deployment.md) 3.8 `T61` 절). 이미 만든 내부 전용 네트워크는 compose의 줄을 바꿔도 다시 만들어지지 않습니다.
 
 ---
