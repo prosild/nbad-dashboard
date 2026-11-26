@@ -1,9 +1,14 @@
 package com.zeekad.dashboard.controller;
 
 import com.zeekad.dashboard.dto.ApiErrorResponse;
+import com.zeekad.dashboard.security.SpaShell;
 import com.zeekad.dashboard.service.QueueQueryException;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -17,8 +22,11 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.io.IOException;
+
 /**
  * 예외 발생 시 스택 트레이스와 내부 클래스명을 숨기고 일관된 JSON 오류 응답을 반환한다.
+ * 예외 하나(T50): 로그인한 사용자가 브라우저로 연 없는 경로에는 JSON 대신 SPA 셸을 404로 준다.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -32,9 +40,23 @@ public class GlobalExceptionHandler {
                 .body(new ApiErrorResponse(403, "FORBIDDEN", "요청하신 기능을 수행할 권한이 없습니다."));
     }
 
+    /**
+     * 없는 경로. 같은 주소가 Accept에 따라 다른 본문(셸 또는 JSON)을 주므로 두 응답 모두 Vary: Accept를 붙인다.
+     * 셸을 주는 조건은 {@link SpaShell#isNotFoundShellRequest}에 있다(로그인한 GET, 제외 경로 밖, text/html을 앞세운 Accept).
+     * 셸로 넘긴 뒤에는 응답이 끝났으므로 null을 돌려준다.
+     */
     @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
-    public ResponseEntity<ApiErrorResponse> handleNotFound(Exception ex) {
+    public ResponseEntity<ApiErrorResponse> handleNotFound(Exception ex,
+                                                           HttpServletRequest request,
+                                                           HttpServletResponse response)
+            throws ServletException, IOException {
+        if (!response.isCommitted() && SpaShell.isNotFoundShellRequest(request)) {
+            response.addHeader(HttpHeaders.VARY, HttpHeaders.ACCEPT);
+            SpaShell.forwardNotFound(request, response);
+            return null;
+        }
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .varyBy(HttpHeaders.ACCEPT)
                 .body(new ApiErrorResponse(404, "NOT_FOUND", "요청하신 경로를 찾을 수 없습니다."));
     }
 
