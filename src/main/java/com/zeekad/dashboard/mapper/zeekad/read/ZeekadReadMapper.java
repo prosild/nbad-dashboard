@@ -137,6 +137,17 @@ public interface ZeekadReadMapper {
 
     List<UnifiedQueueRecord> findUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
 
+    /**
+     * T51 인시던트 목록 한 문장: 기반 SQL을 한 번만 돌려 그 쪽의 행과 집계(total, 기간 밖 수의 재료, 최근 탐지, 요약, 쪽 수·누른 쪽 번호)를
+     * 함께 돌려준다. 쪽이 0행이어도 집계는 온다(rows가 빈 목록).
+     * c는 목록의 조건 그대로(기간·띠 축 값 포함. applyStripFilters·limit·offset은 보지 않는다)이고
+     * page는 1 이상의 쪽 번호(범위 밖이면 SQL이 마지막 쪽으로 누른다), size는 쪽 크기다.
+     */
+    com.zeekad.dashboard.model.zeekad.UnifiedQueuePage findUnifiedQueuePage(
+            @Param("c") UnifiedQueueCriteria criteria,
+            @Param("page") int page,
+            @Param("size") int size);
+
     long countUnifiedQueue(@Param("c") UnifiedQueueCriteria criteria);
 
     /**

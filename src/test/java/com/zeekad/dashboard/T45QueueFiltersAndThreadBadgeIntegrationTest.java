@@ -7,7 +7,6 @@ import com.zeekad.dashboard.mapper.app.IncidentRefMapper;
 import com.zeekad.dashboard.mapper.zeekad.read.ZeekadReadMapper;
 import com.zeekad.dashboard.model.UserRole;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
-import com.zeekad.dashboard.service.IncidentQueueService;
 import com.zeekad.dashboard.service.IncidentRefService;
 import com.zeekad.dashboard.service.UserAdminService;
 import com.zeekad.dashboard.testsupport.MutableTestClock;
@@ -276,13 +275,13 @@ class T45QueueFiltersAndThreadBadgeIntegrationTest {
         Mockito.clearInvocations(zeekadReadMapper);
         JsonNode q = getJson(a, "/api/incidents/queue?period=all&size=25&hostIp=10.45.1.1");
         assertThat(q.get("total").asLong()).isEqualTo(3);
-        // SQL 경로: 쪽 크기만큼만 읽고 자산 검색의 상한(5,000건 + 1) 목록 질의는 부르지 않는다
-        Mockito.verify(zeekadReadMapper, Mockito.times(1)).findUnifiedQueue(ArgumentMatchers.argThat(
-                (UnifiedQueueCriteria c) -> c.getLimit() != null && c.getLimit() == 25
-                        && c.getHostIps() != null && c.getHostIps().length == 1));
-        Mockito.verify(zeekadReadMapper, Mockito.never()).findUnifiedQueue(ArgumentMatchers.argThat(
-                (UnifiedQueueCriteria c) -> c.getLimit() != null && c.getLimit() > IncidentQueueService.ASSET_SEARCH_CAP));
-        Mockito.verify(zeekadReadMapper, Mockito.times(1)).countUnifiedQueue(any());
+        // SQL 경로(T51부터 목록 한 문장): 새 목록 문장을 한 번, 쪽 크기(25)만큼만 읽고
+        // 자산 검색의 상한(5,000건 + 1) 목록 질의와 옛 건수 문장은 부르지 않는다
+        Mockito.verify(zeekadReadMapper, Mockito.times(1)).findUnifiedQueuePage(ArgumentMatchers.argThat(
+                (UnifiedQueueCriteria c) -> c.getHostIps() != null && c.getHostIps().length == 1),
+                ArgumentMatchers.eq(1), ArgumentMatchers.eq(25));
+        Mockito.verify(zeekadReadMapper, Mockito.never()).findUnifiedQueue(any());
+        Mockito.verify(zeekadReadMapper, Mockito.never()).countUnifiedQueue(any());
         // 원문 집합은 한 번만 읽는다
         Mockito.verify(zeekadReadMapper, Mockito.times(1)).findDistinctLatestHostIps(any());
 
@@ -597,7 +596,8 @@ class T45QueueFiltersAndThreadBadgeIntegrationTest {
         // 쪽이 비면 묶음 질의를 하나도 부르지 않는다
         Mockito.clearInvocations(refService, zeekadReadMapper);
         assertThat(getJson(a, "/api/incidents/queue?period=all&status=closed").get("items")).isEmpty();
-        Mockito.verify(zeekadReadMapper, Mockito.times(1)).findUnifiedQueue(any());
+        Mockito.verify(zeekadReadMapper, Mockito.times(1))
+                .findUnifiedQueuePage(any(), ArgumentMatchers.anyInt(), ArgumentMatchers.anyInt());
         Mockito.verify(zeekadReadMapper, Mockito.never()).findSlackThreadLinksByIncidentIds(any());
         Mockito.verify(zeekadReadMapper, Mockito.never()).findThreadRepliesByHeads(any(), ArgumentMatchers.anyInt());
         Mockito.verify(zeekadReadMapper, Mockito.never()).countLatestQueueRowsByIncidentIds(any(), any());

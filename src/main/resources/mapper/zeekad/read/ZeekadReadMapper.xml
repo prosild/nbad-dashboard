@@ -663,7 +663,14 @@
         <foreach collection="c.captureIds" item="cid" open="(" separator="," close=")">#{cid}</foreach>
     </sql>
 
+    <!-- T51: 이 조각이 든 문장에는 SQL 주석 표지 /* unifiedQueueBase */가 남는다(시험과 문장 로그가 이 표지로 기반 실행을 센다).
+         우선순위 판정 CASE는 안쪽 p에 한 번만 두고 정렬용 priority_order는 그 값에서 유도한다(high 0, medium 1, low 2, 종결 NULL).
+         안쪽 p는 PostgreSQL이 바깥 SELECT에 합쳐 계획하고, 최적화 경계(OFFSET 0 ROWS)는 전처럼 조각의 맨 끝(바깥 SELECT)에 있다. -->
     <sql id="unifiedQueueBase">
+        /* unifiedQueueBase */
+        SELECT p.*,
+               CASE p.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END AS priority_order
+        FROM (
         SELECT lq.job_id,
                lq.capture_id,
                lq.bundle_id,
@@ -704,12 +711,6 @@
                    WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) &gt;= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN 'medium'
                    ELSE 'low'
                END AS priority,
-               CASE
-                   WHEN LOWER(TRIM(COALESCE(lq.zeekad_status, ''))) = 'closed' THEN NULL
-                   WHEN COALESCE(lq.zeekad_would_send, FALSE) = TRUE OR COALESCE(lq.zeekad_review_pending, FALSE) = TRUE THEN 0
-                   WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) &gt;= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN 1
-                   ELSE 2
-               END AS priority_order,
                <!-- 상태 정렬 순서: 신규 0, 분석 중 1, 등록 안 된 값 2, 종결 3 -->
                CASE
                    WHEN TRIM(COALESCE(lq.zeekad_status, '')) = '' OR LOWER(TRIM(lq.zeekad_status)) = 'open' THEN 0
@@ -731,6 +732,7 @@
         LEFT JOIN dashboard.incident_reports r
                ON r.job_id = lq.zeekad_report_job_id AND r.incident_id = lq.incident_id
         WHERE lq.capture_id IN <include refid="unifiedCaptureIn"/>
+        ) p
         <!-- T24: 최적화 경계(결과는 같다). 이 부분 질의를 바깥 b.detected_at 기간 조건과 합치지 않게 한다.
              합치면 PostgreSQL이 fs 집계 행 수를 아주 작게 잡아 중첩 반복 계획을 고른다. 통계 없는 스냅샷 복원(리허설·공개 데모)에서
              기간 30일 큐가 60초를 넘겼다(경계를 두면 0.2초 안쪽, T24 측정). 표준 문법이라 H2도 받는다. -->
@@ -754,7 +756,10 @@
         </choose>
     </sql>
 
-    <sql id="unifiedQueueFilters">
+    <!-- T51: 조건을 셋으로 나눈다(일반 조건 · 기간 · 띠 축). unifiedQueueFilters는 셋을 그대로 잇고(뜻은 전과 같다),
+         목록 한 문장(findUnifiedQueuePage)은 일반 조건만 WHERE에 두고 기간·띠 축은 행마다 표지 열로 만들어
+         값마다 다른 조합(목록·total은 셋 다, 기간 밖 수는 기간을 뺀 것, 요약은 띠 축을 뺀 것)을 한 번 훑어 낸다. -->
+    <sql id="unifiedQueueGeneralFilters">
         <if test="c.incidentId != null">
             AND b.incident_id = #{c.incidentId}
         </if>
@@ -778,12 +783,6 @@
         <if test="c.attackIncidentIds != null">
             AND b.incident_id = ANY(#{c.attackIncidentIds, typeHandler=org.apache.ibatis.type.ArrayTypeHandler})
         </if>
-        <if test="c.detectedAfter != null">
-            AND b.detected_at &gt; #{c.detectedAfter}
-        </if>
-        <if test="c.detectedUntil != null">
-            AND b.detected_at &lt;= #{c.detectedUntil}
-        </if>
         <if test="c.pickedBy != null and c.pickedBy != ''">
             AND LOWER(b.zeekad_picked_by) = LOWER(#{c.pickedBy})
         </if>
@@ -802,19 +801,39 @@
         <if test="c.wouldSend != null">
             AND b.zeekad_would_send = #{c.wouldSend}
         </if>
+    </sql>
+
+    <!-- 기간 (after, until]. 탐지 시각이 없는 행은 기간 조건이 있으면 빠진다 -->
+    <sql id="unifiedQueuePeriodFilters">
+        <if test="c.detectedAfter != null">
+            AND b.detected_at &gt; #{c.detectedAfter}
+        </if>
+        <if test="c.detectedUntil != null">
+            AND b.detected_at &lt;= #{c.detectedUntil}
+        </if>
+    </sql>
+
+    <!-- 띠 축(우선순위·에스컬레이션 대기·경보 발송·착수 지연). c.applyStripFilters는 부르는 쪽이 본다 -->
+    <sql id="unifiedQueueStripFilters">
+        <if test="c.priority != null and c.priority != ''">
+            AND b.priority = #{c.priority}
+        </if>
+        <if test="c.reviewPending">
+            AND b.zeekad_review_pending = TRUE
+        </if>
+        <if test="c.alerted">
+            AND b.alerted = TRUE
+        </if>
+        <if test="c.overdue">
+            AND <include refid="ackOverdueCond"/>
+        </if>
+    </sql>
+
+    <sql id="unifiedQueueFilters">
+        <include refid="unifiedQueueGeneralFilters"/>
+        <include refid="unifiedQueuePeriodFilters"/>
         <if test="c.applyStripFilters">
-            <if test="c.priority != null and c.priority != ''">
-                AND b.priority = #{c.priority}
-            </if>
-            <if test="c.reviewPending">
-                AND b.zeekad_review_pending = TRUE
-            </if>
-            <if test="c.alerted">
-                AND b.alerted = TRUE
-            </if>
-            <if test="c.overdue">
-                AND <include refid="ackOverdueCond"/>
-            </if>
+            <include refid="unifiedQueueStripFilters"/>
         </if>
     </sql>
 
@@ -864,6 +883,118 @@
                 OFFSET #{c.offset}
             </if>
         </if>
+    </select>
+
+    <!-- T51 목록 한 문장: 인시던트 목록 요청(asset 조건 없음)의 쪽 행과 집계를 기반을 한 번만 돌려 함께 낸다.
+         전에는 요청 하나에 기반이 서너 번 돌았다(전체 기간: 건수 + 최댓값 + 목록 + 요약, 기간이 있으면: 기간 나눔 + 목록 + 요약).
+         - g: 기반에 일반 조건만 건 행(공통 표 식). agg와 ranked가 두 번 쓰므로 PostgreSQL은 한 번 계산해 둔다
+           (기반 질의의 최적화 경계 OFFSET 0 ROWS도 그대로라 일반 조건이 기반 안으로 합쳐지지 않는다).
+           기간·띠 축은 행마다 표지 열(in_period, in_strip)로 둔다. 기반 열 가운데 host_name은 싣지 않는다(아래).
+         - agg: 집계 1행. total·최근 탐지 = 기간 ∧ 띠 축, total_all·기간 시작 이하 최대 = 띠 축만, 요약 = 기간만(띠 축 없음).
+         - pg: 같은 문장에서 구한 total로 쪽 수를 구하고 받은 쪽 번호(1 이상, 서비스가 보장)를 마지막 쪽으로 누른다.
+           Java가 쪽 번호에 크기를 먼저 곱하지 않는다(page=2147483647이어도 넘치지 않는다).
+         - ranked: 기간 ∧ 띠 축 행에 목록 정렬(unifiedQueueOrder 그대로)로 순번을 매긴다.
+         - 맨 바깥: 집계 1행에 그 쪽의 행을 LEFT JOIN한다(쪽이 0행이어도 집계는 온다. 그때 행 열은 모두 NULL).
+           순서는 맨 바깥 ORDER BY queue_pos가 정한다.
+         - host_name: 뷰가 행마다 하위 질의로 만드는 열이라(실제 스냅샷 2,268행에서 목록 문장 시간의 절반 남짓, T51 측정)
+           g에 싣지 않고 쪽에 나온 행만 같은 뷰에서 행 키(job_id · incident_id · queue_rank)로 다시 읽는다.
+           값은 그 뷰의 같은 행 같은 열이다. -->
+    <!-- 집계 열은 모든 행에 같은 값이라 MyBatis가 결과 하나로 묶고, 큐 행은 rows에 받은 순서대로 모은다.
+         행의 형은 목록 문장과 같은 UnifiedQueueRecord다. 집계만 든 행(job_id NULL)은 rows에 넣지 않는다. -->
+    <resultMap id="unifiedQueuePageMap" type="com.zeekad.dashboard.model.zeekad.UnifiedQueuePage">
+        <result property="total" column="page_total" javaType="java.lang.Long"/>
+        <result property="totalAll" column="page_total_all" javaType="java.lang.Long"/>
+        <result property="latestDetectedAt" column="page_latest_detected_at"/>
+        <result property="newestBeforePeriod" column="page_newest_before_period"/>
+        <result property="pageCount" column="page_count" javaType="java.lang.Long"/>
+        <result property="pageNo" column="page_no" javaType="java.lang.Long"/>
+        <result property="sumTotal" column="sum_total" javaType="java.lang.Long"/>
+        <result property="sumHigh" column="sum_high" javaType="java.lang.Long"/>
+        <result property="sumMedium" column="sum_medium" javaType="java.lang.Long"/>
+        <result property="sumLow" column="sum_low" javaType="java.lang.Long"/>
+        <result property="sumReviewPending" column="sum_review_pending" javaType="java.lang.Long"/>
+        <result property="sumAlerted" column="sum_alerted" javaType="java.lang.Long"/>
+        <result property="sumStatusOpen" column="sum_status_open" javaType="java.lang.Long"/>
+        <result property="sumStatusInvestigating" column="sum_status_investigating" javaType="java.lang.Long"/>
+        <result property="sumStatusClosed" column="sum_status_closed" javaType="java.lang.Long"/>
+        <result property="sumStatusOther" column="sum_status_other" javaType="java.lang.Long"/>
+        <result property="sumOverdue" column="sum_overdue" javaType="java.lang.Long"/>
+        <collection property="rows" ofType="com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord"
+                    resultMap="unifiedQueueMap" notNullColumn="job_id"/>
+    </resultMap>
+
+    <select id="findUnifiedQueuePage" resultMap="unifiedQueuePageMap">
+        WITH g AS (
+            SELECT b.job_id, b.capture_id, b.bundle_id, b.queue_rank, b.incident_id, b.host_ip, b.zeekad_role,
+                   b.event_start, b.event_end, b.zeekad_picked_by, b.zeekad_also_flagged_by, b.connection_count,
+                   b.zeekad_status, b.status_norm, b.zeekad_resolution, b.status_updated_at, b.zeekad_report_job_id,
+                   b.has_report, b.zeekad_report_kind, b.zeekad_verification_passed, b.zeekad_would_send,
+                   b.zeekad_review_action, b.zeekad_review_pending, b.alerted, b.detected_at, b.priority,
+                   b.priority_order, b.status_order,
+                   CASE WHEN 1 = 1 <include refid="unifiedQueuePeriodFilters"/> THEN 1 ELSE 0 END AS in_period,
+                   CASE WHEN 1 = 1 <include refid="unifiedQueueStripFilters"/> THEN 1 ELSE 0 END AS in_strip
+            FROM (<include refid="unifiedQueueBase"/>) b
+            <where>
+                <include refid="unifiedQueueGeneralFilters"/>
+            </where>
+        ),
+        agg AS (
+            SELECT COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.in_strip = 1 THEN 1 ELSE 0 END), 0) AS page_total,
+                   COALESCE(SUM(b.in_strip), 0) AS page_total_all,
+                   MAX(CASE WHEN b.in_period = 1 AND b.in_strip = 1 THEN b.detected_at END) AS page_latest_detected_at,
+                   <choose>
+                       <when test="c.detectedAfter != null">
+                           MAX(CASE WHEN b.in_strip = 1 AND b.detected_at &lt;= #{c.detectedAfter} THEN b.detected_at END)
+                       </when>
+                       <otherwise>CAST(NULL AS TIMESTAMP WITH TIME ZONE)</otherwise>
+                   </choose> AS page_newest_before_period,
+                   COALESCE(SUM(b.in_period), 0) AS sum_total,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.priority = 'high' THEN 1 ELSE 0 END), 0) AS sum_high,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.priority = 'medium' THEN 1 ELSE 0 END), 0) AS sum_medium,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.priority = 'low' THEN 1 ELSE 0 END), 0) AS sum_low,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.zeekad_review_pending = TRUE THEN 1 ELSE 0 END), 0) AS sum_review_pending,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.alerted = TRUE THEN 1 ELSE 0 END), 0) AS sum_alerted,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.status_order = 0 THEN 1 ELSE 0 END), 0) AS sum_status_open,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.status_order = 1 THEN 1 ELSE 0 END), 0) AS sum_status_investigating,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.status_order = 3 THEN 1 ELSE 0 END), 0) AS sum_status_closed,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND b.status_order = 2 THEN 1 ELSE 0 END), 0) AS sum_status_other,
+                   COALESCE(SUM(CASE WHEN b.in_period = 1 AND <include refid="ackOverdueCond"/> THEN 1 ELSE 0 END), 0) AS sum_overdue
+            FROM g b
+        ),
+        pg AS (
+            SELECT p0.*, LEAST(CAST(#{page} AS BIGINT), p0.page_count) AS page_no
+            FROM (
+                SELECT a.*,
+                       GREATEST(1, (a.page_total + CAST(#{size} AS BIGINT) - 1) / CAST(#{size} AS BIGINT)) AS page_count
+                FROM agg a
+            ) p0
+        ),
+        ranked AS (
+            SELECT b.*,
+                   ROW_NUMBER() OVER (<include refid="unifiedQueueOrder"/>) AS queue_pos
+            FROM g b
+            WHERE b.in_period = 1 AND b.in_strip = 1
+        )
+        SELECT a.page_total, a.page_total_all, a.page_latest_detected_at, a.page_newest_before_period,
+               a.page_count, a.page_no,
+               a.sum_total, a.sum_high, a.sum_medium, a.sum_low, a.sum_review_pending, a.sum_alerted,
+               a.sum_status_open, a.sum_status_investigating, a.sum_status_closed, a.sum_status_other, a.sum_overdue,
+               r.job_id, r.capture_id, r.bundle_id, r.queue_rank, r.incident_id, r.host_ip, r.zeekad_role,
+               r.event_start, r.event_end, r.zeekad_picked_by, r.zeekad_also_flagged_by, r.connection_count,
+               (SELECT h.host_name
+                FROM dashboard.latest_incident_queue h
+                WHERE h.job_id = r.job_id
+                  AND h.incident_id = r.incident_id
+                  AND h.queue_rank = r.queue_rank
+                LIMIT 1) AS host_name,
+               r.zeekad_status, r.zeekad_resolution, r.status_updated_at, r.zeekad_report_job_id,
+               r.has_report, r.zeekad_report_kind, r.zeekad_verification_passed, r.zeekad_would_send,
+               r.zeekad_review_action, r.zeekad_review_pending, r.alerted, r.detected_at, r.priority
+        FROM pg a
+        LEFT JOIN ranked r
+               ON r.queue_pos &gt; (a.page_no - 1) * CAST(#{size} AS BIGINT)
+              AND r.queue_pos &lt;= a.page_no * CAST(#{size} AS BIGINT)
+        ORDER BY r.queue_pos
     </select>
 
     <!-- T35 이전·다음: 목록(findUnifiedQueue)과 같은 기반·거르기에 같은 정렬(unifiedQueueOrder 그대로)로 순번을 매긴다.

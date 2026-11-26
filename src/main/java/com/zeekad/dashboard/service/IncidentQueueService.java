@@ -16,9 +16,8 @@ import com.zeekad.dashboard.model.zeekad.IncidentAttackCandidates;
 import com.zeekad.dashboard.model.zeekad.IncidentQueueItem;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueCriteria;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueNeighborRecord;
-import com.zeekad.dashboard.model.zeekad.UnifiedQueuePeriodSplit;
+import com.zeekad.dashboard.model.zeekad.UnifiedQueuePage;
 import com.zeekad.dashboard.model.zeekad.UnifiedQueueRecord;
-import com.zeekad.dashboard.model.zeekad.UnifiedQueueSummaryRow;
 import com.zeekad.dashboard.security.DashboardUserPrincipal;
 import org.springframework.stereotype.Service;
 
@@ -226,35 +225,30 @@ public class IncidentQueueService {
         boolean custom = PERIOD_CUSTOM.equals(scope.period());
 
         if (scope.asset() == null) {
-            UnifiedQueueCriteria c = scope.criteria();
-            if (periodApplied) {
-                // 기간 조건을 WHERE에서 빼고 한 번 훑어 기간 안 수·전체 수·두 최대 시각을 같이 센다
-                UnifiedQueueCriteria noPeriod = c.copy();
-                noPeriod.setDetectedAfter(null);
-                noPeriod.setDetectedUntil(null);
-                UnifiedQueuePeriodSplit split = zeekadReadMapper.splitUnifiedQueueByPeriod(
-                        noPeriod, c.getDetectedAfter(), c.getDetectedUntil());
-                total = split == null ? 0 : split.getInPeriod();
-                long all = split == null ? 0 : split.getTotalAll();
-                outsidePeriod = all - total;
-                latestDetectedAt = split == null ? null : split.getLatestInPeriod();
-                newestOutsidePeriod = split == null || custom ? null : split.getNewestBeforePeriod();
-            } else {
-                total = zeekadReadMapper.countUnifiedQueue(c);
-                latestDetectedAt = total > 0 ? zeekadReadMapper.findMaxUnifiedDetectedAt(c) : null;
+            // T51: 기반 SQL을 한 번만 돌리는 한 문장에서 그 쪽의 행과 집계를 같이 받는다(쪽 번호는 SQL이 total로 누른다).
+            // 집계는 쪽이 0행이어도 온다. 행은 전과 같은 UnifiedQueueRecord다.
+            UnifiedQueuePage agg = zeekadReadMapper.findUnifiedQueuePage(
+                    scope.criteria(), requestedPage(params.page()), size);
+            if (agg == null) {
+                agg = new UnifiedQueuePage();
             }
-            pageCount = pageCount(total, size);
-            page = clampPage(params.page(), pageCount);
-            UnifiedQueueCriteria paged = c.copy();
-            paged.setLimit(size);
-            paged.setOffset((page - 1) * size);
-            pageRecords = zeekadReadMapper.findUnifiedQueue(paged);
+            total = agg.getTotal();
+            pageCount = (int) agg.getPageCount();
+            page = (int) agg.getPageNo();
+            latestDetectedAt = agg.getLatestDetectedAt();
+            if (periodApplied) {
+                outsidePeriod = agg.getTotalAll() - total;
+                newestOutsidePeriod = custom ? null : agg.getNewestBeforePeriod();
+            }
+            pageRecords = agg.getRows();
             pageMasked = pageRecords.stream()
                     .map(r -> maskingService.maskIncidentQueueItem(r, scope.role()))
                     .toList();
-            UnifiedQueueCriteria summaryCriteria = c.copy();
-            summaryCriteria.setApplyStripFilters(false);
-            summary = toSummary(zeekadReadMapper.summarizeUnifiedQueue(summaryCriteria));
+            summary = new UnifiedQueueResponse.Summary(agg.getSumTotal(), agg.getSumHigh(), agg.getSumMedium(),
+                    agg.getSumLow(), agg.getSumReviewPending(), agg.getSumAlerted(),
+                    statusMap(agg.getSumStatusOpen(), agg.getSumStatusInvestigating(), agg.getSumStatusClosed(),
+                            agg.getSumStatusOther()),
+                    agg.getSumOverdue());
         } else {
             List<Masked> base = null;
             if (periodApplied) {
@@ -1013,16 +1007,6 @@ public class IncidentQueueService {
                 statusMap(open, inv, closed, other), overdue);
     }
 
-    private static UnifiedQueueResponse.Summary toSummary(UnifiedQueueSummaryRow row) {
-        if (row == null) {
-            return emptySummary();
-        }
-        return new UnifiedQueueResponse.Summary(row.getTotal(), row.getHigh(), row.getMedium(), row.getLow(),
-                row.getReviewPending(), row.getAlerted(),
-                statusMap(row.getStatusOpen(), row.getStatusInvestigating(), row.getStatusClosed(), row.getStatusOther()),
-                row.getOverdue());
-    }
-
     private static UnifiedQueueResponse.Summary emptySummary() {
         return new UnifiedQueueResponse.Summary(0, 0, 0, 0, 0, 0, statusMap(0, 0, 0, 0), 0);
     }
@@ -1049,18 +1033,20 @@ public class IncidentQueueService {
         return (int) Math.max(1, (total + size - 1) / size);
     }
 
-    /** 숫자가 아니거나 1보다 작으면 1쪽, 범위 밖이면 마지막 쪽 */
-    private static int clampPage(String raw, int pageCount) {
+    /** 받은 쪽 번호: 숫자가 아니거나(int 범위 밖 포함) 1보다 작으면 1. 위쪽 한도는 건수를 안 뒤에 누른다 */
+    static int requestedPage(String raw) {
         int page;
         try {
             page = Integer.parseInt(raw == null ? "" : raw.trim());
         } catch (NumberFormatException e) {
             page = 1;
         }
-        if (page < 1) {
-            page = 1;
-        }
-        return Math.min(page, pageCount);
+        return Math.max(page, 1);
+    }
+
+    /** 숫자가 아니거나 1보다 작으면 1쪽, 범위 밖이면 마지막 쪽 */
+    private static int clampPage(String raw, int pageCount) {
+        return Math.min(requestedPage(raw), pageCount);
     }
 
     private static OffsetDateTime parseTime(String raw) {
