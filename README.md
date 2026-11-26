@@ -82,7 +82,7 @@ flowchart LR
 
 ![분석가 호스트 위험도](docs/images/09-analyst-hosts.png)
 
-**관리자**: 비밀번호 다음에 TOTP 2단계 인증을 거쳐야 업무 API가 열립니다. 사용자의 역할과 열람 허용 캡처를 관리하고 수정·삭제할 수 없는 감사 로그를 봅니다.
+**관리자**: 비밀번호 다음에 TOTP 2단계 인증을 거쳐야 업무 API가 열립니다. 사용자의 역할과 열람 허용 캡처를 관리하고 보관 기한 안에는 수정·삭제할 수 없는 감사 로그를 봅니다.
 
 | TOTP 2단계 인증 | 사용자 관리 | 감사 로그 |
 |---|---|---|
@@ -94,7 +94,7 @@ flowchart LR
 
 | 문제 | 고른 것 | 그 대가 |
 |---|---|---|
-| 공개 인터넷에서 쓰기 권한을 열면 누구나 데이터를 바꾼다 | 체험용 분석가 계정을 열고 바뀌는 표 셋을 앱 밖 서비스가 매시 정각에 기준선으로 되돌림(전용 DB 계정은 초기화 함수만 실행) | 방문자끼리 상태를 공유하고 다른 방문자의 글이 최대 1시간 보인다. 감사 로그는 계속 커진다 |
+| 공개 인터넷에서 쓰기 권한을 열면 누구나 데이터를 바꾼다 | 체험용 분석가 계정을 열고 바뀌는 표 셋을 앱 밖 서비스가 매시 정각에 기준선으로 되돌림(전용 DB 계정은 초기화 함수만 실행) | 방문자끼리 상태를 공유하고 다른 방문자의 글이 최대 1시간 보인다. 감사 로그는 보관 기한(90일) 동안 쌓인다 |
 | ZAP "Low 0" 기준과 JS가 읽어야 하는 CSRF 쿠키(HttpOnly 없음)가 충돌 | 정확히 `XSRF-TOKEN`에 대한 경고만 기계적으로 허용, 남은 위험으로 문서화 | 기준에 예외가 하나 생긴다. 규칙 전체를 끄면 다른 쿠키의 누락을 놓친다 |
 | 처음 만든 서버 렌더링 화면을 직접 보니 디자인이 마음에 들지 않았다 | React SPA로 바꾸되 같은 출처 세션·CSRF·엄격한 CSP·JRE 컨테이너 하나를 유지 (Next.js는 Node 런타임이 늘어 기각) | 보안 시험을 SPA 기준으로 전면 다시 썼다 |
 | 대시보드가 뚫려도 파이프라인 데이터는 바뀌면 안 된다 | 같은 PostgreSQL 안의 별도 DB와 계정 셋(앱·읽기·쓰기 함수 전용) | 데이터 소스가 셋이고 새 쓰기는 zeek_AD 함수가 먼저 있어야 한다 |
@@ -115,7 +115,7 @@ flowchart LR
 | 응답 헤더 | CSP `script-src 'self'; style-src 'self'`(인라인 금지), `frame-ancestors 'none'`, `nosniff`, COOP·COEP·CORP | `config/SecurityConfig.java`, 시험 `SecurityHeadersAndErrorTest` |
 | WAF | Nginx + ModSecurity OWASP CRS(Paranoia 1, 차단 모드). SQLi·XSS·경로 탐색 요청을 앱 앞에서 `403` | `docker/nginx-waf/`, [보안 검증 보고서](docs/security-verification-report.md) 3절 |
 | 클라이언트 IP 위조 방지 | 신뢰하는 프록시 밖의 전달 헤더를 버리고 앱에는 WAF가 정한 값만 넘김. 앱은 WAF 고정 주소에서 온 전달 헤더만 믿음 | `docker/nginx-waf/templates/includes/proxy_backend.conf.template`, `security/TrustedProxies.java`, E2E `[9]`·`[16]` |
-| 감사 로그 | 로그인·원문 열람·상태 변경·권한 변경·IDOR 시도를 기록. DB 트리거가 수정·삭제를 막음 | `V1__init_dashboard_auth_audit.sql`, 시험 `AuditLogImmutabilityTest` |
+| 감사 로그 | 로그인·원문 열람·상태 변경·권한 변경·IDOR 시도를 기록. DB 트리거가 수정을 막고 삭제는 보관 기한이 지난 기록만 전용 함수로 허용(공개 데모 90일) | `V1__init_dashboard_auth_audit.sql`, `V4__audit_retention.sql`, 시험 `AuditLogImmutabilityTest`, `scripts/audit-retention-check.ps1` |
 | SQL 주입 방지 | MyBatis 매퍼는 `#{}` 바인딩만 쓰고 `${}`는 시험이 금지 | 시험 `StaticSecurityAndConfigTest` |
 | DB 계정 분리 | 읽기 계정은 계약 뷰 `SELECT`만, 쓰기 계정은 함수 두 개 `EXECUTE`만 | [`docs/deployment-guide.md`](docs/deployment-guide.md) 2.1 |
 | 컨테이너 | 비루트 실행, 최종 이미지에 Node·JDK 없음(JRE만), `cap_drop: [ALL]`, `no-new-privileges` | `Dockerfile`, `compose.portfolio.yml` |

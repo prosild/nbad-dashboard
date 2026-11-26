@@ -65,21 +65,27 @@
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음) |
-| `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 둘, `--rebuild-baseline` |
-| `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once` |
+| `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 둘, `--rebuild-baseline`. 감사 로그 삭제 함수의 실행 권한(`T58`) |
+| `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(로컬 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
 | `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T33] 초기화(주기 1분), ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
-- **무엇을 되돌리나**: 분석가 쓰기는 넷(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 둘(`dashboard.transition_incident`, `dashboard.decide_review`)만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다. 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 감사 로그와 담당 이력(추가만 하는 기록)은 지우지 않는다.
-- **어디서 하나**: 앱 밖 운영 서비스 `sandbox-reset`(상주, `psql`만)이 매시 정각(UTC·KST 모두 정각)에 `sandbox.reset_pipeline()` 다음 `sandbox.reset_assignments()`를 부르고 결과 한 줄을 남긴다. 시작할 때는 돌리지 않는다. 앱에는 데모 전용 동작(모드 플래그, 앱 안 예약 작업, 체험 계정 이름을 아는 코드, 배너)이 없다.
-- **권한**: 두 함수는 `SECURITY DEFINER`(소유 `zeekad_owner`·`dashboard_app`)이고 `search_path`를 고정하며 모든 객체를 스키마로 한정한다. 접속 계정 `zeekad_sandbox_reset`은 두 DB `CONNECT`, 함수가 든 `sandbox` 스키마 `USAGE`, 두 함수 `EXECUTE`만 가진다. 표·기준선(`sandbox_baseline`)·`CREATE` 권한은 없다(기준선을 바꿀 수 있으면 실제 표를 고른 값으로 되돌릴 수 있다). `dashboard_rw` 권한은 바꾸지 않는다.
+- **무엇을 되돌리나**: 분석가 쓰기는 넷(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 둘(`dashboard.transition_incident`, `dashboard.decide_review`)만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다. 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 초기화는 감사 로그와 담당 이력(추가만 하는 기록)을 지우지 않는다. 감사 로그는 보관 기한(90일)이 지난 행만 같은 서비스가 하루 한 번 따로 지운다(아래 "감사 로그 보관 기한").
+- **어디서 하나**: 앱 밖 운영 서비스 `sandbox-reset`(상주, `psql`만)이 매시 정각(UTC·KST 모두 정각)에 `sandbox.reset_pipeline()` 다음 `sandbox.reset_assignments()`를 부르고 결과 한 줄을 남긴다. 시작할 때는 돌리지 않는다. 하루에 한 번은 이어서 감사 로그 삭제 함수도 부른다(`T58`, 아래). 앱에는 데모 전용 동작(모드 플래그, 앱 안 예약 작업, 체험 계정 이름을 아는 코드, 배너)이 없다.
+- **권한**: 초기화 함수 둘은 `SECURITY DEFINER`(소유 `zeekad_owner`·`dashboard_app`)이고 `search_path`를 고정하며 모든 객체를 스키마로 한정한다. 접속 계정 `zeekad_sandbox_reset`은 두 DB `CONNECT`, 함수가 든 `sandbox` 스키마 `USAGE`, 초기화 함수 둘과 감사 로그 삭제 함수(`public.purge_expired_audit_logs(integer)`, `T58`)의 `EXECUTE`만 가진다. 표(감사 로그 포함)·기준선(`sandbox_baseline`)·`CREATE` 권한은 없다(기준선을 바꿀 수 있으면 실제 표를 고른 값으로 되돌릴 수 있다). `dashboard_rw` 권한은 바꾸지 않는다.
 - **동시 쓰기**: `reset_pipeline()`은 처음에 세 표를 `SHARE ROW EXCLUSIVE`로 잠가 진행 중인 쓰기를 기다리고 새 쓰기를 막는다. 5초 안에 잠그지 못하면 아무것도 바꾸지 않고 오류로 끝내고 다음 정각에 다시 한다.
 - **옛 기준선 거부**: 기준선에 표지(인시던트 수·탐지 작업 수·최대 `job_id`·세 표의 열 정의 해시)를 함께 둔다. 새 스냅샷을 올렸는데 기준선이 옛것이면 표지가 맞지 않아 초기화가 아무것도 바꾸지 않고 오류를 남긴다(3.10).
-- **설정 도구 `sandbox-setup`**(`--profile seed`, 슈퍼유저로 접속): 전용 역할·두 스키마·기준선·두 함수를 만들고 권한을 점검한다. 멱등이다. 기준선은 처음과 `--rebuild-baseline`일 때만 만든다. 그때 체험 계정 이름이 세 표의 행위자(`updated_by`·`actor`·`analyst`)나 현재 담당자에 하나라도 있으면 멈춘다(방문자 변경이 기준선이 되는 것을 막는다. 새 스냅샷이 그 이름을 이미 쓰는 경우도 잡는다. 공개 스냅샷에는 zeek_AD 기록의 행위자 `demo-analyst`가 있어 체험 계정 이름을 `trial-analyst`로 정했다). 처음 만들 때는 담당자가 있는 담당 행이 0이어야 한다. 다시 만들 때는 `sandbox-reset`을 먼저 멈춘다(초기화 계정 접속이 있으면 멈춘다).
+- **설정 도구 `sandbox-setup`**(`--profile seed`, 슈퍼유저로 접속): 전용 역할·두 스키마·기준선·초기화 함수 둘을 만들고 감사 로그 삭제 함수의 `EXECUTE`를 준 뒤 권한을 점검한다. 삭제 함수는 앱이 만든 것이라(migration `V4`) 앱이 `V4`를 적용하기 전이면 아무것도 바꾸지 않고 멈춘다. 멱등이다. 기준선은 처음과 `--rebuild-baseline`일 때만 만든다. 그때 체험 계정 이름이 세 표의 행위자(`updated_by`·`actor`·`analyst`)나 현재 담당자에 하나라도 있으면 멈춘다(방문자 변경이 기준선이 되는 것을 막는다. 새 스냅샷이 그 이름을 이미 쓰는 경우도 잡는다. 공개 스냅샷에는 zeek_AD 기록의 행위자 `demo-analyst`가 있어 체험 계정 이름을 `trial-analyst`로 정했다). 처음 만들 때는 담당자가 있는 담당 행이 0이어야 한다. 다시 만들 때는 `sandbox-reset`을 먼저 멈춘다(초기화 계정 접속이 있으면 멈춘다).
 - **결정을 소비하는 주체 없음**: 공개 스택의 `api`는 `run_api.py` 하나뿐이고 `zeekad_api`에는 `zeekad` 표 쓰기 권한이 없다. 쓰기 권한이 있는 `zeekad_worker`는 NOLOGIN이고 워커가 없다. 그래서 검토 결정 뒤 재개·보고서·Slack 같은 후속 쓰기가 없다(리허설 `[T33f]`가 세 표 밖 `zeekad` 표 전부의 행 수·내용 해시를 쓰기 전·직후·2분 뒤에 비교한다).
 - **쓰기 속도 제한**: nginx가 네 쓰기 경로의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
+- **감사 로그 보관 기한(`T58`)**: 공개 데모는 방문자의 접속 기록(감사 로그의 계정·시각·접속 주소)을 90일 보관한다. 90일은 이 스택의 값이다. 앱의 기본값이 아니고 앱은 기한을 모른다(기한을 주지 않은 배포에서는 아무것도 지워지지 않는다, [`deployment-guide.md`](deployment-guide.md) 2.1).
+  - **누가 지우나**: 앱이 아니라 `sandbox-reset`이 지운다. `compose.portfolio.yml`이 `SANDBOX_AUDIT_RETENTION_DAYS: "90"`을 고정 값으로 넘긴다(`.env` 변수가 아니다). 서비스는 하루에 한 번, 곧 서비스가 뜬 뒤 첫 주기와 UTC 날짜가 바뀐 뒤 첫 주기(KST 09:00 정각)에 앱 DB의 `public.purge_expired_audit_logs(90)`을 부른다. 그날 몫은 결과가 `OK`일 때만 쓴 것으로 친다. 실패했거나 아직 설정 전이면 다음 정각에 다시 부른다. `--once`는 늘 부른다.
+  - **값**: 비우거나 `0`이면 지우지 않는다. 그 밖에는 정수 30~3650만 받고 아니면 서비스가 시작하지 않는다(종료 코드 2).
+  - **무엇이 지워지나**: `occurred_at`이 지금보다 90일 넘게 앞선 감사 행만 지워진다. 함수는 앱 migration `V4`의 것이고 30일보다 짧은 기한을 거부한다. 트리거는 30일 안의 행의 `DELETE`와 모든 `UPDATE`·`TRUNCATE`를 누가 시도하든 거부한다. 한 행이라도 지우면 그 사실이 감사 행 하나(`AUDIT_RETENTION_PURGE`, 행위자 `audit-retention`, 지운 수·기준 시각·기한)로 남고 감사 로그 화면에 "보관 기한 지난 기록 삭제"로 보인다. 이 행도 90일 뒤에 지워진다. 담당 이력(`incident_assignment_history`)에는 접속 주소가 없고 기한을 두지 않았다.
+  - **로그**: 초기화 줄 끝에 감사 칸이 붙는다. `; audit[OK] purged=<지운 수> cutoff=<기준 시각 UTC>`, `; audit[SKIP]`(오늘 몫을 이미 씀), `; audit[OFF]`(기한 값 없음), `; audit[NOT_CONFIGURED] …`(함수가 없거나 실행 권한이 없음), `; audit[ERROR] …`. 감사 칸은 `ERROR`일 때만 줄 전체를 `ERROR`로 만든다.
+  - **감사 로그 밖에 접속 주소가 남는 곳**: 컨테이너 로그와 되돌리기용 앱 DB 백업이다. `nginx-waf`의 접근 로그와 ModSecurity 기록은 컨테이너 로그로 나가고 접속 주소가 들어 있다. Docker는 로그를 기간으로 지우지 못하므로 모든 서비스에 크기 한도(`json-file`, 10MB 파일 5개, 컨테이너마다 50MB까지)를 걸었다. 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 그 컨테이너의 로그는 모두 사라진다. 백업(`backup/app-pre-<ID>.dump`)에는 그 시점의 감사 로그가 통째로 들어 있어 배포 절차가 90일 넘은 백업을 지운다(3.9의 3a. 자동이 아니고 다음 배포 때다).
 - **사유·메모 길이 상한**: 앱이 상태 변경 사유와 검토 메모를 500자(앞뒤 공백 뺀 코드 포인트)까지만 받는다(제품 기능, 모든 스택).
 - **노출**: `trial-analyst`는 `demo`와 같은 캡처를 마스킹 없이 본다. 공개 전 리허설에서 `lab-20261119`(`T33`)와 `lab-20261122`(`T39`)의 모든 인시던트에서 화면이 부르는 API 응답을 두 계정으로 받아 비교하고(`scripts/portfolio-verify.ps1 -ExposureDir <저장소 밖 폴더>`, 대상 캡처는 스크립트의 `$exposureLabCapture`), 드러나는 값의 종류를 운영자가 확인했다. 새 실습망 캡처를 공개할 때도 같은 확인을 한다(3.10).
 
@@ -340,7 +346,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T sandbox-rese
 ```
 
 - 설정 전에는 `sandbox-reset`이 정각마다 `NOT_CONFIGURED…` 한 줄만 남긴다(오류가 아니다). 역할이 아직 없어 postgres 로그에 `password authentication failed for user "zeekad_sandbox_reset"`이 함께 남는다.
-- 초기화 확인: `docker compose -p zeekad-portfolio -f compose.portfolio.yml logs --since 2h sandbox-reset`에 정각마다 `OK pipeline[OK] analyst_review(-지운 +넣은 ~되돌린) incident_status(…) incident_status_history(…); assignments[OK] released=… history+=…` 줄이 있고 `ERROR`가 없어야 한다.
+- 초기화 확인: `docker compose -p zeekad-portfolio -f compose.portfolio.yml logs --since 2h sandbox-reset`에 정각마다 `OK pipeline[OK] analyst_review(-지운 +넣은 ~되돌린) incident_status(…) incident_status_history(…); assignments[OK] released=… history+=…; audit[…]` 줄이 있고 `ERROR`가 없어야 한다. 줄 끝의 감사 칸은 하루에 한 번 `audit[OK] purged=… cutoff=…`이고 나머지 정각은 `audit[SKIP]`이다(1.3).
 
 - 첫 기동 때 `postgres`가 스냅샷을 복원한다(리허설에서 수십 초). 복원이 성공해야만 데이터 폴더에 표지 파일(`portfolio-restore.ok`)이 생기고 헬스체크가 통과한다. 복원이 실패하면 `postgres`가 healthy가 되지 않으므로 `down -v`로 지우고 원인을 고친 뒤 다시 올린다.
 - `postgres`는 PostgreSQL 이미지 기본 설정 그대로 컨테이너 안 로컬 소켓에 `trust` 인증을 쓴다(`initdb: warning: enabling "trust" authentication for local connections`). 바깥 포트가 없어 NAS에서 `docker exec` 권한이 있는 사용자만 쓸 수 있다.
@@ -564,9 +570,21 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 - **롤백**: 두 파일을 `*.pre-t36`으로 되돌리고 `nginx-waf`·`sandbox-reset`을 `up`한다. 옛 compose의 `sandbox-reset`은 새 익명 볼륨을 다시 만든다. 지운 옛 볼륨은 비어 있었으므로 되돌리지 않는다.
 - 반영 뒤 4.4를 하고 다음 정각의 `sandbox-reset` 로그(3.5)를 본다.
 
+#### 감사 로그 보관 기한·컨테이너 로그 한도를 넣는 갱신(`T58`)
+
+`T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이고 실제 명령과 값은 `T57`이 반영한 뒤 여기에 적는다.
+
+- **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V4`를 적용한다. `flyway_schema_history`에 버전 4가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(초기화 계정에 삭제 함수의 `EXECUTE`를 준다. `RESULT: OK`와 `purge_public_execute=false`) → ③ compose 값(기한 90일, 로그 한도)이 걸리게 서비스를 다시 만든다. ①보다 ②를 먼저 하면 `sandbox-setup`이 `function public.purge_expired_audit_logs(integer) is missing`으로 멈춘다(아무것도 바꾸지 않는다).
+- **틈의 로그**: 새 `sandbox-reset.sh`가 ②보다 먼저 돌면 감사 칸이 `audit[NOT_CONFIGURED]`다. 줄 전체는 `ERROR`가 되지 않고 다음 정각에 다시 부른다.
+- **로그 한도는 모든 서비스를 다시 만들어야 걸린다**: 로그 설정은 컨테이너를 만들 때 정해진다. `up -d`가 설정이 바뀐 서비스(전부)를 다시 만들므로 `postgres`도 잠깐 내려간다(DB 볼륨은 그대로다). 다시 만든 컨테이너의 옛 로그는 사라진다.
+- **`T57`이 반영 전에 기록할 것**(이 문서를 쓸 때 NAS Container Manager의 기본 로그 드라이버는 확인하지 않았다): `docker info --format '{{.LoggingDriver}}'`와 컨테이너 하나의 `docker inspect --format '{{.HostConfig.LogConfig}}' zeekad-portfolio-nginx-waf-1`. 기본 드라이버가 `json-file`이 아니었다면 `json-file`로 바뀐 뒤 DSM Container Manager 화면의 로그 탭이 비는지 확인해 적는다(`docker logs`와 `docker compose logs`는 `json-file`에서 그대로 읽힌다).
+- **반영 뒤 확인**: `sandbox-reset … --once`의 줄 끝이 `audit[OK] purged=<수> cutoff=<UTC>`다. 처음에는 90일 넘은 행이 한꺼번에 지워진다(지운 수를 기록한다). 서비스마다 `docker inspect --format '{{json .HostConfig.LogConfig}}'`가 `json-file`·`10m`·`5`다. 이어서 4.4를 한다.
+- **되돌리기용 백업**: `backup/app-pre-*.dump` 가운데 90일 넘은 것을 지운다(3.9의 3a와 같은 명령). 처음 지우는 것은 `T57`의 NAS 단계다.
+- **롤백**: 파일 셋을 `*.pre-t58`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 서비스를 `up`한다. 옛 `sandbox-reset.sh`는 삭제 함수를 부르지 않으므로 그 뒤로는 아무것도 지워지지 않는다. 앱 DB의 `V4`(좁힌 트리거, `TRUNCATE` 차단, 삭제 함수)를 그대로 둔 채 앞 앱 이미지가 뜨는지는 `T57`이 리허설에서 확인한다. 이미 지워진 감사 행은 되돌리지 않는다.
+
 ### 3.9 스냅샷(공개 데이터) 교체
 
-스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다(받아들인다). 이 백업은 되돌리기용이다. 체험 계정 변경의 매시 정각 초기화(1.3)는 새 볼륨에서 다시 설정한다(아래 8c).
+스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다. 이 백업은 되돌리기용이고 그 시점의 감사 로그가 통째로 들어 있으므로 감사 로그와 같은 기한을 둔다: 90일 넘은 백업은 배포 절차가 지운다(아래 3a. 자동이 아니라 다음 배포 때 지우므로 배포가 뜸하면 90일보다 오래 남는다). 체험 계정 변경의 매시 정각 초기화(1.3)는 새 볼륨에서 다시 설정한다(아래 8c).
 
 로컬 PC에서 먼저 한다: 2.2 스냅샷(VM 원본은 `-SshHost <배포 VM>`) → `secret-scan.txt` 확인 → 2.3 리허설(`-SnapshotDir build/portfolio`) 통과 → (실습망 등 처음 공개하는 데이터면) 공개 전 내용 확인. NAS에서는 `zeekad-portfolio` 프로젝트와 `/volume1/docker/zeekad-portfolio` 안에서만, sudo 없이, 아래 순서대로 하고 **단계마다 실패하면 멈추고 되돌린다.** `.env`는 읽거나 고치지 않는다(`DEMO_PASSWORD`는 그대로 쓰인다).
 
@@ -595,6 +613,11 @@ umask 077
 $C exec -T postgres pg_dump -U postgres -Fc zeekad_dashboard < /dev/null > backup/app-pre-$ID.dump.partial || exit 3
 mv -f backup/app-pre-$ID.dump.partial backup/app-pre-$ID.dump && chmod 600 backup/app-pre-$ID.dump && test -s backup/app-pre-$ID.dump || exit 3
 $C exec -T postgres pg_restore --list < backup/app-pre-$ID.dump > /dev/null && echo "backup OK" || exit 3
+# 3a) 90일 넘은 되돌리기용 백업을 지운다(T58: 백업에도 감사 로그가 들어 있다). 지울 파일을 먼저 보고(이름만) 지운 뒤 0인지 확인한다.
+#     -mtime +89 = 만든 지 90일(24시간 단위)이 넘은 파일. 방금 만든 app-pre-$ID.dump는 해당하지 않는다
+find backup -maxdepth 1 -type f -name 'app-pre-*.dump' -mtime +89
+find backup -maxdepth 1 -type f -name 'app-pre-*.dump' -mtime +89 -exec rm -f {} \;
+test "$(find backup -maxdepth 1 -type f -name 'app-pre-*.dump' -mtime +89 | wc -l)" -eq 0 && echo "old backups: 0" || exit 3
 # 4) 내리기(-v 없이)
 $C down < /dev/null || exit 4
 # 5) 이 프로젝트의 DB 볼륨 하나만 지운다(이름을 먼저 확인한다)
@@ -710,7 +733,9 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
 - [ ] `trial-analyst` / 공개 비밀번호로 로그인되고 역할이 `ANALYST`, 허용 캡처가 `demo`와 같으며 숨긴 캡처 직접 조회가 `403`이다. 공개 데모에서는 쓰기(상태 변경·결정·담당)와 로그인 실패를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T33]`). (리허설 [T33a])
 - [ ] 다음 정각 뒤 `logs --since 2h sandbox-reset`에 `OK` 줄이 있고 `ERROR`가 없다. (3.5, 리허설 [T33f])
-- [ ] 추가만 하는 기록의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5다. 그래서 IP 하나가 쓰기로 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 자동 담당 기록은 사유가 없어 수백 바이트라 하루 약 30MB 안팎이다. 허용 밖 인시던트 조회 거부(`ACCESS_DENIED_IDOR`)도 조회 1번에 감사 1행을 남긴다(행당 인덱스 포함 약 300바이트, 리허설 `[T36b]`). 이 증가는 `T33` 전부터 `demo`로도 열려 있었고 `T35`까지는 상한이 없었다. `T36`부터 조회 한도(IP당 분당 200회 + 버스트 30)가 묶어 IP 하나가 조회 거부로 하루에 늘릴 수 있는 감사 로그는 약 288,000행(약 86MB)이다. 이것은 IP별 상한이고 전체 상한이 아니다(방문자가 IP를 바꾸면 더 늘릴 수 있다). 인증 없는 조회는 감사 행을 만들지 않는다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다.
+- [ ] 초기화 줄 끝에 감사 칸(`audit[…]`)이 있고 보관 기한을 반영한 뒤 `audit[OK] purged=… cutoff=…` 줄이 한 번 이상 있다. `audit[NOT_CONFIGURED]`가 이어지면 `sandbox-setup`을 다시 돌린다(실행 권한). 90일 넘은 감사 행이 없다: `SELECT count(*) FROM audit_logs WHERE occurred_at < now() - interval '91 days'`가 `0`(개수만 본다). (1.3, 리허설 [T58b]·[T58c])
+- [ ] 컨테이너 로그 한도가 걸려 있다: `docker inspect --format '{{json .HostConfig.LogConfig}}' <컨테이너>`가 서비스마다 `json-file`, `max-size` `10m`, `max-file` `5`다. (리허설 [T58a])
+- [ ] 감사 로그·담당 이력의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5다. 그래서 IP 하나가 쓰기로 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 자동 담당 기록은 사유가 없어 수백 바이트라 하루 약 30MB 안팎이다. 허용 밖 인시던트 조회 거부(`ACCESS_DENIED_IDOR`)도 조회 1번에 감사 1행을 남긴다(행당 인덱스 포함 약 300바이트, 리허설 `[T36b]`). 이 증가는 `T33` 전부터 `demo`로도 열려 있었고 `T35`까지는 상한이 없었다. `T36`부터 조회 한도(IP당 분당 200회 + 버스트 30)가 묶어 IP 하나가 조회 거부로 하루에 늘릴 수 있는 감사 로그는 약 288,000행(약 86MB)이다. 이것은 IP별 상한이고 전체 상한이 아니다(방문자가 IP를 바꾸면 더 늘릴 수 있다). 인증 없는 조회는 감사 행을 만들지 않는다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다. `T58`부터 감사 로그는 90일이 지나면 하루 한 번 지워지므로 위 증가는 90일치까지 쌓인다(담당 이력은 기한이 없다). PostgreSQL은 지운 자리를 autovacuum 뒤에 다시 쓰므로 DB 크기 값은 지운 날 바로 줄지 않는다. 컨테이너 로그는 컨테이너마다 50MB(10MB 파일 5개)가 한도다. 기간이 아니라 크기 한도라 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 사라진다.
 - [ ] 조회 한도: 인증 없는 `/api/` `GET`(예: `/api/dashboard/overview?period=24h`)을 이 PC에서 240건(분당 200 + 버스트 30 + 10)까지만 몰아 보내 `429`가 한 번 이상 나오고, 그동안 `/api/auth/csrf`는 `200`, 60초 뒤 다시 `401`이다. 이 확인 밖에서는 `/api/` 조회 사이에 0.4초 넘게 간격을 둔다. (리허설 [T36b])
 - [ ] `viewer1`·`analyst1`·`analyst2`·`admin`은 로그인되지 않는다(비활성). (리허설 [5])
 - [ ] `demo`에 틀린 비밀번호를 여러 번 넣어도 잠기지 않는다. 짧은 시간에 로그인을 많이 시도하면 `429`가 난다. (리허설 [6]·[7])

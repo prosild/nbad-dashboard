@@ -37,6 +37,7 @@
   - `dashboard-app` 포트(`8080`)는 호스트나 WAF 밖으로 열지(`ports:`) 않습니다. 정적 테스트가 세 compose 파일의 `dashboard-app`에 `ports:`가 없는지 확인합니다. 신뢰 목록과 겹쳐 지키는 장치입니다.
   - 남은 위험: 같은 bridge 네트워크에서 `NET_RAW` 권한으로 패킷 출처 주소를 꾸미는 공격은 이 방식으로 막지 못합니다.
   - 프로덕션 `bootJar`에는 H2 드라이버와 `application-test.yml`이 들어가지 않습니다.
+- **컨테이너 로그 한도(`T58`)**: `compose.yml`의 두 서비스는 로그 드라이버 `json-file`에 `max-size: "10m"`, `max-file: "5"`를 씁니다(컨테이너마다 50MB까지, 넘으면 오래된 파일부터 지워집니다). `nginx-waf`의 접근 로그와 ModSecurity 기록에는 접속 주소가 들어 있습니다. Docker는 로그를 기간으로 지우지 못하므로 이것은 크기 한도입니다. 요청이 적으면 오래된 줄이 남고 컨테이너를 다시 만들면 모두 사라집니다. 이미 떠 있는 컨테이너에는 걸리지 않으므로 반영하려면 서비스를 다시 만듭니다(`docker compose ... up -d --force-recreate`). 함께 병합해 쓰는 `zeek_AD` compose의 서비스에는 이 설정이 걸리지 않습니다.
 
 ### 1.3 SPA 라우팅과 `/api/**` 경계
 - **SPA 화면 경로**: `/login`, `/login/totp`, `/login/totp/setup`, `/`, `/incidents`, `/incidents/{jobId}/rank/{queueRank}`, `/incidents/{인시던트 번호}`(`T27`, 숫자만), `/hosts`(`T46`), `/reviews`, `/operations`, `/admin/users`, `/admin/audit-logs`는 서버가 `index.html`(SPA 셸)로 포워딩하고 화면은 브라우저의 React가 그립니다(목록은 `SpaForwardController`). `T27`부터 이 화면 경로의 GET·HEAD는 인증이 없거나 세션이 끝났거나 `ADMIN` TOTP를 마치지 않았어도 `302` 대신 데이터 없는 SPA 셸을 `200`(`Cache-Control: no-store`)으로 줍니다(`SpaShell`). 화면이 원래 주소를 들고 로그인·TOTP 화면으로 보냅니다. 데이터는 `/api/**`가 막으므로 셸에는 업무 정보가 없습니다. `/admin/**` 화면의 데이터는 `ADMIN`만 받습니다.
@@ -57,7 +58,14 @@
      - `V1`: `users`, `user_capture_access`, `audit_logs` 테이블과 `audit_logs` `UPDATE`/`DELETE` 차단 트리거(`trg_audit_logs_immutable`)
      - `V2`(`T25`): 담당자 `incident_assignments`와 추가만 하는 이력 `incident_assignment_history`(변경·삭제 차단 트리거)
      - `V3`(`T27`): 인시던트 번호 `incident_refs`(추가만, 변경·삭제 차단 트리거)
+     - `V4`(`T58`): 감사 로그 보관 기한. `audit_logs` 트리거 함수가 `DELETE`를 한 경우에만 통과시킵니다(표식 `dashboard.audit_retention_purge`가 `on`이고 행이 30일보다 오래됨). `UPDATE`는 늘 거부하고 `TRUNCATE`도 새 트리거 `trg_audit_logs_no_truncate`가 거부합니다. 기한이 지난 행을 지우는 함수 `public.purge_expired_audit_logs(<일>)`를 만듭니다(`SECURITY DEFINER`, `search_path` 고정, `PUBLIC` 실행 불가).
    - `dashboard_app` 계정은 `zeekad_dashboard` 데이터베이스의 DDL/DML 권한만 있습니다.
+   - **감사 로그 보관 기한(`T58`)**: 앱은 기한을 모르고 감사 로그를 지우지 않습니다(앱 코드와 설정에 삭제가 없습니다). 기한을 설정하지 않으면 아무것도 지워지지 않습니다. 실제 관제에서는 접속 기록을 오래 남겨야 하므로 이것이 기본입니다.
+     - 기한을 두려면 앱 밖의 예약 작업이 하루 한 번 `SELECT * FROM public.purge_expired_audit_logs(<일>);`를 부릅니다(예: cron이 `psql -d zeekad_dashboard -c "SELECT * FROM public.purge_expired_audit_logs(365)"`). 함수는 지운 수와 기준 시각을 돌려주고 한 행이라도 지웠으면 감사 행 하나(`AUDIT_RETENTION_PURGE`, 행위자 `audit-retention`, 역할 `SYSTEM`)를 남깁니다.
+     - 바닥값은 30일입니다. 함수는 30일보다 짧은 기한을 예외로 거부하고 트리거도 30일 안의 행은 표식이 켜져 있어도 지우지 못하게 합니다. 이 값은 SQL에 있고 설정으로 줄일 수 없습니다.
+     - 실행 권한은 부를 계정에 따로 줍니다: `GRANT EXECUTE ON FUNCTION public.purge_expired_audit_logs(integer) TO <역할>;`. 표 권한은 필요 없습니다(함수가 소유자 권한으로 지웁니다).
+     - 표식은 권한 경계가 아니라 실수 방지입니다. 사용자 정의 설정은 어느 역할이든 세션에서 켤 수 있습니다. 권한 경계는 표 소유권(표를 지울 권한이 있는 계정은 소유자 `dashboard_app`뿐)과 바닥값입니다. 표 소유자는 트리거를 끌 수 있습니다(남은 위험, [`security-verification-report.md`](security-verification-report.md)).
+     - 공개 데모 스택은 초기화 서비스가 하루 한 번 90일로 부릅니다([`portfolio-deployment.md`](portfolio-deployment.md) 1.3). PostgreSQL에서 이 동작을 직접 보는 시험은 `scripts/audit-retention-check.ps1`입니다(일회용 컨테이너, H2 시험은 이 SQL을 보지 못합니다).
 2. **`zeekad` 읽기 전용 계정 (`dashboard_ro`)**
    - `zeekad` 데이터베이스의 `dashboard` 스키마에 있는 데이터 계약 뷰 14종(v1 5종 · v2 7종 · v2.1 `latest_incident_queue` 1종 · migration 017 `feedback_summary` 1종)의 `SELECT` 권한만 줍니다.
      - v1 (5종): `incident_queue`, `incident_model_scores`, `asset_names`, `scoring_jobs`, `model_bundles`
@@ -139,6 +147,8 @@ cp .env.example .env
 | `WAF_SERVER_NAME`, `SERVER_NAME` | Nginx `server_name` | 배포 VM IP 또는 도메인 | `localhost` |
 | `PROXY_HOST_HEADER` | 백엔드로 전달할 `Host` 헤더 | `$http_host` (`compose.yml` 기본 `$$http_host`) | `$http_host` |
 | `SSL_CERT_FILE`, `SSL_CERT_KEY_FILE` | WAF TLS 인증서/개인키 컨테이너 내부 경로 | `/etc/nginx/ssl/server.crt`, `/etc/nginx/ssl/server.key` | `/etc/nginx/conf/server.crt`, `/etc/nginx/conf/server.key` (자동 생성) |
+
+감사 로그 보관 기한과 컨테이너 로그 한도(`T58`)는 앱 환경 변수가 아닙니다. 기한은 예약 작업이 DB 함수에 넘기는 인자이고(2.1) 로그 한도는 `compose.yml`의 `logging` 설정입니다(1.2).
 
 ---
 
