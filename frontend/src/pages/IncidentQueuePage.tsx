@@ -36,6 +36,7 @@ import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../compo
 import {
   CaptureName,
   CodeLabel,
+  CriticalAssetBadge,
   DetectionModelName,
   IncidentStatusBadge,
   NewRowBadge,
@@ -745,6 +746,7 @@ export function IncidentQueuePage() {
                   anchor={data?.anchor ?? null}
                   snapshot={Boolean(data?.snapshot)}
                   highlightAfter={highlightAfter}
+                  masked={Boolean(data?.maskedView)}
                 />
                 <QueueMobileList
                   rows={items}
@@ -752,6 +754,7 @@ export function IncidentQueuePage() {
                   anchor={data?.anchor ?? null}
                   snapshot={Boolean(data?.snapshot)}
                   highlightAfter={highlightAfter}
+                  masked={Boolean(data?.maskedView)}
                 />
               </>
             )}
@@ -929,7 +932,7 @@ function SummaryStrip({
         </summary>
         <div className="soc-card absolute right-0 top-full z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs leading-relaxed text-slate-300">
           <p className="mb-2 text-slate-400">
-            우선순위는 파이프라인 결과로 서버가 자동 계산한 값입니다. 분석가 판정이 아닙니다.
+            우선순위는 파이프라인 결과와 중요 자산 등록으로 서버가 자동 계산한 값입니다. 분석가 판정이 아닙니다.
           </p>
           <ul className="space-y-1">
             <li>
@@ -944,6 +947,8 @@ function SummaryStrip({
               <span className="font-semibold text-slate-400">Low</span>: 그 밖의 인시던트
             </li>
             <li className="text-slate-400">종결된 인시던트는 우선순위를 매기지 않습니다(-).</li>
+            <li>중요 자산으로 등록된 호스트의 인시던트는 한 단계 올립니다(Low → Medium, Medium → High).</li>
+            <li>같은 우선순위 안에서는 중요 자산이 먼저 옵니다.</li>
           </ul>
           <p className="mt-2 text-slate-400">
             기본 정렬은 우선순위, 같으면 탐지 시각 최근 순입니다. 기간은 탐지 시각(인시던트가 처음 탐지된 분석 완료
@@ -1132,6 +1137,7 @@ function QueueTable({
   anchor,
   snapshot,
   highlightAfter,
+  masked,
 }: {
   rows: UnifiedQueueItem[];
   shortNames: Map<string, string>;
@@ -1142,6 +1148,8 @@ function QueueTable({
   anchor: string | null;
   snapshot: boolean;
   highlightAfter: string | null;
+  /** 조회자 화면: 중요 자산 이름을 쓰지 않는다(서버도 주지 않는다) */
+  masked: boolean;
 }) {
   const navigate = useNavigate();
 
@@ -1247,6 +1255,7 @@ function QueueTable({
                 <td className="soc-td-compact px-1.5 2xl:px-2">
                   <div className="flex items-center gap-1">
                     <PriorityBadge priority={item.priority} />
+                    {item.assetCritical && <QueueCriticalBadge item={item} masked={masked} />}
                     {isNewRow(item, highlightAfter) && <NewRowBadge />}
                   </div>
                 </td>
@@ -1515,18 +1524,32 @@ function MobileElapsed({ item, anchor }: { item: UnifiedQueueItem; anchor: strin
   );
 }
 
+/** T52 큐 행의 중요 자산 표지(우선순위 배지 옆) */
+function QueueCriticalBadge({ item, masked }: { item: UnifiedQueueItem; masked: boolean }) {
+  return (
+    <CriticalAssetBadge
+      priority={item.priority}
+      priorityBase={item.priorityBase}
+      name={item.criticalAssetName}
+      masked={masked}
+    />
+  );
+}
+
 function QueueMobileList({
   rows,
   listQuery,
   anchor,
   snapshot,
   highlightAfter,
+  masked,
 }: {
   rows: UnifiedQueueItem[];
   listQuery: string;
   anchor: string | null;
   snapshot: boolean;
   highlightAfter: string | null;
+  masked: boolean;
 }) {
   return (
     <ul className="divide-y divide-slate-800/80 md:hidden" aria-label="인시던트 목록">
@@ -1547,6 +1570,7 @@ function QueueMobileList({
                 </span>
               )}
               <PriorityBadge priority={item.priority} />
+              {item.assetCritical && <QueueCriticalBadge item={item} masked={masked} />}
               {isNewRow(item, highlightAfter) && <NewRowBadge />}
               <span className="shrink-0 font-mono text-sm font-semibold text-slate-100">{item.hostIp}</span>
               {item.hostName[0] !== undefined && (

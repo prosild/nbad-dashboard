@@ -7,6 +7,7 @@ import {
 } from './auth/AuthContext';
 import { ToastProvider } from './components/ToastContext';
 import { AdminAuditLogsPage } from './pages/AdminAuditLogsPage';
+import { AdminCriticalAssetsPage } from './pages/AdminCriticalAssetsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { HostsPage } from './pages/HostsPage';
@@ -102,6 +103,17 @@ export function AppRoutes() {
           <RequireAuth>
             <RequireAdmin>
               <AdminUsersPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      {/* T52 중요 자산(정적 파일 경로 /assets/** 와 겹치지 않는 이름) */}
+      <Route
+        path="/admin/critical-assets"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AdminCriticalAssetsPage />
             </RequireAdmin>
           </RequireAuth>
         }

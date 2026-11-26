@@ -21,6 +21,10 @@ export interface HostRiskItem {
   lastDetectedAt: string | null;
   /** 같은 캡처에서 목적지로 탐지된 뒤 출발지로 탐지됨(조회자는 늘 false) */
   roleTransition: boolean;
+  /** T52 이 줄의 호스트(조회자는 대역 안의 호스트 하나라도)가 중요 자산인지 */
+  assetCritical?: boolean;
+  /** T52 중요 자산 이름(분석가·관리자만. 조회자는 늘 null) */
+  criticalAssetName?: string | null;
 }
 
 export interface HostRiskResponse {
@@ -56,6 +60,10 @@ export interface RelatedHostIncident {
   zeekadResolution: string | null;
   zeekadPickedBy: string | null;
   connectionCount: number | null;
+  /** T52 중요 자산 여부, 기본 우선순위, 이름(조회자는 null) */
+  assetCritical?: boolean;
+  priorityBase?: QueuePriority | null;
+  criticalAssetName?: string | null;
 }
 
 export interface RelatedHostIncidentsResponse {

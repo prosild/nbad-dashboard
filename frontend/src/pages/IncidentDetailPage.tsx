@@ -291,6 +291,7 @@ export function IncidentDetailPage() {
             snapshot={Boolean(timeContext?.snapshot)}
             incidentNo={data?.incidentNo ?? null}
             responseActions={data?.responseActions}
+            maskedView={Boolean(data?.maskedView)}
           />
         ) : undefined
       }

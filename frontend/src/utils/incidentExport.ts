@@ -100,6 +100,8 @@ export function incidentMarkdown(
     '',
     '## 기본 정보',
     `- 우선순위: ${text(labelText('priority', meta?.priority ?? null))}`,
+    // T52 중요 자산: 예/아니요만(이름·설명은 싣지 않는다). 메타가 없으면 "-"
+    `- 중요 자산: ${meta ? (meta.assetCritical ? '예' : '아니요') : '-'}`,
     `- 상태: ${text(labelText('incidentStatus', detail.currentStatus || 'open'))}`,
     `- 판정: ${text(labelText('resolution', detail.currentResolution))}`,
     `- 호스트: ${host || '-'}`,
@@ -164,6 +166,7 @@ export function csvCell(value: unknown): string {
 export const QUEUE_CSV_HEADERS = [
   '번호',
   '우선순위',
+  '중요 자산',
   '탐지 시각(KST)',
   '호스트 IP',
   '호스트 이름',
@@ -196,6 +199,8 @@ export function queueCsv(items: UnifiedQueueItem[]): string {
   const rows = items.map((item) => [
     item.incidentNo,
     label('priority', item.priority),
+    // T52 중요 자산: 예/아니요만(이름은 넣지 않는다. 조회자도 같다)
+    item.assetCritical ? '예' : '아니요',
     time(item.detectedAt),
     item.hostIp,
     item.hostName.join(', '),

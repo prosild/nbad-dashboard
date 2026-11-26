@@ -8,7 +8,14 @@ import { formatDateTime, formatNumber } from '../../utils/format';
 import { hostAllIncidentsPath, relativeGapText } from '../../utils/hosts';
 import { incidentPath } from '../../utils/incidentLink';
 import { captureInfo, captureShortName } from '../../utils/labels';
-import { CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, ResolutionBadge } from '../StatusBadge';
+import {
+  CodeLabel,
+  CriticalAssetBadge,
+  DetectionModelName,
+  IncidentStatusBadge,
+  PriorityBadge,
+  ResolutionBadge,
+} from '../StatusBadge';
 
 /** 불러오기 실패 안내(구역 안에만 보인다) */
 export const RELATED_LOAD_FAILED_TEXT = '같은 호스트의 인시던트를 불러오지 못했습니다.';
@@ -176,6 +183,14 @@ function RelatedRow({
         <CodeLabel dict="hostRole" value={item.zeekadRole} />
       </span>
       <PriorityBadge priority={item.priority} />
+      {item.assetCritical && (
+        <CriticalAssetBadge
+          priority={item.priority}
+          priorityBase={item.priorityBase}
+          name={item.criticalAssetName}
+          masked={maskedView}
+        />
+      )}
       <IncidentStatusBadge status={item.zeekadStatus} />
       <ResolutionBadge resolution={item.zeekadResolution} />
       <span className="text-slate-300">

@@ -8,7 +8,7 @@ import { AppShell } from '../components/AppShell';
 import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue, withoutLastDetected } from '../components/ConditionBar';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
-import { DetectionModelName, SocBadge, type BadgeTone } from '../components/StatusBadge';
+import { CriticalAssetBadge, DetectionModelName, SocBadge, type BadgeTone } from '../components/StatusBadge';
 import type { QueueSource } from '../types/api';
 import type { HostRiskItem, HostRiskResponse } from '../types/hosts';
 import {
@@ -391,6 +391,15 @@ const PRIORITY_CHIPS: readonly { key: 'high' | 'medium' | 'low'; tone: BadgeTone
   { key: 'low', tone: 'muted' },
 ];
 
+/**
+ * T52 중요 자산 표지(우선순위 건수 옆). 분석가·관리자 줄은 그 호스트, 조회자 줄은 대역 안의 호스트 하나라도 중요 자산이면 붙는다.
+ * 줄은 우선순위 하나가 아니라 수의 묶음이라 올림 글은 없다
+ */
+function HostCriticalBadge({ item, masked }: { item: HostRiskItem; masked: boolean }) {
+  if (!item.assetCritical) return null;
+  return <CriticalAssetBadge name={item.criticalAssetName} band={masked} masked={masked} />;
+}
+
 /** 미종결 우선순위별 건수. 색은 우선순위 배지와 같고 0은 흐리게 둔다 */
 function PriorityCounts({ item }: { item: HostRiskItem }) {
   return (
@@ -635,7 +644,10 @@ function HostTable({
                   </div>
                 </td>
                 <td className="soc-td-compact">
-                  <PriorityCounts item={item} />
+                  <span className="inline-flex items-center gap-1">
+                    <PriorityCounts item={item} />
+                    <HostCriticalBadge item={item} masked={masked} />
+                  </span>
                 </td>
                 {!masked && (
                   <td className="soc-td-compact">
@@ -705,6 +717,7 @@ function HostMobileList({
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <PriorityCounts item={item} />
+              <HostCriticalBadge item={item} masked={masked} />
               {!masked && item.roleTransition && <TransitionBadge />}
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">

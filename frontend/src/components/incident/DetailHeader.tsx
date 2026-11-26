@@ -5,6 +5,7 @@ import { captureInfo, detectionModelInfo } from '../../utils/labels';
 import {
   CaptureName,
   CodeLabel,
+  CriticalAssetBadge,
   IncidentStatusBadge,
   PriorityBadge,
   ResolutionBadge,
@@ -56,6 +57,7 @@ export function DetailHeader({
   snapshot = false,
   incidentNo = null,
   responseActions,
+  maskedView = false,
 }: {
   detail: IncidentDetailView;
   meta?: IncidentQueueMeta | null;
@@ -64,6 +66,8 @@ export function DetailHeader({
   incidentNo?: number | null;
   /** T56 대응 조치 기록(요약 복사에 싣는다. 응답에 없으면 undefined) */
   responseActions?: ResponseActionItem[];
+  /** T52 조회자 화면: 중요 자산 이름을 쓰지 않는다(서버도 주지 않는다) */
+  maskedView?: boolean;
 }) {
   const { notify } = useToast();
   const incident = detail.incident;
@@ -127,6 +131,16 @@ export function DetailHeader({
           </span>
         )}
         <PriorityBadge priority={priority} />
+        {/* T52: 올렸다는 사실을 보이는 글로 둔다("중요 자산 · Medium → High"). 이름은 툴팁과 화면 읽기 글에 */}
+        {meta?.assetCritical && (
+          <CriticalAssetBadge
+            priority={priority}
+            priorityBase={meta.priorityBase}
+            name={meta.criticalAssetName}
+            masked={maskedView}
+            showRaise
+          />
+        )}
         {meta?.ongoing && <OngoingBadge snapshot={snapshot} />}
         <span className="flex items-center gap-1">
           <IncidentStatusBadge status={detail.currentStatus} />

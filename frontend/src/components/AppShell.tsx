@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   Activity,
   ClipboardCheck,
+  Crown,
   Clock,
   EyeOff,
   History,
@@ -59,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/reviews', label: '에스컬레이션', icon: ClipboardCheck, matchPrefix: '/reviews' },
   { to: '/operations', label: '운영 현황', icon: Activity, matchPrefix: '/operations' },
   { to: '/admin/users', label: '사용자 관리', icon: Users, matchPrefix: '/admin/users', adminOnly: true },
+  { to: '/admin/critical-assets', label: '중요 자산', icon: Crown, matchPrefix: '/admin/critical-assets', adminOnly: true },
   { to: '/admin/audit-logs', label: '감사 로그', icon: FileSearch, matchPrefix: '/admin/audit-logs', adminOnly: true },
 ];
 

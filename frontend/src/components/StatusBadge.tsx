@@ -8,6 +8,7 @@ import {
   Circle,
   CircleDot,
   Clock,
+  Crown,
   Database,
   Loader,
   Minus,
@@ -66,13 +67,15 @@ export function SocBadge({
   tone = 'neutral',
   title,
   children,
+  ...data
 }: {
   tone?: BadgeTone;
   title?: string;
   children: React.ReactNode;
-}) {
+} & { [key: `data-${string}`]: string | undefined }) {
   return (
     <span
+      {...data}
       title={title}
       className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-medium leading-tight ${TONE_CLASS[tone]}`}
     >
@@ -351,8 +354,9 @@ export function UserRoleBadge({ role }: { role: string | null | undefined }) {
   );
 }
 
-/** 자동 분류 우선순위 툴팁. 분석가 판정이 아니라 화면이 계산한 값임을 알린다. */
-export const PRIORITY_TOOLTIP = '자동 분류 우선순위: 파이프라인 결과로 서버가 계산한 값이며 분석가 판정이 아닙니다';
+/** 자동 분류 우선순위 툴팁. 분석가 판정이 아니라 서버가 계산한 값임을 알린다(T52: 중요 자산 등록도 반영). */
+export const PRIORITY_TOOLTIP =
+  '자동 분류 우선순위: 파이프라인 결과와 중요 자산 등록으로 서버가 계산한 값이며 분석가 판정이 아닙니다';
 export const NO_PRIORITY_TOOLTIP = '종결된 인시던트는 우선순위를 매기지 않습니다';
 
 /**
@@ -374,6 +378,84 @@ export function PriorityBadge({ priority }: { priority: Priority | null }) {
     <SocBadge tone={tone} title={PRIORITY_TOOLTIP}>
       <Icon className="h-3 w-3" aria-hidden="true" />
       {labelText('priority', priority)}
+    </SocBadge>
+  );
+}
+
+/* ───────────── T52 중요 자산 ───────────── */
+
+export const CRITICAL_ASSET_LABEL = '중요 자산';
+export const CRITICAL_ASSET_BAND_TOOLTIP = '이 대역에 중요 자산으로 등록된 호스트가 있습니다';
+
+type QueuePriorityValue = 'high' | 'medium' | 'low';
+
+/** 올렸으면 "Medium → High", 아니면 null */
+export function criticalAssetRaise(
+  priority: QueuePriorityValue | null | undefined,
+  priorityBase: QueuePriorityValue | null | undefined,
+): string | null {
+  if (!priority || !priorityBase || priority === priorityBase) return null;
+  return `${labelText('priority', priorityBase)} → ${labelText('priority', priority)}`;
+}
+
+/**
+ * 중요 자산 표지의 설명 글(툴팁과 화면 읽기 글이 같은 글을 쓴다). 이름은 분석가·관리자에게만 온다(조회자 응답은 null).
+ * - 올렸으면: "…한 단계 올렸습니다(Medium → High)"  - 이미 High면: "…이미 High라 우선순위는 그대로입니다"
+ * - 종결·호스트 줄: "중요 자산으로 등록된 호스트입니다"  - 조회자의 대역 줄(band): "이 대역에 …"
+ */
+export function criticalAssetTooltip({
+  priority,
+  priorityBase,
+  name,
+  band = false,
+}: {
+  priority?: QueuePriorityValue | null;
+  priorityBase?: QueuePriorityValue | null;
+  name?: string | null;
+  band?: boolean;
+}): string {
+  let text: string;
+  const raise = criticalAssetRaise(priority, priorityBase);
+  if (band) {
+    text = CRITICAL_ASSET_BAND_TOOLTIP;
+  } else if (raise) {
+    text = `중요 자산으로 등록된 호스트라 자동 분류 우선순위를 한 단계 올렸습니다(${raise})`;
+  } else if (priority === 'high') {
+    text = '중요 자산으로 등록된 호스트입니다. 이미 High라 우선순위는 그대로입니다';
+  } else {
+    text = '중요 자산으로 등록된 호스트입니다';
+  }
+  return name ? `${text}\n중요 자산: ${name}` : text;
+}
+
+/**
+ * 중요 자산 표지(우선순위 배지 옆). 색만으로 뜻을 전하지 않게 글자 "중요 자산"을 두고,
+ * 툴팁만으로는 휴대폰·키보드 사용자가 볼 수 없어 같은 설명을 화면 읽기 글로도 둔다.
+ * showRaise면 올림을 보이는 글로 붙인다(상세 머리줄: "중요 자산 · Medium → High").
+ * masked면 이름을 쓰지 않는다(조회자. 서버도 이름을 주지 않는다).
+ */
+export function CriticalAssetBadge({
+  priority,
+  priorityBase,
+  name,
+  band = false,
+  masked = false,
+  showRaise = false,
+}: {
+  priority?: QueuePriorityValue | null;
+  priorityBase?: QueuePriorityValue | null;
+  name?: string | null;
+  band?: boolean;
+  masked?: boolean;
+  showRaise?: boolean;
+}) {
+  const tooltip = criticalAssetTooltip({ priority, priorityBase, name: masked ? null : name, band });
+  const raise = showRaise && !band ? criticalAssetRaise(priority, priorityBase) : null;
+  return (
+    <SocBadge tone="info" title={tooltip} data-critical-asset="">
+      <Crown className="h-3 w-3" aria-hidden="true" />
+      <span aria-hidden="true">{raise ? `${CRITICAL_ASSET_LABEL} · ${raise}` : CRITICAL_ASSET_LABEL}</span>
+      <span className="sr-only">{tooltip.replace('\n', '. ')}</span>
     </SocBadge>
   );
 }

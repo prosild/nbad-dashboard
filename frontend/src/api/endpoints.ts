@@ -10,6 +10,8 @@ import type {
   AuthCsrfResponse,
   AuthLoginResponse,
   AuthMeResponse,
+  CriticalAssetListResponse,
+  CriticalAssetMutationResponse,
   LoginNoticeResponse,
   IncidentDetailApiResponse,
   IncidentQueueResponse,
@@ -223,6 +225,14 @@ export const adminApi = {
     apiRequest<AdminUserMutationResponse>(`/api/admin/users/${id}/reset-totp`, {
       method: 'POST',
     }),
+  /* T52 중요 자산. 지우기도 POST(…/{id}/delete)다(WAF 허용 메서드에 DELETE가 없다) */
+  listCriticalAssets: () => apiRequest<CriticalAssetListResponse>('/api/admin/critical-assets'),
+  createCriticalAsset: (body: { hostIp: string; name: string; description: string | null }) =>
+    apiRequest<CriticalAssetMutationResponse>('/api/admin/critical-assets', { method: 'POST', body }),
+  updateCriticalAsset: (id: number, body: { name: string; description: string | null }) =>
+    apiRequest<CriticalAssetMutationResponse>(`/api/admin/critical-assets/${id}`, { method: 'PUT', body }),
+  deleteCriticalAsset: (id: number) =>
+    apiRequest<CriticalAssetMutationResponse>(`/api/admin/critical-assets/${id}/delete`, { method: 'POST' }),
   listAuditLogs: (params: { actionType?: string; actorUsername?: string; limit?: number } = {}) =>
     apiRequest<AdminAuditLogsResponse>(
       `/api/admin/audit-logs${buildQuery({

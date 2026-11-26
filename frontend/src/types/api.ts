@@ -148,6 +148,12 @@ export interface UnifiedQueueItem extends IncidentQueueItem {
   threadHeadNo?: number | null;
   /** T45 그 묶음의 구성원 수(허용 캡처 전체 기준, `period=all&thread=` 목록의 건수와 같다) */
   threadMemberCount?: number | null;
+  /** T52 이 행의 호스트가 중요 자산인지 */
+  assetCritical?: boolean;
+  /** T52 중요 자산을 보기 전의 기본 우선순위(종결이면 null). priority와 다르면 한 단계 올린 것 */
+  priorityBase?: QueuePriority | null;
+  /** T52 중요 자산 이름(분석가·관리자만. 조회자는 늘 null) */
+  criticalAssetName?: string | null;
 }
 
 export interface UnifiedQueueSummary {
@@ -243,6 +249,10 @@ export interface IncidentQueueMeta {
   anchor?: string | null;
   ackDueAt?: string | null;
   ackOverdue?: boolean;
+  /** T52 중요 자산 여부, 기본 우선순위, 이름(조회자는 null) */
+  assetCritical?: boolean;
+  priorityBase?: QueuePriority | null;
+  criticalAssetName?: string | null;
 }
 
 /** T25 현재 담당. assignee가 null이면 미배정 */
@@ -815,6 +825,29 @@ export interface AdminUsersListResponse {
 export interface AdminUserMutationResponse {
   message: string;
   user: AdminUserDto;
+}
+
+/** T52 중요 자산(관리자 API에만 설명이 있다) */
+export interface CriticalAssetItem {
+  id: number;
+  hostIp: string;
+  name: string;
+  description: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface CriticalAssetListResponse {
+  items: CriticalAssetItem[];
+  /** 등록 상한 */
+  limit: number;
+}
+
+export interface CriticalAssetMutationResponse {
+  message: string;
+  item: CriticalAssetItem;
 }
 
 export interface AuditLog {
