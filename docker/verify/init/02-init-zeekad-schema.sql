@@ -510,6 +510,62 @@ $$;
 REVOKE ALL ON FUNCTION dashboard.decide_review(BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION dashboard.decide_review(BIGINT, TEXT, TEXT, TEXT, TEXT) TO dashboard_rw;
 
+-- T53 종결한 사건 다시 열기: zeek_AD migration 018(dashboard.reopen_incident, DD-022)의 대역.
+-- 서명·검사 순서·SQLSTATE·오류 문구·상태 행과 이력 행의 값은 실제 함수와 같다(actor·reason은 받은 값 그대로, 기대 결론은
+-- trim·소문자 변환 없이 글자 그대로 견준다, 거부할 때 상태 행을 만들지 않는다).
+-- 실제와 다른 점: 표 이름(실제는 zeekad.incident·incident_status·incident_status_history, 여기는 dashboard.raw_* 표이고
+-- 마지막 작업 열 last_job_id 대신 job_id), 소유자(실제는 ALTER ... OWNER TO zeekad_owner, 이 스택에는 zeekad_owner가 없어
+-- 초기화를 실행한 슈퍼유저가 소유한다. 다른 대역 함수와 같다), search_path(실제 zeekad, 여기 dashboard).
+-- 그래서 zeek_AD의 018 파일을 이 스택에 그대로 실행할 수 없다. 권한은 실제와 같이 PUBLIC을 회수하고 dashboard_rw에만 준다.
+CREATE OR REPLACE FUNCTION dashboard.reopen_incident(
+    p_job BIGINT,
+    p_incident TEXT,
+    p_actor TEXT,
+    p_reason TEXT,
+    p_expected_resolution TEXT DEFAULT NULL
+) RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = dashboard, pg_temp
+AS $$
+DECLARE
+    v_from       TEXT;
+    v_resolution TEXT;
+BEGIN
+    IF coalesce(btrim(p_actor), '') = '' OR coalesce(btrim(p_reason), '') = '' THEN
+        RAISE EXCEPTION '누가(actor)와 왜(reason)를 적어야 한다' USING ERRCODE = '22023';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM dashboard.raw_incident_queue WHERE job_id = p_job AND incident_id = p_incident) THEN
+        RAISE EXCEPTION '사건이 없다: % %', p_job, p_incident USING ERRCODE = '02000';
+    END IF;
+    SELECT zeekad_status, zeekad_resolution INTO v_from, v_resolution
+    FROM dashboard.raw_incident_status WHERE incident_id = p_incident FOR UPDATE;
+    v_from := coalesce(v_from, 'open');
+    IF v_from <> 'closed' THEN
+        RAISE EXCEPTION '종료한 사건만 다시 열 수 있다. 지금 상태: %', v_from USING ERRCODE = '22023';
+    END IF;
+    IF p_expected_resolution IS NOT NULL THEN
+        IF p_expected_resolution NOT IN ('true_positive', 'false_positive', 'benign') THEN
+            RAISE EXCEPTION '기대 결론은 true_positive·false_positive·benign 중 하나다' USING ERRCODE = '22023';
+        END IF;
+        IF p_expected_resolution <> v_resolution THEN
+            RAISE EXCEPTION '종료 결론이 화면과 다르다. 지금 결론: %', v_resolution USING ERRCODE = '22023';
+        END IF;
+    END IF;
+
+    UPDATE dashboard.raw_incident_status
+    SET zeekad_status = 'investigating', zeekad_resolution = NULL, updated_at = now(), updated_by = p_actor, job_id = p_job
+    WHERE incident_id = p_incident;
+    INSERT INTO dashboard.raw_incident_status_history
+        (job_id, incident_id, from_status, to_status, zeekad_resolution, actor, reason, changed_at)
+    VALUES (p_job, p_incident, 'closed', 'investigating', NULL, p_actor, p_reason, now());
+    RETURN 'investigating';
+END;
+$$;
+
+REVOKE ALL ON FUNCTION dashboard.reopen_incident(BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION dashboard.reopen_incident(BIGINT, TEXT, TEXT, TEXT, TEXT) TO dashboard_rw;
+
 INSERT INTO dashboard.raw_model_bundles (bundle_id, registry_name, registry_version, manifest_sha256, registered_at, thresholds)
 VALUES
     ('zeekad-fusion/1', 'zeekad-ad-models', 'v1.4.0', 'sha256-ab12cd34ef567890',
