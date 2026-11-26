@@ -418,7 +418,7 @@ function Invoke-T33Exposure($TrialClient) {
     for ($page = 1; $page -le 50; $page++) {
         $qPath = "/api/incidents/queue?period=all&captureId=$exposureLabCapture&size=100&page=$page"
         $q = Invoke-Http -Path $qPath -Client $TrialClient
-        Assert-Status $q 200 "[T33x] $trialUser 실습망 큐 $page쪽"
+        Assert-Status $q 200 "[T33x] $trialUser 실습망 큐 ${page}쪽"
         $qTotal = [int]$q.Json.total
         $reqs.Add(@("queue", $qPath))
         foreach ($it in @($q.Json.items)) { $items.Add($it) }
@@ -694,7 +694,7 @@ try {
             elseif ($r.ExitCode -ne 0 -and $out -match "bad address") { "bad address" }
             elseif ($r.ExitCode -ne 0 -and $out -match '(?i)unreachable') { "unreachable" }
             elseif ($r.ExitCode -ne 0 -and ($out -match '(?i)timed out' -or $r.ExitCode -eq 124 -or $r.ExitCode -eq 143)) { "timed out" }
-            elseif ($r.ExitCode -ne 0 -and ($out -match '(?i)refused' -or -not $out)) { "refused" }
+            elseif ($r.ExitCode -ne 0 -and ($out -match '(?i)refused' -or (-not $out -and $r.ExitCode -eq 1))) { "refused" }
             else { "other" }
         return [pscustomobject]@{ Target = "${TargetHost}:$Port"; Exit = $r.ExitCode; Why = $why; Out = $out }
     }
@@ -1987,7 +1987,10 @@ try {
     $hist54 = @($dA54.Json.detail.statusHistory)
     $closeH54 = @($hist54 | Where-Object { $_.toStatus -eq 'closed' })
     $notes54 = @($dA54.Json.responseActions | Where-Object { $null -ne $_.note })
+    # T57(carry-over T54-c, T54 검토 L2): 종결 필터 큐의 모든 쪽도 가려지지 않은 IPv4를 같은 목록에 모은다. 앞뒤 수를 견준다
+    $t23Before54 = $t23IpHits.Count
     $closedQ54 = Get-AllQueueItems $v54 "status=closed&period=all" 100
+    Assert-True ($t23IpHits.Count -eq $t23Before54) "[T54d] demo 종결 필터 큐(전체 기간) 응답에 가려지지 않은 IPv4 없음 ($(($t23IpHits | Select-Object -Skip $t23Before54 | Select-Object -First 10) -join ', '))"
     $pos54 = @($examples54 | ForEach-Object { (Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE incident_id = '$($_.incidentId)'").Output.Trim() })
     $closedPos54 = @($closedQ54.Items | ForEach-Object { "$($_.jobId)/$($_.queueRank)" })
     $missing54 = @($pos54 | Where-Object { $closedPos54 -notcontains $_ })
@@ -2184,6 +2187,10 @@ FROM v GROUP BY m ORDER BY m
         }
         $e2eLogs.Add("[T25b] demo handlingTimes period=$period vs 독립 SQL (percentile_disc):`n       $($lines -join "`n       ")")
     }
+    # T57: T52 중요 자산 규칙을 독립 SQL에도 넣는다. 미종결 행의 호스트가 중요 자산이면 우선순위를 한 단계 올리고(Low → Medium, Medium → High)
+    #      착수 지연은 올린 우선순위의 목표를 쓴다(ZeekadReadMapper.xml priority·ackOverdueCond). 자산 주소는 응답이 아니라 앱 DB에서 따로 읽는다
+    $critHosts25 = Get-CriticalAssetHosts
+    $critArr25 = ConvertTo-SqlArray ([string[]]@($critHosts25))
     $overdueSql = @"
 WITH lq AS (SELECT * FROM dashboard.latest_incident_queue WHERE capture_id = ANY($publicArr)),
 fs AS (SELECT q.incident_id, MIN(j.finished_at) AS det FROM dashboard.incident_queue q
@@ -2192,8 +2199,9 @@ fs AS (SELECT q.incident_id, MIN(j.finished_at) AS det FROM dashboard.incident_q
 p AS (SELECT lq.capture_id, fs.det,
              (TRIM(COALESCE(lq.zeekad_status, '')) = '' OR LOWER(TRIM(lq.zeekad_status)) = 'open') AS is_open,
              CASE WHEN COALESCE(lq.zeekad_would_send, FALSE) OR COALESCE(lq.zeekad_review_pending, FALSE) THEN interval '30 minutes'
-                  WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) >= 1 OR lq.zeekad_report_job_id IS NOT NULL THEN interval '4 hours'
-                  ELSE interval '24 hours' END AS target
+                  WHEN COALESCE(CARDINALITY(lq.zeekad_also_flagged_by), 0) >= 1 OR lq.zeekad_report_job_id IS NOT NULL
+                       THEN CASE WHEN lq.host_ip = ANY($critArr25) THEN interval '30 minutes' ELSE interval '4 hours' END
+                  ELSE CASE WHEN lq.host_ip = ANY($critArr25) THEN interval '4 hours' ELSE interval '24 hours' END END AS target
       FROM lq LEFT JOIN fs ON fs.incident_id = lq.incident_id)
 SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT NULL AND det + target < $anchorExpr
 "@
@@ -2204,7 +2212,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     $wSum = 0; foreach ($l in @($w7.byAssignee)) { $wSum += [int]$l.open + [int]$l.investigating }
     $t25Bodies.Add($odQ.Body)
     Find-UnmaskedIpv4 $odQ.Json "queue[overdue]" $t25IpHits
-    $e2eLogs.Add("[T25b] ackOverdue: independent SQL=$sqlOverdue; queue overdue=true total=$($odQ.Json.total); queue(period=all).summary.overdue=$($allQ.Json.summary.overdue); workload=$($w7 | ConvertTo-Json -Compress -Depth 4)")
+    $e2eLogs.Add("[T25b] ackOverdue: independent SQL=$sqlOverdue (critical asset hosts in the rule=$($critHosts25.Count)); queue overdue=true total=$($odQ.Json.total); queue(period=all).summary.overdue=$($allQ.Json.summary.overdue); workload=$($w7 | ConvertTo-Json -Compress -Depth 4)")
     if (-not ($sqlOverdue -eq [int]$odQ.Json.total -and $sqlOverdue -eq [int]$allQ.Json.summary.overdue -and $sqlOverdue -eq [int]$w7.ackOverdue)) { $t25Fail.Add("ackOverdue sql=$sqlOverdue queue=$($odQ.Json.total) summary=$($allQ.Json.summary.overdue) workload=$($w7.ackOverdue)") }
     if ([int]$w7.unclosed -ne [int]$w7.assigned + [int]$w7.unassigned -or [int]$w7.assigned -ne $wSum) { $t25Fail.Add("workload invariants") }
     # 공개 데모에는 담당 기록이 없다(지어 넣지 않음): 큐 assignee 모두 null, byAssignee 비어 있음
@@ -2501,7 +2509,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     }
     $e2eLogs.Add("[T40a] thread heads with other incidents=$($heads40.Count); sizes=[$((@($t40aSizes | Sort-Object) -join ', '))]; hidden members(latest queue)=$t40aHiddenMembers`n       $($t40aLines -join "`n       ")`n       mismatches=$($t40aBad.Count)$(if ($t40aBad.Count) { ' ' + ($t40aBad -join '; ') })")
     Assert-True ($heads40.Count -ge 1 -and $t40aBad.Count -eq 0) "[T40a] 묶음 머리 $($heads40.Count)개의 큐 thread total = 독립 SQL(demo·$trialUser), 숨김 구성원 제외"
-    Assert-True ($t40aHiddenMembers -ge 1) "[T40a] 숨김 캡처 구성원이 실제로 있다($t40aHiddenMembers건, 이 데이터가 곧 시험)"
+    Assert-True ($t40aHiddenMembers -ge 1) "[T40a] 숨김 캡처 구성원이 실제로 있다(${t40aHiddenMembers}건, 이 데이터가 곧 시험)"
 
     # [T40b] lab-20261122 상세 전부: 묶음마다 memberCount = 독립 SQL, headIncidentNo = incident_refs 번호(행이 없으면 null), restricted- 0
     $rows40 = @((Invoke-Psql "zeekad" "SELECT job_id || '/' || queue_rank FROM dashboard.latest_incident_queue WHERE capture_id = 'lab-20261122' ORDER BY job_id, queue_rank").Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+/\d+$' })
@@ -2537,7 +2545,7 @@ SELECT count(*) FROM p WHERE capture_id LIKE 'lab-%' AND is_open AND det IS NOT 
     }
     $e2eLogs.Add("[T40b] lab-20261122 details=$($rows40.Count) (demo + $trialUser); groups=$t40bGroups headIsSelf=$t40bSelf with head link=$t40bLinks restricted=$t40bRestricted; mismatches=$($t40bBad.Count)$(if ($t40bBad.Count) { ' ' + (($t40bBad | Select-Object -First 10) -join '; ') })")
     Assert-True ($rows40.Count -eq $expectedCounts['lab-20261122'] -and $t40bBad.Count -eq 0) "[T40b] lab-20261122 상세 $($rows40.Count)건 묶음 칸 = 독립 SQL, demo = $trialUser"
-    Assert-True ($t40bRestricted -eq 0 -and $t40bLinks -ge 1) "[T40b] restricted- 0, 최초 알림 링크가 있는 묶음 $t40bLinks개"
+    Assert-True ($t40bRestricted -eq 0 -and $t40bLinks -ge 1) "[T40b] restricted- 0, 최초 알림 링크가 있는 묶음 ${t40bLinks}개"
 
     # [T40c] 숨김 캡처(lab-20261123) 인시던트 번호를 thread로 주면 403(두 계정), 형식 오류는 400
     $hiddenNos40 = @((Invoke-Psql "zeekad_dashboard" "SELECT incident_no FROM incident_refs WHERE capture_id = 'lab-20261123' ORDER BY incident_no LIMIT 2").Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' })
@@ -3046,7 +3054,7 @@ ORDER BY 1
             if (@($badged | ForEach-Object { [long]$_.threadHeadNo } | Sort-Object -Unique).Count -ge 5 -or $pg -ge [int]$q.Json.pageCount) { break }
         }
         $nos = @($badged | ForEach-Object { [long]$_.threadHeadNo } | Sort-Object -Unique | Select-Object -First 5)
-        if ($nos.Count -eq 0) { $t47NoData.Add("[T47c] $($who.Name) 큐 앞 $scanned행에 묶음 표지가 붙는 행이 없음"); continue }
+        if ($nos.Count -eq 0) { $t47NoData.Add("[T47c] $($who.Name) 큐 앞 ${scanned}행에 묶음 표지가 붙는 행이 없음"); continue }
         foreach ($no in $nos) {
             $hk = $noToHash47[$no]
             $e = if ($hk) { $exp40[$hk] } else { $null }
