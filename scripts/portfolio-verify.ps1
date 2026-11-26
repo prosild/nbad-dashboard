@@ -95,7 +95,7 @@ $expectedCounts = [ordered]@{}
 foreach ($p in $manifest.captureIncidentCounts.PSObject.Properties) { $expectedCounts[$p.Name] = [int]$p.Value }
 # T22: demo 허용 캡처는 시드 기본값 cic17-*,syn1-*,lab-20261119(공개 데모는 배포 VM 스냅샷. Kali 실습망 lab-20261119만 공개,
 #      시험 캡처 lab-20261201·첫 VM 실행 lab-20261118 등 나머지는 숨김, 2026-11-21 결정). 정확한 ID는 그 캡처만, 접두사*는 접두사 일치.
-# T39: lab-20261122(Kali 공격 7종 + 타깃 VM)를 더하고 시험 뒤 유휴 구간 lab-20261123은 숨긴다(2026-11-23 결정).
+# T39: lab-20261122(Kali 공격 6종 + 타깃 VM)를 더하고 시험 뒤 유휴 구간 lab-20261123은 숨긴다(2026-11-23 결정).
 #      실습망 단언은 공개 실습망 캡처 목록 전체를 본다. 노출 확인(-ExposureDir)은 처음 공개하는 lab-20261122를 본다(lab-20261119는 T33에서 봤다).
 $demoPatterns = @("cic17-*", "syn1-*", "lab-20261119", "lab-20261122")
 $demoLabCaptures = @("lab-20261119", "lab-20261122")

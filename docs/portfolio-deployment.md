@@ -3,6 +3,8 @@
 대시보드를 포트폴리오로 공개하는 절차다. 이 문서만 보고 처음부터 따라 할 수 있게 적었다.
 `https://soc.<DDNS 이름>.synology.me`에서 공개 데모 계정 `demo`(읽기 전용 `VIEWER`, 마스킹 적용)로 로그인해 실제 `zeek_AD` 스냅샷 데이터를 보게 한다. 분석가 흐름은 체험 계정 `trial-analyst`(`ANALYST`, 마스킹 없음)로 직접 해 볼 수 있다. 바꾼 내용은 매시 정각에 앱 밖 운영 서비스가 되돌린다(`T33`).
 
+탐지 파이프라인의 이름은 NBAD(Network Behavior Anomaly Detection, 저장소 `network-behavior-anomaly-detection`)다. 처음 이름 zeek_AD는 패키지·DB(`zeekad`)·컨테이너·설정 키에 그대로 남아 있고 이 문서의 본문도 그 이름을 쓴다.
+
 - 역할 분담: **로컬 PC**(이미지·스냅샷 준비, 리허설) → **NAS**(SSH로 기동) → **DSM**(인증서·역방향 프록시 설정) → 공개 주소 확인.
 - 처음에 "확인 필요"로 두었던 항목(DSM 메뉴·헤더 동작, `scp`, `docker compose` 등)은 NAS 배포(`T13`)에서 확인해 결과를 해당 절에 적었다.
 - 기존 VMware 스택(`compose.yml`, `docs/deployment-guide.md`)과는 별개다. 두 파일을 병합하지 않는다.
@@ -970,7 +972,7 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
 
 ### 3.10 새 실습망 캡처를 공개할 때(`T33`, `T39`)
 
-zeek_AD 실습망에 표적 VM이 늘어 새 캡처(정찰·무차별 대입·비커닝·느린 유출, 나중에 측면 이동)를 공개할 때의 순서다. 허용 캡처는 `DEMO_CAPTURE_PATTERNS`(비어 있으면 시드 기본값) 한 곳이다. 앱 코드에서 캡처 ID가 있는 곳은 캡처 표시 이름 사전(`frontend/src/utils/labels.ts` `LAB_CAPTURE_NOTES`, zeek_AD 표의 글) 하나뿐이고 권한에는 쓰이지 않는다. 초기화 SQL에는 없다.
+zeek_AD 실습망의 새 공격 시험 캡처를 공개할 때의 순서다. 타깃 VM을 둔 뒤의 공격 시험 캡처 `lab-20261122`(공격 6종: 느린 스캔·비커닝·분할 유출·SMB 공유 탐색·SSH 무차별 대입·DNS 터널)를 `T39`에서 이 순서로 공개했다. 허용 캡처는 `DEMO_CAPTURE_PATTERNS`(비어 있으면 시드 기본값) 한 곳이다. 앱 코드에서 캡처 ID가 있는 곳은 캡처 표시 이름 사전(`frontend/src/utils/labels.ts` `LAB_CAPTURE_NOTES`, zeek_AD 표의 글) 하나뿐이고 권한에는 쓰이지 않는다. 초기화 SQL에는 없다.
 
 1. 로컬 PC: 새 스냅샷(2.2) → `secret-scan.txt` 확인 → 리허설(2.3)을 `-ExposureDir <저장소 밖 폴더>`와 함께 돌린다(허용 캡처를 바꿨으면 리허설 셸에 같은 `DEMO_CAPTURE_PATTERNS`를 준다).
 2. **분석가 노출 확인**: `exposure.md`(필드별 개수·값 형태)를 운영자가 본다. 필요하면 `exposure-values.txt`(실제 값, 커밋하지 않음)를 본다. 점검 항목: HTTP URI(쿼리 문자열의 토큰·계정), 인증 필드(사용자 이름, Kerberos·NTLM·SMB 계정), 호스트 이름(집 장비·개인 이름), 사설 대역(집 LAN `192.168.x`가 섞였는지), 공인 주소(집 공인 IP가 섞였는지), Slack 원문. 공개하면 안 되는 값이 있으면 그 캡처는 공개하지 않는다.

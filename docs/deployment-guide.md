@@ -2,6 +2,8 @@
 
 `zeek_ad_dashboard`를 VMware Ubuntu Server 배포 VM 한 대(zeek_AD와 같은 Docker Compose)나 로컬 개발·검증 환경에 올리고 운영하는 절차와 보안 설정을 적습니다.
 
+탐지 파이프라인의 이름은 NBAD(Network Behavior Anomaly Detection, 저장소 `network-behavior-anomaly-detection`)입니다. 처음 이름 zeek_AD는 패키지·DB(`zeekad`)·컨테이너·설정 키에 그대로 남아 있고 이 문서의 본문도 그 이름을 씁니다.
+
 ---
 
 ## 1. 아키텍처 및 네트워크 경계 개요
