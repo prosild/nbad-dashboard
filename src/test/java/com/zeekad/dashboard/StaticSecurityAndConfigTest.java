@@ -1307,6 +1307,50 @@ class StaticSecurityAndConfigTest {
         assertThat(all.toString()).contains("NBAD 보안 관제").contains("<title>NBAD 보안 관제</title>").contains("CIC+합성 ");
     }
 
+    /** T57: 사설 주소(RFC 1918) IPv4 글자. 옥텟은 0~255이고 앞뒤에 숫자·점이 이어지지 않는 것만(버전 문자열의 일부를 잡지 않게). */
+    private static final String T57_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+    private static final Pattern T57_PRIVATE_IPV4 = Pattern.compile("(?<![0-9.])(?:10\\." + T57_OCTET + "\\." + T57_OCTET + "\\." + T57_OCTET
+            + "|172\\.(?:1[6-9]|2\\d|3[01])\\." + T57_OCTET + "\\." + T57_OCTET + "|192\\.168\\." + T57_OCTET + "\\." + T57_OCTET + ")(?![0-9])(?!\\.[0-9])");
+
+    /**
+     * T57: 빌드된 화면 번들(frontend/dist의 index.html과 assets의 JS·CSS)에 사설 주소 IPv4 글자가 없다. 로그인 전에 누구나 받는 정적 파일이다.
+     * 중요 자산 폼의 입력 예시가 공개 데모 실습망의 실제 대상 서버 주소(10.10.0.20)라 ZAP 베이스라인이 Private IP Disclosure(Low)로 잡았다
+     * (handoff/T57/evidence/red-e2e-zap-private-ip.md). 예시는 문서용 주소(RFC 5737 192.0.2.10)를 쓴다. 번들이 없으면 가정으로 건너뛴다.
+     */
+    @Test
+    void t57BuiltFrontendBundleShipsNoPrivateIpv4Literal() throws IOException {
+        assertThat(T57_PRIVATE_IPV4.matcher("예: 10.10.0.20)").find()).as("판정식 양성 대조 10.x").isTrue();
+        assertThat(T57_PRIVATE_IPV4.matcher(" 192.168.10.3 ").find()).as("판정식 양성 대조 192.168.x").isTrue();
+        assertThat(T57_PRIVATE_IPV4.matcher(" 172.20.1.2,").find()).as("판정식 양성 대조 172.16~31.x").isTrue();
+        assertThat(T57_PRIVATE_IPV4.matcher("예: 192.0.2.10) v10.1.2.3.4 172.32.0.1 1.10.0.0.5").find()).as("판정식 음성 대조(문서용 주소·더 긴 숫자열·범위 밖)").isFalse();
+        Path distIndex = Path.of("frontend/dist/index.html");
+        Path distAssets = Path.of("frontend/dist/assets");
+        Assumptions.assumeTrue(Files.isRegularFile(distIndex) && Files.isDirectory(distAssets),
+                "frontend/dist가 없어 번들 판정을 건너뜀(npm --prefix frontend run build 뒤에 돈다)");
+
+        List<Path> bundle = new java.util.ArrayList<>();
+        bundle.add(distIndex);
+        try (Stream<Path> files = Files.list(distAssets)) {
+            files.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".js") || p.getFileName().toString().endsWith(".css"))
+                    .forEach(bundle::add);
+        }
+        assertThat(bundle).as("번들 JS·CSS 파일").hasSizeGreaterThan(1);
+        StringBuilder all = new StringBuilder();
+        for (Path file : bundle) {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            java.util.regex.Matcher m = T57_PRIVATE_IPV4.matcher(content);
+            boolean found = m.find();
+            String around = found
+                    ? content.substring(Math.max(0, m.start() - 40), Math.min(content.length(), m.end() + 40))
+                    : "";
+            assertThat(found).as("빌드된 번들 %s에 사설 주소 IPv4 글자: …%s…", file, around).isFalse();
+            all.append(content);
+        }
+        // 지금 소스로 빌드한 번들인지: 바꾼 입력 예시가 들어 있다
+        assertThat(all.toString()).contains("IPv4 하나(예: 192.0.2.10)");
+    }
+
     /**
      * T62 보조 판정과 설정: 시험 밖 화면 소스의 주석이 아닌 줄(줄 머리가 //·*·/*·{/* 가 아닌 줄), 두 셸의 탭 제목,
      * 제품 이름, TOTP 발급자, 공개 데모 로그인 안내문과 링크 주소. 패키지·DB·설정 키·캡처 ID는 바꾸지 않는다(T62 인계).

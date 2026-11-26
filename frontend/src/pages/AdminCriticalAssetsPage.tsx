@@ -188,7 +188,7 @@ export function AdminCriticalAssetsPage() {
                   autoComplete="off"
                   value={newHostIp}
                   onChange={(e) => setNewHostIp(e.target.value)}
-                  placeholder="IPv4 하나(예: 10.10.0.20)"
+                  placeholder="IPv4 하나(예: 192.0.2.10)"
                   className="soc-input font-mono text-xs"
                 />
               </div>

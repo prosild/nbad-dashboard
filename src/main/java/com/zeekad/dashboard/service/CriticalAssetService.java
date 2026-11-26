@@ -174,7 +174,7 @@ public class CriticalAssetService {
     /** IPv4 한 주소의 정확한 꼴만(HostIpFilter EXACT: 옥텟 0~255, 앞자리 0 없음, ASCII 숫자). 다듬지 않고 본다 */
     static String requireIpv4(String raw) {
         if (raw == null || HostIpFilter.kindOf(raw) != HostIpFilter.Kind.EXACT) {
-            throw invalid("주소는 IPv4 한 주소(예: 10.10.0.20)만 받습니다. 대역·범위·IPv6·호스트 이름과 앞뒤 공백은 받지 않습니다.");
+            throw invalid("주소는 IPv4 한 주소(예: 192.0.2.10)만 받습니다. 대역·범위·IPv6·호스트 이름과 앞뒤 공백은 받지 않습니다.");
         }
         return raw;
     }

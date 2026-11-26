@@ -477,7 +477,7 @@ function adminHandler(state: { items: AssetRow[]; calls: Array<{ url: string; me
       if (method === 'GET') return json({ items: state.items, limit: 200 });
       if (method === 'POST' && url === '/api/admin/critical-assets') {
         if (body.hostIp === '10.0.0.0/24') {
-          return json({ status: 400, code: 'INVALID_REQUEST', message: '주소는 IPv4 하나(예: 10.10.0.20)만 받습니다.' }, 400);
+          return json({ status: 400, code: 'INVALID_REQUEST', message: '주소는 IPv4 한 주소(예: 192.0.2.10)만 받습니다.' }, 400);
         }
         const created = assetRow(9, body.hostIp, body.name, body.description ?? null);
         state.items = [...state.items, created];
@@ -539,7 +539,7 @@ describe('T52 관리자 화면 /admin/critical-assets', () => {
     await user.type(screen.getByLabelText('주소'), '10.0.0.0/24');
     await user.type(screen.getByLabelText('이름'), '대역');
     await user.click(screen.getByRole('button', { name: '등록' }));
-    expect(await screen.findByText('주소는 IPv4 하나(예: 10.10.0.20)만 받습니다.')).toBeInTheDocument();
+    expect(await screen.findByText('주소는 IPv4 한 주소(예: 192.0.2.10)만 받습니다.')).toBeInTheDocument();
     expect(state.items).toHaveLength(1);
 
     await user.clear(screen.getByLabelText('주소'));
