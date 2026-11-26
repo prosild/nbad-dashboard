@@ -1332,7 +1332,9 @@ function QueueTable({
                   className="soc-td-compact px-1.5 2xl:px-2"
                   title={item.statusUpdatedAt ? `상태 갱신 ${formatDateTime(item.statusUpdatedAt)}` : undefined}
                 >
-                  <div className="flex items-center gap-1">
+                  {/* T57: 종결 행은 상태·판정 배지 둘이라 한 줄이면 칸이 86px → 142px로 넓어져 1280·1536·1920px 표가 넘쳤다.
+                      칸 안에서 줄을 바꿔(flex-wrap) 열이 넓은 배지 하나 폭까지 줄어들게 한다(두 글은 그대로) */}
+                  <div className="flex flex-wrap items-center gap-1" data-col-content="status-verdict">
                     <IncidentStatusBadge status={item.zeekadStatus} />
                     <ResolutionBadge resolution={item.zeekadResolution} />
                   </div>
