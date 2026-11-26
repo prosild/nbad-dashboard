@@ -263,7 +263,7 @@ export function AdminUsersPage() {
             <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
                 <Edit3 className="h-4 w-4 text-slate-400" />
-                사용자 정보·권한 수정: <span className="font-mono">{editingUser.username}</span>
+                사용자 정보·권한 수정: <span className="font-mono [overflow-wrap:anywhere]">{editingUser.username}</span>
               </div>
               <button
                 type="button"

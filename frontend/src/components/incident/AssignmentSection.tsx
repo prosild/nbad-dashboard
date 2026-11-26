@@ -91,7 +91,7 @@ export function AssignmentSection({
       {assignee && assignment?.assignedAt && (
         <div className="text-[11px] text-slate-400">
           지정 <span className="tabular-nums text-slate-300">{formatDateTime(assignment.assignedAt)}</span> · 지정자{' '}
-          <span className="text-slate-300" data-raw="">
+          <span className="text-slate-300 [overflow-wrap:anywhere]" data-raw="">
             {assignment.assignedByDisplay ?? '-'}
           </span>
         </div>

@@ -94,7 +94,7 @@ export function ResponseActionSection({
           )}
           <div className="text-[11px] text-slate-400">
             기록자{' '}
-            <span className="text-slate-300" data-raw="">
+            <span className="text-slate-300 [overflow-wrap:anywhere]" data-raw="">
               {latest.actorDisplay ?? '-'}
             </span>{' '}
             · 기록 <span className="tabular-nums text-slate-300">{formatDateTime(latest.recordedAt)}</span>
