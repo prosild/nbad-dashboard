@@ -3,6 +3,7 @@ package com.zeekad.dashboard;
 import com.zeekad.dashboard.config.DashboardProperties;
 import com.zeekad.dashboard.security.CapturePatternMatcher;
 import com.zeekad.dashboard.security.TotpService;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -1267,6 +1268,93 @@ class StaticSecurityAndConfigTest {
                 && !normalized.endsWith(".test.tsx")
                 && !normalized.endsWith(".spec.ts")
                 && !normalized.endsWith(".spec.tsx");
+    }
+
+    /** T62 이름 변경(zeek_AD → NBAD): 화면에 나가는 글에 남으면 안 되는 옛 제품·평가 자료 이름. */
+    private static final Pattern T62_OLD_SCREEN_NAMES = Pattern.compile("(?i)zeek_ad|합성 APT|CIC\\+APT");
+
+    /**
+     * T62 주된 판정: 빌드된 화면 번들(frontend/dist)에 옛 이름이 없다. 압축 번들에는 주석이 없어 출하되는 글을 그대로 본다.
+     * verify는 npm run build를 gradle check보다 먼저 돌린다. 번들이 없으면 건너뛴 것이 시험 결과에 보이게 가정으로 멈춘다.
+     */
+    @Test
+    void t62BuiltFrontendBundleShipsNoOldProductOrDatasetName() throws IOException {
+        Path distIndex = Path.of("frontend/dist/index.html");
+        Path distAssets = Path.of("frontend/dist/assets");
+        Assumptions.assumeTrue(Files.isRegularFile(distIndex) && Files.isDirectory(distAssets),
+                "frontend/dist가 없어 번들 판정을 건너뜀(npm --prefix frontend run build 뒤에 돈다)");
+
+        List<Path> bundle = new java.util.ArrayList<>();
+        bundle.add(distIndex);
+        try (Stream<Path> files = Files.list(distAssets)) {
+            files.filter(Files::isRegularFile).filter(p -> p.getFileName().toString().endsWith(".js")).forEach(bundle::add);
+        }
+        assertThat(bundle).as("번들 JS 파일").hasSizeGreaterThan(1);
+        StringBuilder all = new StringBuilder();
+        for (Path file : bundle) {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            java.util.regex.Matcher m = T62_OLD_SCREEN_NAMES.matcher(content);
+            boolean found = m.find();
+            String around = found
+                    ? content.substring(Math.max(0, m.start() - 40), Math.min(content.length(), m.end() + 40))
+                    : "";
+            assertThat(found)
+                    .as("빌드된 번들 %s에 옛 이름: …%s…(화면 번들을 다시 빌드했는지도 본다)", file, around)
+                    .isFalse();
+            all.append(content);
+        }
+        // 지금 소스로 빌드한 번들인지: 새 제품 이름·탭 제목·짧은 수집원 이름이 들어 있다.
+        assertThat(all.toString()).contains("NBAD 보안 관제").contains("<title>NBAD 보안 관제</title>").contains("CIC+합성 ");
+    }
+
+    /**
+     * T62 보조 판정과 설정: 시험 밖 화면 소스의 주석이 아닌 줄(줄 머리가 //·*·/*·{/* 가 아닌 줄), 두 셸의 탭 제목,
+     * 제품 이름, TOTP 발급자, 공개 데모 로그인 안내문과 링크 주소. 패키지·DB·설정 키·캡처 ID는 바꾸지 않는다(T62 인계).
+     */
+    @Test
+    void t62ScreenSourcesShellsTotpIssuerAndPortfolioLoginNoticeUseNewName() throws IOException {
+        List<Path> targets = new java.util.ArrayList<>();
+        targets.add(Path.of("frontend/index.html"));
+        try (Stream<Path> files = Files.walk(Path.of("frontend/src"))) {
+            files.filter(Files::isRegularFile).filter(StaticSecurityAndConfigTest::isFrontendProductionSource).forEach(targets::add);
+        }
+        assertThat(targets).hasSizeGreaterThan(20);
+        for (Path file : targets) {
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            for (int i = 0; i < lines.size(); i++) {
+                String head = lines.get(i).stripLeading();
+                if (head.startsWith("//") || head.startsWith("*") || head.startsWith("/*") || head.startsWith("{/*")) {
+                    continue;
+                }
+                assertThat(T62_OLD_SCREEN_NAMES.matcher(lines.get(i)).find())
+                        .as("화면 소스 %s:%d의 주석이 아닌 줄에 옛 이름: %s", file, i + 1, lines.get(i).strip())
+                        .isFalse();
+            }
+        }
+
+        String title = "<title>NBAD 보안 관제</title>";
+        assertThat(Files.readString(Path.of("frontend/index.html"), StandardCharsets.UTF_8)).contains(title);
+        assertThat(Files.readString(Path.of("src/main/resources/static/index.html"), StandardCharsets.UTF_8))
+                .contains(title).doesNotContainPattern(T62_OLD_SCREEN_NAMES);
+        assertThat(Files.readString(Path.of("frontend/src/components/AppShell.tsx"), StandardCharsets.UTF_8))
+                .contains("export const PRODUCT_NAME = 'NBAD 보안 관제';");
+
+        assertThat(new DashboardProperties().getSecurity().getTotpIssuer()).isEqualTo("NBAD Dashboard");
+        assertThat(Files.readString(Path.of("src/main/resources/application.yml"), StandardCharsets.UTF_8))
+                .contains("    totp-issuer: \"NBAD Dashboard\"").doesNotContain("zeek_AD Dashboard"); // spring.application.name은 식별자라 그대로
+
+        // 공개 데모 로그인 안내문(셋째 줄 "합성 패턴")과 링크 주소. 주석의 글자 수는 서버가 세는 대로(앞뒤 공백을 뺀 코드 포인트, \n은 한 자).
+        String app = serviceBlock(Files.readString(Path.of("compose.portfolio.yml"), StandardCharsets.UTF_8), "dashboard-app");
+        assertThat(app).contains("      DASHBOARD_LOGIN_NOTICE_LINK_URL: \"https://github.com/prosild/nbad-dashboard#readme\"\n")
+                .contains("      DASHBOARD_LOGIN_NOTICE_LINK_LABEL: \"소개와 구조 보기(GitHub README)\"\n");
+        java.util.regex.Matcher notice = Pattern.compile("(?m)^      DASHBOARD_LOGIN_NOTICE: \"([^\"]*)\"$").matcher(app);
+        assertThat(notice.find()).as("compose.portfolio.yml app의 DASHBOARD_LOGIN_NOTICE 줄").isTrue();
+        String noticeText = notice.group(1).replace("\\n", "\n").strip();
+        assertThat(noticeText).contains("\n데이터는 공개 데이터셋 CIC-IDS2017과 합성 패턴, 격리 실습망 트래픽입니다.\n")
+                .doesNotContain("APT").doesNotContainPattern(T62_OLD_SCREEN_NAMES);
+        int noticeLength = noticeText.codePointCount(0, noticeText.length());
+        assertThat(noticeLength).isLessThanOrEqualTo(com.zeekad.dashboard.controller.LoginNoticeController.MAX_LENGTH);
+        assertThat(app).contains("지금 " + noticeLength + "자)");
     }
 
     @Test
