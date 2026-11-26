@@ -20,14 +20,14 @@
 | NAS 전환 예행(갱신 리허설, `T61`): 지금 NAS에 떠 있는 구성 → 이 구성을 같은 DB 볼륨 위에서 `down` 없이 넘기고 되돌리기 | 작업 기록의 갱신 리허설 도구(저장소 밖, 로컬 Docker. NAS와 Compose 판이 다르다). 순서와 단언은 [`docs/portfolio-deployment.md`](portfolio-deployment.md) 3.8 `T61` 절(다섯 컨테이너 healthy, DB 볼륨·행 수 그대로, `portfolio-net`의 ID·만든 시각·게이트웨이와 WAF 주소 그대로, `portfolio-data` 생성·`Internal`, 되돌린 뒤 `portfolio-data` 지우기) | 통과(2026-11-26, 로컬 Docker Compose v5.6.0. NAS의 옛 Compose가 아님). 37개 확인 통과. 옛 구성(`09310ce`의 compose: NAS에 반영한 파일과 sha256 같음, 앱 `t49`)에 시드·초기화 설정을 한 뒤 넘김: `portfolio-net`의 ID·만든 시각·게이트웨이와 WAF 주소 그대로, DB 볼륨 그대로, 옛 표 32개의 행 수 같음(앱 DB에 새 migration `V4`·`V5` 기록과 새 표 둘만 더해짐), `postgres`가 옛 구성이 만든 볼륨에서 `postgres` 계정·capability 없이 healthy, 고아 컨테이너 0, 앱 → 근거 API와 DSM 흉내 로그인 화면 `200`. 되돌리기: 옛 앱이 `V5`까지 적용된 DB에서 뜨고(Flyway 경고만) 행 수가 같으며 `portfolio-data`를 지울 수 있음. 다른 프로젝트의 컨테이너·볼륨·네트워크는 앞뒤 같음 |
 | 분석이 끝난 예시 셋을 시드가 앱 API로 기록(`T54`) | 정적 시험 `t54SeedRecordsExamplesOnlyThroughTheAppApiAndKeepsNoNewSecret`(Gradle `check`). 일회용 공개 스택 일부(`postgres`·`api`·`dashboard-app` + 실제 공개 스냅샷)에서 시드·`sandbox-setup`·`sandbox-reset --once`·조회자 상세를 보는 집중 확인 | 정적 시험 통과: 시드가 SQL로 쓰는 표는 `users`와 감사 행뿐이고(zeek_AD 표·대응 조치·담당 표에 쓰는 SQL 없음), 로그에 비밀번호·예시 글이 없고, 자료 파일의 ID 꼴·판정이 맞고, `demo-seed`에 더한 값은 읽기 계정 하나다. 집중 확인(2026-11-26, 새 볼륨 두 번): 시드 전 신규·담당 없음, 시드 1차가 셋을 기록(이력 순서 착수 → 자동 담당 → (정탐) 조치 → 해제 → 종결, 담당자 있는 행 0, `demo-analyst` 비활성), 2차는 로그인 없이 `NO_CHANGES`, 기준선 = 시드 전 + 상태 3·이력 6, 체험 계정이 다른 건을 착수하고 예시에 조치를 덧붙여도 한 번의 초기화로 되돌아가고 예시는 그대로, 조회자 응답에 온전한 IPv4와 조치 메모 없음, 어긋난 상태면 아무것도 바꾸지 않고 실패, 없는 ID는 건너뜀 — 단언 30개 모두 통과. 첫 실행에서 시드가 실제 스냅샷의 계약 뷰(인시던트 × 작업마다 한 행, 상태가 없으면 `open`)를 상태 행으로 읽어 신규 건을 실패로 판정한 결함을 찾아 고쳤습니다(검증용 스키마의 뷰는 상태 행만 내서 시험이 잡지 못했다). 리허설 `[T54]`·`[T54a]`~`[T54d]`는 스크립트에 넣었고 실행 결과는 다음 통합 검증 때 적습니다 |
 
-Trivy는 의존성이나 Dockerfile이 바뀔 때 돌립니다. 마지막 실행은 `T49`(2026-11-26, E2E 안)이고 결과는 `T31`(2026-11-22) 때와 같습니다.
+Trivy는 의존성이나 Dockerfile이 바뀔 때 돌립니다. 마지막 실행은 `T57`(2026-11-26, E2E 안, commit `80de2bb`)입니다. `T49`(결과는 `T31`과 같았다) 뒤 Dockerfile은 바뀌지 않았지만 두 이미지의 OS 패키지에서 MEDIUM 넷이 새로 나왔습니다(아래 4.3의 12, 기반 이미지 갱신은 반영 뒤 다음 작업).
 
 | 스캔 대상 | CRITICAL | HIGH | MEDIUM | 내용 |
 |---|---:|---:|---:|---|
 | SBOM(`bom.json`) | 2 | 0 | 0 | `spring-webmvc` 2건(아래 4.3의 1) |
 | `frontend/package-lock.json`, Dockerfile 2개 | 0 | 0 | 0 | 오설정 0건 |
-| 앱 이미지 OS / `app.jar` | 0 / 2 | 0 / 0 | 0 / 1 | `spring-webmvc` 2건, `ognl` 1건(4.3의 1·2) |
-| WAF 이미지 | 0 | 0 | 0 | 0건. 직전 실행(`T25`)의 `libxml2` `CVE-2026-86144` HIGH 1건은 고정 기반 위에서 `libxml2`만 `2.13.9-r3`으로 올려 해소했습니다. 상류 최신 기반 이미지에도 취약한 `2.13.9-r2`가 들어 있어 다시 빌드만으로는 해소되지 않았습니다([`docs/deployment-guide.md`](deployment-guide.md) 4.1) |
+| 앱 이미지 OS / `app.jar` | 0 / 2 | 0 / 0 | 3 / 1 | OS `libexpat` 3건(4.3의 12), `spring-webmvc` 2건, `ognl` 1건(4.3의 1·2) |
+| WAF 이미지 | 0 | 0 | 4 | `libexpat` 3건·`nginx` 1건(4.3의 12, `T57`에서 새로 나옴). 앞서 `T25` 실행의 `libxml2` `CVE-2026-86144` HIGH 1건은 `T31`에서 고정 기반 위에서 `libxml2`만 `2.13.9-r3`으로 올려 해소했습니다. 상류 최신 기반 이미지에도 취약한 `2.13.9-r2`가 들어 있어 다시 빌드만으로는 해소되지 않았습니다([`docs/deployment-guide.md`](deployment-guide.md) 4.1) |
 
 ## 처음 정리한 검증 (`T10`, 2026-11-20)
 
@@ -185,6 +185,10 @@ Trivy는 의존성이나 Dockerfile이 바뀔 때 돌립니다. 마지막 실행
    - 조회자가 받는 표지가 드러내는 것: 표지만으로는 주소를 알 수 없습니다. 다만 가린 대역 안에 중요 자산이 하나뿐이면 표지가 참인 인시던트는 모두 그 한 호스트의 것이라 조회자가 그 호스트의 인시던트를 묶고 셀 수 있습니다. 호스트 위험도가 대역으로 묶어 막으려던 "원문 호스트 단위의 수"가 그 호스트에 한해 드러납니다. 표지를 빼도 `priority`와 `priorityBase`의 차이(Low·Medium에서 올린 경우)로 같은 것이 드러나므로 우선순위를 올리는 한 딸려 나오는 정보로 보고 받아들였습니다.
    - 공개 데모의 자산 목록: 공개 데모는 시드가 저장소의 자료 파일(`docker/portfolio/seed/critical_assets.json`)대로 자산을 맞추므로 자산의 주소와 이름이 공개 저장소에 함께 실립니다. 그래서 조회자에게 이름을 내리지 않는 규칙은 공개 데모에서는 통제를 보여 주는 시연이고 이름을 숨기지 못합니다(분석가 체험 계정도 공개돼 있습니다). 실제 운영에서는 그 파일이 저장소에 있지 않고 관리자 화면으로만 등록합니다.
    - 자산은 주소로만 맞춥니다(캡처를 가리지 않습니다). 가져온 데이터셋과 실습망의 주소가 겹치면 같이 올라갑니다. 지금 공개 자료에서는 겹치지 않습니다(`192.168.10.x`와 `10.10.0.x`).
+12. **기반 이미지의 OS 패키지**(`T57` Trivy에서 새로 나옴, MEDIUM 넷, 두 이미지 모두 Alpine 3.24.4):
+   - `libexpat 2.10.0-r0`(`2.11.0-r0`에서 수정): `CVE-2026-124317`(범위 밖 읽기), `CVE-2026-128241`(`xmlwf` 도구의 심볼릭 링크), `CVE-2026-134703`(유니코드 처리). 앱 이미지(`eclipse-temurin:17-jre-alpine` + 빌드 때 `apk upgrade`)와 WAF 이미지(`owasp/modsecurity-crs:4.30.0-nginx-alpine`, digest 고정) 모두 이 패키지를 쓰는 것은 `fontconfig` 하나입니다(`apk info -r libexpat`). 앱은 Java의 XML 처리를 쓰고 WAF의 요청 본문 XML은 `libxml2`가 읽습니다. `xmlwf`는 실행하지 않습니다.
+   - `nginx 1.30.7-r1`(`1.30.8-r0`에서 수정, WAF 이미지): `CVE-2026-132779`(TLS 1.3 early data로 서비스 거부). WAF 설정에 `ssl_early_data`가 없어(기본값 꺼짐) 해당 기능이 켜져 있지 않습니다. 공개 데모는 TLS를 DSM이 끝내고 `nginx-waf`에는 `127.0.0.1`의 HTTP 포트로만 붙습니다.
+   - 조치: 이번 반영에서는 Dockerfile을 바꾸지 않습니다(시험한 이미지를 그대로 반영). 반영 뒤 다음 작업에서 기반 이미지를 올리고(WAF는 새 digest 고정) Trivy·E2E를 다시 돌립니다.
 
 ---
 
