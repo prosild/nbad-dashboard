@@ -1,4 +1,4 @@
-# 포트폴리오 공개 배포 안내서 (Synology DS920+)
+# 포트폴리오 공개 배포 안내서 (Synology NAS)
 
 대시보드를 포트폴리오로 공개하는 절차다. 이 문서만 보고 처음부터 따라 할 수 있게 적었다.
 `https://soc.<DDNS 이름>.synology.me`에서 공개 데모 계정 `demo`(읽기 전용 `VIEWER`, 마스킹 적용)로 로그인해 실제 `zeek_AD` 스냅샷 데이터를 보게 한다. 분석가 흐름은 체험 계정 `trial-analyst`(`ANALYST`, 마스킹 없음)로 직접 해 볼 수 있다. 바꾼 내용은 매시 정각에 앱 밖 운영 서비스가 되돌린다(`T33`).
@@ -6,6 +6,7 @@
 - 역할 분담: **로컬 PC**(이미지·스냅샷 준비, 리허설) → **NAS**(SSH로 기동) → **DSM**(인증서·역방향 프록시 설정) → 공개 주소 확인.
 - 처음에 "확인 필요"로 두었던 항목(DSM 메뉴·헤더 동작, `scp`, `docker compose` 등)은 NAS 배포(`T13`)에서 확인해 결과를 해당 절에 적었다.
 - 기존 VMware 스택(`compose.yml`, `docs/deployment-guide.md`)과는 별개다. 두 파일을 병합하지 않는다.
+- **배포 폴더**: NAS에서 이 스택의 파일을 두는 폴더를 이 문서에서는 `<배포 폴더>`라고 쓴다(운영 기기의 모델·판·경로·여유 자원은 문서에 적지 않는다. 실제 값은 저장소 밖 운영 기록에 있다). NAS 셸에서 처음에 한 번 `export DEPLOY_DIR=<배포 폴더>`(절대 경로)로 정하고 `test -d "$DEPLOY_DIR" && echo "DEPLOY_DIR ok"`로 확인한다. 명령은 `cd "$DEPLOY_DIR"`, 상위 폴더는 `"$(dirname "$DEPLOY_DIR")"`로 쓴다. `<배포 폴더>`를 명령 안에 그대로 넣으면 셸이 `<`·`>`를 리다이렉트로 읽는다. 단계를 스크립트 파일로 풀어 새 셸에서 실행할 때(3.8·3.9)는 그 파일 맨 앞에 같은 `DEPLOY_DIR=` 줄을 둔다. 로컬 PC의 `$dst`도 같은 경로다.
 
 ## 1. 구성
 
@@ -16,33 +17,50 @@
                                    ▼
                         127.0.0.1:18480 (NAS 루프백에만 묶임)
                                    │
-  ┌────────────── Compose 프로젝트 zeekad-portfolio (네트워크 10.203.48.0/24 고정) ──────────────┐
-  │ nginx-waf 주소 10.203.48.250 고정(T32), DSM 연결은 게이트웨이 10.203.48.1로 들어온다        │
-  │ nginx-waf (ModSecurity CRS, 로그인 속도 제한) ─> dashboard-app ─> postgres (zeekad 스냅샷,     │
-  │                                                     │              zeekad_dashboard)         │
-  │                                                     └──────> api (zeek_AD 근거 API) ─┘        │
-  └──────────────────────────────────────────────────────────────────────────────────────────┘
+  Compose 프로젝트 zeekad-portfolio   네트워크 둘(T61)
+  ┌ portfolio-net (10.203.48.0/24 고정) ─────────────────────────────────────────────────────
+  │ nginx-waf 주소 10.203.48.250 고정(T32), DSM 연결은 게이트웨이 10.203.48.1로 들어온다
+  │ nginx-waf (ModSecurity CRS, 속도 제한) ─> dashboard-app
+  └──────────────────────────────────────────────│───────────────────────────────────────────
+  ┌ portfolio-data (10.203.47.0/24, 내부 전용: 바깥 길 없음) ──│────────────────────────────────
+  │                                             dashboard-app ─> postgres (zeekad 스냅샷, zeekad_dashboard)
+  │                                                   └──────> api (zeek_AD 근거 API) ─> postgres
+  │ sandbox-reset(상주)·sandbox-setup·demo-seed(도구) ─> postgres (demo-seed는 dashboard-app에도)
+  └──────────────────────────────────────────────────────────────────────────────────────────
+  nginx-waf는 portfolio-data에 붙지 않아 postgres·api에 닿지 않는다. 두 네트워크에 붙는 것은 dashboard-app뿐이다.
 ```
 
-| 서비스 | 이미지(기본값) | 바깥 포트 | 메모리 상한 |
-|---|---|---|---|
-| `postgres` | `pgvector/pgvector:0.8.1-pg17` | 없음 | 1g |
-| `api` | `zeekad-pipeline:dev` (`python scripts/run_api.py`) | 없음 | 1g |
-| `dashboard-app` | `zeek-ad-dashboard-app:local` | 없음 | 1g |
-| `nginx-waf` | `zeek-ad-dashboard-waf:local` | `127.0.0.1:18480` → 8080(HTTP) | 512m |
-| `demo-seed`(도구, `--profile seed run`으로만 실행) | `zeekad-pipeline:dev` | 없음 | 256m |
-| `sandbox-setup`(도구, `--profile seed run`으로만 실행, `T33`) | `pgvector/pgvector:0.8.1-pg17` | 없음 | 128m |
-| `sandbox-reset`(상주, `T33`) | `pgvector/pgvector:0.8.1-pg17`(`psql`만) | 없음 | 64m |
+| 서비스 | 이미지(기본값) | 네트워크(`T61`) | 바깥 포트 | 메모리 상한 |
+|---|---|---|---|---|
+| `postgres` | `pgvector/pgvector:0.8.1-pg17` | `portfolio-data` | 없음 | 1g |
+| `api` | `zeekad-pipeline:dev` (`python scripts/run_api.py`) | `portfolio-data` | 없음 | 1g |
+| `dashboard-app` | `zeek-ad-dashboard-app:local` | `portfolio-net`, `portfolio-data` | 없음 | 1g |
+| `nginx-waf` | `zeek-ad-dashboard-waf:local` | `portfolio-net` | `127.0.0.1:18480` → 8080(HTTP) | 512m |
+| `demo-seed`(도구, `--profile seed run`으로만 실행) | `zeekad-pipeline:dev` | `portfolio-data` | 없음 | 256m |
+| `sandbox-setup`(도구, `--profile seed run`으로만 실행, `T33`) | `pgvector/pgvector:0.8.1-pg17` | `portfolio-data` | 없음 | 128m |
+| `sandbox-reset`(상주, `T33`) | `pgvector/pgvector:0.8.1-pg17`(`psql`만) | `portfolio-data` | 없음 | 64m |
 
-리허설(로컬 PC)에서 측정한 실제 사용량은 네 서비스 합계 약 0.4GiB였다(`T12` 실행 기록, 저장소 밖 보관). 상한 합계 3.5GiB는 NAS 여유 메모리(약 17GB) 안이다.
+리허설(로컬 PC)에서 측정한 실제 사용량은 네 서비스 합계 약 0.4GiB였다(`T12` 실행 기록, 저장소 밖 보관). 상한 합계는 3.5GiB다. 배포 전에 NAS의 여유 메모리가 이보다 넉넉한지 확인한다(3.1).
 
 ### 1.1 보안 전제와 설정 요약
 
 - **바깥에 여는 포트는 `nginx-waf` HTTP 하나뿐이고 NAS `127.0.0.1`에만 묶는다.** 그래서 이 포트에 접근할 수 있는 것은 같은 NAS의 DSM 역방향 프록시뿐이다. 아래 전달 헤더(`X-Forwarded-For`, `X-Forwarded-Proto`)를 믿는 근거가 이 전제다. 포트를 `0.0.0.0`이나 LAN 주소에 묶으면 이 전제가 깨진다.
+- **네트워크 둘(`T61`)**: 인터넷 요청을 받는 `nginx-waf`가 DB와 근거 API에 직접 닿지 못하게 스택 네트워크를 둘로 나눴다(`T60`까지는 일곱 서비스가 `portfolio-net` 하나에 붙었다).
+  - `portfolio-net`(서브넷 `PORTFOLIO_SUBNET`, 기본 `10.203.48.0/24`): `nginx-waf`(고정 주소)와 `dashboard-app`만 붙는다. `nginx-waf`의 포트를 바깥에 열어야 해 내부 전용으로 만들 수 없다. 정의(이름·서브넷·주석)는 `T61` 전과 한 글자도 같다. NAS에 이미 있는 네트워크라 정의가 바뀌면 붙은 컨테이너를 모두 내리고 다시 만들어야 하고, 이름과 서브넷이 그대로여야 `T32`의 신뢰 값(WAF 주소, 게이트웨이)도 그대로다.
+  - `portfolio-data`(`internal: true`, 서브넷 `PORTFOLIO_DATA_SUBNET`, 기본 `10.203.47.0/24`): `dashboard-app`·`postgres`·`api`와 초기화·시드 도구(`sandbox-setup`·`sandbox-reset`·`demo-seed`)가 붙는다. 내부 전용이라 호스트 밖으로 나가는 길(기본 경로)이 없고 포트를 열 수 없다. 고정 주소를 쓰는 서비스는 없다. 근거 API는 DB만 쓰므로 바깥 연결이 필요 없다.
+  - 그래서 `nginx-waf`는 `postgres:5432`와 `api:8000`에 이름으로도 주소로도 닿지 않는다(Docker 내장 DNS는 같은 네트워크의 이름만 돌려준다). `nginx-waf`가 뚫려도 다음에 닿는 곳은 앱(`dashboard-app:8080`)뿐이다. 두 네트워크에 붙는 것은 앱 하나이고 바깥으로 나갈 길이 남는 것도 앱 하나다.
+  - 남는 길: `api`·`sandbox-*`·`demo-seed`는 앱 `8080`에 직접 닿는다(앱이 `api`를 불러야 해 같은 네트워크에 있다). 그 연결의 전달 헤더는 앱이 믿지 않는다(`T32`, 리허설 `[T32d]`).
+  - 셋으로 나누지 않았다. DB만 따로 떼면 `api`·앱·초기화 도구가 모두 두 네트워크에 붙어야 하고, 막으려는 길(WAF → DB·근거 API)은 둘로도 끊긴다.
+  - 확인: 리허설 `[T61a]`(붙은 컨테이너, `Internal`, 기본 경로)·`[T61b]`(`nginx-waf` 안에서 TCP 연결 단계로 판정)·`[T61c]`(`api`에서 WAF로). NAS에 처음 반영할 때의 순서는 3.8의 `T61` 절이다.
+- **컨테이너 권한(`T61`)**: 공개 스택의 모든 서비스가 capability 없이(`cap_drop: [ALL]`) 권한 상승 금지(`no-new-privileges`)로 돈다. `T60`까지는 `nginx-waf`에 `no-new-privileges`만 있었고 `postgres`에는 아무 설정이 없었다.
+  - `nginx-waf`: 이미지가 `nginx` 계정으로 1024 위 포트(8080·8443)를 열어 capability가 필요 없다.
+  - `postgres`: root로 시작하지 않는다(`user: postgres`, `sandbox-*`와 같은 꼴). 이미지의 진입 스크립트는 root가 아니면 데이터 폴더 소유자 바꾸기(`chown`)와 `gosu`를 건너뛴다. 데이터 폴더는 이미지가 `postgres` 소유로 만들어 두므로 새 볼륨과 옛 구성(root로 시작해 `gosu`로 내려감)이 만든 볼륨의 소유자가 같다. 새 볼륨은 리허설, 옛 볼륨은 갱신 리허설(3.8 `T61` 절)로 본다.
+  - 고치기 전과 뒤는 `docker inspect`의 `Config.User`와 PID 1의 `/proc/1/status`(`CapBnd`, `NoNewPrivs`)로 가른다(리허설 `[T61d]`). 실행 중인 프로세스의 실효 권한(`CapEff`)은 고치기 전에도 0이었을 것이나(진입 스크립트가 `gosu`로 내려가고 WAF는 `USER nginx`) 권한 경계(`CapBnd`)가 남아 있었다.
+  - `read_only`와 `tmpfs`는 `nginx-waf`·`postgres`에 걸지 않았다(`sandbox-*`에만 있다).
 - **클라이언트 IP**: nginx는 `X-Forwarded-For`에서 신뢰 범위(`127.0.0.1`, Docker 게이트웨이 `PORTFOLIO_GATEWAY_IP`) 밖의 가장 오른쪽 주소(DSM이 덧붙인 실제 접속 주소)를 클라이언트 IP로 쓴다(`real_ip_recursive on`, 포트폴리오 전용 http 문맥 설정). 앱에 넘기는 헤더는 `T14`부터 모든 스택이 같은 공유 규칙(WAF 이미지 템플릿 `includes/proxy_backend.conf.template`)을 쓴다: `X-Forwarded-For`는 그 주소 하나로 **덮어써서** 넘기고, 방문자가 붙인 `Forwarded`·`X-Forwarded-Host`·`X-Forwarded-Prefix`·`X-Forwarded-Ssl`은 지운다. 그래서 방문자가 헤더를 꾸며도 감사 로그 IP·속도 제한 키·리다이렉트 주소를 바꿀 수 없다. VMware 스택(`compose.yml`)은 `127.0.0.1`만 신뢰한다(`docs/deployment-guide.md` 1.2).
-- **전달 헤더를 믿는 출처(`T32`)**: DSM이 `127.0.0.1:18480`으로 붙은 연결은 컨테이너 안에서 Docker 게이트웨이 주소(`PORTFOLIO_GATEWAY_IP`, 기본 `10.203.48.1`)에서 온 것으로 보인다. `nginx-waf`는 `127.0.0.1`과 이 주소에서 온 연결의 `X-Forwarded-For`·`X-Forwarded-Proto`만 믿는다(`set_real_ip_from`과 `X-Forwarded-Proto`·`Port` map의 출처 표시 `geo $realip_remote_addr`). `T31`까지는 스택 서브넷 전체를 믿어서 같은 네트워크의 다른 컨테이너(예: `api`)가 `nginx-waf:8080`에 `X-Forwarded-For`를 붙이면 그 값이 감사 로그 IP가 됐다. 앱은 `nginx-waf` 고정 주소(`PORTFOLIO_WAF_IP`, 기본 `10.203.48.250`)에서 온 연결의 전달 헤더만 믿는다(`DASHBOARD_TRUSTED_PROXIES`, 같은 변수). 그래서 다른 컨테이너가 `nginx-waf:8080`이나 `dashboard-app:8080`에 전달 헤더를 붙여 보내도 감사 로그 IP는 그 컨테이너 주소이고 `https`로 판정되지 않는다(리허설 `[T32]`).
-  - `PORTFOLIO_SUBNET`을 바꾸면 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 서브넷 안으로 바꾼다. 게이트웨이 주소는 반영 전에 NAS에서 확인한다(3.8 `T32`).
-  - 남은 위험: 같은 bridge에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격은 막지 못한다. 또 게이트웨이를 믿으므로 NAS 호스트의 로컬 프로세스와 host 네트워크 컨테이너는 `127.0.0.1:18480`으로 전달 헤더를 꾸밀 수 있다. 이것은 원래 전제(이 포트에는 DSM만 붙는다)와 같다. 공개 스택은 네트워크(ipam)를 다시 만들지 않으려고 동적 배정 범위를 따로 두지 않았다. 그래서 `nginx-waf`가 내려가 있는 동안 다른 컨테이너가 `.250`을 받으면 앱이 그 컨테이너를 믿는다(그때 `nginx-waf`는 주소 충돌로 뜨지 않아 장애로 드러난다). 네트워크를 다시 만들 일이 있으면 VMware 스택처럼 `ip_range`를 준다.
+- **전달 헤더를 믿는 출처(`T32`)**: DSM이 `127.0.0.1:18480`으로 붙은 연결은 컨테이너 안에서 Docker 게이트웨이 주소(`PORTFOLIO_GATEWAY_IP`, 기본 `10.203.48.1`)에서 온 것으로 보인다. `nginx-waf`는 `127.0.0.1`과 이 주소에서 온 연결의 `X-Forwarded-For`·`X-Forwarded-Proto`만 믿는다(`set_real_ip_from`과 `X-Forwarded-Proto`·`Port` map의 출처 표시 `geo $realip_remote_addr`). `T31`까지는 스택 서브넷 전체를 믿어서 같은 네트워크의 다른 컨테이너(예: `api`)가 `nginx-waf:8080`에 `X-Forwarded-For`를 붙이면 그 값이 감사 로그 IP가 됐다. 앱은 `nginx-waf` 고정 주소(`PORTFOLIO_WAF_IP`, 기본 `10.203.48.250`)에서 온 연결의 전달 헤더만 믿는다(`DASHBOARD_TRUSTED_PROXIES`, 같은 변수). 그래서 다른 컨테이너가 `nginx-waf:8080`이나 `dashboard-app:8080`에 전달 헤더를 붙여 보내도 감사 로그 IP는 그 컨테이너 주소이고 `https`로 판정되지 않는다(리허설 `[T32]`). `T61`부터 `nginx-waf:8080`에 닿는 다른 컨테이너는 `portfolio-net`에 새로 붙인 것뿐이다(앱 말고는 그 네트워크에 붙는 서비스가 없다). 리허설 `[T32c]`는 그 네트워크에 붙인 일회용 컨테이너로 본다.
+  - `PORTFOLIO_SUBNET`을 바꾸면 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 서브넷 안으로 바꾼다. 게이트웨이 주소는 반영 전에 NAS에서 확인한다(3.8 `T32`). `PORTFOLIO_DATA_SUBNET`은 함께 바꿀 값이 없다.
+  - 남은 위험: 같은 bridge에서 `NET_RAW` 권한으로 패킷 출처를 꾸미는 공격은 신뢰 목록으로 막지 못한다. `T61`부터 `nginx-waf`와 같은 네트워크에는 앱뿐이고 스택의 모든 컨테이너에 capability가 없어(`NET_RAW` 포함) 스택 안의 컨테이너는 이 공격을 할 수 없다. 호스트의 프로세스와 나중에 `portfolio-net`에 새로 붙인 컨테이너(`cap_drop` 없이 띄운 것)는 여전히 막지 못한다. 또 게이트웨이를 믿으므로 NAS 호스트의 로컬 프로세스와 host 네트워크 컨테이너는 `127.0.0.1:18480`으로 전달 헤더를 꾸밀 수 있다. 이것은 원래 전제(이 포트에는 DSM만 붙는다)와 같다. 공개 스택은 네트워크(ipam)를 다시 만들지 않으려고 동적 배정 범위를 따로 두지 않았다. 그래서 `nginx-waf`가 내려가 있는 동안 다른 컨테이너가 `.250`을 받으면 앱이 그 컨테이너를 믿는다(그때 `nginx-waf`는 주소 충돌로 뜨지 않아 장애로 드러난다). 네트워크를 다시 만들 일이 있으면 VMware 스택처럼 `ip_range`를 준다.
 - **절대 URL**: 신뢰 출처(DSM)가 보낸 `X-Forwarded-Proto`가 `https`면 앱에 `https`/`443`을 넘긴다. 그래서 비인증 보호 경로의 `302 Location`이 `https://soc.<DDNS 이름>.synology.me/login`(내부 포트 없음)이 된다. HTTP 리스너는 HTTPS로 리다이렉트하지 않는다(TLS는 DSM이 끝낸다). 스택 내부 8443 리스너(DSM 헤더 없음)에서는 `https` + Host의 포트(`8443`)를 넘겨 리다이렉트가 실제로 열린 `https://nginx-waf:8443/...`을 가리킨다.
 - **계정**: `demo`(VIEWER, 허용 캡처 `DEMO_CAPTURE_PATTERNS`, 비어 있으면 `cic17-*,syn1-*,lab-20261119,lab-20261122`)와 체험용 분석가 `trial-analyst`(ANALYST, 허용 캡처는 `demo`와 같은 변수, `T33`)만 활성. `trial-analyst`는 분석가라 마스킹이 없다(공개 전 노출 확인 1.3). 실습망 캡처는 Kali 실행 결과 `lab-20261119`와 Kali 공격 7종 + 타깃 VM `lab-20261122`(`T39`)만 정확한 ID로 보인다. 시험 캡처 `lab-20261201`(가짜 패킷)·첫 VM 실행 `lab-20261118`·시험 뒤 유휴 구간 `lab-20261123`처럼 스냅샷에 있는 나머지 캡처는 `demo`에게 보이지 않는다(DB에서는 지우지 않는다, 2026-11-21·2026-11-23 결정). `viewer1`·`analyst1`·`analyst2`·`admin`은 서로 다른 비공개 무작위 비밀번호를 가진 채 비활성이다.
 - **계정 잠금과 로그인 속도 제한(`T29`에서 바꿈)**: 모든 계정은 앱 기본대로 틀린 비밀번호 5번에 15분 잠긴다(`compose.portfolio.yml`이 `DASHBOARD_MAX_FAILED_ATTEMPTS="5"`로 고정하고 `.env`를 쓰지 않는다. `T12`~`T27`은 `PORTFOLIO_MAX_FAILED_ATTEMPTS=1000000`으로 모든 계정의 잠금을 사실상 껐었다. NAS `.env`에 그 줄이 남아 있어도 이제 쓰이지 않는다). 관리자는 TOTP 확인의 틀린 코드도 같은 횟수에 든다(`T60`). 비밀번호를 공개한 `demo`·`trial-analyst`만 아래 잠금 제외로 빠진다. 비공개 ANALYST·ADMIN 계정이 남의 시도로 15분 잠길 수 있는 것은 받아들인다(방문자 화면은 공개 계정 둘). nginx는 `POST /api/auth/login`과 관리자 TOTP 확인 `POST /api/auth/totp/verify`(`T60`)를 영역 하나로 묶어 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_LOGIN_RATE`, `PORTFOLIO_LOGIN_BURST`). 관리자 로그인 한 번은 이 한도에서 두 건을 쓴다(로그인과 TOTP 확인). TOTP 등록 확인(`POST /api/auth/totp/setup`)은 세지 않는다. 리허설 `[T60]`이 인증 없는 요청으로 `429`를 본다(`admin`을 켜지 않는다).
@@ -52,21 +70,22 @@
 - **센서 상태(`T24`)**: 현황판·운영 현황의 센서 상태 기준은 앱 기본값(마지막 채점이 기준 시각에서 15분 이내 정상, 1시간 이내 지연, 넘으면 중단)을 쓴다. 고정 스냅샷이라 기준 시각 기준으로 센다. `compose.portfolio.yml`은 이 값을 넘기지 않는다(`DASHBOARD_SENSOR_STALE_AFTER`·`DASHBOARD_SENSOR_DOWN_AFTER`, `docs/deployment-guide.md`).
 - **착수 목표(`T25`)**: 앱 기본값(High 30분·Medium 4시간·Low 24시간, 실습망 신규 인시던트만)을 쓴다. 고정 스냅샷이라 경과·착수 지연·처리 시간 지표는 기준 시각 기준으로 센다. `compose.portfolio.yml`은 넘기지 않는다(`DASHBOARD_SLA_ACK_HIGH`·`DASHBOARD_SLA_ACK_MEDIUM`·`DASHBOARD_SLA_ACK_LOW`, `docs/deployment-guide.md`). 담당 기록(앱 DB `V2` 표)은 공개 데모에 지어 넣지 않으므로 처음에는 모두 "미배정"으로 보인다. 체험 계정이 지정한 담당은 매시 정각에 해제된다(1.3).
 - **세션 쿠키**: `DASHBOARD_COOKIE_SECURE=true` 그대로다(`Secure`·`HttpOnly`·`SameSite=Lax`). 브라우저는 DSM과 HTTPS로 통신하므로 문제없다.
-- **8443 리스너**: `nginx-waf`의 HTTPS 리스너(이미지 기본 자체 서명 인증서)는 스택 네트워크 안에서만 쓰인다(리허설 ZAP 대상). 바깥에 열지 않는다.
+- **8443 리스너**: `nginx-waf`의 HTTPS 리스너(이미지 기본 자체 서명 인증서)는 `portfolio-net` 안에서만 쓰인다(리허설 ZAP 대상). 바깥에 열지 않는다.
 - **WAF 로그에 남기는 것(`T59`)**: `nginx-waf` 컨테이너 로그에는 두 가지 줄이 나간다.
   - 접근 로그는 모든 요청을 적는다: 연결 주소, 시각, 요청 줄(메서드·경로·쿼리), 응답 코드, 크기, Referer, User-Agent, 받은 `X-Forwarded-For` 원문. 쿠키와 본문은 적지 않는다.
   - ModSecurity 감사 로그(JSON 한 줄)는 `404`가 아닌 `4xx`와 `5xx` 응답, 그리고 규칙이 걸린 요청을 적는다. WAF 이미지가 부분을 `AHZ`로 줄여(`docker/nginx-waf/Dockerfile`의 `MODSEC_AUDIT_LOG_PARTS`) 접속 주소·시각·`unique_id`·메서드·요청 주소·응답 코드와 걸린 규칙의 메시지만 남긴다. 요청·응답의 헤더와 본문은 남기지 않는다.
   - 줄이기 전(기반 기본값 `ABIJDEFHZ`)에는 로그인 실패(`401`)·권한 거부(`403`)·충돌(`409`) 같은 응답마다 요청 헤더와 응답 헤더가 통째로 남아 세션 쿠키 `ZEEKAD_SESSION`, CSRF 토큰, 응답의 `Set-Cookie` 값이 컨테이너 로그에 들어갔다. 요청 본문(아이디·비밀번호)은 그때도 남지 않았다(`scripts/waf-audit-log-check.ps1`로 확인).
   - 남는 것: 걸린 규칙의 메시지에는 규칙이 잡은 요청의 일부가 그대로 들어간다(공격 꼴 글이 비밀번호 칸에 들어오면 그 글). 요청 주소의 쿼리(검색어, 호스트 주소 조건)는 두 줄 모두에 남는다. 차단된 요청의 User-Agent와 `X-Forwarded-For` 원문은 감사 줄에 없으므로 접근 로그에서 같은 시각·요청 주소의 줄로 찾는다.
   - 이 값은 compose에서 덮지 않는다(`MODSEC_AUDIT_LOG_PARTS`를 주면 이미지의 값을 덮는다. 정적 시험이 막는다).
-- **잔여 위험(고치지 않음)**: `dashboard_app` 계정은 관리용 `postgres` DB에도 접속할 수 있다(PostgreSQL 기본 `PUBLIC` CONNECT. 시드가 그 DB의 `pgcrypto`를 쓴다). 슈퍼유저가 아니고 `public` 스키마 CREATE 권한도 없다. `postgres` 컨테이너에는 바깥 포트가 없어 스택 네트워크 안의 컨테이너만 접속할 수 있다(`T13` 확인).
+  - 상태 확인(`T61`): compose와 WAF 이미지의 상태 확인은 `wget --header "Host: localhost" http://127.0.0.1:8080/healthz`다. `T60`까지는 `Host`가 숫자 주소(`127.0.0.1:8080`)라 CRS `920350`에 걸려 응답이 `200`인데도 10초마다 감사 줄이 하나씩 남았다. 접속 주소는 `127.0.0.1` 그대로다(`localhost` 이름으로 접속하면 IPv6로 풀릴 수 있다). WAF 규칙은 끄거나 예외를 두지 않았다. 바깥에서 숫자 주소 `Host`로 `/healthz`를 부르면 지금처럼 감사 줄이 남는다(리허설 `[T61e]`의 대조).
+- **잔여 위험(고치지 않음)**: `dashboard_app` 계정은 관리용 `postgres` DB에도 접속할 수 있다(PostgreSQL 기본 `PUBLIC` CONNECT. 시드가 그 DB의 `pgcrypto`를 쓴다). 슈퍼유저가 아니고 `public` 스키마 CREATE 권한도 없다. `postgres` 컨테이너에는 바깥 포트가 없어 스택 네트워크 안의 컨테이너만 접속할 수 있다(`T13` 확인). `T61`부터는 `portfolio-data`의 컨테이너뿐이다(`nginx-waf`는 닿지 않는다).
 
 ### 1.2 관련 파일
 
 | 파일 | 내용 |
 |---|---|
-| `compose.portfolio.yml` | 포트폴리오 스택(Compose v2.20.1에서 동작하는 문법만 사용) |
-| `.env.portfolio.example` | 환경 변수 목록(비밀값은 빈 값) |
+| `compose.portfolio.yml` | 포트폴리오 스택(NAS의 Compose(옛 판)에서 `docker compose config`가 통과하는 문법만 사용). 네트워크 둘(`T61`) |
+| `.env.portfolio.example` | 환경 변수 목록(비밀값은 빈 값). `PORTFOLIO_DATA_SUBNET`(`T61`, 데이터 네트워크 서브넷) |
 | `docker/portfolio/initdb/01-roles-databases.sh` | 역할·DB·DB 수준 ACL 생성(zeek_AD `01-roles-databases.sh`와 같은 역할 집합) |
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
@@ -74,7 +93,7 @@
 | `docker/portfolio/sandbox/sandbox-setup.sh` | 체험 계정 초기화 설정(`T33`): 전용 역할·기준선·초기화 함수 셋, `--rebuild-baseline`. 감사 로그 삭제 함수의 실행 권한(`T58`). 대응 조치 기준선 표식과 그 초기화 함수(`T56`) |
 | `docker/portfolio/sandbox/sandbox-reset.sh` | 체험 계정 초기화 서비스(`T33`): 매시 정각, `--once`. 하루 한 번 보관 기한이 지난 감사 로그 삭제(`T58`). 매 주기 기준선 뒤에 덧붙은 대응 조치 기록 삭제(`T56`) |
 | `scripts/portfolio-snapshot.ps1` | `zeekad` DB 스냅샷(로컬 PC 컨테이너 또는 `-SshHost`로 배포 VM)·매니페스트·비밀값 패턴 검사 |
-| `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T33] 초기화(주기 1분), ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
+| `scripts/portfolio-verify.ps1` | 로컬 PC 리허설(E2E [0]~[8], 재시드, [T33] 초기화(주기 1분), [T61] 네트워크 둘·capability·상태 확인 감사 줄, ZAP [9]). `-ExposureDir`를 주면 체험 계정 노출 확인 |
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
@@ -92,7 +111,7 @@
   - **값**: 비우거나 `0`이면 지우지 않는다. 그 밖에는 정수 30~3650만 받고 아니면 서비스가 시작하지 않는다(종료 코드 2).
   - **무엇이 지워지나**: `occurred_at`이 지금보다 90일 넘게 앞선 감사 행만 지워진다. 함수는 앱 migration `V4`의 것이고 30일보다 짧은 기한을 거부한다. 트리거는 30일 안의 행의 `DELETE`와 모든 `UPDATE`·`TRUNCATE`를 누가 시도하든 거부한다. 한 행이라도 지우면 그 사실이 감사 행 하나(`AUDIT_RETENTION_PURGE`, 행위자 `audit-retention`, 지운 수·기준 시각·기한)로 남고 감사 로그 화면에 "보관 기한 지난 기록 삭제"로 보인다. 이 행도 90일 뒤에 지워진다. 담당 이력(`incident_assignment_history`)에는 접속 주소가 없고 기한을 두지 않았다.
   - **로그**: 초기화 줄 끝에 감사 칸이 붙는다. `; audit[OK] purged=<지운 수> cutoff=<기준 시각 UTC>`, `; audit[SKIP]`(오늘 몫을 이미 씀), `; audit[OFF]`(기한 값 없음), `; audit[NOT_CONFIGURED] …`(함수가 없거나 실행 권한이 없음), `; audit[ERROR] …`. 감사 칸은 `ERROR`일 때만 줄 전체를 `ERROR`로 만든다.
-  - **감사 로그 밖에 접속 주소가 남는 곳**: 컨테이너 로그와 되돌리기용 앱 DB 백업이다. `nginx-waf`의 접근 로그와 ModSecurity 기록은 컨테이너 로그로 나가고 접속 주소가 들어 있다. Docker는 로그를 기간으로 지우지 못하므로 모든 서비스에 크기 한도(`json-file`, 10MB 파일 5개, 컨테이너마다 50MB까지)를 걸었다. 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 그 컨테이너의 로그는 모두 사라진다. 백업(`backup/app-pre-<ID>.dump`)에는 그 시점의 감사 로그가 통째로 들어 있어 배포 절차가 90일 넘은 백업을 지운다(3.9의 3a. 자동이 아니고 다음 배포 때다).
+  - **감사 로그 밖에 접속 주소가 남는 곳**: 컨테이너 로그와 되돌리기용 앱 DB 백업이다. `nginx-waf`의 접근 로그와 ModSecurity 기록은 컨테이너 로그로 나가고 접속 주소가 들어 있다. Docker는 로그를 기간으로 지우지 못하므로 모든 서비스에 크기 한도(`json-file`, 10MB 파일 5개, 컨테이너마다 50MB까지)를 걸었다. 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 그 컨테이너의 로그는 모두 사라진다. `T60`까지는 `nginx-waf`의 상태 확인이 10초마다 감사 줄을 남겨 한도가 며칠 만에 찼다(계산. 오래된 줄이 빨리 밀려나는 대신 차단 기록도 며칠 뒤에 사라졌다). `T61`부터 상태 확인은 감사 줄을 남기지 않아 `nginx-waf` 로그도 방문자 요청만큼만 천천히 찬다. 그래서 `nginx-waf`에서도 90일보다 오래된 줄이 남을 수 있다. 백업(`backup/app-pre-<ID>.dump`)에는 그 시점의 감사 로그가 통째로 들어 있어 배포 절차가 90일 넘은 백업을 지운다(3.9의 3a. 자동이 아니고 다음 배포 때다).
 - **사유·메모 길이 상한**: 앱이 상태 변경 사유와 검토 메모를 500자(앞뒤 공백 뺀 코드 포인트)까지만 받는다(제품 기능, 모든 스택).
 - **노출**: `trial-analyst`는 `demo`와 같은 캡처를 마스킹 없이 본다. 공개 전 리허설에서 `lab-20261119`(`T33`)와 `lab-20261122`(`T39`)의 모든 인시던트에서 화면이 부르는 API 응답을 두 계정으로 받아 비교하고(`scripts/portfolio-verify.ps1 -ExposureDir <저장소 밖 폴더>`, 대상 캡처는 스크립트의 `$exposureLabCapture`), 드러나는 값의 종류를 운영자가 확인했다. 새 실습망 캡처를 공개할 때도 같은 확인을 한다(3.10).
 
@@ -162,7 +181,7 @@ $lines = foreach ($f in $images.Values) { "$((Get-FileHash -Algorithm SHA256 "bu
 [IO.File]::WriteAllText("$PWD/build/portfolio-images/images.sha256", ($lines -join "`n") + "`n")
 # 이미지 ID 대조 목록: 각 tar 안 manifest.json의 Config(이미지 설정 digest).
 # 로컬 PC Docker Desktop은 containerd 이미지 저장소라 로컬 PC의 docker image inspect .Id(매니페스트·인덱스 digest)는
-# NAS(Docker 24 기본 저장소)에서 docker load 뒤의 .Id(= 설정 digest)와 다르다. 그래서 tar 안의 Config digest로 비교한다.
+# NAS(Docker 기본 이미지 저장소)에서 docker load 뒤의 .Id(= 설정 digest)와 다르다. 그래서 tar 안의 Config digest로 비교한다.
 $ids = foreach ($tag in $images.Keys) {
   $manifest = (tar -xOf "build/portfolio-images/$($images[$tag])" manifest.json | Out-String) | ConvertFrom-Json
   $cfg = @($manifest)[0].Config                        # 예: blobs/sha256/<hex> 또는 <hex>.json
@@ -174,14 +193,14 @@ $ids = foreach ($tag in $images.Keys) {
 Get-Content build/portfolio-images/image-ids.txt
 ```
 
-- `zeekad-pipeline.tar`는 약 5GB다. `/volume1` 여유 공간(1.5TB)은 충분하다.
+- `zeekad-pipeline.tar`는 약 5GB다. 배포 폴더가 있는 볼륨의 여유 공간을 배포 전에 확인한다(3.1).
 - 리허설(2.3)과 `docker save` 사이에 이미지를 다시 빌드하거나 받지 않는다. 그래야 리허설한 이미지가 NAS로 간다(로컬 PC 안의 동일성은 `docker image inspect --format '{{.Id}}'`를 리허설 전후·`docker save` 뒤에 기록해 비교한다).
 - 이미지 `tar`와 스냅샷은 Git에 넣지 않는다(`build/`는 Git 제외 경로).
 
-배포 묶음(NAS 폴더 `/volume1/docker/zeekad-portfolio`에 아래 구조로 둔다):
+배포 묶음(NAS의 배포 폴더 `$DEPLOY_DIR`에 아래 구조로 둔다):
 
 ```
-/volume1/docker/zeekad-portfolio/
+<배포 폴더>/
 ├── compose.portfolio.yml
 ├── .env.portfolio.example        (복사해서 .env 작성)
 ├── docker/portfolio/initdb/*.sh   (LF 줄바꿈이어야 한다. 저장소의 .gitattributes가 *.sh를 LF로 고정한다)
@@ -193,13 +212,13 @@ Get-Content build/portfolio-images/image-ids.txt
 
 ## 3. NAS에서 배포 (SSH)
 
-NAS: `ssh <NAS 사용자>@<NAS 주소>`(키 인증), Docker는 `/usr/local/bin/docker`(`<NAS 사용자>`는 `docker` 그룹이라 sudo 불필요). 아래 명령은 NAS 셸에서 실행한다.
+NAS: `ssh <NAS 사용자>@<NAS 주소>`(키 인증), Docker는 `/usr/local/bin/docker`(`<NAS 사용자>`는 `docker` 그룹이라 sudo 불필요). 아래 명령은 NAS 셸에서 실행한다. 먼저 `export DEPLOY_DIR=<배포 폴더>`를 정한다(문서 머리).
 
 ### 3.1 사전 확인(기존 컨테이너를 건드리지 않는다)
 
 ```sh
 export PATH=/usr/local/bin:$PATH
-docker version --format '{{.Server.Version}}'; docker compose version   # Docker 24.0.2, Compose v2.20.1 예상
+docker version --format '{{.Server.Version}}'; docker compose version   # 판을 운영 기록(저장소 밖)에 적어 둔다
 # 기존 컨테이너·네트워크 상태를 기록해 둔다(배포 뒤 같은지 비교).
 mkdir -p ~/zeekad-portfolio-check
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Ports}}' | sort > ~/zeekad-portfolio-check/containers-before.txt
@@ -208,21 +227,23 @@ docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | sort > ~/zeekad-po
 # 옮길 네 태그가 이미 있는지(아무것도 나오지 않는 것이 정상). 있으면 3.3 대조 전에 ID를 image-ids.txt와 비교하고,
 # 다른 ID면 멈춘다(docker load가 기존 태그를 새 이미지로 옮겨 기존 컨테이너가 쓰던 이미지를 바꿀 수 있다).
 grep -E '^(zeek-ad-dashboard-app:local|zeek-ad-dashboard-waf:local|zeekad-pipeline:dev|pgvector/pgvector:0\.8\.1-pg17) ' ~/zeekad-portfolio-check/images-before.txt || echo "no target tags"
-# 포트 18480이 비어 있는지(아무것도 나오지 않아야 한다). 18080은 같은 NAS의 기존 포트폴리오 컨테이너가 쓴다.
+# 포트 18480이 비어 있는지(아무것도 나오지 않아야 한다). 같은 기기의 다른 서비스가 쓰는 포트와 겹치면 PORTFOLIO_HTTP_PORT를 바꾼다.
 netstat -tln 2>/dev/null | grep -E ':18480\b' || echo "18480 free"
-# 배포 폴더를 sudo 없이 만들 수 있는지(/volume1/docker 쓰기 권한)
-ls -ld /volume1/docker; test -w /volume1/docker && echo "volume1/docker writable"
-free -m; df -h /volume1
+# 배포 폴더를 sudo 없이 만들 수 있는지(상위 폴더 쓰기 권한)
+ls -ld "$(dirname "$DEPLOY_DIR")"; test -w "$(dirname "$DEPLOY_DIR")" && echo "parent folder writable"
+# 여유 메모리(상한 합계 3.5GiB)와 배포 폴더가 있는 볼륨의 여유 공간(이미지 tar(파이프라인만 약 5GB)와 적재한 이미지, DB 볼륨)을 확인한다
+free -m; df -h "$(dirname "$DEPLOY_DIR")"
 ```
 
-로컬 PC(PowerShell)에서 기존 포트폴리오 응답을 기록해 둔다(배포·DSM 설정 뒤 같은지 비교). 공유기에 NAT 루프백이 없으면 로컬 PC에서 공개 IP로는 접속되지 않으므로 `--resolve`로 NAS의 DSM `443`에 직접 붙는다. 이 값은 `--resolve` 경로가 동작한다는 근거도 된다.
+로컬 PC(PowerShell)에서 같은 기기의 다른 서비스가 DSM `443`으로 내는 응답을 기록해 둔다(배포·DSM 설정 뒤 같은지 비교). 공유기에 NAT 루프백이 없으면 로컬 PC에서 공개 IP로는 접속되지 않으므로 `--resolve`로 NAS의 DSM `443`에 직접 붙는다. 이 값은 `--resolve` 경로가 동작한다는 근거도 된다.
 
 ```powershell
 curl.exe -s -o NUL -w "%{http_code}" --resolve <DDNS 이름>.synology.me:443:<NAS 주소> https://<DDNS 이름>.synology.me/
 ```
 
-- **서브넷 겹침 확인**: `networks-before.txt`에 `10.203.48.0/24`와 겹치는 대역이 있으면 `.env`의 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.50.0/24`. `10.203.49.0/24`는 VMware 스택 `compose.yml`의 기본값이다)으로 바꾼다. 그때 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 대역 안으로 바꾼다(`T32`, 1.1).
-- DS920+ DSM 7.3.2(Container Manager)에서는 `docker compose`(v2.20.1)가 동작한다(`T13` 확인). `docker-compose`로 바꿀 필요 없다.
+- **서브넷 겹침 확인**: 스택은 서브넷 둘을 쓴다(`T61`). `networks-before.txt`에 `10.203.48.0/24`(`portfolio-net`)나 `10.203.47.0/24`(`portfolio-data`)와 겹치는 대역이 있으면 `.env`에서 바꾼다. `portfolio-net`은 `PORTFOLIO_SUBNET`을 겹치지 않는 대역(예: `10.203.50.0/24`. `10.203.49.0/24`는 VMware 스택 `compose.yml`의 기본값이다)으로 바꾸고 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도 그 대역 안으로 바꾼다(`T32`, 1.1). `portfolio-data`는 `PORTFOLIO_DATA_SUBNET`만 바꾼다(고정 주소가 없다). 두 값끼리도 겹치면 안 된다.
+- **내부 전용 네트워크**: 처음 배포할 때도 3.8 `T61` 절의 사전 확인(`docker network create --internal`을 만들었다 바로 지우기)으로 NAS의 Docker가 내부 전용 네트워크를 받는지 본다.
+- NAS의 DSM 7(Container Manager)에서는 `docker compose`가 동작한다(`T13` 확인). `docker-compose`로 바꿀 필요 없다.
 - 이 절부터의 NAS 블록(`sh`)은 **NAS 셸 안에서** 실행한다(`ssh <NAS 사용자>@<NAS 주소>`로 들어가서 붙여 넣거나, 로컬 PC의 Git Bash에서 `ssh ... 'bash -s' <<'EOF' ... EOF`). 로컬 PC의 Windows PowerShell 5.1에서 `ssh <NAS> '<여러 명령>'`처럼 한 줄 인자로 넘기면 인자 안의 큰따옴표가 지워져(`printf "\n"` → `printf n`) 결과가 달라진다(`T13`에서 확인).
 
 ### 3.2 폴더와 파일 전송
@@ -230,14 +251,14 @@ curl.exe -s -o NUL -w "%{http_code}" --resolve <DDNS 이름>.synology.me:443:<NA
 NAS:
 
 ```sh
-mkdir -p /volume1/docker/zeekad-portfolio/snapshot /volume1/docker/zeekad-portfolio/images /volume1/docker/zeekad-portfolio/docker
-chmod 700 /volume1/docker/zeekad-portfolio
+mkdir -p "$DEPLOY_DIR/snapshot" "$DEPLOY_DIR/images" "$DEPLOY_DIR/docker"
+chmod 700 "$DEPLOY_DIR"
 ```
 
 로컬 PC(PowerShell, 저장소 루트):
 
 ```powershell
-$nas = "<NAS 사용자>@<NAS 주소>"; $dst = "/volume1/docker/zeekad-portfolio"
+$nas = "<NAS 사용자>@<NAS 주소>"; $dst = '<배포 폴더>'   # NAS의 DEPLOY_DIR와 같은 절대 경로로 바꾼다
 # DSM은 SFTP가 꺼져 있어 기본 scp(SFTP 모드)가 'subsystem request failed'로 실패한다. -O(기존 SCP 프로토콜)를 쓴다(T13 확인).
 scp -O compose.portfolio.yml .env.portfolio.example "${nas}:${dst}/"
 scp -O -r docker/portfolio "${nas}:${dst}/docker/"
@@ -252,8 +273,8 @@ scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/z
 NAS에서 스냅샷 권한과 무결성 확인:
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
-# snapshot/은 chmod 700 이전에 만들어져 /volume1/docker의 Synology ACL을 상속받는다(NAS 사용자만 허용).
+cd "$DEPLOY_DIR"
+# snapshot/은 chmod 700 이전에 만들어져 상위 공유 폴더의 Synology ACL을 상속받는다(NAS 사용자만 허용).
 # 그러면 컨테이너 안 postgres(uid 999)가 덤프를 읽지 못해 복원이 'zeekad.dump ... is missing'으로 실패한다(T13에서 확인).
 # 755/644로 바꾸면 Linux 권한 모드가 된다. 덤프는 공개 데모 데이터이고 상위 폴더가 700이라 다른 NAS 사용자는 들어올 수 없다.
 chmod 755 snapshot && chmod 644 snapshot/*   # 컨테이너에서 읽히는지는 3.3 끝에서 확인한다
@@ -265,14 +286,14 @@ ls -l docker/portfolio/initdb/*.sh && head -1 docker/portfolio/initdb/01-roles-d
 ### 3.3 이미지 적재
 
 ```sh
-cd /volume1/docker/zeekad-portfolio/images
+cd "$DEPLOY_DIR/images"
 for f in zeek-ad-dashboard-app.tar zeek-ad-dashboard-waf.tar zeekad-pipeline.tar pgvector-pg17.tar; do docker load -i "$f"; done
-# image-ids.txt는 tar 안 manifest.json의 Config digest(2.4). Docker 24 기본 저장소에서는 이것이 적재 뒤 .Id다.
+# image-ids.txt는 tar 안 manifest.json의 Config digest(2.4). NAS의 Docker 기본 이미지 저장소에서는 이것이 적재 뒤 .Id다.
 for t in zeek-ad-dashboard-app:local zeek-ad-dashboard-waf:local zeekad-pipeline:dev pgvector/pgvector:0.8.1-pg17; do
   printf '%s %s\n' "$(docker image inspect --format '{{.Id}}' "$t")" "$t"
 done | diff - image-ids.txt && echo "image IDs match"
 # 컨테이너 안 postgres(uid 999)가 스냅샷을 읽을 수 있는지(3.2의 권한 변경 확인). zeekad.dump: OK 가 나와야 한다
-docker run --rm --network none --user 999:999 -v /volume1/docker/zeekad-portfolio/snapshot:/snapshot:ro --entrypoint sh pgvector/pgvector:0.8.1-pg17 -c 'cd /snapshot && sha256sum -c zeekad.dump.sha256'
+docker run --rm --network none --user 999:999 -v "$DEPLOY_DIR/snapshot":/snapshot:ro --entrypoint sh pgvector/pgvector:0.8.1-pg17 -c 'cd /snapshot && sha256sum -c zeekad.dump.sha256'
 ```
 
 이미지 적재가 끝나면 `images/*.tar`는 지워도 된다(롤백용으로 남겨도 된다).
@@ -282,7 +303,7 @@ docker run --rm --network none --user 999:999 -v /volume1/docker/zeekad-portfoli
 비밀값은 셸 변수와 내장 명령(`printf`)으로만 다룬다. `sed` 같은 외부 명령의 인자로 넘기면 실행 중 프로세스 목록에 보인다.
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+cd "$DEPLOY_DIR"
 umask 077
 gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
 while IFS= read -r line || [ -n "$line" ]; do
@@ -318,7 +339,7 @@ scp -O build/portfolio-secrets/demo-password.txt <NAS 사용자>@<NAS 주소>:ze
 NAS:
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+cd "$DEPLOY_DIR"
 chmod 600 ~/zeekad-portfolio-check/tmp/demo-password.txt
 umask 077
 grep -v '^DEMO_PASSWORD=' .env > .env.new
@@ -330,7 +351,7 @@ grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1   # 아무것도 나
 ```
 
 - `TRIAL_ANALYST_PASSWORD`(체험용 분석가)도 같은 방법으로 넣는다. 파일 이름만 `trial-analyst-password.txt`, 줄 이름만 `TRIAL_ANALYST_PASSWORD`로 바꾼다. 이미 운영 중인 `.env`에 `SANDBOX_RESET_DB_PASSWORD`가 없으면(T33 이전 `.env`) NAS에서 무작위로 넣는다: `umask 077; grep -q '^SANDBOX_RESET_DB_PASSWORD=.' .env || { grep -v '^SANDBOX_RESET_DB_PASSWORD=' .env > .env.new; v=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32); printf 'SANDBOX_RESET_DB_PASSWORD=%s\n' "$v" >> .env.new; unset v; mv .env.new .env; chmod 600 .env; }` 다음 `grep -c '^SANDBOX_RESET_DB_PASSWORD=.\{32\}$' .env`가 1인지 본다(값은 출력하지 않는다).
-- `DEMO_PASSWORD`·`TRIAL_ANALYST_PASSWORD`는 포트폴리오 글에 공개할 값이다. 저장소·문서에는 적지 않는다. 나중에 바꾸려면 같은 방법으로 `.env`의 줄을 바꾸고 시드를 다시 실행한다(5절: `SET_PASSWORD` 하나만 한다).
+- `DEMO_PASSWORD`·`TRIAL_ANALYST_PASSWORD`는 공개 계정 둘(`demo`, `trial-analyst`)의 비밀번호라 README(포트폴리오 소개)에 공개한다. 공개하는 비밀값은 이 둘뿐이고 그 밖의 비밀값은 어디에도 적지 않는다(아래). 나중에 바꾸려면 같은 방법으로 `.env`의 줄을 바꾸고 시드를 다시 실행한다(5절: `SET_PASSWORD` 하나만 한다).
 - 다른 비밀값(DB 비밀번호, 비활성 계정 비밀번호, `BOOTSTRAP_ADMIN_TOTP_SECRET`)은 출력하거나 다른 곳에 옮겨 적지 않는다. 운영 중 필요한 것은 시드 재실행뿐이며 시드는 `.env`를 읽는다.
 - 비밀값이 비어 있으면 기동되지 않는다: PostgreSQL 이미지가 빈 `POSTGRES_SUPERUSER_PASSWORD`로 초기화를 거부하고, `01-roles-databases.sh`가 빈 로그인 역할 비밀번호로 초기화를 멈춘다(그러면 `postgres`가 healthy가 되지 않아 `api`·`dashboard-app`·`nginx-waf`도 뜨지 않는다). 시드는 빈 `DEMO_PASSWORD`·부트스트랩 비밀번호·TOTP 시크릿이면 아무것도 하지 않고 끝난다. 부트스트랩 비밀번호가 빈 계정은 애초에 만들어지지 않는다.
 - 부트스트랩 계정은 `users` 표가 빈 첫 기동 때만 만들어진다. 첫 기동 뒤에 `BOOTSTRAP_*` 값을 바꿔도 이미 있는 계정 비밀번호는 바뀌지 않는다(바꾸려면 3.9의 DB 볼륨 재생성. 이때 zeek_AD DB와 앱 DB가 둘 다 새로 만들어진다).
@@ -338,7 +359,7 @@ grep -E '^[A-Z0-9_]*(PASSWORD|SECRET)=$' .env | cut -d= -f1   # 아무것도 나
 ### 3.5 기동과 계정 시드
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+cd "$DEPLOY_DIR"
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait
 docker compose -p zeekad-portfolio -f compose.portfolio.yml ps
 docker compose -p zeekad-portfolio -f compose.portfolio.yml logs postgres | grep portfolio-restore   # "portfolio-restore: done" 확인, pg_restore 오류 없음
@@ -376,6 +397,9 @@ grep -v zeekad-portfolio containers-before.txt | diff - containers-after.txt && 
 # 기존 네트워크가 바뀌지 않았는지(새로 생긴 zeekad-portfolio 네트워크만 달라야 한다)
 for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' $n; done | sort | grep -v '^zeekad-portfolio' > networks-after.txt
 grep -v '^zeekad-portfolio' networks-before.txt | diff - networks-after.txt && echo "existing networks unchanged"
+# 이 스택의 네트워크 둘(T61): portfolio-net은 internal=false에 nginx-waf·dashboard-app만,
+# portfolio-data는 internal=true에 postgres·api·dashboard-app·sandbox-reset만 붙어 있어야 한다(시드 도구는 실행 뒤 지워진다)
+docker network inspect -f '{{.Name}} internal={{.Internal}} {{range .Containers}}{{.Name}} {{end}}' zeekad-portfolio_portfolio-net zeekad-portfolio_portfolio-data
 ```
 
 로컬 PC(LAN)에서 직접 접근이 막혀 있는지: `curl.exe -m 5 http://<NAS 주소>:18480/login`이 연결 실패여야 한다.
@@ -383,7 +407,7 @@ grep -v '^zeekad-portfolio' networks-before.txt | diff - networks-after.txt && e
 ### 3.7 중지·롤백
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+cd "$DEPLOY_DIR"
 docker compose -p zeekad-portfolio -f compose.portfolio.yml stop              # 잠시 멈춤(데이터 유지)
 docker compose -p zeekad-portfolio -f compose.portfolio.yml down              # 컨테이너 제거(DB 볼륨 유지)
 docker compose -p zeekad-portfolio -f compose.portfolio.yml down -v           # 완전 제거(DB 볼륨까지)
@@ -428,7 +452,7 @@ $h = (Get-FileHash -Algorithm SHA256 "build/portfolio-images/$IMG.tar").Hash.ToL
 $manifest = (tar -xOf "build/portfolio-images/$IMG.tar" manifest.json | Out-String) | ConvertFrom-Json
 if (@($manifest)[0].Config -notmatch '([0-9a-f]{64})') { throw "Config digest not found" }
 [IO.File]::WriteAllText("$PWD/build/portfolio-images/$IMG-image-id.txt", "sha256:$($Matches[1]) ${IMG}:local`n", [Text.UTF8Encoding]::new($false))
-$nas = "<NAS 사용자>@<NAS 주소>"; $dst = "/volume1/docker/zeekad-portfolio"
+$nas = "<NAS 사용자>@<NAS 주소>"; $dst = '<배포 폴더>'   # 3.2와 같은 값(NAS의 DEPLOY_DIR)
 scp -O "build/portfolio-images/$IMG.tar" "build/portfolio-images/$IMG-image.sha256" "build/portfolio-images/$IMG-image-id.txt" "${nas}:${dst}/images/"
 if ($LASTEXITCODE -ne 0) { throw "scp image failed" }
 
@@ -451,7 +475,7 @@ set -u
 export PATH=$PATH:/usr/local/bin
 ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf   # 앱이면 SVC=dashboard-app; IMG=zeek-ad-dashboard-app
 FILES="compose.portfolio.yml"   # 예: "compose.portfolio.yml docker/portfolio/seed/seed_demo.py", 없으면 ""
-cd /volume1/docker/zeekad-portfolio || exit 1
+cd "$DEPLOY_DIR" || exit 1
 mkdir -p ~/zeekad-portfolio-check && C=~/zeekad-portfolio-check
 # 1) 전 상태 기록
 docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.CreatedAt}}' | sort > $C/$ID-containers-before.txt || exit 1
@@ -484,7 +508,7 @@ fi
 set -u
 export PATH=$PATH:/usr/local/bin
 ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf
-cd /volume1/docker/zeekad-portfolio || exit 1
+cd "$DEPLOY_DIR" || exit 1
 C=~/zeekad-portfolio-check
 # 5) 그 서비스만 다시 만든다
 docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env up -d --wait --no-deps $SVC < /dev/null || exit 10
@@ -511,7 +535,7 @@ echo "login via nginx-waf: $CODE"
 
 1. 같은 프로젝트의 `nginx-waf`만 다시 시작한다(다른 컨테이너·볼륨·`.env`는 건드리지 않는다):
    ```sh
-   cd /volume1/docker/zeekad-portfolio || exit 1
+   cd "$DEPLOY_DIR" || exit 1
    docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env restart nginx-waf < /dev/null || exit 15
    curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: soc.<DDNS 이름>.synology.me' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18480/login
    ```
@@ -526,7 +550,7 @@ export PATH=$PATH:/usr/local/bin
 ID=t14; SVC=nginx-waf; IMG=zeek-ad-dashboard-waf
 FILES="compose.portfolio.yml"   # 1단계와 같은 값
 NEED="docker/portfolio/nginx/proxy_backend_extra_portfolio.conf.template"   # 되돌릴 compose가 마운트하는 파일(T14). 없으면 ""
-cd /volume1/docker/zeekad-portfolio || exit 1
+cd "$DEPLOY_DIR" || exit 1
 # 0) 되돌릴 compose(*.pre-<ID>)가 마운트하는 파일이 있는지 먼저 확인한다(없으면 되돌린 compose가 뜨지 않는다)
 for f in $NEED; do [ -f "$f" ] || { echo "missing $f"; exit 19; }; done
 for f in $FILES; do [ -f "$f.pre-$ID" ] && cp -p "$f.pre-$ID" "$f"; done
@@ -537,7 +561,7 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 
 - 확인이 끝나 더 필요 없으면 `docker image rm <IMG>:pre-<작업 ID>`로 보존 태그를 지운다(태그만 지워지고 다른 태그가 가리키는 이미지는 남는다). 보존 파일 `*.pre-<작업 ID>`는 다음 갱신 전까지 둔다.
 - 앱 이미지가 바뀌어도 시드는 다시 할 필요가 없다(계정은 DB 볼륨에 있다). 단, 시드 스크립트(`docker/portfolio/seed/seed_demo.py`)의 목표 상태가 바뀐 갱신(예: T20 `demo` 허용 캡처 `*` → `cic17-*,syn1-*`. 데이터도 함께 바꾸는 T22 `cic17-*,syn1-*,lab-20261119`는 3.9)은 그 파일을 위 파일 교체로 옮기고(`.env`는 그대로. `DEMO_CAPTURE_PATTERNS`가 없으면 기본값이 쓰인다) 3.5의 시드를 두 번 실행한다. 첫 실행은 `RESULT: CHANGED`(`API UPDATE_USER demo`), 두 번째는 `RESULT: NO_CHANGES`여야 한다. 시드 파일이 바뀌지 않았으면 다시 돌리지 않는다.
-- 스크립트로 실행할 때는 위 1·2단계를 스크립트 파일(`nas-step1.sh`·`nas-step2.sh`)로 저장한다. 스크립트를 표준 입력으로 bash에 넘기면(`echo <base64> | base64 -d | bash`, `ssh ... 'bash -s' < 파일`) `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버려 뒤 단계가 실행되지 않은 채 exit 0으로 끝날 수 있다(T22에서 확인). 그래서 NAS의 확인 폴더에 파일로 풀고 표준 입력을 닫아 실행한다: `ssh ... "echo <base64> | base64 -d > ~/zeekad-portfolio-check/<ID>-step1.sh && bash ~/zeekad-portfolio-check/<ID>-step1.sh < /dev/null"`. 출력은 `build/portfolio-evidence/<작업 ID>/nas-update.txt`처럼 Git 제외 경로에 남긴다.
+- 스크립트로 실행할 때는 위 1·2단계를 스크립트 파일(`nas-step1.sh`·`nas-step2.sh`)로 저장한다. 새 셸에서 실행되므로 파일 맨 앞에 `DEPLOY_DIR=<배포 폴더>` 줄을 둔다(문서 머리). 스크립트를 표준 입력으로 bash에 넘기면(`echo <base64> | base64 -d | bash`, `ssh ... 'bash -s' < 파일`) `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버려 뒤 단계가 실행되지 않은 채 exit 0으로 끝날 수 있다(T22에서 확인). 그래서 NAS의 확인 폴더에 파일로 풀고 표준 입력을 닫아 실행한다: `ssh ... "echo <base64> | base64 -d > ~/zeekad-portfolio-check/<ID>-step1.sh && bash ~/zeekad-portfolio-check/<ID>-step1.sh < /dev/null"`. 출력은 `build/portfolio-evidence/<작업 ID>/nas-update.txt`처럼 Git 제외 경로에 남긴다.
 
 #### 로그인 안내문과 링크를 바꾸는 갱신(`T50`)
 
@@ -574,7 +598,7 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 
 - **1단계**: 두 파일을 `images/t36-files/`에 sha256 목록과 함께 올려 대조하고 `*.pre-t36`으로 보존한 뒤 바꾼다. `config --quiet` 뒤 새 값(`ZEEKAD_READ_RATE`·`ZEEKAD_READ_BURST`, `sandbox-*`의 데이터 경로 tmpfs)만 `grep`으로 본다(설정 전체는 비밀값이 들어 있어 출력하지 않는다). 지금 `sandbox-reset`에 붙은 익명 볼륨 이름을 기록한다.
 - **2단계**: `up -d --wait --no-deps nginx-waf`, 이어서 `up -d --no-deps --renew-anon-volumes sandbox-reset`. `--renew-anon-volumes`가 없으면 compose가 옛 컨테이너의 익명 볼륨을 새 컨테이너에 이어 붙이려 할 수 있다. 다른 컨테이너 비교에서 `-nginx-waf-`·`-sandbox-reset-` 두 줄을 빼고 두 이미지 ID가 그대로인지 본다. 새 `sandbox-reset`에 볼륨이 없고 실행 중인지 본다.
-- **옛 익명 볼륨 지우기**: 기록한 볼륨이 매달렸고(`dangling`) 어느 컨테이너도 쓰지 않고 비었을 때만 그 이름 하나를 `docker volume rm`으로 지운다. 비었는지는 그 볼륨을 읽기 전용으로 붙인 일회용 컨테이너(`--network none --read-only --cap-drop ALL`, 같은 `pgvector` 이미지)에서 `find /v -mindepth 1 | wc -l`로 센다. 0이 아니면 지우지 않고 멈춘다. 뒤 상태는 볼륨 2개(`zeekad-portfolio_pgdata`와 다른 프로젝트 것 하나), `dangling` 0이다.
+- **옛 익명 볼륨 지우기**: 기록한 볼륨이 매달렸고(`dangling`) 어느 컨테이너도 쓰지 않고 비었을 때만 그 이름 하나를 `docker volume rm`으로 지운다. 비었는지는 그 볼륨을 읽기 전용으로 붙인 일회용 컨테이너(`--network none --read-only --cap-drop ALL`, 같은 `pgvector` 이미지)에서 `find /v -mindepth 1 | wc -l`로 센다. 0이 아니면 지우지 않고 멈춘다. 뒤 상태는 볼륨 목록이 1단계에서 기록한 목록에서 지운 익명 볼륨 하나만 빠진 것이고(이 프로젝트 것은 `zeekad-portfolio_pgdata` 하나, 다른 볼륨은 앞에서 기록한 목록과 같다) `dangling` 0이다.
 - **롤백**: 두 파일을 `*.pre-t36`으로 되돌리고 `nginx-waf`·`sandbox-reset`을 `up`한다. 옛 compose의 `sandbox-reset`은 새 익명 볼륨을 다시 만든다. 지운 옛 볼륨은 비어 있었으므로 되돌리지 않는다.
 - 반영 뒤 4.4를 하고 다음 정각의 `sandbox-reset` 로그(3.5)를 본다.
 
@@ -583,6 +607,7 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 `T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이고 실제 명령과 값은 `T57`이 반영한 뒤 여기에 적는다.
 
 - **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V4`를 적용한다. `flyway_schema_history`에 버전 4가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(초기화 계정에 삭제 함수의 `EXECUTE`를 준다. `RESULT: OK`와 `purge_public_execute=false`) → ③ compose 값(기한 90일, 로그 한도)이 걸리게 서비스를 다시 만든다. ①보다 ②를 먼저 하면 `sandbox-setup`이 `function public.purge_expired_audit_logs(integer) is missing`으로 멈춘다(아무것도 바꾸지 않는다).
+- **`T61`과 한 번에 반영할 때**: 위 ①→②→③ 대신 아래 `T61` 절의 처음 전환 순서를 따른다(그 순서의 `up`이 ①과 ③을 한 번에 하고 이어서 ②를 한다. `dashboard-app` 하나만 `--no-deps`로 먼저 다시 만들지 않는다).
 - **틈의 로그**: 새 `sandbox-reset.sh`가 ②보다 먼저 돌면 감사 칸이 `audit[NOT_CONFIGURED]`다. 줄 전체는 `ERROR`가 되지 않고 다음 정각에 다시 부른다.
 - **로그 한도는 모든 서비스를 다시 만들어야 걸린다**: 로그 설정은 컨테이너를 만들 때 정해진다. `up -d`가 설정이 바뀐 서비스(전부)를 다시 만들므로 `postgres`도 잠깐 내려간다(DB 볼륨은 그대로다). 다시 만든 컨테이너의 옛 로그는 사라진다.
 - **`T57`이 반영 전에 기록할 것**(이 문서를 쓸 때 NAS Container Manager의 기본 로그 드라이버는 확인하지 않았다): `docker info --format '{{.LoggingDriver}}'`와 컨테이너 하나의 `docker inspect --format '{{.HostConfig.LogConfig}}' zeekad-portfolio-nginx-waf-1`. 기본 드라이버가 `json-file`이 아니었다면 `json-file`로 바뀐 뒤 DSM Container Manager 화면의 로그 탭이 비는지 확인해 적는다(`docker logs`와 `docker compose logs`는 `json-file`에서 그대로 읽힌다).
@@ -595,6 +620,7 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 `T56`은 앱 이미지 하나와 파일 셋(`docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`, `docker/portfolio/nginx/zeekad-portfolio-http.conf.template`)을 바꾼다. `compose.portfolio.yml`, `.env`, 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이다.
 
 - **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V5`를 적용한다. `flyway_schema_history`에 버전 5가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(대응 조치 기준선 표식과 초기화 함수를 만든다. `response action baseline created: max_id=<수>`와 `RESULT: OK`) → ③ nginx 템플릿이 걸리게 `nginx-waf`를 다시 만든다(새 쓰기 경로의 속도 제한). ①보다 ②를 먼저 하면 `sandbox-setup`이 `table public.incident_response_actions is missing`으로 멈춘다(아무것도 바꾸지 않는다).
+- **`T61`과 한 번에 반영할 때**: 위 ①→②→③ 대신 아래 `T61` 절의 처음 전환 순서를 따른다(그 순서의 `up`이 ①과 ③을 한 번에 하고 이어서 ②를 한다. `dashboard-app` 하나만 `--no-deps`로 먼저 다시 만들지 않는다).
 - **틈의 로그**: 새 `sandbox-reset.sh`가 ②보다 먼저 돌면 그 줄의 대응 조치 칸이 `responses[NOT_CONFIGURED]`다. 줄 전체는 `ERROR`가 되지 않는다. ② 뒤의 첫 정각부터 `responses[OK] removed=<수>`다.
 - **①과 ② 사이에 방문자가 대응 조치를 기록했을 때**: `sandbox-setup`이 `REFUSED: <수> response action rows recorded by 'trial-analyst' exist`로 멈춘다(그 글을 기준선으로 굳히지 않는다). 아래처럼 그 행을 지우고 다시 돌린다. 표의 트리거가 `DELETE`를 막으므로 트랜잭션 안에서만 표식을 켠다. 감사 로그의 기록은 남는다.
 
@@ -622,18 +648,126 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --pr
 - **롤백**: 옛 WAF 이미지(`zeek-ad-dashboard-waf:pre-<작업 ID>`)로 되돌리면 요청 헤더와 응답 헤더 기록이 다시 켜진다. 세션 쿠키·CSRF 토큰·`Set-Cookie` 값이 컨테이너 로그에 다시 남으므로 되돌린 채 두지 않는다.
 - **이미 쌓인 로그**(`T57`이 NAS에서 확인한 뒤 확정할 문장): 반영 전의 `nginx-waf` 컨테이너 로그에는 옛 감사 줄(쿠키 값 포함)이 들어 있다. 로그 드라이버가 `json-file`이면 서비스를 다시 만들 때 옛 컨테이너의 로그가 함께 사라진다. NAS의 드라이버는 이 문서를 쓸 때 확인하지 않았다. `docker inspect --format '{{.HostConfig.LogConfig.Type}}' zeekad-portfolio-nginx-waf-1`로 확인한다. `json-file`이 아니면 옛 로그가 남는 곳과 지우는 방법을 여기에 적는다. 옛 줄에 남은 세션 쿠키 값은 그 세션이 끝나면(유휴 30분, 절대 8시간) 쓸 수 없다.
 
+#### 네트워크를 나누고 capability를 빼는 갱신(`T61`)
+
+`T61`은 `compose.portfolio.yml`(네트워크 둘, 모든 서비스의 `cap_drop`·`no-new-privileges`, `postgres`의 `user: postgres`, 상태 확인의 `Host`)과 WAF 이미지(`HEALTHCHECK`의 `Host` 한 줄)를 바꾼다. 공개 스택에서는 compose의 상태 확인이 이미지의 `HEALTHCHECK`를 덮으므로 WAF 이미지는 다른 작업(`T59`)의 WAF 이미지와 함께 옮기면 된다. `.env`는 바꾸지 않는다(`PORTFOLIO_DATA_SUBNET`이 없으면 기본값 `10.203.47.0/24`를 쓴다. 겹치면 3.1처럼 넣는다). 새 네트워크 `zeekad-portfolio_portfolio-data`가 생기고 상주 다섯이 모두 다시 만들어진다(`postgres`도 잠깐 내려간다. DB 볼륨은 그대로다). `portfolio-net`은 정의가 같아 있는 것을 그대로 쓴다. NAS 반영은 통합 작업 `T57`이 한다. 아래 순서와 확인은 로컬 PC의 갱신 리허설(지금 NAS에 떠 있는 구성 → 이 구성, 같은 DB 볼륨, `down` 없이)로 맞춰 본다(결과는 [보안 검증 보고서](security-verification-report.md)의 검증 표). 로컬 Docker와 NAS는 Compose 판이 달라서 옛 Compose의 동작과 NAS의 Docker가 내부 전용 네트워크를 받는지는 아래 사전 확인으로 본다.
+
+로컬 PC에서 먼저 서비스 하나 절차의 PowerShell 블록으로 올린다(`$ID = 't61'`, `$SVC = 'nginx-waf'`, `$IMG = 'zeek-ad-dashboard-waf'`, `$files = @('compose.portfolio.yml')`. WAF 이미지를 이번에 옮기지 않으면 이미지 `tar` 부분은 건너뛴다).
+
+**반영 전 확인**(NAS 셸):
+
+```sh
+export PATH=$PATH:/usr/local/bin
+cd "$DEPLOY_DIR" || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+mkdir -p ~/zeekad-portfolio-check && K=~/zeekad-portfolio-check
+# 1) NAS의 Docker가 내부 전용 네트워크를 받는지와 그 서브넷이 비었는지: 같은 서브넷(PORTFOLIO_DATA_SUBNET을 바꿨으면 그 값)으로 만들었다 바로 지운다.
+#    실패 메시지에 overlaps가 있으면 서브넷 겹침(3.1), 그 밖이면 내부 전용 네트워크 문제(아래 "internal이 문제를 일으킬 때")다
+docker network create --internal --subnet 10.203.47.0/24 zeekad-t61-precheck && docker network rm zeekad-t61-precheck
+# 2) 새 compose의 문법: 올린 파일(1단계의 images/t61-files/)을 배포 폴더 기준으로 교체 전에 본다
+docker compose --project-directory "$DEPLOY_DIR" -p zeekad-portfolio -f images/t61-files/compose.portfolio.yml --env-file .env config --quiet < /dev/null && echo "config OK"
+# 3) 전 상태 기록: portfolio-net의 ID·만든 시각·게이트웨이, WAF 주소, DB 볼륨, 행 수(개수만), 다른 프로젝트의 컨테이너
+docker network inspect -f '{{.Id}} {{.Created}} {{range .IPAM.Config}}{{.Gateway}}{{end}}' zeekad-portfolio_portfolio-net | tee $K/t61-net-before.txt
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zeekad-portfolio-nginx-waf-1 | tee $K/t61-waf-ip-before.txt
+docker volume inspect -f '{{.Name}} {{.CreatedAt}}' zeekad-portfolio_pgdata | tee $K/t61-volume-before.txt
+{ $C exec -T postgres psql -U postgres -d zeekad_dashboard -Atc "SELECT count(*) FROM users" < /dev/null
+  $C exec -T postgres psql -U postgres -d zeekad -Atc "SELECT count(*) FROM dashboard.latest_incident_queue" < /dev/null; } | tee $K/t61-rows-before.txt
+docker ps -a --format '{{.Names}}' | grep -v zeekad-portfolio | sort > $K/t61-others-before.txt
+```
+
+**1단계**: 위 "서비스 하나의 이미지 갱신" 1단계를 `ID=t61`, `SVC=nginx-waf`, `IMG=zeek-ad-dashboard-waf`, `FILES="compose.portfolio.yml"`로 한다(WAF 이미지를 이번에 옮기지 않으면 3)의 적재와 대조를 건너뛰고 2)의 보존 태그와 4)의 파일 교체만 한다). 1단계의 4)가 교체 뒤 `config --quiet`를 한 번 더 본다.
+
+**2단계(처음 전환, `down` 없이)**: 서비스 하나 절차의 2단계(`--no-deps $SVC`) 대신 아래 순서로 한다: `stop sandbox-reset` → `up -d --wait postgres api dashboard-app nginx-waf` → `sandbox-setup` → `up -d --wait sandbox-reset` → `sandbox-reset --once`.
+
+```sh
+set -u
+export PATH=$PATH:/usr/local/bin
+cd "$DEPLOY_DIR" || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+# 5) 초기화 서비스를 먼저 멈춘다(전환 중에 돌지 않게)
+$C stop sandbox-reset < /dev/null || exit 10
+# 6) 상주 넷을 새 구성으로: portfolio-data가 생기고 네 서비스가 다시 만들어진다(portfolio-net은 있는 것을 그대로 쓴다)
+$C up -d --wait postgres api dashboard-app nginx-waf < /dev/null || exit 11
+# 7) 초기화 설정(멱등): RESULT: OK. T58·T56과 함께 반영하면 여기서 새 함수의 실행 권한과 대응 조치 표식을 만든다
+$C --profile seed run --rm sandbox-setup < /dev/null || exit 12
+# 8) 초기화 서비스를 새 구성으로 올리고 한 번 돌린다: 줄에 ERROR가 없어야 한다
+$C up -d --wait sandbox-reset < /dev/null || exit 13
+$C exec -T sandbox-reset bash /sandbox/sandbox-reset.sh --once < /dev/null || exit 14
+```
+
+- **하지 않을 것**: 새 compose로 서비스 하나만 `--no-deps`로 먼저 올리지 않는다(예: `up -d --no-deps dashboard-app`). 그러면 `portfolio-data`는 생기지만 옛 `postgres`가 그 네트워크에 없어 새 구성으로 뜬 `sandbox-*`와 `api`가 `postgres` 이름을 찾지 못한다. `T58`·`T56` 절의 "① 앱 → ② `sandbox-setup` → ③ 다시 만들기"는 이 작업과 한 번에 반영할 때 이 순서로 바뀐다(두 절에 적었다). 전환이 끝난 뒤의 갱신은 지금처럼 서비스 하나 절차를 쓴다.
+
+**확인**(갱신 리허설과 같은 단언. 이어서 4.4의 공개 주소 로그인을 한다):
+
+```sh
+cd "$DEPLOY_DIR" || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"; K=~/zeekad-portfolio-check
+# 9) 다섯 컨테이너: postgres·api·dashboard-app·nginx-waf healthy, sandbox-reset 실행 중. 이 프로젝트의 다른(고아) 컨테이너는 없다
+docker ps -a --filter label=com.docker.compose.project=zeekad-portfolio --format '{{.Names}} {{.Status}}'
+# 10) DB 볼륨·행 수·portfolio-net(ID·만든 시각·게이트웨이)·WAF 주소가 반영 전과 같다. portfolio-net의 ID가 같으면 다시 만들어지지 않은 것이다
+docker volume inspect -f '{{.Name}} {{.CreatedAt}}' zeekad-portfolio_pgdata | diff $K/t61-volume-before.txt - && echo "volume same"
+{ $C exec -T postgres psql -U postgres -d zeekad_dashboard -Atc "SELECT count(*) FROM users" < /dev/null
+  $C exec -T postgres psql -U postgres -d zeekad -Atc "SELECT count(*) FROM dashboard.latest_incident_queue" < /dev/null; } | diff $K/t61-rows-before.txt - && echo "rows same"
+docker network inspect -f '{{.Id}} {{.Created}} {{range .IPAM.Config}}{{.Gateway}}{{end}}' zeekad-portfolio_portfolio-net | diff $K/t61-net-before.txt - && echo "portfolio-net same"
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zeekad-portfolio-nginx-waf-1 | diff $K/t61-waf-ip-before.txt - && echo "WAF address same"
+# 11) 네트워크 둘과 붙은 컨테이너(3.6과 같다), 내부 전용 네트워크에만 붙은 컨테이너의 기본 경로(앞 셋 0, dashboard-app 1)
+docker network inspect -f '{{.Name}} internal={{.Internal}} {{range .Containers}}{{.Name}} {{end}}' zeekad-portfolio_portfolio-net zeekad-portfolio_portfolio-data
+for s in postgres api sandbox-reset dashboard-app; do printf '%s default routes: ' $s; $C exec -T $s cat /proc/net/route < /dev/null | awk '$2=="00000000"' | wc -l; done
+# 12) nginx-waf에서 DB·근거 API에 TCP 연결이 되지 않고(no connection) 앱에는 된다(open). 연결만 보고 데이터는 보내지 않는다
+for t in "api 8000" "postgres 5432" "dashboard-app 8080"; do printf '%s: ' "$t"; $C exec -T nginx-waf timeout 5 nc -z -w 3 $t < /dev/null && echo open || echo "no connection"; done
+# 13) api에서 nginx-waf에 닿지 않고(error) 앱에는 닿는다(connected)
+$C exec -T api python -c 'import socket
+for h in ("nginx-waf", "dashboard-app"):
+    try:
+        socket.create_connection((h, 8080), timeout=3).close(); print(h, "connected")
+    except Exception as e:
+        print(h, "error", type(e).__name__)' < /dev/null
+# 14) 권한: 상주 다섯 PID 1의 CapBnd 0000000000000000, NoNewPrivs 1. postgres는 root로 시작하지 않는다(Config.User postgres)
+for s in postgres api dashboard-app nginx-waf sandbox-reset; do printf '%s ' $s; $C exec -T $s grep -E '^(CapBnd|NoNewPrivs)' /proc/1/status < /dev/null | tr '\n' ' '; echo; done
+docker inspect -f '{{.Config.User}}' zeekad-portfolio-postgres-1
+# 15) 앱 -> 근거 API("status":"ok"), DSM 흉내 요청의 로그인 화면(200)
+$C exec -T dashboard-app wget -qO- http://api:8000/health < /dev/null; echo
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: soc.<DDNS 이름>.synology.me' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18480/login
+# 16) 다른 프로젝트의 컨테이너가 반영 전과 같다
+docker ps -a --format '{{.Names}}' | grep -v zeekad-portfolio | sort | diff $K/t61-others-before.txt - && echo "other containers same"
+```
+
+- 1분쯤 뒤 상태 확인의 감사 줄이 없는지 본다: `$C logs --no-log-prefix --since 2m nginx-waf < /dev/null | grep -c '"uri":"/healthz'`가 `0`이다(방문자가 숫자 주소 `Host`로 `/healthz`를 부르면 그 줄은 남는다). 방문자 줄은 출력하지 않고 개수만 본다.
+- 시드(`demo-seed`)는 다시 돌리지 않아도 된다(계정은 DB 볼륨에 있다).
+
+**되돌리기**(옛 compose와 옛 WAF 이미지로):
+
+```sh
+set -u
+export PATH=$PATH:/usr/local/bin
+cd "$DEPLOY_DIR" || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+cp -p compose.portfolio.yml.pre-t61 compose.portfolio.yml || exit 20
+docker tag zeek-ad-dashboard-waf:pre-t61 zeek-ad-dashboard-waf:local || exit 21   # WAF 이미지를 옮기지 않았으면 건너뛴다
+$C up -d --wait < /dev/null || exit 22
+# 옛 compose에는 없는 네트워크라 남는다. 붙은 컨테이너가 없어야 지워진다
+docker network rm zeekad-portfolio_portfolio-data || exit 23
+```
+
+- 위 9)·10)으로 healthy와 행 수가 반영 전과 같은지 본다. 함께 바꾼 앱 이미지가 있으면 그 갱신 절의 롤백을 따른다. 앱 DB에 적용된 새 migration은 되돌리지 않는다(옛 앱 이미지가 그 DB에서 뜨는지는 리허설에서 본다).
+
+**`internal`이 NAS에서 문제를 일으킬 때**:
+
+- 사전 확인 1)이 서브넷 겹침이 아닌 까닭으로 실패하면(NAS의 Docker가 내부 전용 네트워크를 받지 않는다) 처음부터 `portfolio-data`의 `internal: true` 줄을 뺀 파일로 반영한다. 그러면 `postgres`·`api`·초기화 도구에 바깥 길(기본 경로)이 남는다. `nginx-waf`와 DB·근거 API를 갈라 놓는 효과는 그대로다. 뺀 것과 그 까닭을 운영 기록에 적는다.
+- 이미 만든 뒤라면 compose에서 그 줄만 빼고 `up`해도 듣지 않는다(NAS의 옛 Compose는 있는 네트워크를 정의와 견주지 않고 그대로 쓴다. 새 Compose는 정의가 다르면 다시 만들자고 멈춘다. 어느 쪽이든 붙은 컨테이너가 있으면 바꿀 수 없다. 서브넷을 바꿀 때도 같다). 그 네트워크에 붙은 서비스를 멈추고 네트워크를 지운 뒤 다시 올린다: `$C stop sandbox-reset dashboard-app api postgres` → `docker network rm zeekad-portfolio_portfolio-data` → `$C up -d --wait --force-recreate postgres api dashboard-app sandbox-reset`. 그동안 `nginx-waf`는 `502`를 낸다. 이 경로는 로컬에서 돌려 보지 않았다.
+
 ### 3.9 스냅샷(공개 데이터) 교체
 
 스냅샷은 DB 볼륨이 빌 때만 복원된다(`02-restore-snapshot.sh`). 데이터를 바꾸려면 DB 볼륨을 지우고 다시 만든다. **DB 볼륨 하나에 zeek_AD DB(`zeekad`)와 앱 DB(`zeekad_dashboard`: 계정·감사 로그)가 함께 있으므로 둘 다 새로 만들어진다.** `zeekad`는 새 스냅샷으로, 앱 DB는 부트스트랩(첫 기동)과 시드로 다시 채운다. 지난 감사 로그(방문자 로그인 기록)는 새 DB에 없고 아래 3단계의 백업에만 남는다. 이 백업은 되돌리기용이고 그 시점의 감사 로그가 통째로 들어 있으므로 감사 로그와 같은 기한을 둔다: 90일 넘은 백업은 배포 절차가 지운다(아래 3a. 자동이 아니라 다음 배포 때 지우므로 배포가 뜸하면 90일보다 오래 남는다). 체험 계정 변경의 매시 정각 초기화(1.3)는 새 볼륨에서 다시 설정한다(아래 8c).
 
-로컬 PC에서 먼저 한다: 2.2 스냅샷(VM 원본은 `-SshHost <배포 VM>`) → `secret-scan.txt` 확인 → 2.3 리허설(`-SnapshotDir build/portfolio`) 통과 → (실습망 등 처음 공개하는 데이터면) 공개 전 내용 확인. NAS에서는 `zeekad-portfolio` 프로젝트와 `/volume1/docker/zeekad-portfolio` 안에서만, sudo 없이, 아래 순서대로 하고 **단계마다 실패하면 멈추고 되돌린다.** `.env`는 읽거나 고치지 않는다(`DEMO_PASSWORD`는 그대로 쓰인다).
+로컬 PC에서 먼저 한다: 2.2 스냅샷(VM 원본은 `-SshHost <배포 VM>`) → `secret-scan.txt` 확인 → 2.3 리허설(`-SnapshotDir build/portfolio`) 통과 → (실습망 등 처음 공개하는 데이터면) 공개 전 내용 확인. NAS에서는 `zeekad-portfolio` 프로젝트와 배포 폴더(`$DEPLOY_DIR`) 안에서만, sudo 없이, 아래 순서대로 하고 **단계마다 실패하면 멈추고 되돌린다.** `.env`는 읽거나 고치지 않는다(`DEMO_PASSWORD`는 그대로 쓰인다).
 
 **표준 입력 주의(T22에서 확인)**: 아래 블록을 `echo <base64> | base64 -d | bash`나 `ssh ... 'bash -s' < 파일`처럼 **표준 입력으로 bash에 넘기면** `docker compose exec -T`·`run`이 남은 스크립트를 읽어 버린다. 그러면 그 뒤 줄(백업 권한·`down` 등)이 실행되지 않은 채 exit 0으로 끝난다. 블록은 NAS에 파일로 풀어 `bash <파일> < /dev/null`로 실행하고(또는 대화형 셸에 붙여 넣고), compose를 부르는 줄에는 아래처럼 `< /dev/null`을 붙인다.
 
 ```sh
 export PATH=/usr/local/bin:$PATH
 ID=<작업 ID 소문자, 예: t22>
-cd /volume1/docker/zeekad-portfolio || exit 1
+cd "$DEPLOY_DIR" || exit 1
 C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
 # 0) 체험 계정 초기화 서비스를 먼저 멈춘다(T33)
 $C stop sandbox-reset < /dev/null || exit 1
@@ -698,7 +832,7 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
   7. `$C start dashboard-app < /dev/null`. 시드는 돌리지 않는다(`demo`가 백업에 있다).
   8. `$C up -d --wait nginx-waf < /dev/null`
   - 6이 실패하면 시드를 두 번 돌려 `demo`를 다시 만든 뒤 8을 한다. 이때 지난 감사 로그는 백업에만 남는다.
-- 스크립트로 실행할 때는 단계를 스크립트 파일로 저장해 NAS의 `~/zeekad-portfolio-check/<작업 ID>-step-<단계>.sh`로 풀고 `bash <그 파일> < /dev/null`로 실행한다(표준 입력으로 넘기지 않는다). 출력은 `build/portfolio-evidence/<작업 ID>/nas-replace.txt`(시드는 `nas-seed.txt`)처럼 Git 제외 경로에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
+- 스크립트로 실행할 때는 단계를 스크립트 파일로 저장해 NAS의 `~/zeekad-portfolio-check/<작업 ID>-step-<단계>.sh`로 풀고 `bash <그 파일> < /dev/null`로 실행한다(표준 입력으로 넘기지 않는다). 파일 맨 앞에 `DEPLOY_DIR=<배포 폴더>` 줄을 둔다(문서 머리). 출력은 `build/portfolio-evidence/<작업 ID>/nas-replace.txt`(시드는 `nas-seed.txt`)처럼 Git 제외 경로에 남긴다. 비밀값·쿠키·백업 내용은 출력하지 않는다.
 
 ### 3.10 새 실습망 캡처를 공개할 때(`T33`, `T39`)
 
@@ -720,7 +854,7 @@ zeek_AD 실습망에 표적 VM이 늘어 새 캡처(정찰·무차별 대입·�
 
 ## 4. DSM 설정
 
-DSM 7.3 기준 메뉴 경로다. `T13`에서 이 절의 메뉴 경로와 값으로 설정해 확인했다.
+DSM 7 기준 메뉴 경로다. `T13`에서 이 절의 메뉴 경로와 값으로 설정해 확인했다.
 
 ### 4.1 하위 도메인 인증서
 
@@ -744,20 +878,20 @@ DSM 7.3 기준 메뉴 경로다. `T13`에서 이 절의 메뉴 경로와 값으�
 - `localhost`가 IPv6 `::1`로 풀려 연결되지 않으면 대상 호스트 이름을 `127.0.0.1`로 바꾼다(`T13`에서는 이 문제가 없었다).
 - **인증서 연결**: **제어판 > 보안 > 인증서 > 설정**에서 서비스 `soc.<DDNS 이름>.synology.me`에 4.1의 인증서를 고른다.
 - DSM은 HSTS를 켜면 `Strict-Transport-Security: max-age=15768000; includeSubdomains; preload`를 붙인다. 앱도 `max-age=31536000 ; includeSubDomains`를 보내지만 `T36`부터 공개 WAF가 앱의 HSTS를 내보내지 않는다(`proxy_hide_header`). 그래서 공개 응답에는 DSM 값 하나만 있다(`T35`까지는 두 개였고 동작 영향은 없었다). 스택 안 8443 리스너(ZAP 대상)는 자기 HSTS 하나를 그대로 붙인다. DSM 앞단은 `Server: nginx`(버전 없음)를 붙이며 이 스택에서 바꿀 수 없다.
-- 공유기·모뎀 포트 포워딩과 기존 포트폴리오의 역방향 프록시 규칙은 바꾸지 않는다.
+- 공유기·모뎀 포트 포워딩과 같은 기기의 다른 서비스의 역방향 프록시 규칙은 바꾸지 않는다.
 
 ### 4.3 DSM이 실제로 보내는 헤더 확인(T13)
 
 DSM 규칙을 만든 뒤 외부망(휴대전화 데이터 등)에서 `demo`로 한 번 로그인하고 NAS에서 감사 로그를 본다.
 
 ```sh
-cd /volume1/docker/zeekad-portfolio
+cd "$DEPLOY_DIR"
 docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
   psql -U postgres -d zeekad_dashboard -c "SELECT occurred_at, actor_username, client_ip FROM audit_logs WHERE action_type='LOGIN_SUCCESS' ORDER BY id DESC LIMIT 3"
 ```
 
 - `occurred_at`은 UTC다. 외부망에서 로그인한 시각(한국 시간이면 9시간을 뺀다)으로 줄을 구분한다.
-- `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 스택 서브넷 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다(`T13`에서는 필요 없었다).
+- `client_ip`가 방문자 공인 IP면 정상이다. `127.0.0.1`이나 `portfolio-net` 게이트웨이(`10.203.48.1`)면 DSM이 `X-Forwarded-For`를 보내지 않는 것이다 → 4.2 규칙의 **사용자 지정 헤더 > 생성**에서 `X-Forwarded-For` = `$proxy_add_x_forwarded_for`, `X-Forwarded-Proto` = `$scheme`을 추가하고 다시 확인한다. 이 경우 속도 제한도 모든 방문자에게 하나의 키로 걸리므로 반드시 고친다(`T13`에서는 필요 없었다).
 - `docker compose ... logs nginx-waf`: 접근 로그 줄의 마지막 칸은 받은 `X-Forwarded-For` 원문이다(DSM이 덧붙인 마지막 주소 = 방문자 IP). ModSecurity JSON 로그(`"client_ip"`)는 차단·오류 응답 등 관련 있는 요청만 남으므로 성공한 로그인(200)은 접근 로그로 본다.
 - DSM이 넘기는 `X-Forwarded-For`를 직접 보려면 요청 주소에 표지를 붙여 보낸다(예: 외부망에서 `https://soc.<DDNS 이름>.synology.me/login?probe=<표지>`). `docker compose ... logs --no-log-prefix nginx-waf`에서 `{`로 시작하지 않고 `probe=<표지>`가 든 접근 로그 줄을 찾는다.
   - 줄의 꼴(기반 이미지의 `log_format main`): `<연결 주소> - - [시각] "<메서드> <요청 주소> HTTP/1.1" <응답 코드> <크기> "<Referer>" "<User-Agent>" "<받은 X-Forwarded-For 원문>"`.
@@ -778,19 +912,20 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] 다음 정각 뒤 `logs --since 2h sandbox-reset`에 `OK` 줄이 있고 `ERROR`가 없다. (3.5, 리허설 [T33f])
 - [ ] 초기화 줄 끝에 감사 칸(`audit[…]`)이 있고 보관 기한을 반영한 뒤 `audit[OK] purged=… cutoff=…` 줄이 한 번 이상 있다. `audit[NOT_CONFIGURED]`가 이어지면 `sandbox-setup`을 다시 돌린다(실행 권한). 90일 넘은 감사 행이 없다: `SELECT count(*) FROM audit_logs WHERE occurred_at < now() - interval '91 days'`가 `0`(개수만 본다). (1.3, 리허설 [T58b]·[T58c])
 - [ ] 컨테이너 로그 한도가 걸려 있다: `docker inspect --format '{{json .HostConfig.LogConfig}}' <컨테이너>`가 서비스마다 `json-file`, `max-size` `10m`, `max-file` `5`다. (리허설 [T58a])
-- [ ] 감사 로그·담당 이력의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5다. 그래서 IP 하나가 쓰기로 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 자동 담당 기록은 사유가 없어 수백 바이트라 하루 약 30MB 안팎이다. 허용 밖 인시던트 조회 거부(`ACCESS_DENIED_IDOR`)도 조회 1번에 감사 1행을 남긴다(행당 인덱스 포함 약 300바이트, 리허설 `[T36b]`). 이 증가는 `T33` 전부터 `demo`로도 열려 있었고 `T35`까지는 상한이 없었다. `T36`부터 조회 한도(IP당 분당 200회 + 버스트 30)가 묶어 IP 하나가 조회 거부로 하루에 늘릴 수 있는 감사 로그는 약 288,000행(약 86MB)이다. 이것은 IP별 상한이고 전체 상한이 아니다(방문자가 IP를 바꾸면 더 늘릴 수 있다). 인증 없는 조회는 감사 행을 만들지 않는다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다. `T58`부터 감사 로그는 90일이 지나면 하루 한 번 지워지므로 위 증가는 90일치까지 쌓인다(담당 이력은 기한이 없다). PostgreSQL은 지운 자리를 autovacuum 뒤에 다시 쓰므로 DB 크기 값은 지운 날 바로 줄지 않는다. 컨테이너 로그는 컨테이너마다 50MB(10MB 파일 5개)가 한도다. 기간이 아니라 크기 한도라 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 사라진다.
+- [ ] 감사 로그·담당 이력의 크기: `SELECT count(*) FROM audit_logs`와 `SELECT pg_size_pretty(pg_database_size('zeekad_dashboard'))`(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc …`, 개수와 크기만)를 기록해 지난번과 비교한다. 체험 계정 사유·메모는 500자까지이고 쓰기는 IP당 분당 10회 + 버스트 5다. 그래서 IP 하나가 쓰기로 하루에 늘릴 수 있는 감사 로그는 약 14,400~28,800행이다(분당 10회 × 1,440분. 조사 시작 때 자동 담당 기록이 한 행 더 붙는다). 상태 변경 기록에는 사유 전문이 들어가서 한글 500자(UTF-8 약 1.5KB)면 행당 약 2KB다. 자동 담당 기록은 사유가 없어 수백 바이트라 하루 약 30MB 안팎이다. 허용 밖 인시던트 조회 거부(`ACCESS_DENIED_IDOR`)도 조회 1번에 감사 1행을 남긴다(행당 인덱스 포함 약 300바이트, 리허설 `[T36b]`). 이 증가는 `T33` 전부터 `demo`로도 열려 있었고 `T35`까지는 상한이 없었다. `T36`부터 조회 한도(IP당 분당 200회 + 버스트 30)가 묶어 IP 하나가 조회 거부로 하루에 늘릴 수 있는 감사 로그는 약 288,000행(약 86MB)이다. 이것은 IP별 상한이고 전체 상한이 아니다(방문자가 IP를 바꾸면 더 늘릴 수 있다). 인증 없는 조회는 감사 행을 만들지 않는다. 크게 늘었으면 감사 로그 화면에서 행위자·IP 분포를 보고 판단한다. `T58`부터 감사 로그는 90일이 지나면 하루 한 번 지워지므로 위 증가는 90일치까지 쌓인다(담당 이력은 기한이 없다). PostgreSQL은 지운 자리를 autovacuum 뒤에 다시 쓰므로 DB 크기 값은 지운 날 바로 줄지 않는다. 컨테이너 로그는 컨테이너마다 50MB(10MB 파일 5개)가 한도다. 기간이 아니라 크기 한도라 요청이 적으면 90일보다 오래된 접근 줄이 남을 수 있고 컨테이너를 다시 만들면 사라진다. `T61`부터 `nginx-waf`의 상태 확인이 감사 줄을 남기지 않아 `nginx-waf` 로그도 방문자 요청만큼만 찬다(`T60`까지는 상태 확인 줄이 한도를 며칠 만에 채웠다).
 - [ ] 조회 한도: 인증 없는 `/api/` `GET`(예: `/api/dashboard/overview?period=24h`)을 이 PC에서 240건(분당 200 + 버스트 30 + 10)까지만 몰아 보내 `429`가 한 번 이상 나오고, 그동안 `/api/auth/csrf`는 `200`, 60초 뒤 다시 `401`이다. 이 확인 밖에서는 `/api/` 조회 사이에 0.4초 넘게 간격을 둔다. (리허설 [T36b])
 - [ ] `viewer1`·`analyst1`·`analyst2`·`admin`은 로그인되지 않는다(비활성). (리허설 [5])
 - [ ] `demo`에 틀린 비밀번호를 여러 번 넣어도 잠기지 않는다. 짧은 시간에 로그인을 많이 시도하면 `429`가 난다. (리허설 [6]·[7])
 - [ ] 감사 로그의 로그인 IP가 실제 접속 IP다(4.3). (리허설 [7])
 - [ ] `https://soc.<DDNS 이름>.synology.me/api/incidents?asset=%27%20OR%201%3D1--`가 `403`(WAF)이다. XSS(`?asset=%3Cscript%3E`)·경로 탐색(`?asset=../../etc/passwd`)도 `403`. (리허설 [8])
 - [ ] 로그인 경로가 아닌 `POST /api/...`(예: `/api/incidents/101/rank/2/assignment`)에 인증 없이 `Content-Type: application/xml`로 깨진 XML 본문(`<a><b></a>`)을 보내면 `400`(WAF)이다. 이 요청은 로그인 실패를 만들지 않는다. 예: `curl.exe -s -o NUL -w "%{http_code}" -X POST -H "Content-Type: application/xml" --data-binary "<a><b></a>" "https://soc.<DDNS 이름>.synology.me/api/incidents/101/rank/2/assignment?probe=<고유 표식>"`. NAS에서 `docker logs --since 10m zeekad-portfolio-nginx-waf-1 2>&1 | grep -F <고유 표식>`으로 그 요청의 기록만 찾아 규칙 `200002`를 확인한다(방문자 IP가 든 다른 줄은 보지 않는다). ([T31])
-- [ ] 전달 헤더 신뢰(`T32`): `docker inspect`로 `nginx-waf` 주소가 `PORTFOLIO_WAF_IP`(`10.203.48.250`)이고 `dashboard-app` 환경의 `DASHBOARD_TRUSTED_PROXIES`가 같은 값이다. 공개 HTTPS 주소로 보낸 표식 요청(`curl.exe --resolve …:443:<NAS 주소> "https://soc.<DDNS 이름>.synology.me/login?probe=<고유 표식>"`)의 WAF 로그 줄에서 클라이언트 IP(줄 끝 `X-Forwarded-For` 필드의 신뢰 범위 밖 가장 오른쪽 주소)가 스택 서브넷 주소가 아니다(주소는 적지 않고 "서브넷 안인가"만 적는다. NAS의 `127.0.0.1:18480`으로 바로 보내면 접속 주소가 게이트웨이라 이 확인이 되지 않는다). `demo` 로그인 뒤 반영 시각 이후 `LOGIN_SUCCESS` 행이 1 이상이고 그중 스택 서브넷 주소 행이 0이다(개수만 센다). NAS 안 `api` 컨테이너에서 `nginx-waf:8080/?probe=<고유 표식>`에 `X-Forwarded-For: 198.51.100.x`를 붙인 `GET`의 WAF 로그 접속 주소가 `api` 컨테이너 주소다(감사가 남지 않는 요청). (리허설 [T32])
+- [ ] 전달 헤더 신뢰(`T32`): `docker inspect`로 `nginx-waf` 주소가 `PORTFOLIO_WAF_IP`(`10.203.48.250`)이고 `dashboard-app` 환경의 `DASHBOARD_TRUSTED_PROXIES`가 같은 값이다. 공개 HTTPS 주소로 보낸 표식 요청(`curl.exe --resolve …:443:<NAS 주소> "https://soc.<DDNS 이름>.synology.me/login?probe=<고유 표식>"`)의 WAF 로그 줄에서 클라이언트 IP(줄 끝 `X-Forwarded-For` 필드의 신뢰 범위 밖 가장 오른쪽 주소)가 스택 두 서브넷의 주소가 아니다(주소는 적지 않고 "서브넷 안인가"만 적는다. NAS의 `127.0.0.1:18480`으로 바로 보내면 접속 주소가 게이트웨이라 이 확인이 되지 않는다). `demo` 로그인 뒤 반영 시각 이후 `demo`의 `LOGIN_SUCCESS` 행이 1 이상이고 그중 스택 두 서브넷(`PORTFOLIO_SUBNET`·`PORTFOLIO_DATA_SUBNET`, `T61`) 주소 행이 0이다(개수만 센다). 그 사이에 시드를 돌렸다면 시드의 관리자 로그인(`admin`)은 `portfolio-data` 주소로 찍히는 것이 정상이라 세지 않는다. `T61`부터 `api` 컨테이너에서는 `nginx-waf`에 닿지 않는다(아래 `T61` 항목). 같은 네트워크의 다른 컨테이너가 보낸 전달 헤더를 볼 때는 `portfolio-net`에 붙인 일회용 컨테이너(`docker run --rm --network zeekad-portfolio_portfolio-net --cap-drop ALL --security-opt no-new-privileges:true …`)에서 `nginx-waf:8080/?probe=<고유 표식>`에 `X-Forwarded-For: 198.51.100.x`를 붙인 `GET`을 보내고 WAF 로그 접속 주소가 그 컨테이너 주소인지 본다(감사가 남지 않는 요청). (리허설 [T32])
+- [ ] 네트워크 둘·권한·상태 확인(`T61`): 3.8 `T61` 절의 확인 9)~16)이 기대대로다. 곧 `portfolio-net`에는 `nginx-waf`·`dashboard-app`만, 내부 전용 `portfolio-data`에는 `postgres`·`api`·`dashboard-app`·`sandbox-reset`만 붙어 있다. `nginx-waf`에서 `api:8000`·`postgres:5432`에 TCP 연결이 되지 않고 `dashboard-app:8080`에는 된다. `api`에서 `nginx-waf:8080`에 닿지 않는다. 상주 다섯 PID 1의 `CapBnd`가 0, `NoNewPrivs`가 1이고 `postgres`의 `Config.User`가 `postgres`다. `nginx-waf` 로그에 최근 2분의 `/healthz` 감사 줄이 0이다(개수만). (리허설 [T61a]~[T61e])
 - [ ] 응답 헤더에 `Strict-Transport-Security`가 DSM 값 하나(`max-age=15768000; includeSubdomains; preload`, `T36`)이고 `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server`에 버전이 없다(DSM 앞단이 `Server: nginx`를 붙인다. 4.2). 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1]·[T36c]. 리허설의 WAF 응답에는 HSTS가 없고 공개 주소에서 DSM이 붙인다)
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
 - [ ] 로그아웃 상태에서 `https://soc.<DDNS 이름>.synology.me/`에 접속하면 `https://soc.<DDNS 이름>.synology.me/login`으로 간다(주소에 `:8080`·`:18480`·`http://`가 없다). (리허설 [1])
 - [ ] LAN에서 `http://<NAS 주소>:18480/`로 직접 접근할 수 없다. NAS의 이 스택 포트는 `127.0.0.1:18480` 하나뿐이다. (3.6, 리허설 [0])
-- [ ] 같은 NAS의 기존 컨테이너와 기존 포트폴리오 주소가 그대로 동작한다. (3.6)
+- [ ] 같은 기기의 다른 서비스(기존 컨테이너와 DSM `443`의 기존 주소)가 그대로 동작한다. 다른 프로젝트의 컨테이너·네트워크 목록이 앞에서 기록한 목록과 같다. (3.6)
 
 ## 5. 계정 시드의 직접 SQL 단계와 위험
 
@@ -822,3 +957,8 @@ API로 할 수 없어 `zeekad_dashboard`에 직접 SQL을 쓰는 단계는 셋�
 | `sandbox-reset` 로그에 `does not match the current snapshot` | 새 스냅샷인데 기준선이 옛것이다. 그동안 담당 해제는 계속되고 상태·결정은 되돌지 않는다. `stop sandbox-reset` 뒤 `sandbox-setup --rebuild-baseline`(3.10의 4) |
 | `sandbox-reset` 로그에 `lock timeout` | 그 정각에 쓰기가 5초 넘게 잠금을 잡았다. 아무것도 바뀌지 않았고 다음 정각에 다시 한다 |
 | `302 Location`에 `http://`나 내부 포트가 붙음 | DSM이 `X-Forwarded-Proto: https`를 보내는지 확인(4.2 사용자 지정 헤더) |
+| `up`이 `Pool overlaps with other one on this address space`나 `could not find an available, non-overlapping IPv4 address pool`로 실패 | 스택 서브넷 둘(`T61`) 가운데 하나가 기존 네트워크와 겹친다. `.env`의 `PORTFOLIO_SUBNET`(그때는 `PORTFOLIO_WAF_IP`·`PORTFOLIO_GATEWAY_IP`도) 또는 `PORTFOLIO_DATA_SUBNET`을 겹치지 않는 대역으로 바꾼다(3.1) |
+| `api`·`sandbox-reset`·`sandbox-setup`·`demo-seed`가 `postgres` 이름을 찾지 못함(`could not translate host name "postgres"`, `Name or service not known`) | `T61` 전환 중에 새 compose로 서비스 하나만 `--no-deps`로 올려 옛 `postgres`가 `portfolio-data`에 없다. 3.8 `T61` 절의 2단계 순서대로 `postgres`부터 함께 `up`한다 |
+| `nginx-waf`에서 `api`·`postgres`에 닿는다(3.8 `T61` 절 확인 12) | `nginx-waf`가 `portfolio-data`에 붙어 있거나 옛 compose로 떠 있다. 3.6의 네트워크 확인으로 붙은 컨테이너를 보고 새 compose로 `nginx-waf`를 다시 만든다 |
+| 내부 전용 네트워크를 만들지 못함, 또는 그 줄을 바꿔도 반영되지 않음 | 3.8 `T61` 절의 "`internal`이 NAS에서 문제를 일으킬 때" |
+| `T61` 뒤 `postgres`가 healthy가 되지 않고 로그에 `Permission denied`·`must be owned by` | DB 볼륨의 데이터 폴더가 `postgres`(uid 999) 소유가 아니다(이미지가 만든 볼륨이 아니다). 3.8 `T61` 절의 되돌리기로 옛 compose로 돌리고 원인을 본다 |
