@@ -1,6 +1,6 @@
 # zeek_AD SQL 사본의 출처
 
-이 폴더의 `.sql`은 탐지 파이프라인 저장소 [`prosild/zeek_AD`](https://github.com/prosild/zeek_AD)의 migration 파일을 바이트 그대로 옮긴 사본이다. 머리말이나 주석을 덧붙이지 않았다. 고칠 일이 생기면 zeek_AD에서 고친 파일을 다시 옮기고 아래 값을 바꾼다.
+이 폴더의 `.sql`은 탐지 파이프라인 저장소 [`prosild/network-behavior-anomaly-detection`](https://github.com/prosild/network-behavior-anomaly-detection)(NBAD, 처음 이름 zeek_AD)의 migration 파일을 바이트 그대로 옮긴 사본이다. 머리말이나 주석을 덧붙이지 않았다. 고칠 일이 생기면 zeek_AD에서 고친 파일을 다시 옮기고 아래 값을 바꾼다.
 
 | 사본 | 원본 경로 | zeek_AD commit | sha256(LF 바이트) |
 |---|---|---|---|
