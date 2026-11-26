@@ -160,7 +160,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 문서
 
 - [주요 판단 기록](docs/design-decisions.md)
-- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T48`)
+- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T49`)
 - [배포 및 운영 가이드](docs/deployment-guide.md): VMware 실습 환경
 - [포트폴리오 공개 배포 안내서](docs/portfolio-deployment.md): 공개 데모(Synology NAS)
 - [보안 검증 보고서](docs/security-verification-report.md)
