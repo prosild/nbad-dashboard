@@ -4,7 +4,7 @@
 #   docker compose ... --profile seed run --rm sandbox-setup --rebuild-baseline    # 새 스냅샷을 올린 뒤 기준선 다시 만들기
 # 슈퍼유저(postgres)로 붙어 아래를 만든다. 다시 실행해도 안전하다.
 # - zeekad DB
-#   - 스키마 sandbox_baseline(소유 zeekad_owner, 초기화 역할 권한 없음): 앱 쓰기 함수 둘이 바꾸는 표 셋의 기준선 사본과 표지(marker).
+#   - 스키마 sandbox_baseline(소유 zeekad_owner, 초기화 역할 권한 없음): 앱 쓰기 함수 셋(상태 변경·검토 결정·다시 열기(T53))이 바꾸는 표 셋의 기준선 사본과 표지(marker).
 #     표지는 지금 DB가 어느 스냅샷인지 판별하는 값(인시던트 수·탐지 작업 수·최대 job_id·세 표의 열 정의 해시)이다.
 #   - 스키마 sandbox(소유 zeekad_owner): sandbox.reset_pipeline()(SECURITY DEFINER). 초기화 역할은 이 스키마 USAGE와 함수 EXECUTE만 있다
 #     (PostgreSQL은 함수를 부를 때 그 스키마 USAGE가 필요하다. 그래서 기준선은 따로 sandbox_baseline에 둔다).

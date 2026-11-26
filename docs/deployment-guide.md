@@ -78,9 +78,11 @@
      - migration 017 (1종): `feedback_summary` (캡처 × 모델 묶음 × `zeekad_picked_by`['all' 전체 포함] 분석가 결론 집계: 사건/알림/결론 수, TP/FP/Benign 분포, `zeekad_precision`, `zeekad_alert_precision`, `zeekad_alert_resolved_rate`)
    - 원본 테이블(`raw_*`) 권한과 `INSERT`/`UPDATE`/`DELETE` 권한은 주지 않습니다.
 3. **`zeekad` 쓰기 함수 전용 계정 (`dashboard_rw`)**
-   - `zeekad` 데이터베이스의 `dashboard` 스키마 `USAGE`와 아래 두 함수의 `EXECUTE` 권한만 줍니다.
-     - `dashboard.transition_incident(p_job, p_incident, p_to, p_actor, p_reason, p_resolution)`
-     - `dashboard.decide_review(p_job, p_incident, p_action, p_analyst, p_note)`
+   - `zeekad` 데이터베이스의 `dashboard` 스키마 `USAGE`와 아래 세 함수의 `EXECUTE` 권한만 줍니다. 세 함수 모두 zeek_AD가 만들고 소유하며(`SECURITY DEFINER`) 계약은 zeek_AD `docs/data-contract-v2.md`에 있습니다.
+     - `dashboard.transition_incident(p_job, p_incident, p_to, p_actor, p_reason, p_resolution)`: 상태 변경(신규 → 분석 중 → 종결, 앞으로만)
+     - `dashboard.decide_review(p_job, p_incident, p_action, p_analyst, p_note)`: 에스컬레이션 결정
+     - `dashboard.reopen_incident(p_job, p_incident, p_actor, p_reason, p_expected_resolution)`: 종결한 인시던트 다시 열기(`T53`, zeek_AD migration `018_incident_reopen.sql`, 계약은 "쓰기: 종결한 사건 다시 열기" 절). 종결일 때만 분석 중으로 돌리고 판정을 비우며 이력에 `closed → investigating` 한 행을 남깁니다. `p_expected_resolution`(화면이 보던 판정)이 지금 판정과 다르면 거부합니다. 권한은 migration이 `dashboard_rw`에만 줍니다.
+   - 대시보드 API `POST /api/incidents/{jobId}/rank/{queueRank}/reopen`(본문 `{"reason", "expectedResolution"}`, CSRF 필요)이 세 번째 함수를 부릅니다. 역할은 상태 변경과 같은 `ANALYST`·`ADMIN`이고 화면의 판정을 늘 보냅니다. 함수가 없는 zeek_AD DB(migration 018 전)에서는 `501`(`REOPEN_UNAVAILABLE`, "이 환경의 탐지 DB에는 다시 열기 기능이 아직 없습니다.")을 돌려주고 나머지 기능은 그대로 씁니다. 실행 권한이 없을 때(`42501`)도 같습니다. 그래서 앱 이미지와 migration 018은 어느 것을 먼저 넣어도 됩니다.
 
 ### 2.2 v2.1 · migration 014~016 조인 규칙, Slack 스레드, 검토 재개 및 결합 v2
 - 실습망 캡처(`lab-YYYYMMDD`)는 5분마다 전체를 다시 계산하므로 같은 캡처에 `job_id`가 여러 개 생깁니다.
@@ -259,7 +261,7 @@ docker compose up -d nginx-waf
 
 ## 6. 로컬 독립 E2E 검증 구성 (임시 PostgreSQL 17 포함)
 
-외부 PostgreSQL 없이 Docker Compose 오버라이드(`docker/verify/compose.verify.yml`)로 실제 PostgreSQL 17 + Flyway + `latest_incident_queue` + `dashboard.transition_incident` + `dashboard.decide_review` + Slack 스레드 + WAF + Trivy + OWASP ZAP을 한 번에 검증합니다.
+외부 PostgreSQL 없이 Docker Compose 오버라이드(`docker/verify/compose.verify.yml`)로 실제 PostgreSQL 17 + Flyway + `latest_incident_queue` + `dashboard.transition_incident` + `dashboard.decide_review` + `dashboard.reopen_incident`(`T53`) + Slack 스레드 + WAF + Trivy + OWASP ZAP을 한 번에 검증합니다. 검증 스택의 세 함수는 zeek_AD 함수와 계약(검사 순서·SQLSTATE·행 값)이 같은 대역입니다(`docker/verify/init/02-init-zeekad-schema.sql`. 표 이름과 소유자가 실제와 달라 zeek_AD migration 파일을 그대로 실행할 수 없습니다).
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -EvidenceDir "build/security-evidence"

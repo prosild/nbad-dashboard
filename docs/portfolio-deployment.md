@@ -88,6 +88,8 @@
 | `.env.portfolio.example` | 환경 변수 목록(비밀값은 빈 값). `PORTFOLIO_DATA_SUBNET`(`T61`, 데이터 네트워크 서브넷) |
 | `docker/portfolio/initdb/01-roles-databases.sh` | 역할·DB·DB 수준 ACL 생성(zeek_AD `01-roles-databases.sh`와 같은 역할 집합) |
 | `docker/portfolio/initdb/02-restore-snapshot.sh` | 스냅샷 SHA-256 확인 → `pg_restore --exit-on-error`(소유자·권한 포함) → 성공 표지 |
+| `docker/portfolio/initdb/03-zeekad-functions.sh` | 스냅샷에 없는 zeek_AD 함수 넣기(`T53`): `dashboard.reopen_incident`라는 이름의 함수가 없을 때만 아래 사본을 `zeekad` DB에 한 트랜잭션으로 실행. 실패하면 복원 표지를 지우고 멈춤 |
+| `docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql` | zeek_AD migration 018(종결한 사건 다시 열기)의 바이트 그대로 사본. 출처 commit과 sha256은 같은 폴더의 `SOURCE.md`. 하위 폴더라 이미지가 자동 실행하지 않는다 |
 | `docker/portfolio/nginx/zeekad-portfolio-http.conf.template` | 포트폴리오 전용 nginx http 문맥 설정(DSM 뒤의 실제 IP·전달 Proto/Port·속도 제한·앱 HSTS 숨김). `compose.yml`에는 붙지 않는다. 방문자 전달 헤더 지우기는 공유 이미지 템플릿이 한다(`T14`) |
 | `docker/portfolio/seed/seed_demo.py` | 계정 시드(멱등): `demo`, `trial-analyst`(`TRIAL_ANALYST_PASSWORD`가 비면 만들지 않음). 분석이 끝난 예시 셋을 시연 분석가 `demo-analyst`로 기록(`T54`, 1.4) |
 | `docker/portfolio/seed/demo_examples.json` | 분석이 끝난 예시 셋의 자료(인시던트 ID·판정·착수 사유·대응 조치·종결 사유, `T54`). 시드가 읽는다(`SEED_EXAMPLES_FILE`, 기본 `/seed/demo_examples.json`) |
@@ -98,7 +100,7 @@
 
 ### 1.3 체험 계정과 매시 정각 초기화(`T33`)
 
-- **무엇을 되돌리나**: 분석가 쓰기는 다섯(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정·대응 조치 기록)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 둘(`dashboard.transition_incident`, `dashboard.decide_review`)만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다. 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 대응 조치 기록(`T56`, 방문자가 쓰는 자유 글이다)은 기준선 표식(설정할 때의 최대 `id`)보다 뒤에 덧붙은 행을 지운다. 그 기록을 남긴 감사 행(`INCIDENT_RESPONSE_ACTION`)은 그대로 둔다. 초기화는 감사 로그와 담당 이력(추가만 하는 기록)을 지우지 않는다. 감사 로그는 보관 기한(90일)이 지난 행만 같은 서비스가 하루 한 번 따로 지운다(아래 "감사 로그 보관 기한").
+- **무엇을 되돌리나**: 분석가 쓰기는 여섯(상태 변경·담당 지정·인시던트 검토 결정·검토 목록 결정·대응 조치 기록·다시 열기)이다. 파이프라인 DB(`zeekad`)는 쓰기 계정 `dashboard_rw`가 함수 셋(`dashboard.transition_incident`, `dashboard.decide_review`, `dashboard.reopen_incident`(`T53`))만 실행해 바꾸므로 바뀌는 표가 `zeekad.incident_status`·`zeekad.incident_status_history`·`zeekad.analyst_review` 셋뿐이다(다시 열기는 앞의 두 표만 바꾼다. 방문자가 다시 연 건도 같은 방법으로 되돌아간다). 이 셋을 스냅샷 직후 기준선(`sandbox_baseline` 스키마)과 기본키로 맞춘다. 기준선에 없는 행은 지운다. 없어진 행은 넣고 칸이 다른 행(모든 칸 비교)은 되돌린다. 앱 DB(`zeekad_dashboard`)의 담당은 해제만 하고 담당 이력에 해제 행(행위자 `sandbox-reset`, 사유 값 `manual`)을 덧붙인다. 대응 조치 기록(`T56`, 방문자가 쓰는 자유 글이다)은 기준선 표식(설정할 때의 최대 `id`)보다 뒤에 덧붙은 행을 지운다. 그 기록을 남긴 감사 행(`INCIDENT_RESPONSE_ACTION`)은 그대로 둔다. 초기화는 감사 로그와 담당 이력(추가만 하는 기록)을 지우지 않는다. 감사 로그는 보관 기한(90일)이 지난 행만 같은 서비스가 하루 한 번 따로 지운다(아래 "감사 로그 보관 기한").
 - **어디서 하나**: 앱 밖 운영 서비스 `sandbox-reset`(상주, `psql`만)이 매시 정각(UTC·KST 모두 정각)에 `sandbox.reset_pipeline()` 다음 `sandbox.reset_assignments()`와 `sandbox.reset_response_actions()`를 부르고 결과 한 줄을 남긴다. 시작할 때는 돌리지 않는다. 하루에 한 번은 이어서 감사 로그 삭제 함수도 부른다(`T58`, 아래). 앱에는 데모 전용 동작(모드 플래그, 앱 안 예약 작업, 체험 계정 이름을 아는 코드, 배너)이 없다.
 - **권한**: 초기화 함수 셋은 `SECURITY DEFINER`(소유 `zeekad_owner`·`dashboard_app`)이고 `search_path`를 고정하며 모든 객체를 스키마로 한정한다. 접속 계정 `zeekad_sandbox_reset`은 두 DB `CONNECT`, 함수가 든 `sandbox` 스키마 `USAGE`, 초기화 함수 셋과 감사 로그 삭제 함수(`public.purge_expired_audit_logs(integer)`, `T58`)의 `EXECUTE`만 가진다. 표(감사 로그·대응 조치 기록·대응 조치 기준선 표식 포함)·기준선(`sandbox_baseline`)·`CREATE` 권한은 없다(기준선을 바꿀 수 있으면 실제 표를 고른 값으로 되돌릴 수 있다). `dashboard_rw` 권한은 바꾸지 않는다.
 - **동시 쓰기**: `reset_pipeline()`은 처음에 세 표를 `SHARE ROW EXCLUSIVE`로 잠가 진행 중인 쓰기를 기다리고 새 쓰기를 막는다. 5초 안에 잠그지 못하면 아무것도 바꾸지 않고 오류로 끝내고 다음 정각에 다시 한다.
@@ -106,7 +108,7 @@
 - **설정 도구 `sandbox-setup`**(`--profile seed`, 슈퍼유저로 접속): 전용 역할·두 스키마·기준선·초기화 함수 셋을 만들고 감사 로그 삭제 함수의 `EXECUTE`를 준 뒤 권한을 점검한다. 삭제 함수와 대응 조치 표는 앱이 만든 것이라(migration `V4`, `V5`) 앱이 그 migration을 적용하기 전이면 아무것도 바꾸지 않고 멈춘다. 멱등이다. 기준선은 처음과 `--rebuild-baseline`일 때만 만든다. 그때 체험 계정 이름이 세 표의 행위자(`updated_by`·`actor`·`analyst`)나 현재 담당자에 하나라도 있으면 멈춘다(방문자 변경이 기준선이 되는 것을 막는다. 새 스냅샷이 그 이름을 이미 쓰는 경우도 잡는다. 공개 스냅샷에는 zeek_AD 기록의 행위자 `demo-analyst`가 있어 체험 계정 이름을 `trial-analyst`로 정했다. `T54`부터는 같은 이름의 시연 분석가 계정이 예시 셋을 기록한다(1.4). 흔적 검사는 체험 계정 이름만 보므로 그 기록은 막지 않는다). 처음 만들 때는 담당자가 있는 담당 행이 0이어야 한다. 다시 만들 때는 `sandbox-reset`을 먼저 멈춘다(초기화 계정 접속이 있으면 멈춘다).
 - **대응 조치 기준선 표식(`T56`)**: 표식은 앱 DB의 한 행짜리 표 `sandbox.response_action_baseline`(소유 `dashboard_app`)이고 값은 설정할 때 `incident_response_actions`의 최대 `id`다. zeek_AD 기준선과 따로 정한다. 표식이 없으면 만들고 `--rebuild-baseline`이면 다시 잡고 그 밖에는 그대로 둔다. 그래서 zeek_AD 기준선이 이미 있는 스택에 `sandbox-setup`을 다시 돌려도 표식이 생긴다. 표식을 만들거나 다시 잡을 때 체험 계정이 쓴 대응 조치 행이 하나라도 있으면 멈춘다(방문자가 쓴 글이 기준선이 되어 남는 것을 막는다). 그때는 그 행을 지우고 다시 돌린다(3.8의 `T56` 절). 초기화 함수는 표식이 없으면 0건으로 넘어가지 않고 오류를 낸다. 대응 조치 표의 트리거는 `UPDATE`·`TRUNCATE`를 늘 거부하고 `DELETE`는 초기화 함수가 트랜잭션 안에서 켠 표식(`dashboard.response_actions_reset`)이 있을 때만 통과시킨다. 이 표식은 실수 방지이고 권한 경계가 아니다(표 소유자는 직접 켤 수 있다). 권한 경계는 표 소유권이다.
 - **결정을 소비하는 주체 없음**: 공개 스택의 `api`는 `run_api.py` 하나뿐이고 `zeekad_api`에는 `zeekad` 표 쓰기 권한이 없다. 쓰기 권한이 있는 `zeekad_worker`는 NOLOGIN이고 워커가 없다. 그래서 검토 결정 뒤 재개·보고서·Slack 같은 후속 쓰기가 없다(리허설 `[T33f]`가 세 표 밖 `zeekad` 표 전부의 행 수·내용 해시를 쓰기 전·직후·2분 뒤에 비교한다).
-- **쓰기 속도 제한**: nginx가 다섯 쓰기 경로(대응 조치 기록 포함)의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
+- **쓰기 속도 제한**: nginx가 여섯 쓰기 경로(대응 조치 기록·다시 열기 포함)의 `POST`만 클라이언트 IP당 분당 10회 + 버스트 5로 제한하고 넘으면 `429`를 준다(`PORTFOLIO_WRITE_RATE`, `PORTFOLIO_WRITE_BURST`, 로그인 제한과 다른 영역). 경로는 정규화된 `$uri`를 정규식으로 본다.
 - **감사 로그 보관 기한(`T58`)**: 공개 데모는 방문자의 접속 기록(감사 로그의 계정·시각·접속 주소)을 90일 보관한다. 90일은 이 스택의 값이다. 앱의 기본값이 아니고 앱은 기한을 모른다(기한을 주지 않은 배포에서는 아무것도 지워지지 않는다, [`deployment-guide.md`](deployment-guide.md) 2.1).
   - **누가 지우나**: 앱이 아니라 `sandbox-reset`이 지운다. `compose.portfolio.yml`이 `SANDBOX_AUDIT_RETENTION_DAYS: "90"`을 고정 값으로 넘긴다(`.env` 변수가 아니다). 서비스는 하루에 한 번, 곧 서비스가 뜬 뒤 첫 주기와 UTC 날짜가 바뀐 뒤 첫 주기(KST 09:00 정각)에 앱 DB의 `public.purge_expired_audit_logs(90)`을 부른다. 그날 몫은 결과가 `OK`일 때만 쓴 것으로 친다. 실패했거나 아직 설정 전이면 다음 정각에 다시 부른다. `--once`는 늘 부른다.
   - **값**: 비우거나 `0`이면 지우지 않는다. 그 밖에는 정수 30~3650만 받고 아니면 서비스가 시작하지 않는다(종료 코드 2).
@@ -142,7 +144,7 @@
   하나라도 실패면 아무것도 쓰지 않고(계정도 켜지 않고) 예시별 한 줄 이유와 함께 0이 아닌 코드로 끝난다. "종결인데 담당자가 남음"은 API로 풀 수 없다(3.9의 볼륨 재생성뿐). 결과는 로그 한 줄 `examples: applied=<기록> kept=<그대로> skipped=<건너뜀>`(건너뛴 ID 포함)이다. 글 본문과 비밀번호는 로그에 없다.
 - **계정**: `demo-analyst`는 시드가 만든다(없을 때 관리자 API `createUser`). 예시를 기록해야 하는 실행마다 비밀번호를 무작위로 만들어 쓰고 버린다(출력·저장하지 않는다. `.env`에 없다). 이미 있는 계정의 비밀번호는 관리자 API로 바꿀 수 없어 공개 계정과 같은 SQL 해시 교체 + 감사 행으로 바꾼다(5절). 기록이 끝나면 관리자 API로 끄고, API 단계가 실패해도 `finally`에서 SQL로 끈다. 잠금 제외 목록에는 넣지 않는다. 할 일이 없으면(셋이 모두 `kept`·`skipped`이고 계정이 목표 상태) 로그인 없이 `RESULT: NO_CHANGES`다.
 - **기준선**: 새로 만드는 스택은 시드 → `sandbox-setup` 순서라 예시가 기준선에 그대로 들어간다(zeek_AD 세 표의 사본에 예시의 상태 3행·이력 6행이 들고, 대응 조치 표식은 예시의 조치 두 행의 `id` 이상이다). 그래서 매시 초기화 뒤에도 예시의 상태·판정·이력과 조치 기록은 그대로이고, 방문자가 예시에 덧붙인 조치 기록과 상태 변경은 지워진다. 담당은 기준선이 없고 늘 해제된다(예시의 담당 행은 해제된 채 남는다). 이미 기준선이 있는 스택은 3.8의 `T54` 절로 넣는다.
-- **한번 기준선에 들어가면 시드로 글을 고칠 수 없다**: 종결 건을 다시 여는 전이가 없다(zeek_AD 함수 대기, `T53`). 고치려면 3.9의 볼륨 재생성뿐이고 그때 앱 DB(감사 로그·인시던트 번호)도 새로 만들어진다.
+- **한번 기준선에 들어가면 시드로 글을 고칠 수 없다**: 시드는 이미 종결된 예시를 그대로 둔다(`kept`). 종결 건은 다시 열 수 있지만(`T53`) 다시 열고 새 글로 다시 종결해도 앞선 종결의 사유·판정과 대응 조치 기록은 이력에 그대로 남는다(상태 이력과 대응 조치 기록은 지우지 않는다). 글을 바꾸려면 3.9의 볼륨 재생성뿐이고 그때 앱 DB(감사 로그·인시던트 번호)도 새로 만들어진다.
 - **조회자에게 보이는 것**: 상태 변경 사유는 주소만 가려서 보인다(`10.10.*.*`). 대응 조치는 종류·기록자·시각만 보이고 메모는 내려가지 않는다. 기본 정렬에서 종결 건은 맨 뒤로 가므로 큐의 종결 필터(`/incidents?status=closed&period=all`)로 찾는다. 예시 A에는 옛 작업의 미결정 검토 때문에 큐의 "검토 대기" 표시가 남는다(에스컬레이션 목록에는 없다. 지금도 종결된 옛 시연 건에 같은 표시가 있다).
 - **운영 현황에 주는 영향**: 기록 시각이 기준 시각(탐지 작업의 끝 시각) 뒤라 기간 7일 등에는 들지 않고 전체 기간에만 든다. 처리 시간(탐지부터 종결까지)은 며칠로 나온다. 예시는 기준 시각과 24시간 창을 옮기지 않는다. 판정이 10건 미만이라 "모델 판정"은 계속 "표본 부족"이다.
 - **실습 공격 재현을 정탐으로 닫는 이유**: 탐지 품질의 되먹임에서는 재현한 공격을 맞힌 것이 정탐이다. 실제로 차단·격리하지 않았으므로 대응 조치는 "조치 없음"과 그 사유로 적었다. 글 끝의 "(시연)"과 행위자 `demo-analyst`는 스냅샷의 옛 시연 기록과 같은 관례다(`docs/ui-terminology.md`).
@@ -236,6 +238,7 @@ Get-Content build/portfolio-images/image-ids.txt
 ├── compose.portfolio.yml
 ├── .env.portfolio.example        (복사해서 .env 작성)
 ├── docker/portfolio/initdb/*.sh   (LF 줄바꿈이어야 한다. 저장소의 .gitattributes가 *.sh를 LF로 고정한다)
+├── docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql, SOURCE.md   (T53. *.sql도 .gitattributes가 LF로 고정한다)
 ├── docker/portfolio/nginx/*.conf.template
 ├── docker/portfolio/seed/seed_demo.py
 ├── snapshot/zeekad.dump, zeekad.dump.sha256, manifest.json
@@ -300,7 +303,7 @@ scp -O build/portfolio-images/zeek-ad-dashboard-app.tar build/portfolio-images/z
 ```
 
 - PowerShell 5.1 파이프(`tar | ssh`, `docker save | ssh`)는 바이트를 문자열로 바꿔 깨뜨리므로 쓰지 않는다. 파일은 `scp`로만 보낸다.
-- 작업 트리의 `.env.portfolio.example`·`compose.portfolio.yml`·`seed_demo.py`·nginx 템플릿은 Windows에서 CRLF로 체크아웃돼 그대로 전송된다(`*.sh`만 `.gitattributes`로 LF). Compose·nginx·`python`은 CRLF여도 동작한다. 다만 3.4의 `.env` 작성 스크립트는 줄 끝 `\r`을 떼야 한다(스크립트에 들어 있다).
+- 작업 트리의 `.env.portfolio.example`·`compose.portfolio.yml`·`seed_demo.py`·nginx 템플릿은 Windows에서 CRLF로 체크아웃돼 그대로 전송된다(`*.sh`와 `initdb/zeekad-sql/*.sql`만 `.gitattributes`로 LF. 사본의 sha256은 LF 바이트 값이라 CRLF로 가면 대조가 맞지 않는다). Compose·nginx·`python`은 CRLF여도 동작한다. 다만 3.4의 `.env` 작성 스크립트는 줄 끝 `\r`을 떼야 한다(스크립트에 들어 있다).
 
 NAS에서 스냅샷 권한과 무결성 확인:
 
@@ -313,6 +316,10 @@ chmod 755 snapshot && chmod 644 snapshot/*   # 컨테이너에서 읽히는지�
 (cd snapshot && sha256sum -c zeekad.dump.sha256)
 (cd images && sha256sum -c images.sha256)
 ls -l docker/portfolio/initdb/*.sh && head -1 docker/portfolio/initdb/01-roles-databases.sh | od -c | head -2   # \r 이 없어야 한다
+# T53: zeek_AD SQL 사본. sha256이 SOURCE.md의 값과 같고(줄 둘이 같은 값) \r 이 0개여야 한다
+sha256sum docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql
+grep 'sha256: ' docker/portfolio/initdb/zeekad-sql/SOURCE.md
+grep -c $'\r' docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql   # 0
 ```
 
 ### 3.3 이미지 적재
@@ -812,8 +819,43 @@ docker network rm zeekad-portfolio_portfolio-data || exit 23
 - **확인**: 시드 로그가 `skipped=0`이고 `applied + kept = 3`이다(ID 오타나 스냅샷 착오를 드러낸다). `sandbox-setup` 로그의 기준선 행 수가 앞보다 상태 3·이력 6 많다. 다음 정각 뒤 `logs sandbox-reset`의 줄이 `OK`이고, `demo`로 `/incidents?status=closed&period=all`에 예시 셋이 보인다(4.4).
 - **다시 해야 할 때**(시드가 실패했거나 `--rebuild-baseline`이 `REFUSED`일 때): 시드의 실패 이유(예시별 한 줄)를 먼저 본다. `--once`는 **옛 기준선**으로 되돌리므로 시드가 넣은 예시도 지운다(상태·이력, 옛 표식보다 뒤의 조치 기록). 그래서 "다시"는 `--once`(서비스가 멈춰 있으면 `$C run --rm sandbox-reset --once`) → 시드 → `--rebuild-baseline` 전체다. "종결인데 담당자가 남음"으로 실패하면 API로 풀 수 없다(아래 볼륨 재생성).
 - **`T61`(네트워크 분리)과 한 번에 반영할 때**: 위 `T61` 절의 2단계 순서에서 `sandbox-setup` 앞에 시드(두 번)를 넣고 `sandbox-setup`에 `--rebuild-baseline`을 준다(기준선이 이미 있다). 공개 경로를 닫은 채 하려면 이렇게 잇는다: `stop nginx-waf` → `exec … sandbox-reset.sh --once`(옛 구성에서 방문자 흔적 지우기) → `stop sandbox-reset` → `up -d --wait postgres api dashboard-app`(`nginx-waf`는 아직) → 시드 두 번 → `sandbox-setup --rebuild-baseline` → `up -d --wait sandbox-reset nginx-waf` → `sandbox-reset --once`. 새 구성에서 시드(`demo-seed`)는 `portfolio-data`에 붙고 두 네트워크에 붙은 `dashboard-app`에 닿는다.
-- **기준선에 들어간 뒤에는 시드로 글을 고칠 수 없다**: 종결 건을 다시 여는 전이가 없다. 글을 고치려면 3.9의 볼륨 재생성뿐이고, 그때 앱 DB(감사 로그·인시던트 번호)도 새로 만들어진다(번호는 같은 스냅샷이면 같게 다시 매겨진다).
+- **기준선에 들어간 뒤에는 시드로 글을 고칠 수 없다**: 시드는 이미 종결된 예시를 그대로 둔다. 다시 열기(`T53`)로 열고 다시 종결해도 앞선 종결의 사유·판정과 대응 조치 기록은 이력에 남는다(지우지 않는다). 글을 바꾸려면 3.9의 볼륨 재생성뿐이고, 그때 앱 DB(감사 로그·인시던트 번호)도 새로 만들어진다(번호는 같은 스냅샷이면 같게 다시 매겨진다).
 - **롤백**: 파일 셋을 `*.pre-t54`로 되돌려도 기준선에 들어간 예시는 남는다(옛 시드는 예시를 읽지 않고 `demo-analyst`를 다른 비공개 계정처럼 비활성으로 둔다). 예시를 빼려면 3.9의 볼륨 재생성이다.
+
+#### 종결 건 다시 열기를 넣는 갱신(`T53`)
+
+`T53`은 앱 이미지 하나와 파일 넷(`docker/portfolio/nginx/zeekad-portfolio-http.conf.template`, `docker/portfolio/initdb/03-zeekad-functions.sh`, `docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql`, 같은 폴더의 `SOURCE.md`)을 바꾸고 `zeekad` DB에 함수 하나(`dashboard.reopen_incident`, zeek_AD migration 018)를 더한다. `compose.portfolio.yml`, `.env`, 스냅샷, `sandbox-setup.sh`·`sandbox-reset.sh`는 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때의 순서와 확인이다.
+
+- **이미 볼륨이 있는 스택은 initdb가 돌지 않는다.** 셋째 스크립트(`03-zeekad-functions.sh`)는 볼륨을 새로 만들 때만 돈다(3.9). 지금 NAS의 DB에는 사본을 한 번 손으로 실행한다(아래). zeek_AD가 "스냅샷 복원 DB에는 이 파일 하나만 실행하면 된다(다시 실행해도 결과가 같다)"고 적었다. `CREATE OR REPLACE`·`ALTER … OWNER`·`REVOKE`·`GRANT`라 두 번 실행해도 같다.
+- **순서는 상관없다.** 앱 이미지를 먼저 바꾸면 함수를 넣기 전까지 다시 열기 요청이 `501`(`REOPEN_UNAVAILABLE`, "이 환경의 탐지 DB에는 다시 열기 기능이 아직 없습니다.")일 뿐이고 다른 기능은 그대로다. 함수를 먼저 넣어도 옛 앱은 부르지 않는다. 초기화(`reset_pipeline()`)는 상태·이력 표를 기준선과 맞추므로 다시 연 건도 되돌리고, 기준선 표지는 함수를 보지 않아 `sandbox-setup`을 다시 돌릴 필요가 없다.
+- **파일 옮기기**: 서비스 하나 절차의 PowerShell 블록으로 올린다(`$ID = 't53'`, `$SVC = 'dashboard-app'`, `$IMG = 'zeek-ad-dashboard-app'`, `$files = @('docker/portfolio/nginx/zeekad-portfolio-http.conf.template', 'docker/portfolio/initdb/03-zeekad-functions.sh', 'docker/portfolio/initdb/zeekad-sql/018_incident_reopen.sql', 'docker/portfolio/initdb/zeekad-sql/SOURCE.md')`). 4)의 교체에서 `zeekad-sql/` 폴더가 없으면 먼저 만든다(`mkdir -p docker/portfolio/initdb/zeekad-sql`). 교체 뒤 3.2 끝의 확인(sha256이 `SOURCE.md`와 같고 `\r` 0개)을 한다. 이어서 같은 절차의 5)로 `dashboard-app`을, 템플릿이 걸리게 `nginx-waf`를 다시 만든다(`$C up -d --wait --no-deps nginx-waf`).
+
+**함수 넣기**(NAS 셸. `postgres` 컨테이너 안에서 슈퍼유저로. 사본은 initdb 폴더 마운트로 컨테이너 안 `/docker-entrypoint-initdb.d/zeekad-sql/`에 보인다):
+
+```sh
+set -u
+export PATH=$PATH:/usr/local/bin
+cd "$DEPLOY_DIR" || exit 1
+C="docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env"
+Q="$C exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d zeekad -At"
+# 1) 지금 있는지(0이면 넣는다. 1 이상이면 새 스냅샷에 이미 있으므로 넣지 않고 아래 3)만 본다)
+$Q -c "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dashboard' AND p.proname = 'reopen_incident'" < /dev/null
+# 2) 컨테이너 안 사본의 sha256이 SOURCE.md의 값과 같은지 보고 한 트랜잭션으로 실행한다
+$C exec -T postgres sha256sum /docker-entrypoint-initdb.d/zeekad-sql/018_incident_reopen.sql < /dev/null
+$C exec -T postgres psql -v ON_ERROR_STOP=1 --single-transaction -U postgres -d zeekad -f /docker-entrypoint-initdb.d/zeekad-sql/018_incident_reopen.sql < /dev/null || exit 2
+# 3) 확인: 하나, 소유 zeekad_owner, SECURITY DEFINER, 실행 권한은 dashboard_rw뿐(PUBLIC·초기화 계정 불가)
+$Q -c "SELECT p.oid::regprocedure || ' owner=' || pg_get_userbyid(p.proowner) || ' secdef=' || p.prosecdef || ' acl=' || p.proacl::text || ' reset_exec=' || has_function_privilege('zeekad_sandbox_reset', p.oid, 'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dashboard' AND p.proname = 'reopen_incident'" < /dev/null
+#    -> dashboard.reopen_incident(bigint,text,text,text,text) owner=zeekad_owner secdef=true acl={zeekad_owner=X/zeekad_owner,dashboard_rw=X/zeekad_owner} reset_exec=false
+# 4) dashboard_rw가 실행할 수 있는 함수(권한 목록에 명시된 것)가 정확히 셋
+$Q -c "SELECT n.nspname || '.' || p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE a.grantee = 'dashboard_rw'::regrole AND a.privilege_type = 'EXECUTE' ORDER BY 1" < /dev/null
+#    -> dashboard.decide_review / dashboard.reopen_incident / dashboard.transition_incident
+# 5) 초기화 계정으로는 부를 수 없다(permission denied). 비밀번호는 컨테이너 환경에서 읽고 출력하지 않는다
+$C exec -T sandbox-reset sh -c 'PGPASSWORD="$SANDBOX_RESET_DB_PASSWORD" psql -h postgres -U zeekad_sandbox_reset -d zeekad -c "SELECT dashboard.reopen_incident(1, NULL, NULL, NULL, NULL)"' < /dev/null 2>&1 | grep -c 'permission denied'   # 1
+```
+
+- 5)의 `sandbox-reset` 컨테이너 환경 변수 이름은 compose의 값(`SANDBOX_RESET_DB_PASSWORD`)과 같은지 반영 때 확인한다. 이 블록은 로컬 리허설에서 같은 SQL로 본다(`T53`의 실제 대상 확인. 결과는 [보안 검증 보고서](security-verification-report.md)).
+- **반영 뒤 확인**: `trial-analyst`로 종결 건 하나를 다시 열면 분석 중으로 바뀌고 이력에 "종결 → 분석 중 · 다시 열림"이 보인다. 다음 정각 뒤 그 건이 원래 종결 상태로 돌아왔는지 본다(`[T53d]`와 같다). `demo`에는 다시 열기 폼이 없다. 같은 주소에서 다시 열기 요청을 잇달아 보내면 `429`다. 이어서 4.4를 한다.
+- **되돌리기**: 함수만 빼려면 `$Q -c "DROP FUNCTION dashboard.reopen_incident(bigint, text, text, text, text)"`. 그러면 앱의 다시 열기는 `501`로 돌아가고 다른 기능은 그대로다. 이미 다시 연 건의 상태와 이력은 그대로 남는다(다음 정각 초기화가 기준선으로 되돌린다). 앱 이미지와 파일은 서비스 하나 절차의 롤백(`*.pre-t53`)을 따른다. 옛 `03-zeekad-functions.sh`가 없던 상태로 돌아가도 이미 만든 볼륨에는 영향이 없다.
 
 ### 3.9 스냅샷(공개 데이터) 교체
 
@@ -861,9 +903,10 @@ docker volume rm zeekad-portfolio_pgdata || exit 5
 6) 로컬 PC에서 새 `zeekad.dump`·`zeekad.dump.sha256`·`manifest.json`과 바뀐 배포 파일을 `scp -O`로 보낸다(3.2). NAS에서 `(cd snapshot && sha256sum -c zeekad.dump.sha256)`가 `OK`인지 보고 `chmod 755 snapshot && chmod 644 snapshot/*`로 권한을 맞춘다(T13: 상속 ACL 때문에 컨테이너 postgres가 덤프를 못 읽는다).
 
 ```sh
-# 7) 올리기(nginx-waf·sandbox-reset은 빼고): 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)가 다시 돈다. 공개 경로는 아직 열지 않는다
+# 7) 올리기(nginx-waf·sandbox-reset은 빼고): 빈 볼륨이라 01(역할·DB)·02(스냅샷 복원)·03(스냅샷에 없는 zeek_AD 함수, T53)이 다시 돈다. 공개 경로는 아직 열지 않는다
 $C up -d --wait postgres api dashboard-app < /dev/null || exit 7
-$C logs postgres < /dev/null | grep -E 'portfolio-restore|pg_restore: error'      # "portfolio-restore: done", 오류 줄 없음
+$C logs postgres < /dev/null | grep -E 'portfolio-restore|pg_restore: error|portfolio-functions'   # "portfolio-restore: done", 오류 줄 없음
+#    03은 "dashboard.reopen_incident created" 또는 (새 스냅샷에 이미 있으면) "already exists ... skipping" 한 줄. 실패하면 표지를 지워 healthy가 되지 않는다
 # 8) 시드 두 번(시드는 dashboard-app에 직접 붙으므로 nginx-waf가 없어도 된다): 첫 실행 RESULT: CHANGED(demo 다시 생성), 두 번째 RESULT: NO_CHANGES
 #    T54: 첫 실행이 분석이 끝난 예시 셋을 기록한다(examples: applied=3 kept=0 skipped=0). 새 스냅샷에 그 인시던트가 없으면 skipped로 남는다(1.4)
 $C --profile seed run --rm demo-seed < /dev/null || exit 8
@@ -880,6 +923,7 @@ docker image inspect --format '{{.Id}}' zeek-ad-dashboard-app:local | diff ~/zee
 ```
 
 - 앱 코드가 바뀌지 않았으면 앱 이미지는 교체하지 않는다(바뀌었으면 3.8을 먼저 따로 한다).
+- 셋째 스크립트(`T53`)는 함수 이름만 본다. 새 스냅샷이 zeek_AD의 새 판 `reopen_incident`를 이미 담고 있으면 옛 사본을 실행하지 않는다. 사본이 더 쓰이지 않게 되면 `zeekad-sql/`의 사본과 `03-zeekad-functions.sh`를 지우는 것은 다음 작업에서 정한다.
 - 7과 8 사이에는 새 앱 DB의 부트스트랩 계정(`viewer1`·`analyst1`·`analyst2`·`admin`)이 활성이다(비공개 무작위 비밀번호, `admin`은 TOTP). `demo`는 아직 없다. 그래서 7에서는 `nginx-waf`를 띄우지 않고, 시드 두 번으로 그 계정들을 비활성으로 만든 뒤(8) `nginx-waf`를 띄운다(8b). 공개 경로에서 부트스트랩 계정이 활성인 틈이 없다(T22 때는 이 틈이 약 5분 있었다).
 - 끝나면 3.6 확인과 4.4 공개 주소 확인을 한다. 공개 주소가 `502`면 3.8의 대처를 따른다.
 - **되돌리기**(어느 단계든 실패 시) 다음 순서로 한 뒤 멈춰 원인을 본다. compose를 부르는 줄에는 모두 `< /dev/null`을 붙인다(위 표준 입력 주의):
@@ -967,7 +1011,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] 브라우저 주소 표시줄에 인증서 경고가 없다(4.1 하위 도메인 인증서). `http://` 접속은 공유기가 `443`만 포워딩하므로 외부에서는 해당 없다.
 - [ ] `demo` / 공개 비밀번호로 로그인되고(TOTP 없음) 조사 큐·사건 상세(근거 요약 칸 포함)·보고서·전송 판단·Slack 기록·운영 상태(`feedback_summary`)가 스냅샷 데이터로 보인다. 보이는 캡처(`snapshot/manifest.json`의 `publicCaptures`: `cic17-*` 4, `syn1-*` 4, `lab-20261119`, `lab-20261122`) 건수가 매니페스트와 같고, 두 실습망 캡처 사건의 목록·상세·증적·AI 리포트가 보인다. `lab-20261122` 상세의 Slack 탭에 스레드 답글과 "채널에도 표시" 표지가 보인다(리허설 [T39a]). 숨김 캡처(`hiddenCaptures`: `lab-20261201`, `lab-20261118`, `lab-20261123` 등)는 캡처 목록에 없고, 직접 조회(목록 `captureId=<숨김 캡처>`·그 캡처의 사건 상세)는 `403`이다. 첫 화면(`/`)은 관제 현황판이다. 숨김 캡처 ID는 현황판·운영 현황·검토 목록 응답에도 없다. 최신 큐에 있던 인시던트의 번호(`/incidents/<번호>`)는 교체 전과 같다. (리허설 [2]·[3]·[T39])
 - [ ] IP는 뒤 두 옥텟이 가려져 보인다(`192.168.*.*`). (리허설 [3])
-- [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). (리허설 [4])
+- [ ] `demo`로 상태 전이·검토 결정·`/api/admin/**`가 `403`이다(화면에 쓰기 버튼이 없거나 눌러도 거부). 종결 건의 다시 열기도 `403`이고 화면에 다시 열기 폼이 없다. (리허설 [4]·[T53c])
 - [ ] `trial-analyst` / 공개 비밀번호로 로그인되고 역할이 `ANALYST`, 허용 캡처가 `demo`와 같으며 숨긴 캡처 직접 조회가 `403`이다. 공개 데모에서는 쓰기(상태 변경·결정·담당)와 로그인 실패를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T33]`). (리허설 [T33a])
 - [ ] 다음 정각 뒤 `logs --since 2h sandbox-reset`에 `OK` 줄이 있고 `ERROR`가 없다. (3.5, 리허설 [T33f])
 - [ ] 분석이 끝난 예시 셋(`T54`): 시드 로그가 `skipped=0`이고 `applied + kept = 3`이다. `demo`로 `/incidents?status=closed&period=all`에 셋이 보이고, 예시 A 상세가 종결·정탐이며 사유의 주소가 가려져 있고(`10.10.*.*`) 대응 조치는 종류·기록자·시각만 보인다(메모 없음). 다음 정각 뒤에도 그대로다. `demo-analyst`가 비활성이다(NAS `exec -T postgres psql -U postgres -d zeekad_dashboard -Atc "SELECT enabled FROM users WHERE username = 'demo-analyst'"`가 `f`. 로그인 실패를 일부러 만들지 않는다). (1.4, 리허설 [T54a]~[T54d])
@@ -981,6 +1025,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml exec -T postgres \
 - [ ] `https://soc.<DDNS 이름>.synology.me/api/incidents?asset=%27%20OR%201%3D1--`가 `403`(WAF)이다. XSS(`?asset=%3Cscript%3E`)·경로 탐색(`?asset=../../etc/passwd`)도 `403`. (리허설 [8])
 - [ ] 로그인 경로가 아닌 `POST /api/...`(예: `/api/incidents/101/rank/2/assignment`)에 인증 없이 `Content-Type: application/xml`로 깨진 XML 본문(`<a><b></a>`)을 보내면 `400`(WAF)이다. 이 요청은 로그인 실패를 만들지 않는다. 예: `curl.exe -s -o NUL -w "%{http_code}" -X POST -H "Content-Type: application/xml" --data-binary "<a><b></a>" "https://soc.<DDNS 이름>.synology.me/api/incidents/101/rank/2/assignment?probe=<고유 표식>"`. NAS에서 `docker logs --since 10m zeekad-portfolio-nginx-waf-1 2>&1 | grep -F <고유 표식>`으로 그 요청의 기록만 찾아 규칙 `200002`를 확인한다(방문자 IP가 든 다른 줄은 보지 않는다). ([T31])
 - [ ] 전달 헤더 신뢰(`T32`): `docker inspect`로 `nginx-waf` 주소가 `PORTFOLIO_WAF_IP`(`10.203.48.250`)이고 `dashboard-app` 환경의 `DASHBOARD_TRUSTED_PROXIES`가 같은 값이다. 공개 HTTPS 주소로 보낸 표식 요청(`curl.exe --resolve …:443:<NAS 주소> "https://soc.<DDNS 이름>.synology.me/login?probe=<고유 표식>"`)의 WAF 로그 줄에서 클라이언트 IP(줄 끝 `X-Forwarded-For` 필드의 신뢰 범위 밖 가장 오른쪽 주소)가 스택 두 서브넷의 주소가 아니다(주소는 적지 않고 "서브넷 안인가"만 적는다. NAS의 `127.0.0.1:18480`으로 바로 보내면 접속 주소가 게이트웨이라 이 확인이 되지 않는다). `demo` 로그인 뒤 반영 시각 이후 `demo`의 `LOGIN_SUCCESS` 행이 1 이상이고 그중 스택 두 서브넷(`PORTFOLIO_SUBNET`·`PORTFOLIO_DATA_SUBNET`, `T61`) 주소 행이 0이다(개수만 센다). 그 사이에 시드를 돌렸다면 시드의 관리자 로그인(`admin`)은 `portfolio-data` 주소로 찍히는 것이 정상이라 세지 않는다. `T61`부터 `api` 컨테이너에서는 `nginx-waf`에 닿지 않는다(아래 `T61` 항목). 같은 네트워크의 다른 컨테이너가 보낸 전달 헤더를 볼 때는 `portfolio-net`에 붙인 일회용 컨테이너(`docker run --rm --network zeekad-portfolio_portfolio-net --cap-drop ALL --security-opt no-new-privileges:true …`)에서 `nginx-waf:8080/?probe=<고유 표식>`에 `X-Forwarded-For: 198.51.100.x`를 붙인 `GET`을 보내고 WAF 로그 접속 주소가 그 컨테이너 주소인지 본다(감사가 남지 않는 요청). (리허설 [T32])
+- [ ] 다시 열기(`T53`): `zeekad` DB에 `dashboard.reopen_incident`가 하나 있고 소유 `zeekad_owner`, 실행 권한은 `dashboard_rw`뿐이며 `dashboard_rw`가 실행할 수 있는 함수가 셋이다(3.8 `T53` 절의 3)·4)). 공개 데모에서는 다시 열기를 일부러 만들지 않는다(쓰기 흐름은 리허설 `[T53b]`). (리허설 [T53a])
 - [ ] 네트워크 둘·권한·상태 확인(`T61`): 3.8 `T61` 절의 확인 9)~16)이 기대대로다. 곧 `portfolio-net`에는 `nginx-waf`·`dashboard-app`만, 내부 전용 `portfolio-data`에는 `postgres`·`api`·`dashboard-app`·`sandbox-reset`만 붙어 있다. `nginx-waf`에서 `api:8000`·`postgres:5432`에 TCP 연결이 되지 않고 `dashboard-app:8080`에는 된다. `api`에서 `nginx-waf:8080`에 닿지 않는다. 상주 다섯 PID 1의 `CapBnd`가 0, `NoNewPrivs`가 1이고 `postgres`의 `Config.User`가 `postgres`다. `nginx-waf` 로그에 최근 2분의 `/healthz` 감사 줄이 0이다(개수만). (리허설 [T61a]~[T61e])
 - [ ] 응답 헤더에 `Strict-Transport-Security`가 DSM 값 하나(`max-age=15768000; includeSubdomains; preload`, `T36`)이고 `Content-Security-Policy`(`script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`가 있고 `Server`에 버전이 없다(DSM 앞단이 `Server: nginx`를 붙인다. 4.2). 예: `curl.exe -sI https://soc.<DDNS 이름>.synology.me/login`. (리허설 [1]·[T36c]. 리허설의 WAF 응답에는 HSTS가 없고 공개 주소에서 DSM이 붙인다)
 - [ ] 로그인 응답의 `ZEEKAD_SESSION` 쿠키가 `Secure; HttpOnly; SameSite=Lax`다(브라우저 개발자 도구 > 애플리케이션 > 쿠키). (리허설 [2])
