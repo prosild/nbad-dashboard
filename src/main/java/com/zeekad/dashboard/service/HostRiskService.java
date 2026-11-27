@@ -426,7 +426,7 @@ public class HostRiskService {
         if ("true".equalsIgnoreCase(clean)) {
             return true;
         }
-        throw invalid("전환 거르기 값이 올바르지 않습니다.");
+        throw invalid("방향 전환 필터 값이 올바르지 않습니다.");
     }
 
     /**

@@ -125,7 +125,7 @@ class T53ReopenUnavailableIntegrationTest {
         String body = conflict.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(objectMapper.readTree(body).get("code").asText()).isEqualTo("CONFLICT");
         assertThat(objectMapper.readTree(body).get("message").asText())
-                .isEqualTo("다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요.");
+                .isEqualTo("다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요.");
         assertThat(body).doesNotContain("true_positive", "지금 결론", "ERROR");
         reset(zeekadWriteMapper);
 
@@ -135,7 +135,8 @@ class T53ReopenUnavailableIntegrationTest {
         JsonNode notFound = objectMapper.readTree(reopen(analyst).andExpect(status().isNotFound()).andReturn()
                 .getResponse().getContentAsString(StandardCharsets.UTF_8));
         assertThat(notFound.get("code").asText()).isEqualTo("NOT_FOUND");
-        assertThat(notFound.get("message").asText()).contains("새로고침").doesNotContain("ERROR");
+        // T68(M3): DB 문장에 안내가 없으면 대시보드 안내("다시 불러오기", 화면 단추 이름)를 붙인다
+        assertThat(notFound.get("message").asText()).contains("'다시 불러오기'로 최신 상태를 확인하세요.").doesNotContain("ERROR", "새로고침");
         reset(zeekadWriteMapper);
 
         when(zeekadWriteMapper.reopenIncident(anyLong(), anyString(), anyString(), anyString(), anyString()))

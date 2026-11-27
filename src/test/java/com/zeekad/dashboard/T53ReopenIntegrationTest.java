@@ -74,7 +74,7 @@ class T53ReopenIntegrationTest {
     static final long JOB = 97530L;
     static final long HIDDEN_JOB = 97540L;
     static final String TRANSITION_AUDIT = "INCIDENT_STATUS_TRANSITION";
-    static final String CONFLICT_MESSAGE = "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요.";
+    static final String CONFLICT_MESSAGE = "다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요.";
     static final String SUCCESS_MESSAGE = "인시던트를 다시 열었습니다. 상태는 분석 중입니다.";
     /** 시드한 첫 착수·첫 종결 시각 */
     static final String FIRST_ACK = "2026-11-25T01:00:00Z";

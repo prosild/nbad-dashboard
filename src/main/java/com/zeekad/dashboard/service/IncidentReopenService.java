@@ -34,7 +34,7 @@ public class IncidentReopenService {
     public static final String REOPEN_UNAVAILABLE = "REOPEN_UNAVAILABLE";
     public static final String REOPEN_UNAVAILABLE_MESSAGE = "이 환경의 탐지 DB에는 다시 열기 기능이 아직 없습니다.";
     /** 22023(종결이 아님, 판정이 화면과 다름). DB 문구의 상태·판정 코드 원문을 내보내지 않는다 */
-    public static final String CONFLICT_MESSAGE = "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요.";
+    public static final String CONFLICT_MESSAGE = "다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요.";
     public static final String SUCCESS_MESSAGE = "인시던트를 다시 열었습니다. 상태는 분석 중입니다.";
 
     private final ZeekadWriteMapper zeekadWriteMapper;

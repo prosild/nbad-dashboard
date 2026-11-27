@@ -106,7 +106,7 @@ public class AdminApiController {
         try {
             CriticalAsset updated = criticalAssetService.update(id, body.name(), body.description(),
                     authentication.getName(), "ADMIN", clientIpResolver.resolve(request));
-            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 고쳤습니다.", CriticalAssetDtos.Item.from(updated))));
+            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 수정했습니다.", CriticalAssetDtos.Item.from(updated))));
         } catch (CriticalAssetException ex) {
             return criticalAssetError(ex);
         }
@@ -120,7 +120,7 @@ public class AdminApiController {
         try {
             CriticalAsset deleted = criticalAssetService.delete(id, authentication.getName(), "ADMIN",
                     clientIpResolver.resolve(request));
-            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 지웠습니다.", CriticalAssetDtos.Item.from(deleted))));
+            return ResponseEntity.ok(mutation(new CriticalAssetDtos.MutationResponse("중요 자산을 삭제했습니다.", CriticalAssetDtos.Item.from(deleted))));
         } catch (CriticalAssetException ex) {
             return criticalAssetError(ex);
         }

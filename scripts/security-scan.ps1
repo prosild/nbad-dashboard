@@ -609,7 +609,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
 
                 $viewerDetail2 = Invoke-Http -Url "$baseHttps/api/incidents/101/rank/2" -CookieJar $viewerCookies
                 Assert-Status $viewerDetail2 200 "viewer1 인시던트 상세(101/rank/2)"
-                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "타 인시던트 후속 알림" })
+                $vd2Replies = @($viewerDetail2.Json.detail.slackDeliveries | Where-Object { $_.threadRoleLabel -eq "다른 인시던트의 후속 알림" })
                 $e2eLogs.Add("[4b] viewer1 GET /api/incidents/101/rank/2 -> HTTP $($viewerDetail2.Status) thread replies=$($vd2Replies.Count) threadParent=[$(@($vd2Replies | ForEach-Object { $_.threadParent }) -join ', ')]")
                 Assert-True ($vd2Replies.Count -gt 0 -and @($vd2Replies | Where-Object { $_.threadParent -match "192\.168\.\*\.\*" }).Count -gt 0 -and -not $viewerDetail2.Body.Contains("192.168.10.50")) "viewer1 Slack zeekad_thread_parent IP 마스킹" $viewerDetail2
 
@@ -2795,7 +2795,7 @@ ORDER BY 1, 2
                 Assert-Status $a53v 403 "[T53a] viewer1 다시 열기"
                 Assert-True ($idor53vMid -eq $idor22v) "[T53a] viewer1 허용 캡처 요청은 IDOR 감사를 더하지 않음 ([22c] 뒤 $idor22v -> $idor53vMid)"
                 Assert-ApiError $a53w 409 "CONFLICT" "[T53a] 화면의 판정이 지금과 다르면 409"
-                Assert-True ($a53w.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요." -and -not $a53w.Body.Contains("지금 결론") -and -not $a53w.Body.Contains("true_positive")) "[T53a] 409는 고정 문장, DB 문구·판정 코드 없음" $a53w
+                Assert-True ($a53w.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요." -and -not $a53w.Body.Contains("지금 결론") -and -not $a53w.Body.Contains("true_positive")) "[T53a] 409는 고정 문장, DB 문구·판정 코드 없음" $a53w
                 Assert-True ($before53 -eq "closed/true_positive|1" -and $mid53 -eq $before53) "[T53a] 거부된 요청은 상태·이력을 바꾸지 않음 ($before53 -> $mid53)"
 
                 # [T53b] 허용 밖 캡처(syn1-wed 211/1): analyst1 403 + ACCESS_DENIED_IDOR. 211/1의 상태는 그대로

@@ -2066,7 +2066,7 @@ try {
     Assert-True ($before53 -match '^closed\|(true_positive|false_positive|benign)\|\d+$' -and ($before53 -split '\|')[1] -eq $r53.Resolution) "[T53b] 대상은 종결 건 ($before53)"
     Assert-True ($tDetail53.Json.canReopen -eq $true -and $vDetail53.Json.canReopen -eq $false) "[T53b] 상세의 canReopen: $trialUser true, demo false"
     Assert-ApiError $x53a 409 "CONFLICT" "[T53b] 화면의 판정이 지금과 다르면 409"
-    Assert-True ($x53a.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요." -and $x53a.Body -notmatch '지금 결론|true_positive|false_positive|benign') "[T53b] 409 응답은 고정 문장이고 DB 문구·판정 코드가 없다" $x53a
+    Assert-True ($x53a.Json.message -eq "다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요." -and $x53a.Body -notmatch '지금 결론|true_positive|false_positive|benign') "[T53b] 409 응답은 고정 문장이고 DB 문구·판정 코드가 없다" $x53a
     Assert-True ($mid53 -eq $before53) "[T53b] 틀린 판정의 요청은 아무것도 바꾸지 않음 ($before53 -> $mid53)"
     Assert-Status $x53v 403 "[T53c] 조회자(demo)의 다시 열기는 403"
     Assert-True ($midV53 -eq $before53) "[T53c] 조회자의 요청은 아무것도 바꾸지 않음 ($midV53)"

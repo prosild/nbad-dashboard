@@ -318,7 +318,7 @@ class IncidentDetailAndSecurityIntegrationTest {
         // VIEWER가 다른 사건의 thread_parent에 포함된 원문 IP도 마스킹되는지 확인 (101/rank/2 -> 타 인시던트 후속 알림)
         mockMvc.perform(get("/api/incidents/101/rank/2").session(viewerSession))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("타 인시던트 후속 알림"))
+                .andExpect(jsonPath("$.detail.slackDeliveries[0].threadRoleLabel").value("다른 인시던트의 후속 알림"))
                 // T46: 컴퓨터 계정(끝이 $)도 같은 규칙
                 .andExpect(jsonPath("$.detail.assetNames[0].extraAttributes.zeekad_name").value("B***"))
                 .andExpect(content().string(not(containsString("BKP-SVC01"))))

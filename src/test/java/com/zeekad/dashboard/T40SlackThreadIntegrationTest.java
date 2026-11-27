@@ -178,7 +178,7 @@ class T40SlackThreadIntegrationTest {
             assertThat(g.get("memberCount").asLong()).isZero();
             assertThat(g.get("threadKey").asText()).isEqualTo("restricted-1");
             assertThat(g.at("/deliveries/0/threadParent").asText()).isEqualTo("restricted-1");
-            assertThat(g.at("/deliveries/0/threadRoleLabel").asText()).isEqualTo("타 인시던트 후속 알림");
+            assertThat(g.at("/deliveries/0/threadRoleLabel").asText()).isEqualTo("다른 인시던트의 후속 알림");
             assertThat(d.at("/detail/slackDeliveries/0/threadParent").asText()).isEqualTo("restricted-1");
             assertThat(d.at("/detail/slackDeliveries/0/threadKey").asText()).isEqualTo("restricted-1");
             JsonNode payload = objectMapper.readTree(g.at("/deliveries/0/payloadJson").asText());

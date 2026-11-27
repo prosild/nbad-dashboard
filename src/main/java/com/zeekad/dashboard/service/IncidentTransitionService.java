@@ -165,7 +165,7 @@ public class IncidentTransitionService {
             try {
                 incidentAssignmentService.autoAssignOnStart(principal, item, jobId, clientIp);
             } catch (RuntimeException ex) {
-                log.error("조사 시작 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank,
+                log.error("분석 시작 뒤 담당자 자동 지정 실패: jobId={}, rank={}, actor={}", jobId, queueRank,
                         UntrustedText.forLog(actorUsername), ex);
                 successMessage = successMessage + AUTO_ASSIGN_FAILED_NOTE;
             }

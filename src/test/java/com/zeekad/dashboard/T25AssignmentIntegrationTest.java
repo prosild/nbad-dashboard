@@ -202,12 +202,17 @@ class T25AssignmentIntegrationTest {
         // 화면이 본 값(미배정)과 서버 값(n1)이 다르다
         JsonNode c = json(assign(a2, 96003, 2, n2, null).andExpect(status().isConflict()).andReturn());
         assertThat(c.get("code").asText()).isEqualTo("ASSIGNMENT_CONFLICT");
+        // T68(C4): 안내는 화면 단추 이름("다시 불러오기")에 맞춘다
+        assertThat(c.get("message").asText()).isEqualTo("다른 사용자가 먼저 담당자를 바꿨습니다. '다시 불러오기'로 지금 담당자를 확인하세요.");
         // 같은 값으로
         JsonNode nc = json(assign(a2, 96003, 2, n1, n1).andExpect(status().isConflict()).andReturn());
         assertThat(nc.get("code").asText()).isEqualTo("NO_CHANGE");
+        // T68(C4): 지정과 해제의 문장을 나눈다(한 문장이면 해제 때 사실과 다르다)
+        assertThat(nc.get("message").asText()).isEqualTo("이미 그 담당자로 지정되어 있습니다.");
         // 미배정을 해제
         JsonNode nc2 = json(assign(a2, 96003, 3, null, null).andExpect(status().isConflict()).andReturn());
         assertThat(nc2.get("code").asText()).isEqualTo("NO_CHANGE");
+        assertThat(nc2.get("message").asText()).isEqualTo("이미 담당자가 없습니다.");
         // 종결
         JsonNode closed = json(assign(a1, 96003, 6, n1, null).andExpect(status().isConflict()).andReturn());
         assertThat(closed.get("code").asText()).isEqualTo("INCIDENT_CLOSED");

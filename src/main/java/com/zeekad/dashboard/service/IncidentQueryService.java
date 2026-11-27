@@ -219,7 +219,7 @@ public class IncidentQueryService {
     }
 
     /** T63: 자산 검색어가 100 UTF-16 단위를 넘을 때(큐·옛 목록 API·새 건수·이웃 같은 문구) */
-    public static final String ASSET_TOO_LONG_MESSAGE = "자산 검색어는 100자를 넘을 수 없습니다.";
+    public static final String ASSET_TOO_LONG_MESSAGE = "호스트 검색어는 100자를 넘을 수 없습니다.";
 
     /**
      * 자산 검색. normalizedQuery는 {@link TextSearch#parseQuery}가 정규화한 검색어다(null이면 조건 없음).

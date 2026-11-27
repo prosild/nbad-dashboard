@@ -681,7 +681,7 @@ public class IncidentDetailService {
         } else if (rawThreadParent.equals(d.getIncidentId())) {
             threadRoleLabel = "후속 알림";
         } else {
-            threadRoleLabel = "타 인시던트 후속 알림";
+            threadRoleLabel = "다른 인시던트의 후속 알림";
         }
         SlackDelivery masked = maskingService.maskSlackDelivery(d, role);
         String displayThreadParent;

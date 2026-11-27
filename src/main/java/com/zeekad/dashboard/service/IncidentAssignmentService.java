@@ -50,6 +50,10 @@ public class IncidentAssignmentService {
 
     public static final String REASON_MANUAL = "manual";
     public static final String REASON_AUTO_ON_START = "auto_on_start";
+    /** T68(C4): 바뀐 것이 없는 지정·해제와 먼저 바뀐 담당자의 안내. 새로고침 안내는 화면 단추 이름("다시 불러오기")에 맞춘다 */
+    public static final String NO_CHANGE_ASSIGNED_MESSAGE = "이미 그 담당자로 지정되어 있습니다.";
+    public static final String NO_CHANGE_UNASSIGNED_MESSAGE = "이미 담당자가 없습니다.";
+    public static final String CONFLICT_MESSAGE = "다른 사용자가 먼저 담당자를 바꿨습니다. '다시 불러오기'로 지금 담당자를 확인하세요.";
     /** IN 목록 한 번에 넣는 incident_id 수(바인드 변수 한계보다 충분히 작게) */
     static final int LOOKUP_CHUNK = 1000;
 
@@ -123,10 +127,10 @@ public class IncidentAssignmentService {
         if (outcome == null || outcome.code() != null) {
             String code = outcome == null ? "ASSIGNMENT_CONFLICT" : outcome.code();
             if ("NO_CHANGE".equals(code)) {
-                return AssignResult.fail(409, code, "이미 그 담당 상태입니다. 바뀐 것이 없습니다.");
+                // T68(C4): 지정이면 "이미 그 담당자", 해제(대상 없음)면 "이미 담당자가 없음"(한 문장으로 쓰면 해제 때 사실과 다르다)
+                return AssignResult.fail(409, code, targetId == null ? NO_CHANGE_UNASSIGNED_MESSAGE : NO_CHANGE_ASSIGNED_MESSAGE);
             }
-            return AssignResult.fail(409, "ASSIGNMENT_CONFLICT",
-                    "다른 사용자가 먼저 담당자를 바꿨습니다. 화면을 새로 고쳐 지금 담당자를 확인하세요.");
+            return AssignResult.fail(409, "ASSIGNMENT_CONFLICT", CONFLICT_MESSAGE);
         }
         auditAssignment(principal.getUsername(), principal.getRole().name(), item, jobId, outcome, REASON_MANUAL, clientIp);
         return AssignResult.ok(currentView(item.getIncidentId(), incidentQueryService.loadUserDisplayMap()));

@@ -131,7 +131,7 @@ public class AnalystReviewDecisionService {
                             reviewJobId, UntrustedText.forLog(incidentId));
                     String safeMsg = SqlErrorSanitizer.sanitizeSqlMessage(
                             sqlEx.getMessage(),
-                            "요청한 분석가 검토 항목을 찾을 수 없습니다.");
+                            "요청한 에스컬레이션을 찾을 수 없습니다.");
                     return DecisionResult.failure(404, "NOT_FOUND", SqlErrorSanitizer.withRefreshGuide(safeMsg));
                 }
             }
