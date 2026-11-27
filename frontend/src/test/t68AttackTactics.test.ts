@@ -5,7 +5,7 @@ import snapshot from './fixtures/public-attack-tactics.json';
 
 /**
  * T68 추가 결정 2: ATT&CK 전술 사전(labels.ts attackTactic)이 공개 스냅샷의 전술 값을 모두 덮는다.
- * 새 판 ATT&CK은 Defense Evasion을 Stealth(TA0005)와 Defense Impairment(TA0112)로 나눴다. 탐지 파이프라인은 stealth를 보낸다.
+ * ATT&CK v19(2026-04)는 Defense Evasion을 Stealth(TA0005)와 Defense Impairment(TA0112)로 나눴다(MITRE 전술 페이지·v19 공지). 탐지 파이프라인은 stealth를 보낸다.
  */
 describe('T68 ATT&CK 전술 표시 이름', () => {
   it('공개 스냅샷의 전술 값은 모두 사전에 있고 영어 원문으로 남지 않는다', () => {

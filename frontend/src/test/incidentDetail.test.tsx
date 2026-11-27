@@ -591,6 +591,24 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ action: 'confirm' });
   });
 
+  it('T68: 결정이 409면 서버 문장과 그 문장이 가리키는 "다시 불러오기" 단추를 보이고, 누르면 상세를 다시 부른다', async () => {
+    const user = userEvent.setup();
+    const message = "검토 결정 규칙에 위배되었거나 이미 다른 분석가가 결정했습니다. '다시 불러오기'로 최신 상태를 확인하세요.";
+    const { fetchMock } = renderDetail('/incidents/42/rank/1', {
+      postResponse: (url) =>
+        url.endsWith('/review-decision') ? json({ succeeded: false, code: 'CONFLICT', message }, 409) : undefined,
+    });
+    const detailGets = () =>
+      fetchMock.mock.calls.filter(([u, init]) => String(u) === '/api/incidents/42/rank/1' && (init as RequestInit | undefined)?.method !== 'POST').length;
+    await screen.findByRole('tab', { name: '요약', selected: true });
+    await user.click(within(actions()).getByRole('button', { name: '승인' }));
+    const alert = await within(actions()).findByRole('alert');
+    expect(alert).toHaveTextContent(message);
+    const before = detailGets();
+    await user.click(within(alert).getByRole('button', { name: '다시 불러오기' }));
+    await waitFor(() => expect(detailGets()).toBe(before + 1));
+  });
+
   it('결정 뒤에는 결정 버튼 대신 결정·반영 상태를 보인다', async () => {
     renderDetail('/incidents/42/rank/1', {
       detail: (d) => ({

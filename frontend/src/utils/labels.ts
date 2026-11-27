@@ -223,7 +223,7 @@ export const LABEL_DICTIONARIES = {
     'privilege escalation': '권한 상승',
     'defense-evasion': '방어 회피',
     'defense evasion': '방어 회피',
-    // T68 추가 결정 2: 새 판 ATT&CK은 Defense Evasion을 Stealth(TA0005)·Defense Impairment(TA0112)로 나눴다. 옛 값도 남긴다
+    // T68 추가 결정 2: ATT&CK v19(2026-04)는 Defense Evasion을 Stealth(TA0005)·Defense Impairment(TA0112)로 나눴다(MITRE 전술 페이지·v19 공지). 옛 값도 남긴다
     stealth: '은닉',
     'defense-impairment': '방어 무력화',
     'defense impairment': '방어 무력화',
