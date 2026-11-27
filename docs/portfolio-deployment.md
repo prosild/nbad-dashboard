@@ -670,15 +670,15 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 
 #### 감사 로그 보관 기한·컨테이너 로그 한도를 넣는 갱신(`T58`)
 
-`T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이다. 반영 뒤(2026-11-27) 다섯 서비스는 compose대로 `json-file`(10MB x 5)이다. NAS의 기본 로그 드라이버는 Synology `db`라서 반영 전 WAF 컨테이너의 감사 줄(`T59` 전 판, 세션 쿠키·CSRF 토큰 포함)이 DSM 컨테이너 로그에 남았을 수 있다(확인하지 않음). 그 세션은 유휴 30분·절대 8시간 만료로 이미 끝났다. 이 반영(`T65`, 3.9 경로)에서 공개 경로는 766초 닫혀 있었다: 새 스냅샷(35.9MB) 복원이 `postgres` 상태 확인 한도(시작 유예 120초 + 10초 × 12회)보다 오래 걸려 `up --wait`가 멈췄고 복원이 끝나기를 기다렸다(한도를 고치는 것은 다음 작업).
+`T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 `T65`가 3.9 경로(스냅샷 교체와 함께 앱 DB를 새로 만듦)로 했다(2026-11-27). 아래는 그때 지킬 순서와 확인할 것이다. 반영 뒤(2026-11-27) 다섯 서비스는 compose대로 `json-file`(10MB x 5)이다. NAS의 기본 로그 드라이버는 Synology `db`라서 반영 전 WAF 컨테이너의 감사 줄(`T59` 전 판, 세션 쿠키·CSRF 토큰 포함)이 DSM 컨테이너 로그에 남았을 수 있다(확인하지 않음). 그 세션은 유휴 30분·절대 8시간 만료로 이미 끝났다. 이 반영(`T65`, 3.9 경로)에서 공개 경로는 766초 닫혀 있었다: 새 스냅샷(35.9MB) 복원이 `postgres` 상태 확인 한도(시작 유예 120초 + 10초 × 12회)보다 오래 걸려 `up --wait`가 멈췄고 복원이 끝나기를 기다렸다(한도를 고치는 것은 다음 작업). 닫힌 시간에는 반영 도구의 결함(`string_agg` 정렬)으로 다시 돈 약 2분과 시드·초기화 설정 시간도 들어 있다.
 
 - **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V4`를 적용한다. `flyway_schema_history`에 버전 4가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(초기화 계정에 삭제 함수의 `EXECUTE`를 준다. `RESULT: OK`와 `purge_public_execute=false`) → ③ compose 값(기한 90일, 로그 한도)이 걸리게 서비스를 다시 만든다. ①보다 ②를 먼저 하면 `sandbox-setup`이 `function public.purge_expired_audit_logs(integer) is missing`으로 멈춘다(아무것도 바꾸지 않는다).
 - **`T61`과 한 번에 반영할 때**: 위 ①→②→③ 대신 아래 `T61` 절의 처음 전환 순서를 따른다(그 순서의 `up`이 ①과 ③을 한 번에 하고 이어서 ②를 한다. `dashboard-app` 하나만 `--no-deps`로 먼저 다시 만들지 않는다).
 - **틈의 로그**: 새 `sandbox-reset.sh`가 ②보다 먼저 돌면 감사 칸이 `audit[NOT_CONFIGURED]`다. 줄 전체는 `ERROR`가 되지 않고 다음 정각에 다시 부른다.
 - **로그 한도는 모든 서비스를 다시 만들어야 걸린다**: 로그 설정은 컨테이너를 만들 때 정해진다. `up -d`가 설정이 바뀐 서비스(전부)를 다시 만들므로 `postgres`도 잠깐 내려간다(DB 볼륨은 그대로다). 다시 만든 컨테이너의 옛 로그는 사라진다.
-- **`T57`이 반영 전에 기록할 것**(이 문서를 쓸 때 NAS Container Manager의 기본 로그 드라이버는 확인하지 않았다): `docker info --format '{{.LoggingDriver}}'`와 컨테이너 하나의 `docker inspect --format '{{.HostConfig.LogConfig}}' zeekad-portfolio-nginx-waf-1`. 기본 드라이버가 `json-file`이 아니었다면 `json-file`로 바뀐 뒤 DSM Container Manager 화면의 로그 탭이 비는지 확인해 적는다(`docker logs`와 `docker compose logs`는 `json-file`에서 그대로 읽힌다).
-- **반영 뒤 확인**: `sandbox-reset … --once`의 줄 끝이 `audit[OK] purged=<수> cutoff=<UTC>`다. 처음에는 90일 넘은 행이 한꺼번에 지워진다(지운 수를 기록한다). 서비스마다 `docker inspect --format '{{json .HostConfig.LogConfig}}'`가 `json-file`·`10m`·`5`다. 이어서 4.4를 한다.
-- **되돌리기용 백업**: `backup/app-pre-*.dump` 가운데 90일 넘은 것을 지운다(3.9의 3a와 같은 명령). 처음 지우는 것은 `T57`의 NAS 단계다.
+- **반영 전에 기록할 것**: `docker info --format '{{.LoggingDriver}}'`와 컨테이너 하나의 `docker inspect --format '{{.HostConfig.LogConfig}}' zeekad-portfolio-nginx-waf-1`. `T65`는 반영 전에 기록했다(기본 드라이버 Synology `db`, `nginx-waf`도 `db`). 기본 드라이버가 `json-file`이 아니면 `json-file`로 바뀐 뒤 DSM Container Manager 화면의 로그 탭이 비는지 볼 수 있는데, `T65`는 보지 않았다(운영자가 고를 수 있는 확인이다. `docker logs`와 `docker compose logs`는 `json-file`에서 그대로 읽힌다).
+- **반영 뒤 확인**: `sandbox-reset … --once`의 줄 끝이 `audit[OK] purged=<수> cutoff=<UTC>`다. 처음에는 90일 넘은 행이 한꺼번에 지워진다(지운 수를 기록한다). `T65`는 앱 DB를 새로 만든 반영이라 첫 줄이 `purged=0`이었다. 서비스마다 `docker inspect --format '{{json .HostConfig.LogConfig}}'`가 `json-file`·`10m`·`5`다. 이어서 4.4를 한다.
+- **되돌리기용 백업**: `backup/app-pre-*.dump` 가운데 90일 넘은 것을 지운다(3.9의 3a와 같은 명령). 처음 지운 것은 `T65`의 NAS 단계였다(90일 넘은 백업 0개).
 - **롤백**: 파일 셋을 `*.pre-t58`로 되돌리고 앞 앱 이미지를 `:local`로 다시 태그한 뒤 서비스를 `up`한다. 옛 `sandbox-reset.sh`는 삭제 함수를 부르지 않으므로 그 뒤로는 아무것도 지워지지 않는다. 앱 DB의 `V4`(좁힌 트리거, `TRUNCATE` 차단, 삭제 함수)를 그대로 둔 채 앞 앱 이미지가 뜨는지는 `T57`이 리허설에서 확인한다. 이미 지워진 감사 행은 되돌리지 않는다.
 
 #### 대응 조치 기록을 넣는 갱신(`T56`)
