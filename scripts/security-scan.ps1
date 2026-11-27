@@ -494,6 +494,30 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 Assert-True (-not $bundleText.Contains("정밀도")) "SPA 번들에 옛 표기 '정밀도' 없음(T20 정탐률로 바꿈)"
                 $e2eLogs.Add("[1e] SPA bundle operations notices present: $($bundleNotices -join ' | '); '정확도'·'정밀도' absent")
 
+                # [T67a] favicon(T67): SPA 셸이 /favicon.ico를 가리키고, 비인증 GET이 WAF(ModSecurity)와 앱(내장 Tomcat)을 거쳐 200 이미지다.
+                #        내용은 저장소 파일과 같은 바이트, 보안 헤더가 붙고, 그 요청에 ModSecurity 감사 줄이 없다(접근 줄은 남아 표식을 찾았음을 보인다).
+                #        화면 번들에는 T67 판정 문장("모델이 올린 인시던트", "분석가 판정")이 있고 옛 카드 이름 "모델 판정"이 없다.
+                Assert-True ($loginGet.Body.Contains('<link rel="icon" href="/favicon.ico"')) "[T67a] SPA 셸이 /favicon.ico를 가리킴" $loginGet
+                $probe67 = "t67fav$(New-RandomToken 8)"
+                $hdr67 = Join-Path $tmpDir "t67-favicon.hdr"
+                $bin67 = Join-Path $tmpDir "t67-favicon.bin"
+                $code67 = (Invoke-NativeCapture "curl.exe" @("-sS", "-k", "--max-time", "20", "-D", $hdr67, "-o", $bin67, "-w", "%{http_code}", "-H", "Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8", "$baseHttps/favicon.ico?probe=$probe67") -IgnoreExitCode).Output.Trim()
+                $resp67 = [pscustomobject]@{ Method = "GET"; Url = "$baseHttps/favicon.ico"; Status = [int]$code67; Headers = $(if (Test-Path $hdr67) { [IO.File]::ReadAllText($hdr67, $utf8NoBom) } else { "" }); Body = ""; Json = $null }
+                $ct67 = Get-HeaderValue $resp67 "Content-Type"
+                $sha67 = if (Test-Path $bin67) { (Get-FileHash -Algorithm SHA256 $bin67).Hash.ToLowerInvariant() } else { "none" }
+                $shaRepo67 = (Get-FileHash -Algorithm SHA256 (Join-Path $RepoRoot "frontend/public/favicon.ico")).Hash.ToLowerInvariant()
+                $csp67 = Get-HeaderValue $resp67 "Content-Security-Policy"
+                $access67 = Get-WafProbeLineCount $probe67
+                $wafLogs67 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
+                $audit67 = @($wafLogs67 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and ((Test-ProbeMark $_ $probe67) -or $_ -match '"uri":"/favicon\.ico') })
+                $e2eLogs.Add("[T67a] unauthenticated GET /favicon.ico?probe=<marker> via WAF -> HTTP $code67 Content-Type=$ct67 sha256=$sha67 (repo $shaRepo67) nosniff=$(Get-HeaderValue $resp67 'X-Content-Type-Options') X-Frame-Options=$(Get-HeaderValue $resp67 'X-Frame-Options') CSP frame-ancestors none=$([bool]($csp67 -and $csp67.Contains("frame-ancestors 'none'")))`n      nginx-waf lines with the marker=$access67, ModSecurity audit lines for /favicon.ico=$($audit67.Count); bundle '모델이 올린 인시던트'=$($bundleText.Contains('모델이 올린 인시던트')) '분석가 판정'=$($bundleText.Contains('분석가 판정')) '모델 판정'=$($bundleText.Contains('모델 판정'))")
+                Assert-True ($code67 -eq '200') "[T67a] 비인증 GET /favicon.ico 200 (실제 $code67)" $resp67
+                Assert-True ($ct67 -match '^image/') "[T67a] /favicon.ico Content-Type image/* (실제 $ct67)" $resp67
+                Assert-True ($sha67 -eq $shaRepo67) "[T67a] /favicon.ico 내용 = frontend/public/favicon.ico ($sha67 vs $shaRepo67)" $resp67
+                Assert-True ($csp67 -and $csp67.Contains("frame-ancestors 'none'") -and (Get-HeaderValue $resp67 "X-Content-Type-Options") -eq "nosniff") "[T67a] /favicon.ico 보안 헤더(CSP frame-ancestors, nosniff)" $resp67
+                Assert-True ($access67 -ge 1 -and $audit67.Count -eq 0) "[T67a] /favicon.ico 요청의 nginx-waf 접근 줄 있음($access67)·ModSecurity 감사 줄 0건($($audit67.Count))"
+                Assert-True ($bundleText.Contains('모델이 올린 인시던트') -and $bundleText.Contains('분석가 판정') -and -not $bundleText.Contains('모델 판정')) "[T67a] SPA 번들에 T67 판정 문장이 있고 옛 카드 이름 '모델 판정'이 없음"
+
                 # [2] /api/** 는 SPA로 폴백하지 않는다
                 $unauthApi = Invoke-Http -Url "$baseHttps/api/incidents"
                 $unauthMissing = Invoke-Http -Url "$baseHttps/api/does-not-exist/e2e"
