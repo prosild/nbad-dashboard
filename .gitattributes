@@ -1,2 +1,3 @@
 *.sh text eol=lf
 docker/portfolio/initdb/zeekad-sql/*.sql text eol=lf
+*.ico binary
