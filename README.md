@@ -129,7 +129,7 @@ flowchart LR
 | SQL 주입 방지 | MyBatis 매퍼는 `#{}` 바인딩만 쓰고 `${}`는 시험이 금지 | 시험 `StaticSecurityAndConfigTest` |
 | 신뢰하지 않는 글자열 | 호스트·사용자 이름과 LLM 리포트 글을 바깥 입력으로 다룬다. 서버는 숨은 문자(방향 전환·제어·보이지 않는 문자)를 분석가에게는 `[U+202E]` 같은 표지로 보이고 조회자에게서는 지운 뒤 가리며 칸마다 길이 상한(이름 256자 등)을 둔다. 화면은 이름 칸의 폭을 정하고 요약 탭의 리포트 글마다 "AI 작성" 표지를 붙인다. CSV·마크다운 내보내기는 같은 표지 처리와 수식·마크다운 기호 방어를 한 번 더 한다 | `service/UntrustedText.java`, `frontend/src/utils/hiddenChars.ts`, `frontend/src/utils/incidentExport.ts`, 시험 `T63UntrustedTextIntegrationTest`, `t64UntrustedText.test.tsx` |
 | DB 계정 분리 | 읽기 계정은 계약 뷰 `SELECT`만, 쓰기 계정은 함수 세 개 `EXECUTE`만 | [`docs/deployment-guide.md`](docs/deployment-guide.md) 2.1 |
-| 네트워크 분리 | 공개 스택은 네트워크가 둘이다. 인터넷 요청을 받는 WAF는 앱과만 같은 네트워크에 있고 DB·근거 API·초기화 도구는 바깥 길이 없는 내부 전용 네트워크에 있어 WAF에서 DB와 근거 API에 닿지 않는다 | `compose.portfolio.yml`, 리허설 `[T61a]`~`[T61c]`, 시험 `StaticSecurityAndConfigTest` |
+| 네트워크 분리 | 공개 스택은 네트워크가 둘이다. 인터넷 요청을 받는 WAF는 앱과만 같은 네트워크에 있고 DB·근거 API·초기화 도구는 내부 전용 네트워크에 있어 WAF에서 DB와 근거 API에 닿지 않고 인터넷으로 나가지 못한다. 다만 공개 데모 NAS의 Docker는 이 네트워크에도 호스트로 가는 경로를 넣어 NAS 자신의 주소에는 닿는다 | `compose.portfolio.yml`, 리허설 `[T61a]`~`[T61c]`, 공개 확인 `[T61a]`(NAS), 시험 `StaticSecurityAndConfigTest` |
 | 컨테이너 | 비루트 실행, 최종 이미지에 Node·JDK 없음(JRE만). 공개 스택의 모든 서비스와 VMware 구성의 두 서비스가 `cap_drop: [ALL]`·`no-new-privileges`로 돌고 공개 스택의 DB도 root로 시작하지 않는다 | `Dockerfile`, `compose.portfolio.yml`, `compose.yml`, 리허설 `[T61d]` |
 
 ## 검증
@@ -142,7 +142,7 @@ flowchart LR
 | 공개 스택 리허설 | 공개 데모와 같은 구성에 스냅샷을 복원해 E2E와 ZAP을 돌린 뒤 지운다 (`scripts/portfolio-verify.ps1`) |
 | 공개 주소 확인 | 배포 뒤 공개 주소에서 로그인·마스킹·숨김 캡처 `403`·속도 제한 등을 확인 |
 
-최근 결과(2026-11-26, commit `712f173`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과, 공개 주소 확인 250항목 통과. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
+최근 결과(2026-11-27, commit `ccb314a`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과, 공개 주소 확인 317항목 중 315 통과(남은 둘은 NAS의 Docker 환경 차이: 내부 전용 네트워크에서 NAS 호스트 주소에 닿음, 커널이 NoNewPrivs를 표시하지 않아 Docker 설정으로 확인). Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
 
 ## AI와 일한 방식
 
@@ -180,7 +180,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 
 ## 아쉬운 점과 다음에 할 것
 
-- 공개 데모의 전체 기간 인시던트 목록 응답이 최대 980ms입니다(공개 주소 측정). 목표인 1초 안이지만 여유가 작습니다. 새 스냅샷에서 목록이 약 3배 느려진 것을 계약 뷰용 인덱스 하나로 되돌렸습니다(로컬 663 → 137ms).
+- 공개 데모의 전체 기간 인시던트 목록 응답이 최대 477ms입니다(공개 주소 측정). 목록 요청 하나에 같은 질의를 서너 번 돌리던 것을 한 번으로 줄여 로컬 리허설 스택에서는 340ms → 165ms가 됐습니다. 새 스냅샷에서 목록이 약 3배 느려진 것을 계약 뷰용 인덱스 하나로 되돌렸습니다(로컬 663 → 137ms).
 - 호스트 위험도의 "목적지 → 출발지 전환" 표지는 같은 캡처 안에서 순서만 보고 시간 간격을 보지 않습니다. 공개 데이터셋에서는 호스트 14개 모두에 붙어 먼저 볼 호스트를 가려내는 데 도움이 되지 않습니다.
 - 공개 스택은 네트워크를 둘로 나누고 모든 컨테이너에서 capability를 빼서 스택 안의 컨테이너가 패킷 출처를 꾸밀 수 없습니다. 호스트의 프로세스와 WAF 네트워크에 나중에 새로 붙인 컨테이너는 여전히 막지 못하고, `api`·초기화 도구는 앱에 직접 닿습니다(앱이 그 연결의 전달 헤더를 믿지 않습니다).
 - Spring Framework 6.2.19에 CRITICAL 취약점 2건이 남아 있습니다. 해당 기능(`XsltView`, SSE 뷰)을 쓰지 않아 노출 경로는 없고 고친 버전이 Spring Boot 4 세대라 그때 해소합니다.

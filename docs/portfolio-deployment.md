@@ -670,7 +670,7 @@ docker image inspect --format '{{.Id}}' $IMG:local; cat ~/zeekad-portfolio-check
 
 #### 감사 로그 보관 기한·컨테이너 로그 한도를 넣는 갱신(`T58`)
 
-`T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이고 실제 명령과 값은 `T57`이 반영한 뒤 여기에 적는다.
+`T58`은 앱 이미지 하나와 파일 셋(`compose.portfolio.yml`, `docker/portfolio/sandbox/sandbox-setup.sh`, `docker/portfolio/sandbox/sandbox-reset.sh`)을 바꾼다. `.env`와 스냅샷은 그대로다. NAS 반영은 통합 작업 `T57`이 한다. 아래는 그때 지킬 순서와 확인할 것이다. 반영 뒤(2026-11-27) 다섯 서비스는 compose대로 `json-file`(10MB x 5)이다. NAS의 기본 로그 드라이버는 Synology `db`라서 반영 전 WAF 컨테이너의 감사 줄(`T59` 전 판, 세션 쿠키·CSRF 토큰 포함)이 DSM 컨테이너 로그에 남았을 수 있다(확인하지 않음). 그 세션은 유휴 30분·절대 8시간 만료로 이미 끝났다. 이 반영(`T65`, 3.9 경로)에서 공개 경로는 766초 닫혀 있었다: 새 스냅샷(35.9MB) 복원이 `postgres` 상태 확인 한도(시작 유예 120초 + 10초 × 12회)보다 오래 걸려 `up --wait`가 멈췄고 복원이 끝나기를 기다렸다(한도를 고치는 것은 다음 작업).
 
 - **순서가 있다**: ① 앱 이미지를 바꿔 `dashboard-app`을 다시 만든다(Flyway가 `V4`를 적용한다. `flyway_schema_history`에 버전 4가 성공으로 있는지 본다) → ② `sandbox-setup`을 다시 돌린다(초기화 계정에 삭제 함수의 `EXECUTE`를 준다. `RESULT: OK`와 `purge_public_execute=false`) → ③ compose 값(기한 90일, 로그 한도)이 걸리게 서비스를 다시 만든다. ①보다 ②를 먼저 하면 `sandbox-setup`이 `function public.purge_expired_audit_logs(integer) is missing`으로 멈춘다(아무것도 바꾸지 않는다).
 - **`T61`과 한 번에 반영할 때**: 위 ①→②→③ 대신 아래 `T61` 절의 처음 전환 순서를 따른다(그 순서의 `up`이 ①과 ③을 한 번에 하고 이어서 ②를 한다. `dashboard-app` 하나만 `--no-deps`로 먼저 다시 만들지 않는다).
@@ -712,7 +712,7 @@ docker compose -p zeekad-portfolio -f compose.portfolio.yml --env-file .env --pr
   ```
   이어서 4.4를 한다.
 - **롤백**: 옛 WAF 이미지(`zeek-ad-dashboard-waf:pre-<작업 ID>`)로 되돌리면 요청 헤더와 응답 헤더 기록이 다시 켜진다. 세션 쿠키·CSRF 토큰·`Set-Cookie` 값이 컨테이너 로그에 다시 남으므로 되돌린 채 두지 않는다.
-- **이미 쌓인 로그**(`T57`이 NAS에서 확인한 뒤 확정할 문장): 반영 전의 `nginx-waf` 컨테이너 로그에는 옛 감사 줄(쿠키 값 포함)이 들어 있다. 로그 드라이버가 `json-file`이면 서비스를 다시 만들 때 옛 컨테이너의 로그가 함께 사라진다. NAS의 드라이버는 이 문서를 쓸 때 확인하지 않았다. `docker inspect --format '{{.HostConfig.LogConfig.Type}}' zeekad-portfolio-nginx-waf-1`로 확인한다. `json-file`이 아니면 옛 로그가 남는 곳과 지우는 방법을 여기에 적는다. 옛 줄에 남은 세션 쿠키 값은 그 세션이 끝나면(유휴 30분, 절대 8시간) 쓸 수 없다.
+- **이미 쌓인 로그**: 반영 전의 `nginx-waf` 컨테이너 로그에는 옛 감사 줄(쿠키 값 포함)이 들어 있었다. NAS의 기본 로그 드라이버는 Synology `db`였다(2026-11-27 `T65`). 그 줄이 남았을 수 있는 곳과 세션 만료는 위 `T58` 절의 반영 뒤 문장에 적었다.
 
 #### 네트워크를 나누고 capability를 빼는 갱신(`T61`)
 

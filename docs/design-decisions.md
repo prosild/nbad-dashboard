@@ -207,7 +207,7 @@
 
 **고른 것.** 둘로 나눴다. 막으려는 길(WAF → DB·근거 API)은 둘로도 끊기고, DB만 떼면 근거 API·앱·초기화 도구가 모두 두 네트워크에 붙어야 한다. 권한만 빼는 안은 WAF에서 DB로 가는 길을 그대로 둔다. `portfolio-net`의 정의(이름·서브넷)는 한 글자도 바꾸지 않았다. NAS에 이미 있는 네트워크라 정의가 바뀌면 붙은 컨테이너를 모두 내리고 다시 만들어야 하고, 이름과 서브넷이 그대로여야 판단 11의 신뢰 값(WAF 주소, 게이트웨이)도 그대로다. 네트워크를 나누면서 모든 서비스에 `cap_drop: [ALL]`·`no-new-privileges`를 걸고 DB 컨테이너도 root로 시작하지 않게 했다.
 
-**결과·근거.** `compose.portfolio.yml`, [`docs/portfolio-deployment.md`](portfolio-deployment.md) 1.1, 정적 시험 `StaticSecurityAndConfigTest`. 공개 스택 리허설 `[T61a]`~`[T61c]`에서 `nginx-waf`는 `postgres:5432`와 `api:8000`에 이름으로도 주소로도 연결되지 않았고(대조로 앱에는 연결됨), `[T61d]`에서 모든 컨테이너의 capability가 비어 있고 DB는 root로 시작하지 않았다. 남은 위험은 [보안 검증 보고서](security-verification-report.md) 4.3의 9에 있다.
+**결과·근거.** `compose.portfolio.yml`, [`docs/portfolio-deployment.md`](portfolio-deployment.md) 1.1, 정적 시험 `StaticSecurityAndConfigTest`. 공개 스택 리허설 `[T61a]`~`[T61c]`에서 `nginx-waf`는 `postgres:5432`와 `api:8000`에 이름으로도 주소로도 연결되지 않았고(대조로 앱에는 연결됨), `[T61d]`에서 모든 컨테이너의 capability가 비어 있고 DB는 root로 시작하지 않았다. 남은 위험은 [보안 검증 보고서](security-verification-report.md) 4.3의 9에 있다. 공개 데모 NAS(2026-11-27 반영)의 Docker는 내부 전용 네트워크에도 호스트로 가는 기본 경로를 넣어, DB·근거 API·초기화 도구는 인터넷으로 나가지 못하지만 NAS 자신의 주소에는 닿는다(로컬 리허설에서는 보이지 않았다).
 
 ## 13. 종결한 인시던트 다시 열기를 별도 함수로 받았다 (2026-11-26)
 
