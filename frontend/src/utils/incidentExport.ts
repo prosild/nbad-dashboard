@@ -119,7 +119,7 @@ export function incidentMarkdown(
     `- 발생 구간: ${withZone(formatDateTimeRange(incident.eventStart, incident.eventEnd))}`,
     `- 탐지 모델: ${text(labelText('detectionModel', incident.zeekadPickedBy))}`,
     '',
-    '## 주요 증적',
+    '## 주요 증거',
     `- 세션 수: ${sessions === null ? '-' : `${formatNumber(sessions)}건`}`,
     `- 송신 바이트: ${formatBytes(evidence.available ? evidence.bytesSent : null)}`,
     `- 수신 바이트: ${formatBytes(evidence.available ? evidence.bytesReceived : null)}`,

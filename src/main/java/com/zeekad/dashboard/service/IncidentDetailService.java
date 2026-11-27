@@ -188,7 +188,7 @@ public class IncidentDetailService {
         try {
             return buildEvidenceView(apiResponse, role);
         } catch (RuntimeException e) {
-            log.warn("근거 API /api/v1/jobs/{}/incidents/{} 증적 조립 실패(폴백 반환): {}",
+            log.warn("근거 API /api/v1/jobs/{}/incidents/{} 증거 조립 실패(폴백 반환): {}",
                     jobId, queueRank, e.getClass().getName());
             return IncidentDetailView.EvidenceView.unavailable(EvidenceData.FALLBACK_MESSAGE);
         }

@@ -23,7 +23,7 @@ import { parseQueueQuery, queueApiParams } from '../utils/triage';
 /** 상세 탭. URL `tab=`에 남긴다(요약은 기본이라 남기지 않는다). */
 export const DETAIL_TABS = [
   { key: 'summary', label: '요약' },
-  { key: 'evidence', label: '증적' },
+  { key: 'evidence', label: '증거' },
   { key: 'report', label: 'AI 리포트' },
   { key: 'decision', label: '발송 판단' },
   { key: 'slack', label: 'Slack' },

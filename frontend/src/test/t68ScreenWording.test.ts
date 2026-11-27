@@ -72,7 +72,7 @@ function findBanned(fileName: string, source: string): string[] {
 }
 
 describe('T68 화면 글 소스 정적 검사', () => {
-  it('막는 낱말은 닫힌 목록이다(OLD_TERMS 전부 + 설계자 답 M2의 15개)', () => {
+  it('막는 낱말은 닫힌 목록이다(OLD_TERMS 전부 + 설계자 답 M2의 15개 + 추가 결정 "증적")', () => {
     expect(OLD_TERMS.length).toBe(44);
     expect(T68_REMOVED_TERMS).toEqual([
       '틀 문장',
@@ -90,6 +90,7 @@ describe('T68 화면 글 소스 정적 검사', () => {
       '첫 알림',
       '이동 목록',
       '사전에 없는',
+      '증적',
     ]);
     for (const t of [...OLD_TERMS, ...T68_REMOVED_TERMS]) expect(BANNED_SOURCE_TERMS).toContain(t);
   });

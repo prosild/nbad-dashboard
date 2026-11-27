@@ -466,7 +466,7 @@ export function ObservedAccounts({ assetNames }: { assetNames: AssetNameRecord[]
   );
 }
 
-/* ───────────── 증적 탭 ───────────── */
+/* ───────────── 증거 탭(T68 전 "증적") ───────────── */
 
 export function EvidenceSection({
   evidence,
@@ -488,11 +488,11 @@ export function EvidenceSection({
           className="flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
-          <span>{evidence.statusMessage || '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.'}</span>
+          <span>{evidence.statusMessage || '상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.'}</span>
         </div>
       ) : (
         <>
-          <h3 className="soc-subhead">증적 요약</h3>
+          <h3 className="soc-subhead">증거 요약</h3>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
             <StatCard label="총 세션 수" value={displayCount(evidence.connectionCount)} />
             <StatCard label="송신 바이트" title={BYTES_BASIS_TOOLTIP} value={displayBytes(evidence.bytesSent)} />
@@ -545,7 +545,7 @@ export function EvidenceSection({
 
           {evidence.limits.length > 0 && (
             <div className="soc-panel p-4">
-              <h4 className="soc-subhead mb-2">증적의 한계</h4>
+              <h4 className="soc-subhead mb-2">증거의 한계</h4>
               <ul className="list-disc space-y-1 pl-5 text-xs text-slate-300">
                 {evidence.limits.map((item, idx) => (
                   <li key={idx}>{item}</li>
@@ -562,7 +562,7 @@ export function EvidenceSection({
         <details className="soc-panel p-4">
           <summary className="soc-subhead flex cursor-pointer items-center gap-1.5">
             <Database className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
-            원본 증적 데이터
+            원본 증거 데이터
           </summary>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {additionalEntries.map(([key, value]) => (

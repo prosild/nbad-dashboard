@@ -28,7 +28,7 @@ const baseEvidence: EvidenceView = {
 };
 
 describe('EvidenceSection', () => {
-  it('정형 증적 칸(바이트·unique·서비스 프로토콜·상위 포트 전송 계층·프로토콜 로그 하위 수치·관측 한계)을 렌더링한다', () => {
+  it('정형 증거 칸(바이트·unique·서비스 프로토콜·상위 포트 전송 계층·프로토콜 로그 하위 수치·관측 한계)을 렌더링한다', () => {
     const { container } = render(<EvidenceSection evidence={baseEvidence} />);
 
     expect(screen.getByText('송신 바이트')).toBeInTheDocument();
@@ -69,16 +69,16 @@ describe('EvidenceSection', () => {
     expect(within(screen.getByTestId('protocol-log-dns')).queryByText('값 없음')).not.toBeInTheDocument();
   });
 
-  it('증적이 없으면 백엔드 상태 문구를 그대로 보여 준다', () => {
+  it('증거가 없으면 백엔드 상태 문구를 그대로 보여 준다', () => {
     render(
       <EvidenceSection
         evidence={{
           ...baseEvidence,
           available: false,
-          statusMessage: '이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.',
+          statusMessage: '이 인시던트에는 증거 요약이 없습니다. 증거 조회는 정상입니다.',
         }}
       />,
     );
-    expect(screen.getByRole('status')).toHaveTextContent('이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.');
+    expect(screen.getByRole('status')).toHaveTextContent('이 인시던트에는 증거 요약이 없습니다. 증거 조회는 정상입니다.');
   });
 });

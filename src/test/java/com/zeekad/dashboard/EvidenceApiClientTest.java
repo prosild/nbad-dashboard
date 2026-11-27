@@ -236,7 +236,7 @@ class EvidenceApiClientTest {
 
         EvidenceApiResponse timeoutErr = client.fetchIncidentEvidence(101L, 2);
         assertThat(timeoutErr.isAvailable()).isFalse();
-        assertThat(timeoutErr.getStatusMessage()).isEqualTo("상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.");
+        assertThat(timeoutErr.getStatusMessage()).isEqualTo("상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.");
 
         assertThat(client.fetchJobs()).isEmpty();
         assertThat(client.fetchCaptureQueue("cic17-wed", 10)).isEmpty();

@@ -1,0 +1,16 @@
+{
+  "about": "공개 스냅샷(build/portfolio/zeekad.dump sha256 716e77c0…)의 dashboard.incident_reports.zeekad_attack_candidates에 나오는 전술 값 전부(후보 수 순). 일회용 복원 DB(--network none)에서 뽑았다(handoff/T68/evidence/attack-tactics.txt, T68 추가 결정 2). 스냅샷을 새로 뜨면 이 목록도 다시 뽑는다.",
+  "tactics": [
+    "command-and-control",
+    "persistence",
+    "stealth",
+    "discovery",
+    "impact",
+    "credential-access",
+    "collection",
+    "lateral-movement",
+    "initial-access",
+    "reconnaissance",
+    "exfiltration"
+  ]
+}

@@ -15,7 +15,7 @@ import { AllFactsTable, FactEvidence } from './FactEvidence';
 
 /** AI 리포트 탭 머리의 안내 한 줄(T64). LLM이 쓴 리포트일 때만 */
 export const AI_WRITTEN_NOTE =
-  'AI(LLM)가 쓴 글입니다. 근거 사실과 대조했지만 해석이 맞다는 뜻은 아닙니다. 판단은 증적으로 확인하세요.';
+  'AI(LLM)가 쓴 글입니다. 근거 사실과 대조했지만 해석이 맞다는 뜻은 아닙니다. 판단은 증거로 확인하세요.';
 
 /** LLM이 쓴 리포트인가(kind `llm`). 템플릿 리포트·종류 없음은 아니다 */
 export function isLlmReport(report: Pick<ReportView, 'present' | 'reportKind'>): boolean {

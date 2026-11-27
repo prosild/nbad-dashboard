@@ -48,7 +48,7 @@ describe('T37 근거 사실 사전', () => {
       hint: 'Zeek 페이로드 바이트가 IP 바이트보다 큰 세션(바이트 값은 관측한 IP 바이트 기준)',
     });
     expect(view('queue_rank', 3)).toMatchObject({ label: '탐지 순위', text: '3위' });
-    // T68(A2): 증적 탭과 같은 "송신 바이트"(T18b), 기준은 툴팁
+    // T68(A2): 증거 탭과 같은 "송신 바이트"(T18b), 기준은 툴팁
     expect(view('bytes_sent_by_host', 1791339786)).toMatchObject({ label: '송신 바이트', text: '1.7 GB', hint: '인시던트 대상 호스트 기준' });
     expect(view('bytes_received_by_host', 512)).toMatchObject({ label: '수신 바이트', hint: '인시던트 대상 호스트 기준' });
     expect(view('bytes_received_by_host', 512).text).toBe('512 B');

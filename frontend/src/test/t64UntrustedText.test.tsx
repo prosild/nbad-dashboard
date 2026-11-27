@@ -218,12 +218,12 @@ describe('T64 상세 화면', () => {
     expect(header).toHaveTextContent(`${CTRL_NAME}, ${LONG_NAME}`);
     expectBoundedName(header, CTRL_NAME);
 
-    for (const name of ['요약', '증적', 'AI 리포트', '발송 판단', 'Slack', '이력']) {
+    for (const name of ['요약', '증거', 'AI 리포트', '발송 판단', 'Slack', '이력']) {
       await user.click(screen.getByRole('tab', { name }));
       expectNoMarkup(container);
     }
 
-    await user.click(screen.getByRole('tab', { name: '증적' }));
+    await user.click(screen.getByRole('tab', { name: '증거' }));
     // 관측 계정 표의 이름 칸: 줄바꿈으로 폭이 정해진다(표지·HTML은 글자 그대로)
     for (const value of [ACCOUNT_LONG, ACCOUNT_CTRL, HTML]) {
       const cell = within(panel()).getByText(value);
@@ -252,7 +252,7 @@ describe('T64 상세 화면', () => {
     ];
     const { container } = renderDetail(detail, 'VIEWER');
     await screen.findByRole('tab', { name: '요약', selected: true });
-    await user.click(screen.getByRole('tab', { name: '증적' }));
+    await user.click(screen.getByRole('tab', { name: '증거' }));
     expect(within(screen.getByRole('tabpanel')).getByText('a*** [보이지 않는 문자 1개 제거]')).toBeInTheDocument();
     expect(container.textContent).toContain(CTRL_VIEWER);
     expect(container.textContent).not.toContain('[U+');
@@ -506,7 +506,7 @@ function renderSummary(detail: IncidentDetailView) {
   );
 }
 
-const AI_NOTE = 'AI(LLM)가 쓴 글입니다. 근거 사실과 대조했지만 해석이 맞다는 뜻은 아닙니다. 판단은 증적으로 확인하세요.';
+const AI_NOTE = 'AI(LLM)가 쓴 글입니다. 근거 사실과 대조했지만 해석이 맞다는 뜻은 아닙니다. 판단은 증거로 확인하세요.';
 
 describe('T64 요약 탭의 리포트 표지', () => {
   const blockOf = (heading: string) => screen.getByRole('heading', { name: heading }).parentElement as HTMLElement;

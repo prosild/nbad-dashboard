@@ -196,7 +196,7 @@ describe('인시던트 목록 및 상세 화면', () => {
               ],
               evidence: {
                 available: false,
-                statusMessage: '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.',
+                statusMessage: '상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,
@@ -356,9 +356,9 @@ describe('인시던트 목록 및 상세 화면', () => {
     expect(within(f1).getByText('142')).toBeInTheDocument();
     expect(within(panel()).queryByRole('button', { name: /F1/ })).toBeNull();
 
-    // 증적 탭: 증적 조회 실패 문구
-    await openTab('증적');
-    expect(within(panel()).getByText('상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
+    // 증거 탭: 증거 조회 실패 문구
+    await openTab('증거');
+    expect(within(panel()).getByText('상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.')).toBeInTheDocument();
 
     // 발송 판단 탭: 판단 모델은 선택 확률 숫자 하나만(선택지별 확률 막대는 2026-11-21 결정으로 뺐다)
     await openTab('발송 판단');
@@ -446,7 +446,7 @@ describe('인시던트 목록 및 상세 화면', () => {
               assetNames: [],
               evidence: {
                 available: false,
-                statusMessage: '상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.',
+                statusMessage: '상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.',
                 connectionCount: null,
                 bytesSent: null,
                 bytesReceived: null,

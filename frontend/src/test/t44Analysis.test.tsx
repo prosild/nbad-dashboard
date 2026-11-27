@@ -193,7 +193,7 @@ describe('T44 상대 IP 표지·복사 버튼', () => {
     expect(card.children).toHaveLength(2);
   });
 
-  it('증적 탭 많이 통신한 상대 IP 표: 사설·외부 표지, 특수 대역은 표지 없이 복사만, 가려진 주소는 가려진 값을 복사', async () => {
+  it('증거 탭 많이 통신한 상대 IP 표: 사설·외부 표지, 특수 대역은 표지 없이 복사만, 가려진 주소는 가려진 값을 복사', async () => {
     const user = userEvent.setup();
     render(
       <EvidenceSection
@@ -392,14 +392,14 @@ describe('T44 주요 통신 구조', () => {
     expect(panel!.querySelector('[data-topology-host] text:last-of-type title')?.textContent).toBe('대상 호스트');
   });
 
-  it('상대 IP가 없거나, 증적이 없거나, 인시던트를 넘기지 않으면 그리지 않는다', () => {
+  it('상대 IP가 없거나, 증거가 없거나, 인시던트를 넘기지 않으면 그리지 않는다', () => {
     const empty = topology(queueItem(), peerEvidence({ topPeers: [], representativeConnections: [] }));
     expect(empty.panel).toBeNull();
     empty.unmount();
     const noIp = topology(queueItem(), peerEvidence({ topPeers: [{ connections: 3 }, { ip: 7 }, { ip: ' ' }], representativeConnections: [] }));
     expect(noIp.panel).toBeNull();
     noIp.unmount();
-    const fallback = topology(queueItem(), peerEvidence({ available: false, statusMessage: '증적 요약이 없습니다.' }));
+    const fallback = topology(queueItem(), peerEvidence({ available: false, statusMessage: '증거 요약이 없습니다.' }));
     expect(fallback.panel).toBeNull();
     fallback.unmount();
     const noIncident = topology(undefined, peerEvidence({ representativeConnections: [] }));
@@ -512,7 +512,7 @@ describe('T44 평소 대비 배수', () => {
 const INTERNAL = ['zeekad_', 'dashboard.', 'evidence.v1', 'zeekad-fusion/3', 'cic17-wed|'];
 
 describe('T44 인시던트 마크다운 요약', () => {
-  it('기본 정보·주요 증적·리포트를 한국어 표시 이름으로 싣고 내부 식별자는 넣지 않는다', () => {
+  it('기본 정보·주요 증거·리포트를 한국어 표시 이름으로 싣고 내부 식별자는 넣지 않는다', () => {
     const md = incidentMarkdown(baseDetail(), DEFAULT_META, 7);
     expect(md.split('\n').slice(0, 21)).toEqual([
       '# 인시던트 #7 요약',
@@ -529,7 +529,7 @@ describe('T44 인시던트 마크다운 요약', () => {
       '- 발생 구간: 2017-07-05 22:45:00 ~ 23:15:00 KST',
       '- 탐지 모델: 통신 관계 이상',
       '',
-      '## 주요 증적',
+      '## 주요 증거',
       '- 세션 수: 155,261건',
       '- 송신 바이트: 1.7 GB',
       '- 수신 바이트: 118 MB',
@@ -605,7 +605,7 @@ describe('T44 인시던트 마크다운 요약', () => {
     expect(md.split('\n').filter((line) => line.startsWith('#'))).toEqual([
       '# 인시던트 #7 요약',
       '## 기본 정보',
-      '## 주요 증적',
+      '## 주요 증거',
       '## 리포트',
       '### 관측 요약',
       '### 확인된 사실',
@@ -629,7 +629,7 @@ describe('T44 인시던트 마크다운 요약', () => {
     expect(md).toContain('### 확인된 사실\n- (식별자 생략)\n');
   });
 
-  it('증적이 없으면 큐의 세션 수만 쓰고 나머지는 "-"', () => {
+  it('증거가 없으면 큐의 세션 수만 쓰고 나머지는 "-"', () => {
     const detail = baseDetail();
     detail.evidence = peerEvidence({ available: false });
     const md = incidentMarkdown(detail, DEFAULT_META, 7);
@@ -911,7 +911,7 @@ describe('T44 인시던트 큐 "CSV 내보내기" 버튼', () => {
 /* ───────────────────────── 상세 화면에 함께 붙였을 때 ───────────────────────── */
 
 describe('T44 상세 화면 구성', () => {
-  it('증적 탭: 증적 요약 카드 아래, 분포 막대 위에 주요 통신 구조가 온다', () => {
+  it('증거 탭: 증거 요약 카드 아래, 분포 막대 위에 주요 통신 구조가 온다', () => {
     const detail: IncidentDetailView = baseDetail();
     const { container } = render(<EvidenceSection evidence={detail.evidence} assetNames={detail.assetNames} incident={detail.incident} />);
     const panel = screen.getByRole('region', { name: '주요 통신 구조' });

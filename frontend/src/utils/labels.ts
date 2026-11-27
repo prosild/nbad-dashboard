@@ -58,7 +58,7 @@ export const LABEL_DICTIONARIES = {
     send: '발송',
     hold: '보류',
     analyst_review: '에스컬레이션',
-    need_more_evidence: '증적 보강 필요',
+    need_more_evidence: '증거 보강 필요',
   },
   /** 경보 발송 최종 결정 주체 (zeek_AD decided_by) */
   decidedBy: {
@@ -151,7 +151,7 @@ export const LABEL_DICTIONARIES = {
     CRITICAL_ASSET_CHANGE: '중요 자산 변경',
     AUDIT_RETENTION_PURGE: '보관 기한 지난 기록 삭제',
   },
-  /** 증적 표의 열 이름 (zeek_AD evidence.v1 하위 키) */
+  /** 증거 표의 열 이름 (zeek_AD evidence.v1 하위 키) */
   evidenceField: {
     ip: 'IP',
     port: '포트',
@@ -223,6 +223,10 @@ export const LABEL_DICTIONARIES = {
     'privilege escalation': '권한 상승',
     'defense-evasion': '방어 회피',
     'defense evasion': '방어 회피',
+    // T68 추가 결정 2: 새 판 ATT&CK은 Defense Evasion을 Stealth(TA0005)·Defense Impairment(TA0112)로 나눴다. 옛 값도 남긴다
+    stealth: '은닉',
+    'defense-impairment': '방어 무력화',
+    'defense impairment': '방어 무력화',
     'credential-access': '자격 증명 접근',
     'credential access': '자격 증명 접근',
     discovery: '탐색',

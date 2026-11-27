@@ -206,7 +206,7 @@ export function SummaryTab({
             <ReportLimitations report={report} />
           </div>
         ) : (
-          <p className="text-xs text-slate-400">리포트에 추가 확인 권고가 없습니다. 증적 탭에서 세션과 상대 IP를 확인하세요.</p>
+          <p className="text-xs text-slate-400">리포트에 추가 확인 권고가 없습니다. 증거 탭에서 세션과 상대 IP를 확인하세요.</p>
         )}
       </section>
 

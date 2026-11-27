@@ -39,8 +39,8 @@ class T68ScreenWordingStaticTest {
     void bannedTermsAreTheSharedClosedList() throws IOException {
         Set<String> banned = bannedTerms();
         assertThat(banned).contains("틀 문장", "거르기", "채점", "조사 중", "조사 시작", "조사를 시작", "자산 검색", "부푼",
-                "기준 시각 기준", "쪽당", "함께 탐지한 모델", "이상 판정 구간", "첫 알림", "이동 목록", "사전에 없는", "탐지 사건", "작업 #");
-        assertThat(banned).hasSize(44 + 15 - 4); // oldTerms 44개 + T68 15개, 겹치는 4개(조사 중·함께 탐지한 모델·이상 판정 구간·첫 알림)
+                "기준 시각 기준", "쪽당", "함께 탐지한 모델", "이상 판정 구간", "첫 알림", "이동 목록", "사전에 없는", "증적", "탐지 사건", "작업 #");
+        assertThat(banned).hasSize(44 + 16 - 4); // oldTerms 44개 + T68 16개(추가 결정 "증적" 포함), 겹치는 4개(조사 중·함께 탐지한 모델·이상 판정 구간·첫 알림)
     }
 
     @Test

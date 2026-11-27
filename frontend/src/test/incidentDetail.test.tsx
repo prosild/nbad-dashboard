@@ -377,7 +377,7 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(await screen.findByRole('tab', { name: '요약', selected: true })).toBeInTheDocument();
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       '요약',
-      '증적',
+      '증거',
       'AI 리포트',
       '발송 판단',
       'Slack',
@@ -387,9 +387,9 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(panel()).getByText('왜 의심스러운가')).toBeInTheDocument();
     expect(within(panel()).getByText('다음에 할 일')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('tab', { name: '증적' }));
+    await user.click(screen.getByRole('tab', { name: '증거' }));
     expect(loc()).toBe('/incidents/42/rank/1?tab=evidence');
-    expect(screen.getByRole('tab', { name: '증적', selected: true })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '증거', selected: true })).toBeInTheDocument();
     // 화살표 키로도 탭을 옮긴다
     await user.keyboard('{ArrowRight}');
     expect(loc()).toBe('/incidents/42/rank/1?tab=report');
@@ -680,10 +680,10 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ toStatus: 'closed', resolution: 'benign', reason: '정상 업무' });
   });
 
-  it('주요 세션은 필드별 열로 보이고(세션 기준 바이트), 원본 증적은 기본 접힘이다', async () => {
+  it('주요 세션은 필드별 열로 보이고(세션 기준 바이트), 원본 증거는 기본 접힘이다', async () => {
     const user = userEvent.setup();
     renderDetail('/incidents/42/rank/1?tab=evidence');
-    await screen.findByRole('tab', { name: '증적', selected: true });
+    await screen.findByRole('tab', { name: '증거', selected: true });
     const table = within(panel()).getAllByRole('table').find((t) => within(t).queryByRole('columnheader', { name: '시작 시각' }));
     if (!table) throw new Error('주요 세션 표 없음');
     expect(within(table).getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
@@ -715,17 +715,17 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(row2).getByText('식별 안 됨')).toBeInTheDocument();
     // 중첩 JSON 셀이 없다
     expect(table.textContent).not.toContain('{"');
-    // 원본 증적 데이터는 접혀 있다
-    const raw = within(panel()).getByText('원본 증적 데이터').closest('details') as HTMLDetailsElement;
+    // 원본 증거 데이터는 접혀 있다
+    const raw = within(panel()).getByText('원본 증거 데이터').closest('details') as HTMLDetailsElement;
     expect(raw.open).toBe(false);
-    await user.click(within(panel()).getByText('원본 증적 데이터'));
+    await user.click(within(panel()).getByText('원본 증거 데이터'));
     expect(raw.open).toBe(true);
   });
 
-  it('T26 휴대폰 폭: 모든 탭의 표(증적 탭의 관측 계정 표 포함)는 가로 스크롤 상자 안에 있다', async () => {
+  it('T26 휴대폰 폭: 모든 탭의 표(증거 탭의 관측 계정 표 포함)는 가로 스크롤 상자 안에 있다', async () => {
     const user = userEvent.setup();
     renderDetail('/incidents/42/rank/1?tab=evidence');
-    await screen.findByRole('tab', { name: '증적', selected: true });
+    await screen.findByRole('tab', { name: '증거', selected: true });
     // 관측 계정 표가 그려지는 데이터(assetNames: WS-01$)로 본다
     const accounts = within(panel()).getByText('WS-01$').closest('table') as HTMLTableElement;
     expect(accounts).not.toBeNull();
@@ -791,16 +791,16 @@ describe('인시던트 상세 화면(T19)', () => {
     }
   });
 
-  it('XSS 페이로드(주요 세션 값·원본 증적·Slack·리포트)는 모든 탭에서 글로만 나온다', async () => {
+  it('XSS 페이로드(주요 세션 값·원본 증거·Slack·리포트)는 모든 탭에서 글로만 나온다', async () => {
     const user = userEvent.setup();
     const { container } = renderDetail('/incidents/42/rank/1');
     await screen.findByRole('tab', { name: '요약', selected: true });
-    for (const name of ['요약', '증적', 'AI 리포트', '발송 판단', 'Slack', '이력']) {
+    for (const name of ['요약', '증거', 'AI 리포트', '발송 판단', 'Slack', '이력']) {
       await user.click(screen.getByRole('tab', { name }));
       expect(container.querySelectorAll('script')).toHaveLength(0);
       expect(container.querySelectorAll('img')).toHaveLength(0);
     }
-    await user.click(screen.getByRole('tab', { name: '증적' }));
+    await user.click(screen.getByRole('tab', { name: '증거' }));
     expect(within(panel()).getByText(`${XSS}:1`)).toBeInTheDocument();
     expect(within(panel()).getByText(XSS)).toHaveAttribute('data-raw');
     await user.click(screen.getByRole('tab', { name: 'Slack' }));
@@ -856,7 +856,7 @@ describe('인시던트 상세 화면(T19)', () => {
     // 목록: High만, 세션 수 내림 → 4, 3, 2
     const from = 'period=all&source=imported&status=investigating&priority=high&sort=connections&dir=desc&page=1';
     const { listCalls } = renderDetail(`/incidents/42/rank/3?from=${encodeURIComponent(from)}&tab=evidence`, { list });
-    await screen.findByRole('tab', { name: '증적', selected: true });
+    await screen.findByRole('tab', { name: '증거', selected: true });
     const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
     await waitFor(() => expect(within(nav).getByText('2 / 3')).toBeInTheDocument());
     // 목록 조건을 그대로(쪽 번호·크기 없이) 보낸다

@@ -30,7 +30,7 @@ describe('표시 이름 사전', () => {
     expect(labelText('sendChoice', 'send')).toBe('발송');
     expect(labelText('sendChoice', 'hold')).toBe('보류');
     expect(labelText('sendChoice', 'analyst_review')).toBe('에스컬레이션');
-    expect(labelText('sendChoice', 'need_more_evidence')).toBe('증적 보강 필요');
+    expect(labelText('sendChoice', 'need_more_evidence')).toBe('증거 보강 필요');
     expect(labelText('decidedBy', 'policy')).toBe('규칙');
     expect(labelText('decidedBy', 'llm')).toBe('AI 리포트');
     expect(labelText('decidedBy', 'decision_model')).toBe('판단 모델');

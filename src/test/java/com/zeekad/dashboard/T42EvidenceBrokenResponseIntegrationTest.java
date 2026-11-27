@@ -224,7 +224,7 @@ class T42EvidenceBrokenResponseIntegrationTest {
         assertThat(output.getAll())
                 .doesNotContain("MARKER_ASSEMBLY_MESSAGE")
                 .doesNotContain("MARKER_ASSEMBLY_VALUE")
-                .contains("증적 조립 실패(폴백 반환): java.lang.IllegalStateException");
+                .contains("증거 조립 실패(폴백 반환): java.lang.IllegalStateException");
     }
 
     @Test

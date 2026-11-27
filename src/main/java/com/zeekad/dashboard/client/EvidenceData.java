@@ -10,8 +10,8 @@ import java.util.Map;
  */
 public class EvidenceData {
 
-    public static final String FALLBACK_MESSAGE = "상세 증적을 불러오지 못했습니다. 기본 정보만 표시합니다.";
-    public static final String NO_EVIDENCE_MESSAGE = "이 인시던트에는 증적 요약이 없습니다. 증적 조회는 정상입니다.";
+    public static final String FALLBACK_MESSAGE = "상세 증거를 불러오지 못했습니다. 기본 정보만 표시합니다.";
+    public static final String NO_EVIDENCE_MESSAGE = "이 인시던트에는 증거 요약이 없습니다. 증거 조회는 정상입니다.";
 
     private boolean available;
     private String statusMessage;
