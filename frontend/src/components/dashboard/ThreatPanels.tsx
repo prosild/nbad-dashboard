@@ -25,7 +25,7 @@ export const TOP_HOSTS_NOTE_TITLE =
   '미종결 High, Medium, Low 건수가 많은 순서입니다. 위험 점수를 새로 매긴 값이 아닙니다. 전체 건수에는 종결도 들어갑니다.';
 export const MASKED_RANGE_NOTE = '가려진 주소(A.B.*.*)는 호스트 하나가 아니라 그 대역의 호스트를 묶은 줄입니다.';
 export const TOP_THREADS_NOTE_TITLE =
-  '같은 Slack 스레드로 묶인 알림입니다. 공격으로 확정된 묶음이 아닙니다. 줄을 누르면 기간과 상관없이 묶음 전체를 봅니다.';
+  '같은 Slack 스레드로 묶인 알림입니다. 공격으로 확정된 묶음이 아닙니다. 줄을 누르면 기간과 상관없이 묶음 전체를 표시합니다.';
 export const THREAD_COUNT_TITLE =
   '기간 내는 지금 기간·수집원·캡처 조건 안의 인시던트 수이고, 전체는 그 알림 묶음 전체의 인시던트 수입니다.';
 
@@ -259,7 +259,7 @@ function TopThreadsPanel({ overview }: { overview: DashboardOverviewResponse }) 
                 // 묶음 전체를 본다: 현황판의 기간·수집원 조건을 유지하지 않는다
                 to={`/incidents?period=all&thread=${t.headIncidentNo}`}
                 className={`flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 ${ROW_LINK}`}
-                title={`최초 알림 인시던트 #${t.headIncidentNo}의 알림 묶음 전체를 봅니다(기간 조건을 유지하지 않습니다)`}
+                title={`최초 알림 인시던트 #${t.headIncidentNo}의 알림 묶음 전체 보기(기간 조건을 유지하지 않습니다)`}
                 data-thread-row=""
               >
                 <span className="font-mono text-cyan-200">#{t.headIncidentNo}</span>

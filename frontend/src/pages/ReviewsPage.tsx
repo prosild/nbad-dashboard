@@ -6,6 +6,7 @@ import { reviewsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { STALE_ACTION_BLOCKED, StaleNotice } from '../components/StaleNotice';
+import { CopyIdButton } from '../components/incident/DetailHeader';
 import { ReviewDecisionButtons } from '../components/incident/ReviewDecisionButtons';
 import { CaptureName, CodeLabel, LookupText, ResumeStatusBadge, ReviewActionBadge } from '../components/StatusBadge';
 import { useToast } from '../components/ToastContext';
@@ -21,6 +22,14 @@ import {
   REVIEW_STATUS_RELATION,
   useNowMs,
 } from '../utils/reviewResume';
+
+/**
+ * 행의 인시던트를 부르는 이름(T68 A13): 번호가 있으면 "인시던트 #번호", 없으면 "인시던트"(설계자 답 L2).
+ * 원문 ID(캡처|IP|역할|시각)는 내부 키라 접근성 이름에도 쓰지 않는다.
+ */
+function rowIncidentLabel(item: AnalystReviewItem): string {
+  return typeof item.incidentNo === 'number' && item.incidentNo > 0 ? `인시던트 #${item.incidentNo}` : '인시던트';
+}
 
 function ReviewRowActions({
   item,
@@ -65,7 +74,7 @@ function ReviewRowActions({
       <input
         id={noteId}
         type="text"
-        aria-label={`${item.incidentId} 검토 메모`}
+        aria-label={`${rowIncidentLabel(item)} 검토 메모`}
         maxLength={FREE_TEXT_MAX}
         value={note}
         onChange={(e) => setNote(e.target.value)}
@@ -78,7 +87,7 @@ function ReviewRowActions({
         submitting={submitting}
         onDecide={(action) => void decide(action)}
         compact
-        idPrefix={item.incidentId}
+        idPrefix={rowIncidentLabel(item)}
         blockedReason={blockedReason}
       />
     </div>
@@ -167,6 +176,7 @@ export function ReviewsPage() {
         <section className="soc-card flex flex-wrap items-center justify-between gap-4 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div>
+              {/* T68: 다른 화면의 "수집원"(전체·센서 종류·캡처를 고름)과 달리 캡처 하나만 고른다(서버 조건 captureId). 그래서 "캡처" 그대로 */}
               <label htmlFor="reviews-capture" className="mb-1 block text-[11px] font-medium text-slate-400">
                 캡처
               </label>
@@ -272,8 +282,23 @@ export function ReviewsPage() {
                               <span className="font-mono font-semibold text-slate-100">{item.hostIp ?? '-'}</span>
                               <CodeLabel dict="hostRole" value={item.zeekadRole} className="text-slate-400" />
                             </div>
-                            <div className="mt-0.5 break-all font-mono text-[11px] text-slate-500" data-raw="">
-                              {item.incidentId}
+                            {/* T68 A13: 원문 ID 대신 번호 링크(번호가 없으면 "상세 보기"). 원문 ID는 복사로만 준다 */}
+                            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                              {typeof item.incidentNo === 'number' && item.incidentNo > 0 ? (
+                                <Link
+                                  to={`/incidents/${item.incidentNo}`}
+                                  className="font-semibold tabular-nums text-cyan-300 hover:text-cyan-200 hover:underline"
+                                >
+                                  #{item.incidentNo}
+                                </Link>
+                              ) : (
+                                incidentPath(item) !== null && (
+                                  <Link to={incidentPath(item) as string} className="text-cyan-300 hover:text-cyan-200 hover:underline">
+                                    상세 보기
+                                  </Link>
+                                )
+                              )}
+                              <CopyIdButton incidentId={item.incidentId} />
                             </div>
                           </td>
                           <td className="soc-td max-w-sm text-xs text-slate-200">

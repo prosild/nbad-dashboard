@@ -41,9 +41,16 @@ describe('T37 근거 사실 사전', () => {
     expect(view('connection_count', 155261)).toMatchObject({ label: '세션 수', text: '155,261', valueKnown: true });
     expect(view('unique_peers', 12).label).toBe('고유 상대 IP 수');
     expect(view('unique_destination_ports', 27).label).toBe('고유 목적지 포트 수');
-    expect(view('payload_bytes_inflated_connections', 724).text).toBe('724');
+    // T68(A16): "부푼" → "과대 집계된", 뜻은 툴팁 첫 줄(hint)
+    expect(view('payload_bytes_inflated_connections', 724)).toMatchObject({
+      label: '페이로드 바이트가 과대 집계된 세션 수',
+      text: '724',
+      hint: 'Zeek 페이로드 바이트가 IP 바이트보다 큰 세션(바이트 값은 관측한 IP 바이트 기준)',
+    });
     expect(view('queue_rank', 3)).toMatchObject({ label: '탐지 순위', text: '3위' });
-    expect(view('bytes_sent_by_host', 1791339786)).toMatchObject({ label: '자산 송신 바이트', text: '1.7 GB' });
+    // T68(A2): 증적 탭과 같은 "송신 바이트"(T18b), 기준은 툴팁
+    expect(view('bytes_sent_by_host', 1791339786)).toMatchObject({ label: '송신 바이트', text: '1.7 GB', hint: '인시던트 대상 호스트 기준' });
+    expect(view('bytes_received_by_host', 512)).toMatchObject({ label: '수신 바이트', hint: '인시던트 대상 호스트 기준' });
     expect(view('bytes_received_by_host', 512).text).toBe('512 B');
     expect(view('incident_duration_seconds', 3900)).toMatchObject({ label: '인시던트 지속 시간', text: '1시간 5분' });
   });
@@ -73,20 +80,22 @@ describe('T37 근거 사실 사전', () => {
     });
   });
 
-  it('방향·탐지 모델·함께 탐지한 모델(빈 배열은 "없음")·모델 이상 판정 구간', () => {
+  it('방향·탐지 모델·교차 탐지(빈 배열은 "없음")·모델 탐지 윈도우(T68 A3·A4: 전에는 함께 탐지한 모델·이상 판정 구간)', () => {
     expect(view('host_role', 'originator')).toMatchObject({ label: '통신 방향', text: '출발지' });
     expect(view('picked_by_model', 'tgn_recon')).toMatchObject({ label: '탐지 모델', text: '통신 관계 이상' });
-    expect(view('also_flagged_by_models', ['tail_rarity_v2', 'transformer_v2']).text).toBe('기준선 이탈, 행위 패턴 이탈');
+    expect(view('also_flagged_by_models', ['tail_rarity_v2', 'transformer_v2'])).toMatchObject({ label: '교차 탐지', text: '기준선 이탈, 행위 패턴 이탈' });
     expect(view('also_flagged_by_models', []).text).toBe('없음');
     expect(view('model_candidate_windows.transformer_v2', { candidate: 3, windows: 6 })).toMatchObject({
-      label: '행위 패턴 이탈 이상 판정 구간',
-      text: '3 / 6 구간',
+      label: '행위 패턴 이탈 탐지 윈도우',
+      text: '3 / 6',
+      hint: '기준값을 넘은 윈도우 수 / 전체 윈도우 수',
     });
   });
 
   it('평소 대비: 네 값 한 줄, p95 배수, null 칸은 "-"(0 아님), 0으로 나누지 않음', () => {
     const v = view('baseline.connections_per_window', { incident_max: 1200, baseline_p50: 10, baseline_p95: 40, baseline_max: 90 });
-    expect(v.label).toBe('평소 대비 · 구간당 세션 수');
+    // T68(M1): 5분 탐지 단위는 "윈도우"(전에는 "구간당")
+    expect(v.label).toBe('평소 대비 · 윈도우당 세션 수');
     expect(v.text).toBe('이번 인시던트 최대 1,200 / 평소 중앙값 10 / 평소 p95 40 / 평소 최대 90 (평소 p95의 30배)');
     expect(v.wide).toBe(true);
     const nulls = view('baseline.dns_queries_per_window', { incident_max: 7, baseline_p50: null, baseline_p95: null, baseline_max: null });
@@ -104,8 +113,8 @@ describe('T37 근거 사실 사전', () => {
       '이번 인시던트 최대 60자',
     );
     expect(view('baseline_windows', { baseline_windows: 288, incident_windows: 6 })).toMatchObject({
-      label: '비교한 구간 수',
-      text: '평소 288구간 · 이번 인시던트 6구간',
+      label: '비교한 윈도우 수',
+      text: '평소 윈도우 288개 · 이번 인시던트 윈도우 6개',
     });
   });
 
@@ -139,7 +148,8 @@ describe('T37 근거 사실 사전', () => {
     const v = describeFact(fact('example_connection_1', conn), VIEWER_PS);
     expect(v).toMatchObject({ label: '주요 세션 1', wide: true, valueKnown: true });
     expect(v.text).toBe(
-      'H(192.168.*.*) → X1(203.0.*.*):443/tcp · ssl · 정상 연결·종료 · 지속 1.2초 · 출발지가 보냄 2.0 KB · 목적지가 보냄 300 B',
+      // T68(C5): "출발지가 보냄" → "출발지 송신"
+      'H(192.168.*.*) → X1(203.0.*.*):443/tcp · ssl · 정상 연결·종료 · 지속 1.2초 · 출발지 송신 2.0 KB · 목적지 송신 300 B',
     );
     expect(view('example_connection_2', { ...conn, duration_seconds: null }).text).toContain('지속 -');
   });
@@ -297,14 +307,14 @@ describe('T37 근거 화면', () => {
       '프로토콜 로그 (1개)',
       '상대 IP·목적지 포트 (1개)',
       '주요 세션 (1개)',
-      '사전에 없는 항목 (1개)',
+      '기타 항목(원문) (1개)',
     ]);
     const rowF03 = within(details).getByText('F03').closest('tr') as HTMLElement;
     expect(within(rowF03).getByText('인용')).toBeInTheDocument();
     expect(within(rowF03).getByText('X1(203.0.113.45) · 세션 210건')).toBeInTheDocument();
     const rowF04 = within(details).getByText('F04').closest('tr') as HTMLElement;
     expect(within(rowF04).queryByText('인용')).toBeNull();
-    expect(within(details).getByText('H(192.168.10.5) → X1(203.0.113.45):80/tcp · http · 정상 연결·종료 · 지속 500ms · 출발지가 보냄 10 B · 목적지가 보냄 20 B')).toBeInTheDocument();
+    expect(within(details).getByText('H(192.168.10.5) → X1(203.0.113.45):80/tcp · http · 정상 연결·종료 · 지속 500ms · 출발지 송신 10 B · 목적지 송신 20 B')).toBeInTheDocument();
   });
 
   it('근거 사실 전체가 없으면(옛 응답) 접힌 구역을 그리지 않는다', () => {

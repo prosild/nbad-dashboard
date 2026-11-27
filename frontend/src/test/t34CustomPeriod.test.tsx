@@ -482,7 +482,7 @@ describe('현황판 기간 지정(T34)', () => {
   it('현황판 링크(운영 현황·큐)가 범위를 넘긴다', async () => {
     renderAt(`/?${CUSTOM_QS}`);
     await screen.findByRole('region', { name: '탐지 추이' });
-    const ops = screen.getByRole('link', { name: /누적 판정·탐지 모델 성능은 운영 현황/ });
+    const ops = screen.getByRole('link', { name: /누적 분석가 판정·모델별 정탐률은 운영 현황에서 보기/ });
     const p = new URLSearchParams(ops.getAttribute('href')!.split('?')[1]);
     expect(p.get('period')).toBe('custom');
     expect(p.get('start')).toBe(S);

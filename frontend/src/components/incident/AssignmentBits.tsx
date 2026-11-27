@@ -6,7 +6,7 @@ import { SocBadge } from '../StatusBadge';
 
 /** 착수 지연 표지 툴팁(docs/ui-terminology.md "착수 지연") */
 export const ACK_OVERDUE_TOOLTIP =
-  '실습망 신규 인시던트가 우선순위별 착수 목표(탐지 뒤 High 30분·Medium 4시간·Low 24시간, 기본값)를 넘겼습니다. 조사를 시작하면 풀립니다.';
+  '실습망 신규 인시던트가 우선순위별 착수 목표(탐지 뒤 High 30분·Medium 4시간·Low 24시간, 기본값)를 넘겼습니다. 분석 중으로 바꾸면 해제됩니다.';
 
 /** 빨간 "착수 지연" 표지. 색만이 아니라 글자로 보인다(T25). */
 export function AckOverdueBadge({

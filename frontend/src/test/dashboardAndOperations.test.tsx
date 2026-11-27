@@ -403,12 +403,14 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=7d&source=live&priority=high');
   });
 
-  it('기간·수집원을 바꾸면 URL과 요청 조건이 바뀐다. 조건 줄에 기준 시각 = 현재와 불러온 시각이 있다', async () => {
+  it('기간·수집원을 바꾸면 URL과 요청 조건이 바뀐다. 조건 줄에 기준 시각: 현재와 불러온 시각이 있다', async () => {
     const user = userEvent.setup();
     const { calls } = renderAt('/');
     await kpiRegion();
     const bar = screen.getByRole('region', { name: '보기 조건' });
-    expect(within(bar).getByTestId('dashboard-anchor')).toHaveTextContent('기준 시각 = 현재');
+    // T68(A23): "기준 시각 = 현재"(코드 표기) → "기준 시각: 현재", 툴팁은 "…을 끝으로 계산합니다"
+    expect(within(bar).getByTestId('dashboard-anchor')).toHaveTextContent('기준 시각: 현재');
+    expect(within(bar).getByTestId('dashboard-anchor')).toHaveAttribute('title', '기간은 지금 시각을 끝으로 계산합니다');
     expect(bar).toHaveTextContent('불러온 시각');
     await user.click(within(bar).getByRole('button', { name: '7일' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/?period=7d');
@@ -524,7 +526,7 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     );
   });
 
-  it('수집원 상태: 센서 행(상태·마지막 채점·마지막 이상 활동·수)과 수집 중 캡처, 지난 날짜 접기, 가져온 데이터(실패 먼저), 행 링크', async () => {
+  it('수집원 상태: 센서 행(상태·마지막 탐지 작업·마지막 이상 활동·수)과 수집 중 캡처, 지난 날짜 접기, 가져온 데이터(실패 먼저), 행 링크', async () => {
     renderAt('/');
     const panel = await screen.findByRole('region', { name: '수집원 상태' });
     const sensor = await within(panel).findByRole('link', { name: '실습망 센서 인시던트 목록' });
@@ -532,7 +534,9 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     expect(within(sensor).getByText('정상')).toBeInTheDocument();
     expect(sensor).toHaveTextContent('인시던트 5 · High 2');
     const li = sensor.closest('li') as HTMLElement;
-    expect(within(li).getByText('5분 전')).toHaveAttribute('title', expect.stringContaining('마지막 채점'));
+    // T68(A21, 설계자 답 M6): "마지막 채점" → "마지막 탐지 작업"(툴팁 "마지막으로 탐지 작업이 끝난 시각")
+    expect(within(li).getByText('5분 전')).toHaveAttribute('title', expect.stringContaining('마지막 탐지 작업'));
+    expect(within(li).getByText('마지막 탐지 작업')).toHaveAttribute('title', '마지막으로 탐지 작업이 끝난 시각');
     expect(within(li).getByText('12분 전')).toHaveAttribute('title', expect.stringContaining('마지막 이상 활동'));
     expect(within(li).getByText('실습 11-20').closest('a')).toHaveAttribute('href', '/incidents?period=24h&captureId=lab-20261120');
     const ended = li.querySelector('details[data-ended-captures]') as HTMLElement;
@@ -577,13 +581,16 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     for (const label of ['정상', '지연', '중단', '실패', '기록 없음', '가져온 데이터']) {
       expect(within(panel).getAllByText(label).length, label).toBeGreaterThan(0);
     }
-    expect(within(panel).getByText('지연').closest('[title]')).toHaveAttribute('title', expect.stringContaining('15분을 넘었고 1시간 안'));
-    expect(within(panel).getByText('중단').closest('[title]')).toHaveAttribute('title', expect.stringContaining('1시간을 넘었습니다'));
+    // T68(A21): "마지막 채점이 지금에서 15분 안" 같은 옮긴 말을 뺐다
+    expect(within(panel).getByText('정상').closest('[title]')).toHaveAttribute('title', '정상: 마지막 탐지 작업이 끝나고 15분 이내입니다');
+    expect(within(panel).getByText('지연').closest('[title]')).toHaveAttribute('title', expect.stringContaining('15분 넘게 지났습니다(1시간 이내)'));
+    expect(within(panel).getByText('중단').closest('[title]')).toHaveAttribute('title', expect.stringContaining('1시간 넘게 지났습니다'));
   });
 
-  it('경보 발송 상태(작게): 발송 방식 Dry-run, 최근 일일 요약 시각, 기간 안 일일 요약 수', async () => {
+  it('Slack 일일 요약 상태(작게, T68 A11: 전에는 "경보 발송 상태"): 발송 방식 Dry-run, 최근 일일 요약 시각, 기간 안 일일 요약 수', async () => {
     renderAt('/');
-    const panel = await screen.findByRole('region', { name: '경보 발송 상태' });
+    const panel = await screen.findByRole('region', { name: 'Slack 일일 요약 상태' });
+    expect(within(panel).getByRole('heading', { name: 'Slack 일일 요약 상태' })).toBeInTheDocument();
     expect(await within(panel).findByText('Dry-run')).toBeInTheDocument();
     expect(panel).toHaveTextContent('2026-11-21 00:40:00');
     expect(panel).toHaveTextContent('최근 24시간 일일 요약1건');
@@ -599,7 +606,8 @@ describe('관제 현황판(T24 시간·수집원 기준)', () => {
     expect(screen.queryByText(/데이터 기준/)).not.toBeInTheDocument();
     expect(screen.queryByText('전체 인시던트')).not.toBeInTheDocument();
     expect(screen.queryByTestId('data-as-of')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /누적 판정·탐지 모델 성능은 운영 현황/ })).toHaveAttribute('href', '/operations?period=24h');
+    // T68(A12)
+    expect(screen.getByRole('link', { name: /누적 분석가 판정·모델별 정탐률은 운영 현황에서 보기/ })).toHaveAttribute('href', '/operations?period=24h');
   });
 
   it('T26 휴대폰 폭: 현황판의 모든 표(화면 판독기 전용 표 제외)는 가로 스크롤 상자 안에 있다', async () => {
@@ -777,7 +785,7 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     for (const cell of [sensor, live, ended]) expect(within(cell).queryByText('원본 시각')).toBeNull();
     expect(within(table).getAllByText('원본 시각')).toHaveLength(2);
 
-    // "마지막 채점"(채점한 시각)은 가져온 데이터 행도 상대 시각 그대로다
+    // "마지막 탐지 작업"(탐지 작업이 끝난 시각, T68 전 "마지막 채점")은 가져온 데이터 행도 상대 시각 그대로다
     const scored = (table.querySelector('[data-capture-row="cic17-wed"]') as HTMLElement).querySelectorAll('td')[2] as HTMLElement;
     expect(scored.textContent).toBe('6일 전');
   });
@@ -924,7 +932,8 @@ describe('T25 운영 현황: 처리 시간·담당 현황', () => {
     expect(panel).toHaveTextContent('미종결5');
     expect(panel).toHaveTextContent('배정3');
     expect(panel).toHaveTextContent('미배정2');
-    const link = within(panel).getByRole('link', { name: '착수 지연 1건 인시던트 큐에서 보기' });
+    // T68: "인시던트 큐" → "인시던트 목록"(메뉴·화면 이름과 같게)
+    const link = within(panel).getByRole('link', { name: '착수 지연 1건 인시던트 목록에서 보기' });
     expect(Object.fromEntries(new URLSearchParams((link.getAttribute('href') ?? '').split('?')[1]))).toEqual({
       period: 'all',
       overdue: 'true',
@@ -969,9 +978,9 @@ describe('T25 현황판·운영 현황 후속(T24 뒤에 정한 것)', () => {
     }
   });
 
-  it('경보 발송 상태의 최근 일일 요약은 짧은 수집원 이름이고, 전체 이름은 툴팁·판독기 글자다', async () => {
+  it('Slack 일일 요약 상태(T68 전 "경보 발송 상태")의 최근 일일 요약은 짧은 수집원 이름이고, 전체 이름은 툴팁·판독기 글자다', async () => {
     renderAt('/');
-    const panel = await screen.findByRole('region', { name: '경보 발송 상태' });
+    const panel = await screen.findByRole('region', { name: 'Slack 일일 요약 상태' });
     const cap = await waitFor(() => panel.querySelector('[data-alerting-capture]') as HTMLElement);
     expect(cap).toHaveTextContent('실습 11-20');
     expect(cap.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^실습 11-20$/);

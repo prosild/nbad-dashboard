@@ -43,7 +43,7 @@ interface NavState {
 }
 
 /** 이동 목록 조회 실패 안내(T21) */
-export const NAV_LOAD_FAILED_TEXT = '이동 목록을 불러오지 못했습니다';
+export const NAV_LOAD_FAILED_TEXT = '이전·다음 인시던트를 불러오지 못했습니다';
 /** 거르기 결과에 이 인시던트가 없을 때(T23) */
 export const NAV_NOT_IN_LIST_TEXT = '목록이 갱신되어 이 인시던트가 지금 목록에 없습니다';
 /** 보고 있는 탐지 작업이 최신이 아닐 때(T23) */

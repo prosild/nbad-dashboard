@@ -92,10 +92,12 @@ export function SummaryTab({
         }`
       : '-';
 
+  // T68(A15, 설계자 답 H1): 방향을 단정하는 동사를 쓰지 않는다. 세션 수는 그 호스트의 전체 세션이고 방향은 인시던트 단위다.
+  // 문장부호와 구분 기호만 바로잡았다(전에는 "출발지 호스트 X에서 … 주요 상대 IP … 주요 포트 …"가 부호 없이 이어졌다).
+  const tops = [peer ? `주요 상대 IP: ${peer}` : null, port ? `주요 포트: ${port}` : null].filter(Boolean).join(' · ');
   const autoSummary = [
-    `${labelText('hostRole', incident.zeekadRole)} 호스트 ${incident.hostIp}에서 ${formatDuration(incident.eventStart, incident.eventEnd)} 동안 세션 ${formatNumber(sessions)}건이 관측되었습니다.`,
-    peer ? `주요 상대 IP ${peer}` : null,
-    port ? `주요 포트 ${port}` : null,
+    `호스트 ${incident.hostIp}(${labelText('hostRole', incident.zeekadRole)}) · ${formatDuration(incident.eventStart, incident.eventEnd)} 동안 세션 ${formatNumber(sessions)}건이 관측되었습니다.`,
+    tops || null,
   ]
     .filter(Boolean)
     .join(' ');

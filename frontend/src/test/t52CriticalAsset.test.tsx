@@ -488,13 +488,13 @@ function adminHandler(state: { items: AssetRow[]; calls: Array<{ url: string; me
         const id = Number(del[1]);
         const removed = state.items.find((a) => a.id === id);
         state.items = state.items.filter((a) => a.id !== id);
-        return json({ message: '중요 자산을 지웠습니다.', item: removed });
+        return json({ message: '중요 자산을 삭제했습니다.', item: removed });
       }
       const upd = url.match(/\/api\/admin\/critical-assets\/(\d+)$/);
       if (method === 'PUT' && upd) {
         const id = Number(upd[1]);
         state.items = state.items.map((a) => (a.id === id ? { ...a, name: body.name, description: body.description } : a));
-        return json({ message: '중요 자산을 고쳤습니다.', item: state.items.find((a) => a.id === id) });
+        return json({ message: '중요 자산을 수정했습니다.', item: state.items.find((a) => a.id === id) });
       }
     }
     return json({ status: 404, code: 'NOT_FOUND', message: '없음' }, 404);
@@ -514,7 +514,7 @@ describe('T52 관리자 화면 /admin/critical-assets', () => {
     expect(screen.queryByRole('link', { name: '사용자 관리' })).toBeNull();
   });
 
-  it('목록(주소·이름·설명·고친 사람·시각), 규칙 한 줄, 추가와 서버 검증 오류', async () => {
+  it('목록(주소·이름·설명·수정한 사람·시각), 규칙 한 줄, 추가와 서버 검증 오류', async () => {
     const user = userEvent.setup();
     const state = { items: [assetRow(1, '10.10.0.20', '실습망 대상 서버', 'SSH·HTTP·파일 공유')], calls: [] as Array<{ url: string; method: string; body: unknown }> };
     renderApp('/admin/critical-assets', 'ADMIN', adminHandler(state));
@@ -527,7 +527,8 @@ describe('T52 관리자 화면 /admin/critical-assets', () => {
       '주소',
       '이름',
       '설명',
-      '고친 사람 · 시각',
+      // T68(B6): 사용자 관리·감사 로그처럼 수정·삭제
+      '수정한 사람 · 시각',
       '관리',
     ]);
     expect(within(table).getByText('10.10.0.20')).toBeInTheDocument();
@@ -554,35 +555,36 @@ describe('T52 관리자 화면 /admin/critical-assets', () => {
     expect(document.querySelector('[style]')).toBeNull();
   });
 
-  it('지우기는 확인을 한 번 더 받고 POST …/{id}/delete로 보낸다(DELETE 메서드를 쓰지 않는다)', async () => {
+  it('삭제는 확인을 한 번 더 받고 POST …/{id}/delete로 보낸다(DELETE 메서드를 쓰지 않는다)', async () => {
     const user = userEvent.setup();
     const state = { items: [assetRow(1, '10.10.0.20', '실습망 대상 서버', null)], calls: [] as Array<{ url: string; method: string; body: unknown }> };
     renderApp('/admin/critical-assets', 'ADMIN', adminHandler(state));
     const table = await screen.findByRole('table');
     await within(table).findByText('10.10.0.20');
-    await user.click(within(table).getByRole('button', { name: '10.10.0.20 지우기' }));
+    await user.click(within(table).getByRole('button', { name: '10.10.0.20 삭제' }));
     // 확인 전에는 보내지 않는다
     expect(state.calls.some((c) => c.method !== 'GET')).toBe(false);
-    const confirm = screen.getByRole('group', { name: '10.10.0.20 지우기 확인' });
-    expect(confirm).toHaveTextContent('되돌릴 수 없습니다');
+    const confirm = screen.getByRole('group', { name: '10.10.0.20 삭제 확인' });
+    // T68(B7): 주소·이름 뒤에 조사를 고정으로 붙이지 않는다
+    expect(confirm).toHaveTextContent('이 중요 자산을 삭제할까요? 10.10.0.20 · 실습망 대상 서버. 되돌릴 수 없습니다');
     await user.click(within(confirm).getByRole('button', { name: '취소' }));
-    expect(screen.queryByRole('group', { name: '10.10.0.20 지우기 확인' })).toBeNull();
+    expect(screen.queryByRole('group', { name: '10.10.0.20 삭제 확인' })).toBeNull();
 
-    await user.click(within(table).getByRole('button', { name: '10.10.0.20 지우기' }));
-    await user.click(within(screen.getByRole('group', { name: '10.10.0.20 지우기 확인' })).getByRole('button', { name: '지우기 확정' }));
+    await user.click(within(table).getByRole('button', { name: '10.10.0.20 삭제' }));
+    await user.click(within(screen.getByRole('group', { name: '10.10.0.20 삭제 확인' })).getByRole('button', { name: '삭제 확정' }));
     await waitFor(() => expect(state.items).toHaveLength(0));
     const writes = state.calls.filter((c) => c.method !== 'GET');
     expect(writes).toEqual([{ url: '/api/admin/critical-assets/1/delete', method: 'POST', body: null }]);
     expect(await screen.findByText('등록한 중요 자산이 없습니다.')).toBeInTheDocument();
   });
 
-  it('고치기는 이름·설명만 보내고 주소는 바꿀 수 없다', async () => {
+  it('수정은 이름·설명만 보내고 주소는 바꿀 수 없다', async () => {
     const user = userEvent.setup();
     const state = { items: [assetRow(1, '10.10.0.20', '실습망 대상 서버', null)], calls: [] as Array<{ url: string; method: string; body: unknown }> };
     renderApp('/admin/critical-assets', 'ADMIN', adminHandler(state));
     const table = await screen.findByRole('table');
-    await user.click(await within(table).findByRole('button', { name: '10.10.0.20 고치기' }));
-    const form = screen.getByRole('form', { name: '중요 자산 고치기' });
+    await user.click(await within(table).findByRole('button', { name: '10.10.0.20 수정' }));
+    const form = screen.getByRole('form', { name: '중요 자산 수정' });
     expect(within(form).queryByLabelText('주소')).toBeNull();
     expect(within(form).getByText('10.10.0.20')).toBeInTheDocument();
     await user.clear(within(form).getByLabelText('이름'));

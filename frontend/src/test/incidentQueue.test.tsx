@@ -251,18 +251,18 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(ids[ids.length - 1]).toBe(7);
   });
 
-  it('쪽 나눔은 서버 값: 다음 쪽·쪽 번호·쪽당 건수, 거르기를 바꾸면 1쪽으로 돌아간다', async () => {
+  it('쪽 나눔은 서버 값: 다음 페이지·페이지 번호·페이지당 건수(T68 C2: 전에는 쪽), 거르기를 바꾸면 1쪽으로 돌아간다', async () => {
     const user = userEvent.setup();
     const { queueCalls } = renderQueue();
     await ready();
-    expect(screen.getByRole('button', { name: '이전 쪽' })).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: '다음 쪽' }));
+    expect(screen.getByRole('button', { name: '이전 페이지' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '다음 페이지' }));
     expect(params().get('page')).toBe('2');
     await waitFor(() => expect(screen.getByText('전체 60건 중 51–60')).toBeInTheDocument());
     expect(lastCall(queueCalls).get('page')).toBe('2');
     expect(tableIds()).toHaveLength(10);
-    expect(screen.getByRole('button', { name: '2쪽' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('button', { name: '다음 쪽' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '2페이지' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: '다음 페이지' })).toBeDisabled();
 
     await user.click(screen.getByRole('button', { name: /우선순위 Low 24건만 보기/ }));
     expect(params().get('page')).toBeNull();
@@ -272,14 +272,14 @@ describe('통합 인시던트 큐(T23)', () => {
     await user.click(screen.getByRole('button', { name: /우선순위 Low 24건만 보기/ }));
     expect(params().get('priority')).toBeNull();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '2쪽' })).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '2쪽' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '2페이지' })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '2페이지' }));
     expect(params().get('page')).toBe('2');
-    await user.selectOptions(screen.getByLabelText('쪽당 건수'), '25');
+    await user.selectOptions(screen.getByLabelText('페이지당 건수'), '25');
     expect(params().get('size')).toBe('25');
     expect(params().get('page')).toBeNull();
     await waitFor(() => expect(screen.getByText('전체 60건 중 1–25')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: '3쪽' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '3페이지' })).toBeInTheDocument();
   });
 
   it('범위 밖 page는 서버가 고친 마지막 쪽으로, 허용 밖 size는 50으로 URL을 고친다', async () => {
@@ -302,7 +302,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(screen.getByRole('button', { name: '7일' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('수집원')).toHaveValue('src:imported');
     expect(screen.getByRole('button', { name: /우선순위 Low 12건만 보기/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByLabelText('쪽당 건수')).toHaveValue('25');
+    expect(screen.getByLabelText('페이지당 건수')).toHaveValue('25');
     expect(screen.getByRole('button', { name: '우선순위: Low 필터 지우기' })).toBeInTheDocument();
     expect(tableIds().every((i) => i <= 30)).toBe(true);
   });
@@ -524,7 +524,8 @@ describe('통합 인시던트 큐(T23)', () => {
     const row4 = within(table).getByText('10.0.4.1').closest('tr') as HTMLElement;
     // T43: 실패 칩의 뜻을 "AI 리포트를 쓰지 못해 템플릿으로 대체"로 바꿨다(목록에는 사유가 없어 둘 가운데 단정하지 않는다)
     const failChip = within(row4).getByRole('img', {
-      name: 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세에서 봅니다',
+      // T68(C1): "사유는 상세에서 봅니다" → "상세 화면에서 확인하세요"
+      name: 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세 화면에서 확인하세요',
     });
     expect(failChip).toHaveAttribute('title', failChip.getAttribute('aria-label'));
     const row36 = within(table).getByText('10.0.36.1').closest('tr') as HTMLElement;
@@ -534,7 +535,7 @@ describe('통합 인시던트 큐(T23)', () => {
     expect(within(row36).getByRole('img', { name: '발송 판단: 보류' })).toBeInTheDocument();
     const row59 = within(table).getByText('10.0.59.1').closest('tr') as HTMLElement;
     expect(within(row59).getByText('진행 중')).toBeInTheDocument();
-    expect(within(row59).getByText('진행 중').closest('[title]')).not.toHaveAttribute('title', expect.stringContaining('기준 시각 기준'));
+    expect(within(row59).getByText('진행 중').closest('[title]')).not.toHaveAttribute('title', expect.stringContaining('(기준 시각: 고정 스냅샷)'));
   });
 
   it('서버 우선순위가 없음(종결)이면 우선순위 없음으로 표시한다(화면이 다시 계산하지 않는다)', async () => {
@@ -739,7 +740,7 @@ describe('새 인시던트 띠·자동 갱신(T23)', () => {
     await waitFor(() => expect(within(screen.getByRole('table')).queryAllByText('새')).toHaveLength(0));
   });
 
-  it('고정 스냅샷이면 부르지 않고 "고정 스냅샷 · 자동 갱신 꺼짐"을 보인다. 진행 중 툴팁은 기준 시각 기준이다', async () => {
+  it('고정 스냅샷이면 부르지 않고 "고정 스냅샷 · 자동 갱신 꺼짐"을 보인다. 진행 중 툴팁은 기준 시각이 고정 스냅샷의 것이다', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     setVisibility('visible');
     const { newCountCalls } = renderQueue('/incidents', { snapshot: true });
@@ -753,7 +754,7 @@ describe('새 인시던트 띠·자동 갱신(T23)', () => {
     const row59 = within(screen.getByRole('table')).getByText('10.0.59.1').closest('tr') as HTMLElement;
     expect(within(row59).getByText('진행 중').closest('[title]')).toHaveAttribute(
       'title',
-      expect.stringContaining('기준 시각 기준'),
+      expect.stringContaining('(기준 시각: 고정 스냅샷)'),
     );
   });
 
@@ -993,7 +994,7 @@ describe('T40 알림 묶음 조건(thread)', () => {
     await ready();
     expect(lastCall(queueCalls).get('thread')).toBe('2269');
     const chip = screen.getByRole('button', { name: '알림 묶음 #2269 필터 지우기' });
-    expect(chip).toHaveAttribute('title', '최초 알림 인시던트 #2269의 Slack 스레드에 묶인 인시던트만 봅니다');
+    expect(chip).toHaveAttribute('title', '최초 알림 인시던트 #2269의 Slack 스레드에 묶인 인시던트만 표시합니다');
     expect(chip).toHaveTextContent('알림 묶음 #2269');
     await user.click(chip);
     expect(params().get('thread')).toBeNull();

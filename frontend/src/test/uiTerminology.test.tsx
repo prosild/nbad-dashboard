@@ -977,7 +977,9 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     const tab = await screen.findByRole('tab', { name: '발송 판단', selected: true });
     expect(tab).toBeInTheDocument();
     const decisionPanel = screen.getByRole('tabpanel');
-    expect(within(decisionPanel).getByText('발송')).toBeInTheDocument();
+    // T68(A8): 규칙 의견의 선택지 send도 최종 판단처럼 "발송"이다(전에는 "전송"). 최종 + 규칙 의견 두 곳
+    expect(within(decisionPanel).getAllByText('발송').length).toBeGreaterThanOrEqual(2);
+    expect(decisionPanel.textContent).not.toContain('전송');
     expect(decisionPanel.textContent).not.toContain('경보 발송');
     // 상세 헤더의 경보 발송은 사건 알림 기록(alerted) 값이다
     expect(within(screen.getByRole('region', { name: '인시던트 요약' })).getByText('경보 발송')).toBeInTheDocument();
@@ -1007,7 +1009,8 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     expect(await screen.findByRole('heading', { name: '현황판' })).toBeInTheDocument();
     // T24: 시간·수집원 기준 KPI와 패널. 옛 "전체 인시던트"·"판정 완료"·"데이터 기준"·"캡처별 현황"은 없다(OLD_TERMS)
     expect(await screen.findByText('탐지된 인시던트')).toBeInTheDocument();
-    for (const name of ['핵심 지표', '탐지 추이', '최근 인시던트', '수집원 상태', '경보 발송 상태']) {
+    // T68(A11): "경보 발송 상태" → "Slack 일일 요약 상태"(일일 요약 기록만 보이는 패널)
+    for (const name of ['핵심 지표', '탐지 추이', '최근 인시던트', '수집원 상태', 'Slack 일일 요약 상태']) {
       expect(await screen.findByRole('region', { name })).toBeInTheDocument();
     }
     // 수집원은 짧은 이름이 보이고 전체 이름(zeek_AD Q65)·캡처 ID는 툴팁·판독기 글자에 있다
@@ -1078,7 +1081,7 @@ describe('화면 문구 회귀 검사(내부 이름·영어 병기 없음)', () 
     const heading = await screen.findByRole('heading', { name: '같은 호스트의 다른 인시던트' });
     const section = heading.closest('section') as HTMLElement;
     await within(section).findByText('#1042');
-    for (const term of ['이 인시던트 말고 12건', '가까운 2건', '전체 보기', '목적지', '출발지', '종결', '분석 중', '오탐', '행위 패턴 이탈', '상세 보기']) {
+    for (const term of ['이 인시던트 외 12건', '가까운 2건', '전체 보기', '목적지', '출발지', '종결', '분석 중', '오탐', '행위 패턴 이탈', '상세 보기']) {
       expect(section, term).toHaveTextContent(term);
     }
     expect(section).toHaveTextContent(/\d+(분|시간|일) (전|뒤)/);

@@ -135,7 +135,7 @@ function EventBody({ ev }: { ev: TimelineEvent }) {
               {ev.item.to ? ev.item.to.displayName : '미배정'}
             </span>
             {ev.item.reason === 'auto_on_start' && (
-              <span className="text-[11px] text-slate-400">조사 시작 때 자동 지정</span>
+              <span className="text-[11px] text-slate-400">분석 시작 때 자동 지정</span>
             )}
           </div>
           <div className="mt-0.5 text-[11px] text-slate-400">

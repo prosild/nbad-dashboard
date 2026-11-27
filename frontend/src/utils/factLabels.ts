@@ -18,7 +18,7 @@ export const FACT_GROUPS = [
   { key: 'protocolLog', label: '프로토콜 로그' },
   { key: 'peers', label: '상대 IP·목적지 포트' },
   { key: 'sessions', label: '주요 세션' },
-  { key: 'other', label: '사전에 없는 항목' },
+  { key: 'other', label: '기타 항목(원문)' },
 ] as const;
 
 export type FactGroupKey = (typeof FACT_GROUPS)[number]['key'];
@@ -37,6 +37,8 @@ export interface FactView {
   valueKnown: boolean;
   /** 값이 길어 줄을 따로 쓰는 항목 */
   wide: boolean;
+  /** 항목 이름의 뜻·기준(T68, 항목 툴팁 첫 줄). 없으면 null */
+  hint: string | null;
   /** 리포트가 인용한 번호가 사실 목록에 없음("근거 정보 없음") */
   missing: boolean;
 }
@@ -57,38 +59,54 @@ const PROTOCOL_LOG_NAMES: Record<string, string> = {
   dce_rpc: 'DCE-RPC',
 };
 
-/** 단순 숫자 사실(이름 → 항목 이름, 값 단위) */
-const SCALAR_FACTS: Record<string, { label: string; unit: ValueUnit; group: FactGroupKey }> = {
+/**
+ * 증적 탭 핵심 수치와 같은 툴팁(T68). 과대 집계 툴팁은 새로 짓지 않고 탐지 저장소 증적의 한계(`limits`) 문장
+ * "바이트는 관측한 IP 바이트다. Zeek 페이로드 바이트가 IP 바이트보다 큰(부푼) 연결 수는 …"에서 가져왔다(설계자 답 L7).
+ */
+export const PAYLOAD_INFLATED_HINT = 'Zeek 페이로드 바이트가 IP 바이트보다 큰 세션(바이트 값은 관측한 IP 바이트 기준)';
+export const HOST_BYTES_HINT = '인시던트 대상 호스트 기준';
+
+/** 단순 숫자 사실(이름 → 항목 이름, 값 단위, 뜻) */
+const SCALAR_FACTS: Record<string, { label: string; unit: ValueUnit; group: FactGroupKey; hint?: string }> = {
   connection_count: { label: '세션 수', unit: 'count', group: 'overview' },
   unique_peers: { label: '고유 상대 IP 수', unit: 'count', group: 'overview' },
   unique_destination_ports: { label: '고유 목적지 포트 수', unit: 'count', group: 'overview' },
-  payload_bytes_inflated_connections: { label: '페이로드 바이트가 부푼 세션 수', unit: 'count', group: 'overview' },
+  payload_bytes_inflated_connections: {
+    label: '페이로드 바이트가 과대 집계된 세션 수',
+    unit: 'count',
+    group: 'overview',
+    hint: PAYLOAD_INFLATED_HINT,
+  },
   queue_rank: { label: '탐지 순위', unit: 'rank', group: 'overview' },
-  bytes_sent_by_host: { label: '자산 송신 바이트', unit: 'bytes', group: 'overview' },
-  bytes_received_by_host: { label: '자산 수신 바이트', unit: 'bytes', group: 'overview' },
+  bytes_sent_by_host: { label: '송신 바이트', unit: 'bytes', group: 'overview', hint: HOST_BYTES_HINT },
+  bytes_received_by_host: { label: '수신 바이트', unit: 'bytes', group: 'overview', hint: HOST_BYTES_HINT },
   incident_duration_seconds: { label: '인시던트 지속 시간', unit: 'seconds', group: 'overview' },
 };
 
-/** `baseline.<지표>` 지표 이름. 단위는 이름 끝(`_ratio` 비율, `_chars` 글자 수, `payload_bytes_*` 바이트)으로 정한다. */
+/**
+ * `baseline.<지표>` 지표 이름. 단위는 이름 끝(`_ratio` 비율, `_chars` 글자 수, `payload_bytes_*` 바이트)으로 정한다.
+ * `_per_window`는 5분 탐지 윈도우 하나당 값이다(T68: "구간당" → "윈도우당", `baseline_windows`도 윈도우. docs/ui-terminology.md T18b 83행).
+ * 탐지 저장소가 준 모델 툴팁(labels.ts DETECTION_MODEL_INFO)의 "5분 구간"은 계약 글이라 그대로 둔다.
+ */
 const BASELINE_METRICS: Record<string, string> = {
-  connections_per_window: '구간당 세션 수',
-  dce_rpc_calls_per_window: '구간당 DCE-RPC 호출 수',
-  distinct_peer_ports_per_window: '구간당 고유 상대 포트 수',
-  distinct_peers_per_window: '구간당 고유 상대 IP 수',
+  connections_per_window: '윈도우당 세션 수',
+  dce_rpc_calls_per_window: '윈도우당 DCE-RPC 호출 수',
+  distinct_peer_ports_per_window: '윈도우당 고유 상대 포트 수',
+  distinct_peers_per_window: '윈도우당 고유 상대 IP 수',
   dns_max_query_length_chars: 'DNS 최장 질의 길이',
-  dns_nxdomain_per_window: '구간당 DNS 없는 도메인 응답',
-  dns_queries_per_window: '구간당 DNS 질의 수',
-  ftp_failures_per_window: '구간당 FTP 실패 응답',
-  http_errors_per_window: '구간당 HTTP 오류 응답',
-  http_requests_per_window: '구간당 HTTP 요청 수',
+  dns_nxdomain_per_window: '윈도우당 DNS NXDOMAIN 응답',
+  dns_queries_per_window: '윈도우당 DNS 질의 수',
+  ftp_failures_per_window: '윈도우당 FTP 실패 응답',
+  http_errors_per_window: '윈도우당 HTTP 오류 응답',
+  http_requests_per_window: '윈도우당 HTTP 요청 수',
   icmp_connection_ratio: 'ICMP 세션 비율',
-  kerberos_failures_per_window: '구간당 Kerberos 실패 수',
-  payload_bytes_received_by_host_per_window: '구간당 자산 수신 페이로드 바이트',
-  payload_bytes_sent_by_host_per_window: '구간당 자산 송신 페이로드 바이트',
+  kerberos_failures_per_window: '윈도우당 Kerberos 실패 수',
+  payload_bytes_received_by_host_per_window: '윈도우당 수신 페이로드 바이트',
+  payload_bytes_sent_by_host_per_window: '윈도우당 송신 페이로드 바이트',
   rejected_connection_ratio: '거부된 세션 비율',
-  smb_file_actions_per_window: '구간당 SMB 파일 작업 수',
-  smb_mappings_per_window: '구간당 SMB 공유 폴더 연결',
-  tls_without_sni_per_window: '구간당 SNI 없는 TLS 세션',
+  smb_file_actions_per_window: '윈도우당 SMB 파일 작업 수',
+  smb_mappings_per_window: '윈도우당 SMB 공유 폴더 연결',
+  tls_without_sni_per_window: '윈도우당 SNI 없는 TLS 세션',
   unestablished_connection_ratio: '성립하지 않은 세션 비율',
 };
 
@@ -197,6 +215,7 @@ interface NameRule {
   label: string;
   group: FactGroupKey;
   wide?: boolean;
+  hint?: string;
   render: (v: Json, pseudonyms: Pseudonyms) => string | null;
 }
 
@@ -292,7 +311,7 @@ function renderExampleConnection(v: Json, pseudonyms: Pseudonyms): string | null
   // start_seconds는 뜻을 확인하지 않아 한 줄 요약에 넣지 않는다(원문은 펼친 상세에 있다). 모양만 본다.
   if (v.start_seconds !== null && !isFiniteNumber(v.start_seconds)) return null;
   if ([src, dst, port, transport, protocol, state, duration, sent, recv].some((x) => x === null)) return null;
-  return `${src} → ${dst}:${port}/${transport} · ${protocol} · ${state} · 지속 ${duration} · 출발지가 보냄 ${sent} · 목적지가 보냄 ${recv}`;
+  return `${src} → ${dst}:${port}/${transport} · ${protocol} · ${state} · 지속 ${duration} · 출발지 송신 ${sent} · 목적지 송신 ${recv}`;
 }
 
 function protocolMetricLabel(proto: string, metric: string): { label: string; unit: ValueUnit } | null {
@@ -309,7 +328,7 @@ function protocolMetricLabel(proto: string, metric: string): { label: string; un
 function ruleFor(name: string): NameRule | null {
   if (hasOwn(SCALAR_FACTS, name)) {
     const s = SCALAR_FACTS[name];
-    return { label: s.label, group: s.group, render: (v) => formatUnit(v, s.unit) };
+    return { label: s.label, group: s.group, hint: s.hint, render: (v) => formatUnit(v, s.unit) };
   }
   if (name === 'host_role') {
     return {
@@ -337,7 +356,7 @@ function ruleFor(name: string): NameRule | null {
   }
   if (name === 'also_flagged_by_models') {
     return {
-      label: '함께 탐지한 모델',
+      label: '교차 탐지',
       group: 'detection',
       render: (v) => {
         if (!Array.isArray(v)) return null;
@@ -350,14 +369,14 @@ function ruleFor(name: string): NameRule | null {
   }
   if (name === 'baseline_windows') {
     return {
-      label: '비교한 구간 수',
+      label: '비교한 윈도우 수',
       group: 'baseline',
       render: (v) => {
         if (!hasExactKeys(v, ['baseline_windows', 'incident_windows'])) return null;
         const b = formatUnit(v.baseline_windows, 'plain');
         const i = formatUnit(v.incident_windows, 'plain');
         if (b === null || i === null) return null;
-        return `평소 ${b}구간 · 이번 인시던트 ${i}구간`;
+        return `평소 윈도우 ${b}개 · 이번 인시던트 윈도우 ${i}개`;
       },
     };
   }
@@ -370,13 +389,14 @@ function ruleFor(name: string): NameRule | null {
     const model = lookupLabel('detectionModel', m[1]);
     if (!model.known) return null;
     return {
-      label: `${model.text} 이상 판정 구간`,
+      label: `${model.text} 탐지 윈도우`,
       group: 'detection',
+      hint: '기준값을 넘은 윈도우 수 / 전체 윈도우 수',
       render: (v) => {
         if (!hasExactKeys(v, ['candidate', 'windows'])) return null;
         const c = formatUnit(v.candidate, 'plain');
         const w = formatUnit(v.windows, 'plain');
-        return c === null || w === null ? null : `${c} / ${w} 구간`;
+        return c === null || w === null ? null : `${c} / ${w}`;
       },
     };
   }
@@ -476,7 +496,7 @@ export function isMissingFact(fact: FactItem): boolean {
 export function describeFact(fact: FactItem, pseudonyms: Pseudonyms): FactView {
   const base = { id: fact.id, rawName: fact.name };
   if (isMissingFact(fact)) {
-    return { ...base, label: MISSING_NAME, nameKnown: true, group: 'other', text: '-', valueKnown: true, wide: false, missing: true };
+    return { ...base, label: MISSING_NAME, nameKnown: true, group: 'other', text: '-', valueKnown: true, wide: false, hint: null, missing: true };
   }
   const rule = ruleFor(fact.name);
   const sv = structured(fact);
@@ -496,6 +516,7 @@ export function describeFact(fact: FactItem, pseudonyms: Pseudonyms): FactView {
         text: annotated,
         valueKnown: false,
         wide: annotated.length > 40,
+        hint: null,
         missing: false,
       };
     }
@@ -509,6 +530,7 @@ export function describeFact(fact: FactItem, pseudonyms: Pseudonyms): FactView {
     text: text ?? rawText,
     valueKnown: text !== null,
     wide: Boolean(rule?.wide) || (text === null && rawText.length > 40),
+    hint: rule?.hint ?? null,
     missing: false,
   };
 }
@@ -538,8 +560,16 @@ export interface VerificationReasonView {
 
 /**
  * zeek_AD 계약 v2 `zeekad_verification_reason`: `verification`(숫자·가명·ATT&CK ID가 사실과 안 맞음), `call`(호출 실패).
- * `call: <글>`(T39에서 본 실제 값 `call: ClientError`)은 콜론 뒤 글을 받은 그대로 덧붙인다. 그 밖의 값은 뜻을 짓지 않고 원문이다.
+ * `call: <글>`(T39에서 본 실제 값 `call: ClientError`)은 콜론 뒤 글(오류 종류 이름)을 받은 그대로 "오류: …"로 덧붙인다. 그 밖의 값은 뜻을 짓지 않고 원문이다.
+ * T68: 사유 이름은 화면의 다른 글처럼 "AI"로 부른다(LLM 호출 실패 → AI 호출 실패).
  */
+function callFailureDetail(reason: string | null | undefined): string | null {
+  const call = /^call:\s*(.*)$/s.exec((reason ?? '').trim());
+  if (!call) return null;
+  const detail = call[1].trim();
+  return detail === '' ? null : detail;
+}
+
 export function describeVerificationReason(reason: string | null | undefined): VerificationReasonView | null {
   if (reason === null || reason === undefined || reason.trim() === '') return null;
   const value = reason.trim();
@@ -547,12 +577,11 @@ export function describeVerificationReason(reason: string | null | undefined): V
     return { text: '리포트 내용이 근거와 맞지 않음(숫자·가명·ATT&CK ID)', known: true, raw: reason };
   }
   if (value === 'call') {
-    return { text: 'LLM 호출 실패', known: true, raw: reason };
+    return { text: 'AI 호출 실패', known: true, raw: reason };
   }
-  const call = /^call:\s*(.*)$/s.exec(value);
-  if (call) {
-    const detail = call[1].trim();
-    return { text: detail ? `LLM 호출 실패: ${detail}` : 'LLM 호출 실패', known: true, raw: reason };
+  if (/^call:/.test(value)) {
+    const detail = callFailureDetail(value);
+    return { text: detail ? `AI 호출 실패(오류: ${detail})` : 'AI 호출 실패', known: true, raw: reason };
   }
   return { text: reason, known: false, raw: reason };
 }
@@ -565,10 +594,12 @@ export function templateReplacedText(reason: string | null | undefined): string 
   const view = describeVerificationReason(reason);
   const value = (reason ?? '').trim();
   if (view?.known && value === 'verification') {
-    return 'AI가 쓴 리포트가 검증(글 속 숫자·가명·ATT&CK ID를 근거 사실과 대조)에서 걸려 쓰지 않았습니다. 아래는 사실만 나열한 템플릿 리포트입니다.';
+    return 'AI가 작성한 리포트가 검증(글 속 숫자·가명·ATT&CK ID를 근거 사실과 대조)을 통과하지 못해 사용하지 않았습니다. 아래는 사실만 나열한 템플릿 리포트입니다.';
   }
   if (view?.known) {
-    return `AI 호출이 실패해(${view.text}) AI 리포트를 쓰지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.`;
+    const detail = callFailureDetail(value);
+    const code = detail ? `(오류: ${detail})` : '';
+    return `AI 호출에 실패해${code} AI 리포트를 만들지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.`;
   }
   return 'AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 아래는 사실만 나열한 템플릿 리포트입니다.';
 }

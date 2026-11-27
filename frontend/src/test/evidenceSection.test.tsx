@@ -46,7 +46,8 @@ describe('EvidenceSection', () => {
 
     const dns = screen.getByTestId('protocol-log-dns');
     expect(within(dns).getByText('질의 수').nextSibling).toHaveTextContent('80');
-    expect(within(dns).getByText('없는 도메인 응답').nextSibling).toHaveTextContent('0');
+    // T68(B1): NXDOMAIN은 분석가가 그대로 쓰는 말이다(전에는 "없는 도메인 응답")
+    expect(within(dns).getByText('NXDOMAIN 응답').nextSibling).toHaveTextContent('0');
     const dce = screen.getByTestId('protocol-log-dce_rpc');
     expect(within(dce).getByText('주요 호출').nextSibling).toHaveTextContent('NetrShareEnum · 10');
 
@@ -57,7 +58,12 @@ describe('EvidenceSection', () => {
   it('키가 없는 값은 "값 없음", 관측한 0은 0으로 구분한다', () => {
     render(<EvidenceSection evidence={baseEvidence} />);
 
-    expect(screen.getByText('페이로드 바이트가 부푼 세션 수').nextSibling).toHaveTextContent('값 없음');
+    // T68(A16): "부푼" → "과대 집계된", 툴팁은 탐지 저장소 limits 문장에서 가져왔다(설계자 답 L7)
+    expect(screen.getByText('페이로드 바이트가 과대 집계된 세션 수').nextSibling).toHaveTextContent('값 없음');
+    expect(screen.getByText('페이로드 바이트가 과대 집계된 세션 수').closest('[title]')).toHaveAttribute(
+      'title',
+      'Zeek 페이로드 바이트가 IP 바이트보다 큰 세션(바이트 값은 관측한 IP 바이트 기준)',
+    );
     expect(screen.getByText('수신 바이트').nextSibling).toHaveTextContent('0 B');
     expect(within(screen.getByTestId('protocol-log-ntlm')).getByText('값 없음')).toBeInTheDocument();
     expect(within(screen.getByTestId('protocol-log-dns')).queryByText('값 없음')).not.toBeInTheDocument();

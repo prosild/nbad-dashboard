@@ -424,12 +424,13 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(h).getByText('155,261건')).toBeInTheDocument();
     expect(within(h).getByText('경보 발송')).toBeInTheDocument();
     expect(within(h).getByText('검증 통과')).toBeInTheDocument();
-    // T23: 수집원(종류 + 표시 이름)·탐지 시각·캡처 내 순위
+    // T23: 수집원(종류 + 표시 이름)·탐지 시각·탐지 순위(T68 A14: 전에는 "캡처 내 순위")
     expect(within(h).getByText('가져온 데이터')).toBeInTheDocument();
     expect(within(h).getByText('CIC-IDS2017 수요일')).toBeInTheDocument();
     expect(within(h).getByText('탐지')).toBeInTheDocument();
     expect(within(h).getByText('2026-11-12 11:27:00')).toBeInTheDocument();
-    expect(within(h).getByText('캡처 내 순위')).toBeInTheDocument();
+    expect(within(h).getByText('탐지 순위')).toBeInTheDocument();
+    expect(within(h).getByText('탐지 순위').closest('[title]')).toHaveAttribute('title', '이 캡처의 탐지 결과에서 매긴 순위(1위가 가장 의심스러움)');
     expect(within(h).getByText('1위')).toBeInTheDocument();
     expect(within(h).queryByText('진행 중')).toBeNull();
     // 모델 버전·탐지 작업 시각은 툴팁에만
@@ -462,7 +463,7 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(header()).getByText('Low')).toBeInTheDocument();
   });
 
-  it('진행 중이면 헤더에 표지를 붙이고, 고정 스냅샷이면 툴팁에 기준 시각 기준을 적는다. 실습망 센서 표시', async () => {
+  it('진행 중이면 헤더에 표지를 붙이고, 고정 스냅샷이면 툴팁에 기준 시각이 고정 스냅샷의 것임을 적는다. 실습망 센서 표시', async () => {
     renderDetail('/incidents/42/rank/1', {
       meta: { ...DEFAULT_META, sourceType: 'live', ongoing: true },
       detail: (d) => ({ ...d, incident: { ...d.incident, captureId: 'lab-20261118' } }),
@@ -473,7 +474,8 @@ describe('인시던트 상세 화면(T19)', () => {
     expect(within(h).getByText('실습망 센서')).toBeInTheDocument();
     expect(within(h).getByText('실습망 2026-11-18 · 시험')).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(h).getByText('진행 중').closest('[title]')).toHaveAttribute('title', expect.stringContaining('기준 시각 기준')),
+      // T68(A23): "(기준 시각 기준)" → "(기준 시각: 고정 스냅샷)"
+      expect(within(h).getByText('진행 중').closest('[title]')).toHaveAttribute('title', expect.stringContaining('(기준 시각: 고정 스냅샷)')),
     );
   });
 
@@ -769,7 +771,8 @@ describe('인시던트 상세 화면(T19)', () => {
     }
     await user.click(screen.getByRole('tab', { name: '발송 판단' }));
     // 세 의견이 같으면 한 줄 요약을 먼저 보이고 펼친다
-    const summaryLine = within(panel()).getByRole('button', { name: '세 의견 모두 전송' });
+    // T68(A8): 발송 판단 선택지 send는 "발송"(같은 탭의 "최종 발송 판단 [발송]"과 같은 동사)
+    const summaryLine = within(panel()).getByRole('button', { name: '세 의견 모두 발송' });
     expect(summaryLine).toHaveAttribute('aria-expanded', 'false');
     expect(within(panel()).queryByText('규칙 의견')).toBeNull();
     await user.click(summaryLine);
@@ -1112,7 +1115,7 @@ describe('T21: 결정 반영 상태·반영 지연·오탐 미리 채움·이력
     expect(within(statusItems[0]).queryByText('오탐')).toBeNull();
   });
 
-  it('이동 목록 조회가 실패하면 헤더에 안내와 다시 시도가 있고, 다시 시도하면 이동 버튼이 살아난다', async () => {
+  it('이전·다음 인시던트 조회가 실패하면 헤더에 안내와 다시 시도가 있고, 다시 시도하면 이동 버튼이 살아난다', async () => {
     const user = userEvent.setup();
     const list = [
       listItem({ queueRank: 1, hostIp: '10.0.0.1' }),
@@ -1121,7 +1124,8 @@ describe('T21: 결정 반영 상태·반영 지연·오탐 미리 채움·이력
     const { listCalls } = renderDetail('/incidents/42/rank/1', { list, listFailures: 1 });
     await screen.findByRole('tab', { name: '요약', selected: true });
     const nav = screen.getByRole('navigation', { name: '인시던트 이동' });
-    expect(await within(nav).findByRole('alert')).toHaveTextContent('이동 목록을 불러오지 못했습니다');
+    // T68(B2): "이동 목록"은 사용자가 모르는 내부 개념이다
+    expect(await within(nav).findByRole('alert')).toHaveTextContent('이전·다음 인시던트를 불러오지 못했습니다');
     expect(within(nav).getByRole('link', { name: '다음 인시던트' })).toHaveAttribute('aria-disabled', 'true');
 
     await user.click(within(nav).getByRole('button', { name: '다시 시도' }));
@@ -1152,7 +1156,7 @@ describe('T25 담당 칸·경과·타임라인', () => {
     expect(within(g).getByRole('button', { name: '담당자 변경' })).toBeInTheDocument();
     expect(within(g).queryByRole('button', { name: '담당 해제' })).toBeNull();
     expect(within(actions()).getByRole('note', { name: '담당자 자동 지정 안내' })).toHaveTextContent(
-      '조사를 시작하면 내가 담당자로 지정됩니다.',
+      '분석을 시작하면(분석 중으로 바꾸면) 내가 담당자로 지정됩니다.',
     );
   });
 
@@ -1242,7 +1246,7 @@ describe('T25 담당 칸·경과·타임라인', () => {
     });
     await screen.findByRole('tab', { name: '요약', selected: true });
     expect(within(assignmentArea()).queryAllByRole('button')).toHaveLength(0);
-    expect(within(assignmentArea()).getByText('종결된 인시던트라 담당자를 바꾸지 않습니다.')).toBeInTheDocument();
+    expect(within(assignmentArea()).getByText('종결된 인시던트라 담당자를 바꿀 수 없습니다.')).toBeInTheDocument();
   });
 
   it('머리: 미종결이면 경과와 착수 지연, 종결이면 처리 시간', async () => {
@@ -1300,7 +1304,7 @@ describe('T25 담당 칸·경과·타임라인', () => {
     expect(iAssign).toBeLessThan(iChange);
     expect(iChange).toBeLessThan(iClear);
     expect(texts[iAssign]).toContain('미배정');
-    expect(texts[iAssign]).toContain('조사 시작 때 자동 지정');
+    expect(texts[iAssign]).toContain('분석 시작 때 자동 지정');
     expect(texts[iChange]).toContain('변경자 관리자 (admin)');
     expect(texts[iClear]).toMatch(/김분석.*미배정/);
   });

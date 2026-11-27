@@ -91,7 +91,7 @@ export function RelatedHostIncidents({
         </h3>
         {data && (
           <span className="text-xs tabular-nums text-slate-400" data-testid="related-count">
-            이 인시던트 말고 {formatNumber(data.total)}건
+            이 인시던트 외 {formatNumber(data.total)}건
             {data.total > data.items.length && ` · 가까운 ${formatNumber(data.items.length)}건`}
           </span>
         )}

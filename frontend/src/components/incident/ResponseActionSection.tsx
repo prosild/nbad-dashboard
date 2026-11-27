@@ -103,7 +103,7 @@ export function ResponseActionSection({
       ) : (
         <p className="text-xs text-slate-400">기록된 대응 조치가 없습니다.</p>
       )}
-      {actions.length > 1 && <p className="text-[11px] text-slate-400">앞선 {actions.length - 1}건은 이력에서 봅니다.</p>}
+      {actions.length > 1 && <p className="text-[11px] text-slate-400">이전 기록 {actions.length - 1}건은 이력 탭에서 볼 수 있습니다.</p>}
 
       {error && (
         <div

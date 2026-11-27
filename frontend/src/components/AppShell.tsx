@@ -204,7 +204,7 @@ export function AppShell({
             role="status"
             data-snapshot-banner=""
             className="border-b border-slate-700 bg-slate-800/80 px-4 py-1.5 text-center text-xs text-slate-200 sm:px-6"
-            title="데이터가 더 늘지 않는 고정 스냅샷입니다. 최근 기간(24시간 등)은 이 기준 시각에서 거꾸로 셉니다."
+            title="데이터가 더 늘지 않는 고정 스냅샷입니다. 최근 기간(24시간 등)은 이 기준 시각을 끝으로 계산합니다."
           >
             <History className="mr-1.5 inline h-3.5 w-3.5 align-[-2px] text-slate-400" aria-hidden="true" />
             고정 스냅샷 · 기준 시각 <span className="tabular-nums">{formatDateTime(timeContext.anchor)}</span>{' '}

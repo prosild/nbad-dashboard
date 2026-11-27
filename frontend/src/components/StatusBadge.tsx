@@ -279,15 +279,22 @@ export function WouldSendBadge({ wouldSend }: { wouldSend: boolean | null | unde
   );
 }
 
-/** 경보 발송(T21): 사건 알림 Slack 기록(상태 후속 알림 제외)이 있는 인시던트. 현황판 KPI·목록 필터와 같은 정의 */
+/**
+ * 경보 발송 수의 뜻(T68 A10). 현황판 KPI·인시던트 목록 요약 띠·운영 현황 경보 카드가 같은 글을 쓴다.
+ * 공개 데모는 실제로 보내지 않으므로(Dry-run) "실제 발송 수"로 읽히지 않게 무엇을 세는지 적는다. 툴팁만 둔다(설계자 답 M4).
+ */
+export const ALERTED_COUNT_TOOLTIP =
+  '인시던트 알림 Slack 기록이 있는 인시던트 수(Dry-run·발송 실패 포함, 상태 변경 알림 제외)';
+
+/** 경보 발송(T21): 인시던트 알림 Slack 기록(상태 변경 알림 제외)이 있는 인시던트. 현황판 KPI·목록 필터와 같은 정의 */
 export function AlertedBadge({ alerted }: { alerted: boolean | null | undefined }) {
   return alerted ? (
-    <SocBadge tone="notice" title="사건 알림 Slack 기록이 있습니다(dry-run 기록·발송 실패 기록 포함)">
+    <SocBadge tone="notice" title="인시던트 알림을 Slack에 남긴 기록이 있습니다(Dry-run·발송 실패 포함)">
       <Bell className="h-3 w-3" aria-hidden="true" />
       경보 발송
     </SocBadge>
   ) : (
-    <SocBadge tone="muted" title="사건 알림 Slack 기록이 없습니다">
+    <SocBadge tone="muted" title="인시던트 알림 기록이 없습니다">
       <BellOff className="h-3 w-3" aria-hidden="true" />
       발송 기록 없음
     </SocBadge>
@@ -509,10 +516,10 @@ export function SourceTypeBadge({ type }: { type: SourceType | null | undefined 
 export const ONGOING_TOOLTIP =
   '진행 중: 실습망 센서의 종결되지 않은 인시던트이며, 마지막 윈도우가 그 캡처의 최신 윈도우이고 기준 시각 15분 안에 끝났습니다';
 
-/** 진행 중 표지(하늘색 = 진행 중). 고정 스냅샷이면 툴팁에 "기준 시각 기준"을 적는다. */
+/** 진행 중 표지(하늘색 = 진행 중). 고정 스냅샷이면 툴팁에 기준 시각이 고정 스냅샷의 것임을 적는다. */
 export function OngoingBadge({ snapshot = false }: { snapshot?: boolean }) {
   return (
-    <SocBadge tone="info" title={snapshot ? `${ONGOING_TOOLTIP}(기준 시각 기준)` : ONGOING_TOOLTIP}>
+    <SocBadge tone="info" title={snapshot ? `${ONGOING_TOOLTIP}(기준 시각: 고정 스냅샷)` : ONGOING_TOOLTIP}>
       <Loader className="h-3 w-3" aria-hidden="true" />
       진행 중
     </SocBadge>

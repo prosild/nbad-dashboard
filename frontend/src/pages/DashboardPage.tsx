@@ -8,7 +8,7 @@ import { PeriodButtons, SourceField, sourceSelectChanges, sourceSelectValue } fr
 import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
-import { CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, SocBadge } from '../components/StatusBadge';
+import { ALERTED_COUNT_TOOLTIP, CodeLabel, DetectionModelName, IncidentStatusBadge, PriorityBadge, SocBadge } from '../components/StatusBadge';
 import { PanelHeader } from '../components/dashboard/PanelHeader';
 import { SourceStatusList } from '../components/dashboard/SourceStatus';
 import { ThreatPanels } from '../components/dashboard/ThreatPanels';
@@ -285,7 +285,7 @@ export function DashboardPage() {
                 <PanelHeader
                   icon={Server}
                   title="수집원 상태"
-                  note={`${periodScopeText(cond, overview.anchor)} 인시던트 수${overview.snapshot ? ' · 기준 시각 기준' : ''}`}
+                  note={`${periodScopeText(cond, overview.anchor)} 인시던트 수${overview.snapshot ? ' · 기준 시각까지' : ''}`}
                 />
                 <SourceStatusList
                   overview={overview}
@@ -299,7 +299,7 @@ export function DashboardPage() {
 
             <p className="text-right text-xs text-slate-400">
               <Link to={`/operations?${conditionQuery(cond)}`} className="inline-flex items-center gap-1 text-cyan-300 hover:text-cyan-200">
-                누적 판정·탐지 모델 성능은 운영 현황
+                누적 분석가 판정·모델별 정탐률은 운영 현황에서 보기
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
             </p>
@@ -310,18 +310,18 @@ export function DashboardPage() {
   );
 }
 
-/** 기준 시각: now면 "기준 시각 = 현재", 고정 스냅샷이면 맨 위 띠와 같은 값 */
+/** 기준 시각: now면 "기준 시각: 현재", 고정 스냅샷이면 맨 위 띠와 같은 값 */
 function AnchorText({ overview }: { overview: DashboardOverviewResponse | null }) {
   if (!overview) return null;
   if (!overview.snapshot) {
     return (
-      <span title="기간은 지금 시각에서 거꾸로 셉니다" data-testid="dashboard-anchor">
-        기준 시각 = 현재
+      <span title="기간은 지금 시각을 끝으로 계산합니다" data-testid="dashboard-anchor">
+        기준 시각: 현재
       </span>
     );
   }
   return (
-    <span title="고정 스냅샷: 기간을 이 기준 시각에서 거꾸로 셉니다" data-testid="dashboard-anchor">
+    <span title="고정 스냅샷: 이 기준 시각을 끝으로 기간을 계산합니다" data-testid="dashboard-anchor">
       기준 시각{' '}
       <span className="font-semibold tabular-nums text-slate-100">{formatDateTime(overview.anchor)}</span> {DISPLAY_TIME_ZONE_LABEL}
     </span>
@@ -405,7 +405,7 @@ function KpiRow({
         value={formatNumber(s.alerted)}
         scope={scope}
         tone={s.alerted > 0 ? 'notice' : 'default'}
-        title="상태 알림이 아닌 Slack 발송 기록이 있는 인시던트 수입니다."
+        title={ALERTED_COUNT_TOOLTIP}
       />
       <KpiCard
         to={`/incidents?${conditionQuery(allPeriod(cond), { reviewPending: 'true' })}`}
@@ -414,7 +414,7 @@ function KpiRow({
         scope="현재"
         tone={pending !== null && pending > 0 ? 'attention' : 'default'}
         sub={pendingError ? '불러오지 못했습니다' : undefined}
-        title="분석가 검토를 기다리는 인시던트 수입니다(기간 무관, 최신 분석 결과 기준). 에스컬레이션 화면의 대기 목록과 정의가 조금 다를 수 있습니다."
+        title="분석가 검토를 기다리는 인시던트 수입니다(기간 무관, 최신 분석 결과 기준). 에스컬레이션 화면에는 최신 분석 결과에 없는 인시던트의 요청(그 인시던트의 가장 최근 요청)도 보이지만, 이 수는 최신 분석 결과에 있는 인시던트만 셉니다."
       />
     </section>
   );
@@ -558,7 +558,7 @@ function RecentPanel({
   );
 }
 
-/* ───────────────────────── 경보 발송 상태 ───────────────────────── */
+/* ───────────────────────── Slack 일일 요약 상태 ───────────────────────── */
 
 function AlertingPanel({
   overview,
@@ -574,8 +574,8 @@ function AlertingPanel({
   const a = overview.alerting;
   const latestAt = a.latestDeliveredAt ?? a.latestCreatedAt;
   return (
-    <section className={`soc-card min-w-0 space-y-3 p-4 ${className}`} aria-label="경보 발송 상태">
-      <PanelHeader icon={Bell} title="경보 발송 상태" note="Slack 일일 요약" />
+    <section className={`soc-card min-w-0 space-y-3 p-4 ${className}`} aria-label="Slack 일일 요약 상태">
+      <PanelHeader icon={Bell} title="Slack 일일 요약 상태" />
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
         <dt className="text-slate-400">발송 방식</dt>
         <dd className="flex flex-wrap items-center gap-1.5">

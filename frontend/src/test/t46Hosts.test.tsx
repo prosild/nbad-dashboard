@@ -461,12 +461,12 @@ describe('T46 호스트 위험도 화면', () => {
     const server = hostsServer((url) => json(hostsResponse(url, ANALYST_ROWS, { total: 120 })));
     const user = userEvent.setup();
     renderApp('/hosts', server.handler);
-    const nav = await screen.findByRole('navigation', { name: '쪽 이동' });
+    const nav = await screen.findByRole('navigation', { name: '페이지 이동' });
     expect(nav).toHaveTextContent('전체 120건 중 1–50');
-    await user.click(within(nav).getByRole('button', { name: '다음 쪽' }));
+    await user.click(within(nav).getByRole('button', { name: '다음 페이지' }));
     await waitFor(() => expect(server.last().get('page')).toBe('2'));
     expect(urlParams().get('page')).toBe('2');
-    await user.selectOptions(within(screen.getByRole('navigation', { name: '쪽 이동' })).getByLabelText('쪽당 건수'), '25');
+    await user.selectOptions(within(screen.getByRole('navigation', { name: '페이지 이동' })).getByLabelText('페이지당 건수'), '25');
     await waitFor(() => expect(server.last().get('size')).toBe('25'));
     // 크기를 바꾸면 1쪽으로 돌아간다
     expect(server.last().get('page')).toBe('1');
@@ -527,7 +527,7 @@ describe('T46 호스트 위험도 화면', () => {
     expect(screen.getByTestId('hosts-total')).not.toHaveTextContent('0개');
     expect(document.querySelector('[data-empty]')).toBeNull();
     expect(document.querySelector('[data-hosts-table-wrap]')).toBeNull();
-    expect(screen.queryByRole('navigation', { name: '쪽 이동' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: '페이지 이동' })).toBeNull();
     expect(screen.queryByTestId('stale-notice')).toBeNull();
 
     mode = 'ok';
@@ -595,7 +595,7 @@ describe('T46 호스트 위험도 화면', () => {
     expect(screen.getByTestId('hosts-total')).toHaveTextContent('전체 기간 호스트 1개');
   });
 
-  it('빈 목록: 조건을 적은 안내와 기간 넓히기, 검색 중이면 검색·거르기 지우기', async () => {
+  it('빈 목록: 조건을 적은 안내와 기간 넓히기, 검색 중이면 검색·필터 지우기(T68 A24: 전에는 거르기)', async () => {
     const server = hostsServer((url) => json(hostsResponse(url, [])));
     const user = userEvent.setup();
     renderApp('/hosts', server.handler);
@@ -618,8 +618,8 @@ describe('T46 호스트 위험도 화면', () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(filtered).toHaveTextContent('검색·거르기 조건에 맞는 호스트가 없습니다.');
-    await user.click(within(filtered).getByRole('button', { name: '검색·거르기 지우기' }));
+    expect(filtered).toHaveTextContent('검색·필터 조건에 맞는 호스트가 없습니다.');
+    await user.click(within(filtered).getByRole('button', { name: '검색·필터 지우기' }));
     await waitFor(() => expect(server.last().get('q')).toBeNull());
     expect(urlParams().get('q')).toBeNull();
   });
@@ -628,7 +628,7 @@ describe('T46 호스트 위험도 화면', () => {
     const server = hostsServer((url) => json(hostsResponse(url, [], { maskedView: true })));
     renderApp('/hosts?q=nobody', server.handler, 'VIEWER');
     await waitFor(() => expect(document.querySelector('[data-empty="filter"]')).not.toBeNull());
-    expect(document.querySelector('[data-empty="filter"]')).toHaveTextContent('검색·거르기 조건에 맞는 대역이 없습니다.');
+    expect(document.querySelector('[data-empty="filter"]')).toHaveTextContent('검색·필터 조건에 맞는 대역이 없습니다.');
     expect(screen.getByTestId('hosts-total')).toHaveTextContent('대역 0개');
   });
 
@@ -752,7 +752,7 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
 
     await act(async () => slow.resolve(json(res)));
     await waitFor(() => expect(sec.querySelectorAll('[data-related-row]')).toHaveLength(3));
-    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 말고 3건');
+    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 외 3건');
     expect(screen.getByTestId('related-count')).not.toHaveTextContent('가까운');
     expect(within(sec).queryByRole('link', { name: '전체 보기' })).toBeNull();
 
@@ -787,7 +787,7 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
     const server = detailServer(() => json({ hostIp: '10.50.0.1', total: 14, maskedView: false, items }));
     renderApp('/incidents/42/rank/1', server.handler);
     await waitFor(() => expect(section().querySelectorAll('[data-related-row]')).toHaveLength(10));
-    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 말고 14건 · 가까운 10건');
+    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 외 14건 · 가까운 10건');
     expect(within(section()).getByRole('link', { name: '전체 보기' })).toHaveAttribute(
       'href',
       '/incidents?period=all&hostIp=10.50.0.1',
@@ -817,7 +817,7 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
     );
     renderApp('/incidents/42/rank/1', v6.handler);
     await waitFor(() => expect(section().querySelectorAll('[data-related-row]')).toHaveLength(10));
-    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 말고 12건 · 가까운 10건');
+    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 외 12건 · 가까운 10건');
     expect(within(section()).queryByRole('link', { name: '전체 보기' })).toBeNull();
   });
 
@@ -826,7 +826,7 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
     const view = renderApp('/incidents/42/rank/1', server.handler);
     await waitFor(() => expect(section().querySelector('[data-related-state="empty"]')).not.toBeNull());
     expect(section()).toHaveTextContent('이 호스트에서 탐지된 다른 인시던트가 없습니다.');
-    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 말고 0건');
+    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 외 0건');
     view.unmount();
 
     const viewer = detailServer(() => json({ hostIp: '10.50.*.*', total: 0, maskedView: true, items: [] }), {
@@ -889,6 +889,6 @@ describe('T46 요약 탭: 같은 호스트의 다른 인시던트', () => {
     await waitFor(() => expect(server.relatedCalls()).toBe(2));
     await waitFor(() => expect(section().querySelectorAll('[data-related-row]')).toHaveLength(2));
     expect(server.order.filter((x) => x === 'detail')).toHaveLength(2);
-    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 말고 2건');
+    expect(screen.getByTestId('related-count')).toHaveTextContent('이 인시던트 외 2건');
   });
 });

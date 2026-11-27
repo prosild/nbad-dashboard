@@ -48,7 +48,7 @@ export function bucketRangeText(b: TrendBucket): string {
 
 export function bucketTitle(b: TrendBucket): string {
   const parts = SERIES.map((s) => `${s.label} ${formatNumber(b[s.key])}`).join(' · ');
-  return `${bucketRangeText(b)}\n합계 ${formatNumber(b.total)}건 (${parts})${b.partial ? '\n일부 구간: 구간 일부만 기간 안입니다' : ''}`;
+  return `${bucketRangeText(b)}\n합계 ${formatNumber(b.total)}건 (${parts})${b.partial ? '\n일부 구간: 막대 구간의 일부만 선택한 기간에 듭니다' : ''}`;
 }
 
 /**

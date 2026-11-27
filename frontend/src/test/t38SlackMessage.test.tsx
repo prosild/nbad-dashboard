@@ -278,7 +278,8 @@ describe('T38 Slack 알림 본문과 전문', () => {
 
 describe('T38 판 표지', () => {
   it('사전: 앞머리로 찾고 모르는 판은 원문, 판 없음은 null', () => {
-    expect(lookupSlackMessageVersion('template.v1')).toMatchObject({ text: '즉시 알림(틀 문장)', known: true });
+    // T68(A1): 다른 화면처럼 "템플릿"(전에는 "틀 문장")
+    expect(lookupSlackMessageVersion('template.v1')).toMatchObject({ text: '즉시 알림(템플릿)', known: true });
     expect(lookupSlackMessageVersion('llm-report.v1')).toMatchObject({ text: 'AI 리포트 알림', known: true });
     expect(lookupSlackMessageVersion('llm-report.v2')).toMatchObject({ text: 'AI 리포트 알림', known: true });
     expect(lookupSlackMessageVersion('digest.v9')).toMatchObject({ text: 'digest.v9', known: false });
@@ -299,7 +300,7 @@ describe('T38 판 표지', () => {
         )}
       />,
     );
-    expect(screen.getAllByText('즉시 알림(틀 문장)')).toHaveLength(1);
+    expect(screen.getAllByText('즉시 알림(템플릿)')).toHaveLength(1);
     expect(screen.getAllByText('AI 리포트 알림')).toHaveLength(2);
     expect(screen.getByText('digest.v9')).toHaveAttribute('data-unregistered');
     expect(screen.getByText('상태 변경 알림')).toBeInTheDocument();
@@ -312,7 +313,7 @@ describe('T38 역할 표지와 스레드 기록 기준 시각', () => {
   const roleBadges = (container: HTMLElement) =>
     Array.from(container.querySelectorAll('span'))
       .map((el) => el.firstChild?.textContent ?? '')
-      .filter((t) => ['최초 알림', '스레드 기록 없음', '후속 알림', '타 인시던트 후속 알림'].includes(t));
+      .filter((t) => ['최초 알림', '스레드 기록 없음', '후속 알림', '다른 인시던트의 후속 알림'].includes(t));
 
   it('기준 시각 전 부모 없는 둘: 첫째 "최초 알림", 둘째는 "스레드 기록 없음"과 툴팁·접근성 이름, 들여쓰기 없음', () => {
     const { container } = render(
@@ -320,8 +321,9 @@ describe('T38 역할 표지와 스레드 기록 기준 시각', () => {
     );
     expect(roleBadges(container)).toEqual(['최초 알림', '스레드 기록 없음']);
     const badge = screen.getByText('스레드 기록 없음');
-    expect(badge).toHaveAttribute('title', '스레드 기록 도입(2026-11-19) 전의 알림입니다. 첫 알림의 스레드 답글인지 기록에 없습니다.');
-    expect(badge.textContent).toContain('첫 알림의 스레드 답글인지 기록에 없습니다.');
+    // T68(A5, 설계자 답 L5): 옛 "첫 알림"과 "…인지 기록에 없습니다"를 고치고 이유(스레드 기록 시작 전)는 남겼다
+    expect(badge).toHaveAttribute('title', '2026-11-19 스레드 기록을 시작하기 전 알림이라 최초 알림의 스레드 답글이었는지 알 수 없습니다.');
+    expect(badge.textContent).toContain('최초 알림의 스레드 답글이었는지 알 수 없습니다.');
     expect(container.querySelector('.ml-5')).toBeNull();
   });
 
@@ -357,11 +359,12 @@ describe('T38 역할 표지와 스레드 기록 기준 시각', () => {
         threadGroups={group(
           delivery({ jobId: 1, createdAt: AFTER }),
           delivery({ jobId: 2, createdAt: AFTER, threadParent: 'inc-1', threadRoleLabel: '후속 알림', messageVersion: 'llm-report.v1' }),
-          delivery({ jobId: 3, createdAt: BEFORE, threadParent: 'inc-0', threadRoleLabel: '타 인시던트 후속 알림' }),
+          delivery({ jobId: 3, createdAt: BEFORE, threadParent: 'inc-0', threadRoleLabel: '다른 인시던트의 후속 알림' }),
         )}
       />,
     );
-    expect(roleBadges(container)).toEqual(['최초 알림', '후속 알림', '타 인시던트 후속 알림']);
+    // T68(C4): 서버 스레드 역할 표지 "타 인시던트 후속 알림" → "다른 인시던트의 후속 알림"(시험 자료도 서버 글을 따른다)
+    expect(roleBadges(container)).toEqual(['최초 알림', '후속 알림', '다른 인시던트의 후속 알림']);
     expect(container.querySelectorAll('.ml-5')).toHaveLength(2);
     expect(screen.queryByText('스레드 기록 없음')).toBeNull();
     // 묶음 머리글은 그대로

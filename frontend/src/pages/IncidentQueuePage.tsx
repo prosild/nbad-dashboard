@@ -34,6 +34,7 @@ import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
 import { EmptyPeriodText, hasOutsideToShow, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import {
+  ALERTED_COUNT_TOOLTIP,
   CaptureName,
   CodeLabel,
   CriticalAssetBadge,
@@ -376,7 +377,7 @@ export function IncidentQueuePage() {
       list.push({
         key: 'thread',
         label: `알림 묶음 #${query.thread}`,
-        title: `최초 알림 인시던트 #${query.thread}의 Slack 스레드에 묶인 인시던트만 봅니다`,
+        title: `최초 알림 인시던트 #${query.thread}의 Slack 스레드에 묶인 인시던트만 표시합니다`,
       });
     // T45 호스트 정확 일치(상세 헤더의 호스트 링크에서 온다). 형식이 틀린 값도 칩으로 남겨 지울 수 있게 한다
     if (query.hostIp) {
@@ -387,16 +388,16 @@ export function IncidentQueuePage() {
         raw: query.hostIp,
         title:
           kind === 'masked'
-            ? '호스트 IP가 이 대역인 인시던트만 봅니다'
+            ? '호스트 IP가 이 대역인 인시던트만 표시합니다'
             : kind === 'exact'
-              ? '호스트 IP가 이 주소와 정확히 같은 인시던트만 봅니다'
+              ? '호스트 IP가 이 주소와 정확히 같은 인시던트만 표시합니다'
               : undefined,
       });
     }
     // T45 ATT&CK 기법 ID·전술
     if (query.attack) {
       const attack = attackFilterLabel(query.attack);
-      const title = '리포트의 관련 ATT&CK 기법 후보(확정이 아닌 가설)에 이 값이 있는 인시던트만 봅니다';
+      const title = '리포트의 관련 ATT&CK 기법 후보(확정이 아닌 가설)에 이 값이 있는 인시던트만 표시합니다';
       list.push(
         attack.kind === 'technique' || attack.value === query.attack
           ? { key: 'attack', label: attack.label, raw: attack.value, title }
@@ -417,7 +418,7 @@ export function IncidentQueuePage() {
       list.push({ key: 'hasReport', label: `AI 리포트: ${query.hasReport === 'true' ? '리포트 있음' : '리포트 없음'}` });
     if (query.wouldSend)
       list.push({ key: 'wouldSend', label: `발송 판단: ${query.wouldSend === 'true' ? '발송' : '보류'}` });
-    if (query.asset) list.push({ key: 'asset', label: '자산 검색', raw: query.asset });
+    if (query.asset) list.push({ key: 'asset', label: '호스트 검색', raw: query.asset });
     if (query.priority) list.push({ key: 'priority', label: `우선순위: ${labelText('priority', query.priority)}` });
     if (query.reviewPending) list.push({ key: 'reviewPending', label: '에스컬레이션 대기만' });
     if (query.alerted) list.push({ key: 'alerted', label: '경보 발송만' });
@@ -558,7 +559,7 @@ export function IncidentQueuePage() {
                 disabled={!data || stale || items.length === 0}
                 onClick={() => downloadQueueCsv(items)}
                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
-                title="지금 보이는 쪽의 인시던트를 CSV 파일로 내려받습니다"
+                title="지금 보이는 페이지의 인시던트를 CSV 파일로 내려받습니다"
               >
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
                 CSV 내보내기
@@ -668,7 +669,7 @@ export function IncidentQueuePage() {
 
               <form onSubmit={handleAssetSubmit}>
                 <label htmlFor="filter-asset" className="mb-1 block text-[11px] font-medium text-slate-400">
-                  자산 IP·호스트 이름 검색
+                  호스트 IP·이름 검색
                 </label>
                 <div className="flex gap-1.5">
                   <input
@@ -908,6 +909,7 @@ function SummaryStrip({
         pressed={alertedFilter}
         onClick={() => onToggle('alerted', 'true')}
         ariaLabel={`경보 발송${countText(s.alerted)}만 보기`}
+        title={ALERTED_COUNT_TOOLTIP}
       >
         <Bell className="h-3.5 w-3.5 text-cyan-400" aria-hidden="true" />
         <span className="text-slate-400">경보 발송</span>
@@ -956,8 +958,8 @@ function SummaryStrip({
             시각) 기준입니다.
           </p>
           <p className="mt-2 text-slate-400">
-            착수 목표: 실습망 신규 인시던트는 탐지 뒤 High 30분·Medium 4시간·Low 24시간(기본값) 안에 조사를 시작해야
-            합니다. 넘기면 &lsquo;착수 지연&rsquo;입니다. 가져온 데이터는 재생 데이터라 따지지 않습니다.
+            착수 목표: 실습망 신규 인시던트는 탐지 뒤 High 30분·Medium 4시간·Low 24시간(기본값) 안에 착수(분석 중으로
+            변경)해야 합니다. 넘기면 &lsquo;착수 지연&rsquo;입니다. 가져온 데이터는 재생 데이터라 따지지 않습니다.
           </p>
         </div>
       </details>
@@ -1667,7 +1669,7 @@ export function Pagination({
   const to = Math.min(total, page * pageSize);
   return (
     <nav
-      aria-label="쪽 이동"
+      aria-label="페이지 이동"
       className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-3 py-2 text-xs text-slate-400"
     >
       <span className="tabular-nums" aria-live="polite">
@@ -1675,12 +1677,12 @@ export function Pagination({
       </span>
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1.5">
-          <span>쪽당</span>
+          <span>페이지당</span>
           <select
             value={String(pageSize)}
             onChange={(e) => onSize(Number(e.target.value))}
             className="soc-select py-1 pl-2 pr-7 text-xs tabular-nums"
-            aria-label="쪽당 건수"
+            aria-label="페이지당 건수"
           >
             {PAGE_SIZES.map((s) => (
               <option key={s} value={String(s)}>
@@ -1694,7 +1696,7 @@ export function Pagination({
             type="button"
             onClick={() => onPage(page - 1)}
             disabled={page <= 1}
-            aria-label="이전 쪽"
+            aria-label="이전 페이지"
             className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -1710,7 +1712,7 @@ export function Pagination({
                 type="button"
                 onClick={() => onPage(p)}
                 aria-current={p === page ? 'page' : undefined}
-                aria-label={`${p}쪽`}
+                aria-label={`${p}페이지`}
                 className={`min-w-[1.75rem] rounded px-1.5 py-0.5 tabular-nums ${
                   p === page ? 'bg-cyan-500/15 font-semibold text-cyan-200' : 'hover:bg-slate-800 hover:text-slate-100'
                 }`}
@@ -1723,7 +1725,7 @@ export function Pagination({
             type="button"
             onClick={() => onPage(page + 1)}
             disabled={page >= pageCount}
-            aria-label="다음 쪽"
+            aria-label="다음 페이지"
             className="rounded p-1 hover:bg-slate-800 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ChevronRight className="h-4 w-4" aria-hidden="true" />

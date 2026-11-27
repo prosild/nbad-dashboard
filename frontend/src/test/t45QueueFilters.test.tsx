@@ -198,7 +198,7 @@ describe('T45 큐 hostIp·attack 칩', () => {
     expect(chip).toHaveTextContent('호스트: 10.45.2.1');
     expect(chip.querySelector('[data-raw]')).toHaveTextContent('10.45.2.1');
     expect(chip.querySelector('[data-raw]')).toHaveClass('font-mono');
-    expect(chip).toHaveAttribute('title', '호스트 IP가 이 주소와 정확히 같은 인시던트만 봅니다');
+    expect(chip).toHaveAttribute('title', '호스트 IP가 이 주소와 정확히 같은 인시던트만 표시합니다');
     // 정확 일치: 그 호스트 한 건만
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(2);
     // 필터 패널에는 입력이 없다(패널 필터 수에 세지 않는다)
@@ -217,7 +217,7 @@ describe('T45 큐 hostIp·attack 칩', () => {
     expect(lastCall(masked.queueCalls).get('hostIp')).toBe('10.45.*.*');
     const chip = within(chipList()).getByRole('button', { name: '호스트 대역 10.45.*.* 필터 지우기' });
     expect(chip).toHaveTextContent('호스트 대역: 10.45.*.*');
-    expect(chip).toHaveAttribute('title', '호스트 IP가 이 대역인 인시던트만 봅니다');
+    expect(chip).toHaveAttribute('title', '호스트 IP가 이 대역인 인시던트만 표시합니다');
     masked.unmount();
 
     const user = userEvent.setup();
@@ -248,7 +248,7 @@ describe('T45 큐 hostIp·attack 칩', () => {
     expect(chip).toHaveTextContent('ATT&CK 기법: T1059.001');
     expect(chip).toHaveAttribute(
       'title',
-      '리포트의 관련 ATT&CK 기법 후보(확정이 아닌 가설)에 이 값이 있는 인시던트만 봅니다',
+      '리포트의 관련 ATT&CK 기법 후보(확정이 아닌 가설)에 이 값이 있는 인시던트만 표시합니다',
     );
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(3);
     // 상세로 가는 링크의 from=에 두 조건이 실린다(상세의 이전·다음이 같은 조건 안에서 움직인다)

@@ -219,7 +219,7 @@ export function HostsPage() {
                       기준 시각 <span className="text-slate-200">{formatDateTime(data.anchor)}</span> {DISPLAY_TIME_ZONE_LABEL}
                     </>
                   ) : (
-                    '기준 시각 = 현재'
+                    '기준 시각: 현재'
                   )}
                 </span>
               )}
@@ -363,14 +363,14 @@ function EmptyHosts({
     <div className="space-y-2 px-4 py-12 text-center text-sm text-slate-300" data-empty={anyFilter ? 'filter' : 'none'}>
       <p>
         {anyFilter
-          ? `검색·거르기 조건에 맞는 ${subject} 없습니다.`
+          ? `검색·필터 조건에 맞는 ${subject} 없습니다.`
           : `${scope} 동안 인시던트가 탐지된 ${subject} 없습니다.`}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
         {anyFilter && (
           <button type="button" onClick={onClear} className="soc-btn-secondary px-3 py-1.5 text-xs">
             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-            검색·거르기 지우기
+            검색·필터 지우기
           </button>
         )}
         {!allPeriod && (

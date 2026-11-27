@@ -190,7 +190,7 @@ export function AssignmentSection({
           )}
         </>
       ) : (
-        closed && <p className="text-[11px] text-slate-400">종결된 인시던트라 담당자를 바꾸지 않습니다.</p>
+        closed && <p className="text-[11px] text-slate-400">종결된 인시던트라 담당자를 바꿀 수 없습니다.</p>
       )}
     </div>
   );

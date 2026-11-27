@@ -260,7 +260,7 @@ describe('T56 조치 패널의 "대응 조치" 칸', () => {
     expect(within(latest).getByText('CERT에 이관(최신)')).toBeInTheDocument();
     expect(within(g).queryByText('단말 격리 요청(중간)')).toBeNull();
     expect(within(g).queryByText('차단 요청(처음)')).toBeNull();
-    expect(within(g).getByText('앞선 2건은 이력에서 봅니다.')).toBeInTheDocument();
+    expect(within(g).getByText('이전 기록 2건은 이력 탭에서 볼 수 있습니다.')).toBeInTheDocument();
   });
 
   it('신규(착수 전): 폼 대신 안내 문장을 보인다', async () => {

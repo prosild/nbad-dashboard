@@ -52,21 +52,23 @@ const HEALTH_ICON: Record<SensorHealth, React.ComponentType<{ className?: string
 
 /** 센서 상태 뜻(툴팁). 기준값은 응답의 staleAfterSeconds·downAfterSeconds */
 export function sensorHealthTooltip(health: SensorHealth, staleSec: number, downSec: number, snapshot: boolean): string {
-  const ref = snapshot ? '기준 시각' : '지금';
+  // T68: "마지막 채점이 지금에서 15분 안" 같은 옮긴 말을 뺐다. 시간 글 뒤에 조사를 붙이지 않는다(30초가/15분이).
+  const ref = snapshot ? '기준 시각에서 보면 ' : '';
   const text: Record<SensorHealth, string> = {
-    ok: `정상: 마지막 채점이 ${ref}에서 ${formatSeconds(staleSec)} 안입니다`,
-    stale: `지연: 마지막 채점이 ${ref}에서 ${formatSeconds(staleSec)}을 넘었고 ${formatSeconds(downSec)} 안입니다`,
-    down: `중단: 마지막 채점이 ${ref}에서 ${formatSeconds(downSec)}을 넘었습니다`,
+    ok: `정상: ${ref}마지막 탐지 작업이 끝나고 ${formatSeconds(staleSec)} 이내입니다`,
+    stale: `지연: ${ref}마지막 탐지 작업이 끝나고 ${formatSeconds(staleSec)} 넘게 지났습니다(${formatSeconds(downSec)} 이내)`,
+    down: `중단: ${ref}마지막 탐지 작업이 끝나고 ${formatSeconds(downSec)} 넘게 지났습니다`,
     failed: '실패: 이 센서의 가장 최근 탐지 작업이 실패했습니다',
     none: '기록 없음: 이 센서의 성공한 탐지 작업이 없습니다',
   };
-  return `${text[health]}${snapshot ? ' (기준 시각 기준)' : ''}`;
+  const tail = snapshot && (health === 'failed' || health === 'none') ? ' (기준 시각까지)' : '';
+  return `${text[health]}${tail}`;
 }
 
 export const CAPTURE_STATE_TOOLTIP: Record<CaptureState, string> = {
-  active: '수집 중: 이 센서의 가장 최근 채점이 이 캡처(날짜)에 있습니다',
+  active: '수집 중: 이 센서의 가장 최근 탐지 작업이 이 캡처(날짜)에 있습니다',
   ended: '지난 날짜: 이 센서가 다음 날짜 캡처로 넘어갔습니다(센서 상태에 영향 없음)',
-  imported: '가져온 데이터: 공개 데이터셋을 가져와 채점한 캡처입니다',
+  imported: '가져온 데이터: 공개 데이터셋을 가져와 분석한 캡처입니다',
   failed: '실패: 이 캡처의 가장 최근 탐지 작업이 실패했습니다',
   none: '기록 없음: 이 캡처의 성공한 탐지 작업이 없습니다',
 };
@@ -125,7 +127,11 @@ export function RelativeTime({
   );
 }
 
-export const NO_ACTIVITY_TITLE = '마지막 채점에 인시던트 없음';
+export const NO_ACTIVITY_TITLE = '마지막 탐지 작업에 인시던트 없음';
+
+/** T68(A21): "마지막 채점" → "마지막 탐지 작업". 인시던트의 "마지막 탐지"(마지막 인시던트 탐지 시각)와 첫 말을 다르게 둔다 */
+export const LAST_JOB_LABEL = '마지막 탐지 작업';
+export const LAST_JOB_TOOLTIP = '마지막으로 탐지 작업이 끝난 시각';
 
 export const SOURCE_TIME_LABEL = '원본 시각';
 export const SOURCE_TIME_TOOLTIP = '가져온 데이터의 발생 시각은 원본 데이터셋의 시각입니다.';
@@ -299,9 +305,9 @@ function SensorItem({
         </span>
       </Link>
       <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
-        <dt>마지막 채점</dt>
+        <dt title={LAST_JOB_TOOLTIP}>{LAST_JOB_LABEL}</dt>
         <dd className="text-slate-200">
-          <RelativeTime iso={sensor.lastScoredAt} anchor={anchor} label="마지막 채점" />
+          <RelativeTime iso={sensor.lastScoredAt} anchor={anchor} label={LAST_JOB_LABEL} />
         </dd>
         <dt>마지막 이상 활동</dt>
         <dd className="text-slate-200">
@@ -415,7 +421,7 @@ function ImportedItem({
         <span className="sr-only">{`${info.text} · 캡처 ID: ${row.captureId}`}</span>
         <CaptureStateBadge state={row.state} />
         <span className="hidden w-16 text-right text-[11px] text-slate-400 sm:inline">
-          <RelativeTime iso={row.lastScoredAt} anchor={anchor} label="마지막 채점" />
+          <RelativeTime iso={row.lastScoredAt} anchor={anchor} label={LAST_JOB_LABEL} />
         </span>
         <span className="w-10 text-right tabular-nums text-slate-300" title="기간 안 인시던트">
           {formatNumber(row.total)}
@@ -458,7 +464,7 @@ export function SourceStatusTable({
           <tr>
             <th className="soc-th">수집원</th>
             <th className="soc-th">상태</th>
-            <th className="soc-th">마지막 채점</th>
+            <th className="soc-th" title={LAST_JOB_TOOLTIP}>{LAST_JOB_LABEL}</th>
             <th className="soc-th">마지막 이상 활동</th>
             <th className="soc-th">최근 끝난 작업</th>
             <th className="soc-th text-right" title="기간 안에 탐지된 인시던트">인시던트</th>
@@ -533,7 +539,7 @@ function SensorTableRows({
           <SensorHealthBadge health={sensor.health} title={sensorHealthTooltip(sensor.health, staleSec, downSec, snapshot)} />
         </td>
         <td className="soc-td text-slate-200">
-          <RelativeTime iso={sensor.lastScoredAt} anchor={anchor} label="마지막 채점" />
+          <RelativeTime iso={sensor.lastScoredAt} anchor={anchor} label={LAST_JOB_LABEL} />
         </td>
         <td className="soc-td text-slate-200">
           <RelativeTime iso={sensor.lastActivityAt} anchor={anchor} label="마지막 이상 활동" emptyTitle={NO_ACTIVITY_TITLE} />
@@ -578,7 +584,7 @@ function CaptureTableRow({
         <CaptureStateBadge state={row.state} />
       </td>
       <td className="soc-td text-slate-200">
-        <RelativeTime iso={row.lastScoredAt} anchor={anchor} label="마지막 채점" />
+        <RelativeTime iso={row.lastScoredAt} anchor={anchor} label={LAST_JOB_LABEL} />
       </td>
       <td className="soc-td text-slate-200">
         {/* T50: 가져온 데이터인지는 상태(state)가 아니라 수집원 종류로 가른다(실패·기록 없음인 가져온 캡처도 같다) */}

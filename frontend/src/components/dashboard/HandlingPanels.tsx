@@ -14,13 +14,16 @@ export const HANDLING_METRIC_TOOLTIP = {
   detection:
     '탐지 지연(MTTD): 트래픽 발생 시각에서 탐지 시각(처음 탐지된 분석 완료)까지. 실습망만 셉니다(가져온 데이터는 발생 시각이 원본 데이터셋 시각이라 뺍니다). 기간은 탐지 시각 기준입니다.',
   acknowledge:
-    '착수 시간(MTTA): 탐지 시각에서 착수(처음 조사 중으로 바뀐 시각)까지. 기간은 착수 시각 기준입니다. 조사 중 기록 없이 종결된 건은 제외에 셉니다. 담당 지정은 착수로 치지 않습니다.',
+    "착수 시간(MTTA): 탐지 시각에서 착수(처음 분석 중으로 바뀐 시각)까지. 기간은 착수 시각 기준입니다. 분석 중 기록 없이 종결된 건은 '제외'로 셉니다. 담당 지정은 착수로 치지 않습니다.",
   resolve:
-    '처리 시간(MTTR): 탐지 시각에서 종결 시각까지. 기간은 종결 시각 기준이고 판정별로도 봅니다.',
+    '처리 시간(MTTR): 탐지 시각에서 종결 시각까지. 기간은 종결 시각 기준이고 판정별로도 나눠 보입니다.',
 } as const;
 
 const STAT_NOTE =
-  '중앙값·p90은 가장 가까운 순위(정렬 뒤 ceil(p·n)번째)입니다. 평균은 며칠 묵은 몇 건에 크게 끌려가므로 쓰지 않습니다. 제외는 값이 음수이거나 필요한 시각이 없는 건입니다.';
+  "중앙값과 p90(상위 10% 경계값)을 보입니다. 평균은 오래 걸린 몇 건에 크게 흔들려 쓰지 않습니다. '제외'는 값이 음수이거나 필요한 시각이 없는 건입니다.";
+
+/** B3(T68): 지표 이름의 MTTx는 업계 이름이라 두고, M(평균)이 아니라는 것을 칸 머리 툴팁에 적는다 */
+export const HANDLING_METRIC_HEADER_TOOLTIP = 'MTTD·MTTA·MTTR은 업계 이름입니다. 이 표는 평균이 아니라 중앙값과 p90으로 셉니다.';
 
 function StatCells({ stat }: { stat: TimeStat }) {
   const empty = stat.n === 0;
@@ -57,17 +60,17 @@ export function HandlingTimesPanel({ times, scope }: { times: HandlingTimes; sco
           <span className="text-xs font-normal text-slate-400">{scope}</span>
         </h2>
         <span className="text-[11px] text-slate-400" title={STAT_NOTE}>
-          중앙값·p90 · 기준 시각 기준
+          중앙값·p90 · 기준 시각까지
         </span>
       </div>
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[34rem] border-collapse text-left text-xs">
           <thead>
             <tr>
-              <th scope="col" className="soc-th">지표</th>
+              <th scope="col" className="soc-th" title={HANDLING_METRIC_HEADER_TOOLTIP}>지표</th>
               <th scope="col" className="soc-th text-right">건수</th>
               <th scope="col" className="soc-th text-right">중앙값</th>
-              <th scope="col" className="soc-th text-right">p90</th>
+              <th scope="col" className="soc-th text-right">p90(상위 10% 경계값)</th>
               <th scope="col" className="soc-th text-right" title="값이 음수이거나 필요한 시각이 없는 건">제외</th>
               <th scope="col" className="soc-th"><span className="sr-only">표본</span></th>
             </tr>
@@ -104,7 +107,7 @@ export function HandlingTimesPanel({ times, scope }: { times: HandlingTimes; sco
 /** 운영 현황 "담당 현황" 패널(T25): 지금 값(기간 무관). 착수 지연은 큐로 가는 링크다. */
 export function WorkloadPanel({ workload, overdueLink }: { workload: Workload; overdueLink: string }) {
   const cells = [
-    { label: '미종결', value: workload.unclosed, hint: '신규·조사 중 인시던트' },
+    { label: '미종결', value: workload.unclosed, hint: '신규·분석 중 인시던트' },
     { label: '배정', value: workload.assigned },
     { label: '미배정', value: workload.unassigned },
   ];
@@ -130,7 +133,7 @@ export function WorkloadPanel({ workload, overdueLink }: { workload: Workload; o
             <Link
               to={overdueLink}
               className={`${workload.ackOverdue > 0 ? 'text-rose-300' : 'text-slate-300'} hover:underline`}
-              aria-label={`착수 지연 ${workload.ackOverdue}건 인시던트 큐에서 보기`}
+              aria-label={`착수 지연 ${workload.ackOverdue}건 인시던트 목록에서 보기`}
             >
               {formatNumber(workload.ackOverdue)}
             </Link>

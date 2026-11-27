@@ -17,7 +17,7 @@ import { CodeLabel, LookupText, SocBadge } from '../StatusBadge';
 const SLACK_THREAD_RECORD_START = Date.parse('2026-11-19T06:20:00Z');
 
 const NO_THREAD_RECORD_TITLE =
-  '스레드 기록 도입(2026-11-19) 전의 알림입니다. 첫 알림의 스레드 답글인지 기록에 없습니다.';
+  '2026-11-19 스레드 기록을 시작하기 전 알림이라 최초 알림의 스레드 답글이었는지 알 수 없습니다.';
 
 /** 기준 시각 전 기록이면 true. `createdAt`이 없거나 읽을 수 없으면 기준 뒤로 다룬다. */
 function beforeThreadRecords(createdAt: string | null): boolean {
@@ -122,7 +122,7 @@ function BlockView({ block }: { block: SlackBlockView }) {
 }
 
 /**
- * Slack 발송 한 건: 역할·종류·판, 시각, 알림 본문, 접힌 전문, 전송 결과.
+ * Slack 발송 한 건: 역할·종류·판, 시각, 알림 본문, 접힌 전문, 발송 결과.
  * 원본 JSON 글, 채널, URL, `slackTs`, `threadParent`는 화면(툴팁·속성 포함)에 두지 않는다(2026-11-21 `T19`, 2026-11-23 `T38` 결정).
  */
 function SlackDeliveryCard({
@@ -210,11 +210,11 @@ function SlackDeliveryCard({
 
       <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
         <span>
-          전송 결과 <CodeLabel dict="slackDeliveryStatus" value={item.deliveryStatus} className="text-slate-300" />
+          발송 결과 <CodeLabel dict="slackDeliveryStatus" value={item.deliveryStatus} className="text-slate-300" />
         </span>
         {!item.dryRunOrRecorded && item.deliveryMode && (
           <span>
-            전송 방식 <CodeLabel dict="slackDeliveryMode" value={item.deliveryMode} className="text-slate-300" />
+            발송 방식 <CodeLabel dict="slackDeliveryMode" value={item.deliveryMode} className="text-slate-300" />
           </span>
         )}
       </div>

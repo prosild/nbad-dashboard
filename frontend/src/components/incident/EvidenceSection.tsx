@@ -2,6 +2,7 @@ import { AlertTriangle, Database } from 'lucide-react';
 import type { AssetNameRecord, EvidenceView, IncidentQueueItem, ProtocolLogEntry } from '../../types/api';
 import { formatBytes, formatDateTime, formatNumber, formatSessionDuration } from '../../utils/format';
 import { lookupLabel, unregisteredTitle, type LabelDictionaryName } from '../../utils/labels';
+import { PAYLOAD_INFLATED_HINT } from '../../utils/factLabels';
 import { CodeLabel, LookupText } from '../StatusBadge';
 import { IpActions } from './InvestigationLinks';
 import { PeerTopologySvg } from './PeerTopologySvg';
@@ -498,7 +499,11 @@ export function EvidenceSection({
             <StatCard label="수신 바이트" title={BYTES_BASIS_TOOLTIP} value={displayBytes(evidence.bytesReceived)} />
             <StatCard label="고유 상대 IP 수" value={displayCount(evidence.uniquePeers)} />
             <StatCard label="고유 목적지 포트 수" value={displayCount(evidence.uniquePorts)} />
-            <StatCard label="페이로드 바이트가 부푼 세션 수" value={displayCount(evidence.payloadBytesInflated)} />
+            <StatCard
+              label="페이로드 바이트가 과대 집계된 세션 수"
+              title={PAYLOAD_INFLATED_HINT}
+              value={displayCount(evidence.payloadBytesInflated)}
+            />
           </div>
 
           {incident && <PeerTopologySvg incident={incident} evidence={evidence} />}
@@ -558,7 +563,6 @@ export function EvidenceSection({
           <summary className="soc-subhead flex cursor-pointer items-center gap-1.5">
             <Database className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
             원본 증적 데이터
-            <span className="text-[11px] font-normal text-slate-500">기본으로 접혀 있습니다</span>
           </summary>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {additionalEntries.map(([key, value]) => (

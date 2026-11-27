@@ -266,7 +266,7 @@ export function ActionPanel({
               className="flex items-start gap-1.5 rounded border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-[11px] text-slate-300"
             >
               <Info className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden="true" />
-              조사를 시작하면 내가 담당자로 지정됩니다.
+              분석을 시작하면(분석 중으로 바꾸면) 내가 담당자로 지정됩니다.
             </p>
           )}
 
@@ -425,7 +425,7 @@ export function ActionPanel({
               aria-describedby="reopen-reason-count"
               value={reopenReason}
               onChange={(e) => setReopenReason(e.target.value)}
-              placeholder="다시 여는 까닭과 새로 본 근거를 입력하세요."
+              placeholder="다시 여는 사유와 새로 본 근거를 입력하세요."
               className="soc-input text-xs"
             />
             <FreeTextCounter id="reopen-reason-count" value={reopenReason} />
@@ -516,9 +516,13 @@ export function ActionPanel({
                 {reviewError && (
                   <div
                     role="alert"
-                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
                   >
-                    {reviewError}
+                    <span>{reviewError}</span>
+                    <button type="button" onClick={() => void onRefresh()} className="soc-btn-secondary py-1 text-[11px]">
+                      <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                      다시 불러오기
+                    </button>
                   </div>
                 )}
                 <div>

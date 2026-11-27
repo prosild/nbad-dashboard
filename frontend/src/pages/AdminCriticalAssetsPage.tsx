@@ -18,7 +18,8 @@ function errorText(err: unknown, fallback: string): string {
 }
 
 /**
- * T52 중요 자산 관리(관리자만). 목록(주소·이름·설명·고친 사람·시각), 추가, 고치기(이름·설명만), 지우기(확인을 한 번 더 받는다).
+ * T52 중요 자산 관리(관리자만). 목록(주소·이름·설명·수정한 사람·시각), 추가, 수정(이름·설명만), 삭제(확인을 한 번 더 받는다).
+ * T68(B6·B7): 화면 동사는 사용자 관리·감사 로그와 같은 수정·삭제다(전에는 고치기·지우기).
  * 서버가 주소(IPv4 하나의 정확한 꼴)·길이·중복을 검사하고, 화면은 서버의 오류 문장을 폼 아래에 보인다.
  */
 export function AdminCriticalAssetsPage() {
@@ -116,7 +117,7 @@ export function AdminCriticalAssetsPage() {
       setEditing(null);
       await load();
     } catch (err) {
-      setEditError(errorText(err, '중요 자산을 고치지 못했습니다.'));
+      setEditError(errorText(err, '중요 자산을 수정하지 못했습니다.'));
     } finally {
       setSubmitting(false);
     }
@@ -131,7 +132,7 @@ export function AdminCriticalAssetsPage() {
       if (editing?.id === item.id) setEditing(null);
       await load();
     } catch (err) {
-      notify(errorText(err, '중요 자산을 지우지 못했습니다.'), 'error');
+      notify(errorText(err, '중요 자산을 삭제하지 못했습니다.'), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -243,11 +244,11 @@ export function AdminCriticalAssetsPage() {
             <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-cyan-200">
                 <Edit3 className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                중요 자산 고치기
+                중요 자산 수정
               </h2>
               <button
                 type="button"
-                aria-label="고치기 폼 닫기"
+                aria-label="수정 폼 닫기"
                 onClick={() => setEditing(null)}
                 className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
               >
@@ -255,13 +256,13 @@ export function AdminCriticalAssetsPage() {
               </button>
             </div>
             <form
-              aria-label="중요 자산 고치기"
+              aria-label="중요 자산 수정"
               onSubmit={(e) => void handleUpdate(e)}
               className="grid grid-cols-1 gap-4 md:grid-cols-2"
             >
               <div className="md:col-span-2 text-xs text-slate-400">
                 주소 <span className="font-mono font-semibold text-slate-100">{editing.hostIp}</span>
-                <span className="ml-2 text-slate-500">(주소를 바꾸려면 지우고 새로 추가합니다)</span>
+                <span className="ml-2 text-slate-500">(주소를 바꾸려면 삭제하고 새로 추가합니다)</span>
               </div>
               <div>
                 <label htmlFor="asset-edit-name" className="mb-1 block text-xs font-medium text-slate-300">
@@ -334,7 +335,7 @@ export function AdminCriticalAssetsPage() {
                       <th className="soc-th">주소</th>
                       <th className="soc-th">이름</th>
                       <th className="soc-th">설명</th>
-                      <th className="soc-th">고친 사람 · 시각</th>
+                      <th className="soc-th">수정한 사람 · 시각</th>
                       <th className="soc-th text-right">관리</th>
                     </tr>
                   </thead>
@@ -361,14 +362,14 @@ export function AdminCriticalAssetsPage() {
                           {confirmingId === item.id ? (
                             <div
                               role="group"
-                              aria-label={`${item.hostIp} 지우기 확인`}
+                              aria-label={`${item.hostIp} 삭제 확인`}
                               className="ml-auto max-w-xs space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-left text-xs text-amber-100"
                             >
                               <p className="flex items-start gap-1.5">
                                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
                                 <span className="min-w-0 [overflow-wrap:anywhere]">
-                                  {item.hostIp}({item.name})을 지울까요? 되돌릴 수 없습니다. 이 주소의 인시던트는 원래 우선순위로
-                                  돌아갑니다.
+                                  이 중요 자산을 삭제할까요? {item.hostIp} · {item.name}. 되돌릴 수 없습니다. 이 주소의 인시던트는
+                                  원래 우선순위로 돌아갑니다.
                                 </span>
                               </p>
                               <div className="flex gap-1.5">
@@ -379,7 +380,7 @@ export function AdminCriticalAssetsPage() {
                                   className="soc-btn-caution flex-1 px-2 py-1 text-xs"
                                 >
                                   <Trash2 className="h-3 w-3" aria-hidden="true" />
-                                  지우기 확정
+                                  삭제 확정
                                 </button>
                                 <button
                                   type="button"
@@ -395,21 +396,21 @@ export function AdminCriticalAssetsPage() {
                             <div className="flex flex-wrap justify-end gap-1.5">
                               <button
                                 type="button"
-                                aria-label={`${item.hostIp} 고치기`}
+                                aria-label={`${item.hostIp} 수정`}
                                 onClick={() => openEdit(item)}
                                 className="soc-btn-secondary px-2.5 py-1 text-xs"
                               >
                                 <Edit3 className="h-3 w-3" aria-hidden="true" />
-                                고치기
+                                수정
                               </button>
                               <button
                                 type="button"
-                                aria-label={`${item.hostIp} 지우기`}
+                                aria-label={`${item.hostIp} 삭제`}
                                 onClick={() => setConfirmingId(item.id)}
                                 className="soc-btn-caution px-2.5 py-1 text-xs"
                               >
                                 <Trash2 className="h-3 w-3" aria-hidden="true" />
-                                지우기
+                                삭제
                               </button>
                             </div>
                           )}

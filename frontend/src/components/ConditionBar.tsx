@@ -189,7 +189,7 @@ function RangeDialog({
       }}
     >
       <form onSubmit={submit} className="space-y-2" noValidate>
-        <p className="text-[11px] text-slate-400">탐지 시각 기준, 시작 초과 ~ 끝 이하 (KST)</p>
+        <p className="text-[11px] text-slate-400">탐지 시각 기준(KST). 시작 시각은 빼고 끝 시각은 포함합니다</p>
         <label className="block text-xs text-slate-300" htmlFor="period-range-start">
           시작 <span className="text-slate-500">KST</span>
         </label>

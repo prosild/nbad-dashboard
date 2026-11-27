@@ -33,8 +33,39 @@ function templateHeaderTitle(reason: string | null | undefined): string {
   return `AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: ${view ? view.text : '-'}`;
 }
 
+/** T68(A14): 같은 queue_rank를 근거 사실·발송 판단 사유처럼 "탐지 순위"로 부른다 */
+export const DETECTION_RANK_TOOLTIP = '이 캡처의 탐지 결과에서 매긴 순위(1위가 가장 의심스러움)';
+
 /** 복사 버튼 글자. 접근성 이름·툴팁은 버튼에 있다 */
 const COPY_LABEL_CLASS = '';
+
+/**
+ * 인시던트 ID 원문 복사 단추. 상세 머리와 에스컬레이션 목록(T68 A13: 원문 ID를 글로 보이지 않고 복사로만 준다)이 함께 쓴다.
+ */
+export function CopyIdButton({ incidentId }: { incidentId: string }) {
+  const { notify } = useToast();
+  async function copyId() {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard');
+      await navigator.clipboard.writeText(incidentId);
+      notify('인시던트 ID를 복사했습니다.', 'success');
+    } catch {
+      notify('인시던트 ID를 복사하지 못했습니다.', 'error');
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copyId()}
+      className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-200"
+      aria-label="인시던트 ID 복사"
+      title="인시던트 ID 원문을 복사합니다"
+    >
+      <Copy className="h-3 w-3" aria-hidden="true" />
+      <span className={COPY_LABEL_CLASS}>ID 복사</span>
+    </button>
+  );
+}
 
 function Field({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
@@ -93,16 +124,6 @@ export function DetailHeader({
       notify('인시던트 요약을 복사했습니다.', 'success');
     } catch {
       notify('인시던트 요약을 복사하지 못했습니다.', 'error');
-    }
-  }
-
-  async function copyId() {
-    try {
-      if (!navigator.clipboard) throw new Error('clipboard');
-      await navigator.clipboard.writeText(incident.incidentId);
-      notify('인시던트 ID를 복사했습니다.', 'success');
-    } catch {
-      notify('인시던트 ID를 복사하지 못했습니다.', 'error');
     }
   }
 
@@ -171,7 +192,7 @@ export function DetailHeader({
         </Field>
       </div>
       {/* T28: 둘째 줄은 어느 폭에서도 줄을 바꾼다. 넓은 화면에서 줄바꿈을 막으면(xl:flex-nowrap) 1440~1600px에서
-          min-w-0 항목이 내용보다 좁아져 서로 덮였다(착수 지연·캡처 내 순위, 경보·AI 리포트, 검증·링크 복사).
+          min-w-0 항목이 내용보다 좁아져 서로 덮였다(착수 지연·탐지 순위, 경보·AI 리포트, 검증·링크 복사).
           줄바꿈이 되면 항목은 한 줄에 혼자일 때만 줄어들어 수집원 이름이 말줄임된다(휴대폰 폭). */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-detail-head-row="2">
         <Field label="수집원">
@@ -192,7 +213,7 @@ export function DetailHeader({
             {meta?.ackOverdue && <AckOverdueBadge dueAt={meta?.ackDueAt} detectedAt={meta?.detectedAt ?? null} />}
           </Field>
         )}
-        <Field label="캡처 내 순위">
+        <Field label="탐지 순위" title={DETECTION_RANK_TOOLTIP}>
           <span className="tabular-nums text-slate-200">{incident.queueRank}위</span>
         </Field>
         <Field label="발생" title={timeTitle}>
@@ -257,16 +278,7 @@ export function DetailHeader({
               <span className={COPY_LABEL_CLASS}>링크 복사</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => void copyId()}
-            className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-400 hover:border-slate-500 hover:text-slate-200"
-            aria-label="인시던트 ID 복사"
-            title="인시던트 ID 원문을 복사합니다"
-          >
-            <Copy className="h-3 w-3" aria-hidden="true" />
-            <span className={COPY_LABEL_CLASS}>ID 복사</span>
-          </button>
+          <CopyIdButton incidentId={incident.incidentId} />
         </span>
       </div>
     </section>

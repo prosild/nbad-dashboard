@@ -27,7 +27,7 @@ function delivery(over: Partial<SlackDeliveryView> = {}): SlackDeliveryView {
     payloadJson: '{"text":"알림"}',
     threadParent: 'lab-20261122|10.0.0.*|originator|1',
     threadKey: 'lab-20261122|10.0.0.*|originator|1',
-    threadRoleLabel: '타 인시던트 후속 알림',
+    threadRoleLabel: '다른 인시던트의 후속 알림',
     replyBroadcast: false,
     ...over,
   };
@@ -60,14 +60,14 @@ describe('T40 상세 Slack 탭 묶음 링크', () => {
     const members = screen.getByRole('link', { name: '같은 묶음 인시던트 9건 보기' });
     expect(members).toHaveAttribute('href', '/incidents?period=all&thread=2269');
     // 표지 글은 그대로
-    expect(screen.getByText('타 인시던트 후속 알림')).toBeInTheDocument();
+    expect(screen.getByText('다른 인시던트의 후속 알림')).toBeInTheDocument();
   });
 
   it('붙은 인시던트(머리를 볼 수 없음, 번호 null): 아무것도 더하지 않는다(이유 문구 없음)', () => {
     renderGroups([group({ threadKey: 'restricted-1', deliveries: [delivery({ threadParent: 'restricted-1', threadKey: 'restricted-1' })] })]);
     expect(screen.queryByTestId('slack-thread-links')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.getByText('타 인시던트 후속 알림')).toBeInTheDocument();
+    expect(screen.getByText('다른 인시던트의 후속 알림')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('restricted-1');
   });
 
@@ -139,9 +139,10 @@ describe('T40 검증 실패 사유·문제 항목 한국어', () => {
       known: true,
       raw: 'verification',
     });
-    expect(describeVerificationReason('call')).toEqual({ text: 'LLM 호출 실패', known: true, raw: 'call' });
+    // T68(A17, 설계자 답 L3): 사유 이름은 "AI 호출 실패", 콜론 뒤 글은 오류 종류 이름이라 "오류: …"
+    expect(describeVerificationReason('call')).toEqual({ text: 'AI 호출 실패', known: true, raw: 'call' });
     expect(describeVerificationReason('call: ClientError')).toEqual({
-      text: 'LLM 호출 실패: ClientError',
+      text: 'AI 호출 실패(오류: ClientError)',
       known: true,
       raw: 'call: ClientError',
     });

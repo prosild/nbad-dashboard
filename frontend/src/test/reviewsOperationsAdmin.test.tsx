@@ -91,10 +91,11 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     // T26: 휴대폰 폭에서 표가 페이지를 넓히지 않게 모든 표는 가로 스크롤 상자 안에 있다
     expectAllTablesInScrollBox();
 
-    await user.type(
-      screen.getByLabelText('cic17-wed|192.168.10.5|originator|100 검토 메모'),
-      '조사 진행',
-    );
+    // T68(A13, 설계자 답 L2): 번호가 없는 행은 접근성 이름이 "인시던트 검토 메모"이고 "상세 보기" 링크가 있다. 원문 ID는 글로 보이지 않는다
+    expect(screen.queryByText('cic17-wed|192.168.10.5|originator|100')).toBeNull();
+    expect(screen.getByRole('link', { name: '상세 보기' })).toHaveAttribute('href', '/incidents/99/rank/1');
+    expect(screen.getByRole('button', { name: '인시던트 ID 복사' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('인시던트 검토 메모'), '조사 진행');
     await user.click(screen.getByRole('button', { name: '승인' }));
 
     await waitFor(() => {
@@ -128,6 +129,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
                 reviewJobId: 88,
                 captureId: 'cic17-wed',
                 incidentId,
+                incidentNo: 2188,
                 queueRank: 1,
                 hostIp: '192.168.10.5',
                 zeekadRole: 'originator',
@@ -158,7 +160,10 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     const user = userEvent.setup();
     renderWithAdmin('/reviews', fetchMock as unknown as typeof fetch);
     expect(await screen.findByText('경계선 점수 검토')).toBeInTheDocument();
-    const note = screen.getByLabelText(`${incidentId} 검토 메모`);
+    // T68(A13): 번호가 있으면 "#번호" 링크(번호 주소)와 "인시던트 #번호 검토 메모". 원문 ID는 복사로만 준다
+    expect(screen.getByRole('link', { name: '#2188' })).toHaveAttribute('href', '/incidents/2188');
+    expect(screen.queryByText(incidentId)).toBeNull();
+    const note = screen.getByLabelText('인시던트 #2188 검토 메모');
 
     // 메모 없이 누르면 막고 메모 칸으로 포커스
     await user.click(screen.getByRole('button', { name: '오탐 종결' }));
@@ -169,7 +174,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     // 메모 → 확인 단계 → 확정
     await user.type(note, '정상 업무');
     await user.click(screen.getByRole('button', { name: '오탐 종결' }));
-    const confirm = screen.getByRole('group', { name: `${incidentId} 오탐 종결 확인` });
+    const confirm = screen.getByRole('group', { name: '인시던트 #2188 오탐 종결 확인' });
     expect(decideCalls()).toHaveLength(0);
     await user.click(within(confirm).getByRole('button', { name: '오탐 종결 확정' }));
     await waitFor(() => expect(decideCalls()).toHaveLength(1));

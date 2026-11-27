@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Cpu, Info, Layers, MessageSquare, Server } from 'lucide-react';
+import { Activity, BarChart3, Bell, ChevronDown, ChevronRight, Info, Layers, MessageSquare, Server, UserCheck } from 'lucide-react';
 import { errorNotice, type ErrorNotice } from '../api/client';
 import { dashboardApi, operationsApi } from '../api/endpoints';
 import { AppShell } from '../components/AppShell';
@@ -10,6 +10,7 @@ import { HandlingTimesPanel, WorkloadPanel } from '../components/dashboard/Handl
 import { ErrorAlert, LoadingPanel } from '../components/ErrorBanner';
 import { StaleNotice } from '../components/StaleNotice';
 import {
+  ALERTED_COUNT_TOOLTIP,
   CaptureName,
   CodeLabel,
   DetectionModelName,
@@ -252,7 +253,7 @@ export function OperationsPage() {
                       기준 시각 <span className="text-slate-200">{formatDateTime(overview.anchor)}</span> {DISPLAY_TIME_ZONE_LABEL}
                     </>
                   ) : (
-                    '기준 시각 = 현재'
+                    '기준 시각: 현재'
                   )}
                 </span>
               )}
@@ -322,7 +323,7 @@ export function OperationsPage() {
                   </div>
                   )}
                 </StatusCard>
-                <StatusCard icon={Cpu} title="분석가 판정" tone="neutral">
+                <StatusCard icon={UserCheck} title="분석가 판정" tone="neutral">
                   <div
                     className="text-base font-semibold text-slate-50"
                     title={
@@ -342,7 +343,7 @@ export function OperationsPage() {
                   <div className="text-xs text-slate-400">캡처마다 최신 탐지 작업의 모든 모델 합계 기준</div>
                 </StatusCard>
                 <StatusCard icon={Bell} title="경보" tone="neutral">
-                  <div className="text-base font-semibold text-slate-50">
+                  <div className="text-base font-semibold text-slate-50" title={ALERTED_COUNT_TOOLTIP}>
                     경보 발송 {formatNumber(status.totalsRow.alerted)}건
                   </div>
                   <div className="text-xs text-slate-300">{alertPrecisionSummaryText(status.totalsRow)}</div>
@@ -370,7 +371,7 @@ export function OperationsPage() {
                   </h2>
                   <span className="text-[11px] text-slate-400">
                     인시던트·High·경보 발송·실패 작업은 {scope}
-                    {overview.snapshot ? ' · 기준 시각 기준' : ''}
+                    {overview.snapshot ? ' · 기준 시각까지' : ''}
                   </span>
                 </div>
                 <SourceStatusTable overview={overview} shortNames={shortNames} />
@@ -538,7 +539,7 @@ export function OperationsPage() {
                           <span className="font-mono text-slate-300" data-raw="">
                             {bundle.registryName ?? '-'}
                           </span>{' '}
-                          · 판{' '}
+                          · 버전{' '}
                           <span className="font-mono text-slate-300" data-raw="">
                             {bundle.registryVersion ?? '-'}
                           </span>
@@ -597,7 +598,7 @@ export function OperationsPage() {
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-400">
-                        채널 <span className="break-all font-mono text-slate-300">{summary.payloadChannel ?? '-'}</span> · 전송 결과{' '}
+                        채널 <span className="break-all font-mono text-slate-300">{summary.payloadChannel ?? '-'}</span> · 발송 결과{' '}
                         <CodeLabel dict="slackDeliveryStatus" value={summary.zeekadDeliveryStatus} className="text-slate-300" />
                       </div>
                       {/* T64: 미리보기는 페이로드 글 전체(서버 상한 4,000자)라 높이를 정하고 상자 안에서 스크롤한다 */}

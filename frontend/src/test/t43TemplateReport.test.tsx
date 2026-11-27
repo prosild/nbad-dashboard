@@ -58,7 +58,7 @@ describe('T43 목록 리포트 칩', () => {
   it('검증 칩 실패의 뜻: 템플릿으로 대체(사유는 단정하지 않음), 통과는 그대로', () => {
     chips('template', { verified: false });
     const fail = screen.getByRole('img', { name: VERIFICATION_DESCRIPTION.failedQueue });
-    expect(fail).toHaveAttribute('title', 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세에서 봅니다');
+    expect(fail).toHaveAttribute('title', 'AI 리포트를 쓰지 못함: 검증 실패 또는 호출 실패로 템플릿 리포트로 대체됐습니다. 사유는 상세 화면에서 확인하세요');
     expect(VERIFICATION_DESCRIPTION.failedQueue).not.toContain('맞지 않는 내용');
   });
 
@@ -108,8 +108,8 @@ describe('T43 상세 머리줄 "AI 리포트" 칸', () => {
     renderHeader({ reportKind: 'template', verificationPassed: false, verificationReason: 'call: ClientError' });
     const badge = screen.getByText('템플릿 대체');
     const img = badge.closest('[role="img"]') as HTMLElement;
-    expect(img).toHaveAttribute('title', 'AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: LLM 호출 실패: ClientError');
-    expect(img.getAttribute('aria-label')).toBe('템플릿 대체: AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: LLM 호출 실패: ClientError');
+    expect(img).toHaveAttribute('title', 'AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: AI 호출 실패(오류: ClientError)');
+    expect(img.getAttribute('aria-label')).toBe('템플릿 대체: AI 리포트를 쓰지 못해 템플릿 리포트로 대체됐습니다. 사유: AI 호출 실패(오류: ClientError)');
     expect(screen.queryByText('검증 실패')).toBeNull();
   });
 
@@ -157,14 +157,15 @@ describe('T43 AI 리포트 탭', () => {
     expect(screen.queryByText('검증 실패')).toBeNull();
     expect(screen.queryByText('AI 작성')).toBeNull();
     expect(screen.getByTestId('template-report-note')).toHaveTextContent(
-      'AI가 쓴 리포트가 검증(글 속 숫자·가명·ATT&CK ID를 근거 사실과 대조)에서 걸려 쓰지 않았습니다. 아래는 사실만 나열한 템플릿 리포트입니다.',
+      // T68(A17): "걸려 쓰지 않았습니다"(쓰다: 작성/사용 모호) → "통과하지 못해 사용하지 않았습니다"
+      'AI가 작성한 리포트가 검증(글 속 숫자·가명·ATT&CK ID를 근거 사실과 대조)을 통과하지 못해 사용하지 않았습니다. 아래는 사실만 나열한 템플릿 리포트입니다.',
     );
   });
 
-  it('사유 call: …: 호출 실패로 쓰지 못함', () => {
+  it('사유 call: …: 호출 실패로 만들지 못함', () => {
     render(<ReportSection report={report({ reportKind: 'template', verificationPassed: false, verificationReason: 'call: ClientError' })} />);
     expect(screen.getByTestId('template-report-note')).toHaveTextContent(
-      'AI 호출이 실패해(LLM 호출 실패: ClientError) AI 리포트를 쓰지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.',
+      'AI 호출에 실패해(오류: ClientError) AI 리포트를 만들지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.',
     );
   });
 
@@ -176,10 +177,11 @@ describe('T43 AI 리포트 탭', () => {
       );
       unmount();
     }
-    expect(templateReplacedText('call')).toBe('AI 호출이 실패해(LLM 호출 실패) AI 리포트를 쓰지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.');
+    // 자세한 글이 없으면 괄호를 빼서 "AI 호출 실패"가 겹치지 않게 한다(설계자 답 L3)
+    expect(templateReplacedText('call')).toBe('AI 호출에 실패해 AI 리포트를 만들지 못했습니다. 아래는 사실만 나열한 템플릿 리포트입니다.');
   });
 
-  it('주황 상자 제목: 쓰지 않은 AI 리포트의 이유, 문제 항목이 그 글의 것임을 적는다(항목 문장은 그대로)', () => {
+  it('주황 상자 제목: 사용하지 않은 AI 리포트의 이유, 문제 항목이 그 글의 것임을 적는다(항목 문장은 그대로)', () => {
     render(
       <ReportVerificationProblems
         report={report({
@@ -190,8 +192,9 @@ describe('T43 AI 리포트 탭', () => {
         })}
       />,
     );
-    expect(screen.getByText(/AI 리포트를 쓰지 않은 이유:/)).toHaveTextContent('AI 리포트를 쓰지 않은 이유: 리포트 내용이 근거와 맞지 않음(숫자·가명·ATT&CK ID)');
-    expect(screen.getByText('아래 항목은 쓰지 않은 AI 리포트 글의 것입니다. 화면의 템플릿 리포트 내용이 아닙니다.')).toBeInTheDocument();
+    // T68(A18)
+    expect(screen.getByText(/AI 리포트를 사용하지 않은 이유:/)).toHaveTextContent('AI 리포트를 사용하지 않은 이유: 리포트 내용이 근거와 맞지 않음(숫자·가명·ATT&CK ID)');
+    expect(screen.getByText('아래 문제는 사용하지 않은 AI 리포트에서 나온 것으로, 화면의 템플릿 리포트와는 관계없습니다.')).toBeInTheDocument();
     expect(screen.getByText(/리포트가 인용한 ATT&CK ID 가운데 후보 목록에 없는 ID: "T1046"/)).toBeInTheDocument();
     expect(screen.queryByText(/검증 실패 사유/)).toBeNull();
   });
@@ -199,7 +202,7 @@ describe('T43 AI 리포트 탭', () => {
   it('계약에 없는 조합(llm + 검증 실패)은 상자 제목을 지금처럼 "검증 실패 사유"로 둔다', () => {
     render(<ReportVerificationProblems report={report({ reportKind: 'llm', verificationPassed: false, verificationReason: 'verification' })} />);
     expect(screen.getByText(/검증 실패 사유:/)).toBeInTheDocument();
-    expect(screen.queryByText(/쓰지 않은 이유/)).toBeNull();
+    expect(screen.queryByText(/사용하지 않은 이유/)).toBeNull();
   });
 
   it('AI 작성·검증 통과는 그대로("AI 작성" + "검증 통과", 한 줄 안내 없음)', () => {

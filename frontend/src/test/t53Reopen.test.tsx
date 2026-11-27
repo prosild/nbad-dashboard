@@ -21,7 +21,7 @@ const PATH = '/api/incidents/42/rank/1';
 const CLOSED_TEXT = '종결된 인시던트입니다.';
 const REOPEN_NOTE = '다시 열면 상태가 분석 중으로 돌아가고 판정이 비워집니다. 앞선 종결과 판정은 이력에 남습니다.';
 const ASSIGN_NOTE = '담당자가 없으면 다시 연 사람이 담당자로 지정됩니다.';
-const CONFLICT_TEXT = '다른 사람이 먼저 상태나 판정을 바꿨습니다. 새로고침한 뒤 다시 확인하세요.';
+const CONFLICT_TEXT = "다른 사람이 먼저 상태나 판정을 바꿨습니다. '다시 불러오기'로 최신 상태를 확인하세요.";
 const UNAVAILABLE_TEXT = '이 환경의 탐지 DB에는 다시 열기 기능이 아직 없습니다.';
 
 const json = (body: unknown, status = 200) =>

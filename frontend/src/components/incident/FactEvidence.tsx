@@ -21,7 +21,7 @@ import { SocBadge } from '../StatusBadge';
 export const FACT_PREVIEW_COUNT = 4;
 
 function rawTooltip(fact: FactItem, view: FactView): string {
-  const lines = [`근거 번호 ${view.id}`, `원문 이름: ${view.rawName}`];
+  const lines = [...(view.hint ? [view.hint] : []), `근거 번호 ${view.id}`, `원문 이름: ${view.rawName}`];
   if (!view.missing) lines.push(`원문 값: ${fact.value ?? '-'}`);
   return lines.join('\n');
 }
@@ -64,7 +64,7 @@ function FactNumber({ id }: { id: string }) {
 const BASELINE_ATTENTION_TIMES = 2;
 
 /**
- * T44 평소 대비 강조: "p95 대비 N배" 표지와 비교 막대(이번 인시던트 최대 = 막대, 평소 p95 = 세로 눈금).
+ * T44 평소 대비 강조: "평소 상위 5% 값의 N배" 표지(T68, 전에는 "p95 대비 N배")와 비교 막대(이번 인시던트 최대 = 막대, 평소 p95 = 세로 눈금).
  * 막대 눈금의 끝은 이번 인시던트 최대·평소 p95·평소 최대 가운데 큰 값이다. 수치는 바로 위 값 글에 있고 읽는 법은 툴팁에 둔다.
  * 인라인 style 없이 SVG 기하 속성으로만 그린다.
  */
@@ -76,7 +76,9 @@ function BaselineBar({ comparison }: { comparison: BaselineComparison }) {
   const times = formatTimes(ratioOverP95);
   return (
     <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-baseline-comparison="">
-      <SocBadge tone={strong ? 'attention' : 'neutral'}>p95 대비 {times}</SocBadge>
+      <SocBadge tone={strong ? 'attention' : 'neutral'} title="평소 p95: 평소 값 가운데 상위 5%가 시작되는 값">
+        평소 상위 5% 값의 {times}
+      </SocBadge>
       <svg
         viewBox="0 0 100 10"
         preserveAspectRatio="none"

@@ -454,7 +454,8 @@ describe('T44 평소 대비 배수', () => {
     // 기존 값 글은 그대로
     expect(describeFact(f, {}).text).toBe('이번 인시던트 최대 12 / 평소 중앙값 2 / 평소 p95 4 / 평소 최대 20 (평소 p95의 3배)');
     expect(row).toHaveTextContent('(평소 p95의 3배)');
-    const badge = within(row).getByText('p95 대비 3배');
+    // T68(B3): "p95 대비 3배" → "평소 상위 5% 값의 3배"
+    const badge = within(row).getByText('평소 상위 5% 값의 3배');
     expect(badge.className).toContain('amber');
     const svg = within(row).getByRole('img', { name: '이번 인시던트 최대가 평소 p95의 3배' });
     // 눈금 끝 = max(12, 20, 4) = 20
@@ -471,7 +472,7 @@ describe('T44 평소 대비 배수', () => {
         pseudonyms={{}}
       />,
     );
-    const badge = screen.getByText('p95 대비 1.5배');
+    const badge = screen.getByText('평소 상위 5% 값의 1.5배');
     expect(badge.className).not.toContain('amber');
     expect(badge.className).toContain('border-slate-700');
     expect(container.querySelector('[data-baseline-bar]')).toHaveAttribute('width', '100');
@@ -493,7 +494,7 @@ describe('T44 평소 대비 배수', () => {
     );
     expect(container.querySelectorAll('[data-fact-id]')).toHaveLength(5);
     expect(container.querySelector('[data-baseline-comparison]')).toBeNull();
-    expect(screen.queryByText(/p95 대비/)).toBeNull();
+    expect(screen.queryByText(/평소 상위 5% 값의/)).toBeNull();
   });
 
   it('근거 사실 전체 표에는 글만 두고 막대를 그리지 않는다', () => {

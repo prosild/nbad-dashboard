@@ -240,12 +240,12 @@ export function ReportVerificationProblems({ report }: { report: ReportView }) {
       <div className="flex items-center gap-1.5 font-semibold">
         <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="[overflow-wrap:anywhere]">
-          {template ? 'AI 리포트를 쓰지 않은 이유: ' : '검증 실패 사유: '}
+          {template ? 'AI 리포트를 사용하지 않은 이유: ' : '검증 실패 사유: '}
           <VerificationReasonText reason={report.verificationReason} />
         </span>
       </div>
       {template && problems.length > 0 && (
-        <p className="mt-1 text-amber-200/80">아래 항목은 쓰지 않은 AI 리포트 글의 것입니다. 화면의 템플릿 리포트 내용이 아닙니다.</p>
+        <p className="mt-1 text-amber-200/80">아래 문제는 사용하지 않은 AI 리포트에서 나온 것으로, 화면의 템플릿 리포트와는 관계없습니다.</p>
       )}
       {problems.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-4 [overflow-wrap:anywhere]">

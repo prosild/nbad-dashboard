@@ -127,7 +127,7 @@ export function formatRangeShort(range: PeriodRange, anchor?: string | null): st
 
 /** 긴 범위 글(KST, 초 포함): 툴팁용 */
 export function formatRangeLong(range: PeriodRange): string {
-  return `${formatDateTime(range.start)} 초과 ~ ${formatDateTime(range.end)} 이하 KST`;
+  return `${formatDateTime(range.start)} ~ ${formatDateTime(range.end)} KST(시작 시각은 빼고 끝 시각은 포함)`;
 }
 
 /** 두 ISO 중 늦은 것(원래 문자열을 돌려준다) */
