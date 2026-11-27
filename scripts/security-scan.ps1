@@ -508,14 +508,25 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $shaRepo67 = (Get-FileHash -Algorithm SHA256 (Join-Path $RepoRoot "frontend/public/favicon.ico")).Hash.ToLowerInvariant()
                 $csp67 = Get-HeaderValue $resp67 "Content-Security-Policy"
                 $access67 = Get-WafProbeLineCount $probe67
+                # 이 E2E의 요청은 숫자 주소 Host(127.0.0.1:포트)라 CRS 920350이 요청마다 감사 줄을 남긴다(차단 아님, [T61e]의 대조와 같다).
+                # 그래서 (가) 숫자 Host 요청의 감사 줄은 끊김 없이 규칙 920350뿐이어야 하고, (나) 이름 Host(localhost, --resolve)로 보낸
+                # 같은 요청은 감사 줄이 0건이어야 한다(favicon에 걸리는 규칙이 없다).
+                $probe67b = "t67favname$(New-RandomToken 8)"
+                $code67b = (Invoke-NativeCapture "curl.exe" @("-sS", "-k", "--max-time", "20", "-o", "NUL", "-w", "%{http_code}", "--resolve", "localhost:${WafHttpsPort}:127.0.0.1", "-H", "Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8", "https://localhost:$WafHttpsPort/favicon.ico?probe=$probe67b") -IgnoreExitCode).Output.Trim()
+                $access67b = Get-WafProbeLineCount $probe67b
                 $wafLogs67 = (Invoke-NativeCapture "docker" ($composeArgs + @("logs", "--no-log-prefix", "nginx-waf")) -IgnoreExitCode).Output
-                $audit67 = @($wafLogs67 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') -and ((Test-ProbeMark $_ $probe67) -or $_ -match '"uri":"/favicon\.ico') })
-                $e2eLogs.Add("[T67a] unauthenticated GET /favicon.ico?probe=<marker> via WAF -> HTTP $code67 Content-Type=$ct67 sha256=$sha67 (repo $shaRepo67) nosniff=$(Get-HeaderValue $resp67 'X-Content-Type-Options') X-Frame-Options=$(Get-HeaderValue $resp67 'X-Frame-Options') CSP frame-ancestors none=$([bool]($csp67 -and $csp67.Contains("frame-ancestors 'none'")))`n      nginx-waf lines with the marker=$access67, ModSecurity audit lines for /favicon.ico=$($audit67.Count); bundle '모델이 올린 인시던트'=$($bundleText.Contains('모델이 올린 인시던트')) '분석가 판정'=$($bundleText.Contains('분석가 판정')) '모델 판정'=$($bundleText.Contains('모델 판정'))")
+                $auditLines67 = @($wafLogs67 -split "`r?`n" | Where-Object { $_.StartsWith('{"transaction"') })
+                $audit67 = @($auditLines67 | Where-Object { Test-ProbeMark $_ $probe67 })
+                $audit67b = @($auditLines67 | Where-Object { Test-ProbeMark $_ $probe67b })
+                $rules67 = @($audit67 | ForEach-Object { [regex]::Matches($_, '"ruleId":"(\d+)"') | ForEach-Object { $_.Groups[1].Value } } | Select-Object -Unique)
+                $intr67 = @($audit67 | Where-Object { $_ -match '"is_interrupted":true' }).Count
+                $e2eLogs.Add("[T67a] unauthenticated GET /favicon.ico?probe=<marker> via WAF (numeric Host) -> HTTP $code67 Content-Type=$ct67 sha256=$sha67 (repo $shaRepo67) nosniff=$(Get-HeaderValue $resp67 'X-Content-Type-Options') X-Frame-Options=$(Get-HeaderValue $resp67 'X-Frame-Options') CSP frame-ancestors none=$([bool]($csp67 -and $csp67.Contains("frame-ancestors 'none'")))`n      numeric Host: nginx-waf lines with the marker=$access67, ModSecurity audit lines=$($audit67.Count) rules=[$($rules67 -join ', ')] interrupted=$intr67`n      name Host (localhost via --resolve): HTTP $code67b, nginx-waf lines with the marker=$access67b, ModSecurity audit lines=$($audit67b.Count)`n      bundle '모델이 올린 인시던트'=$($bundleText.Contains('모델이 올린 인시던트')) '분석가 판정'=$($bundleText.Contains('분석가 판정')) '모델 판정'=$($bundleText.Contains('모델 판정'))")
                 Assert-True ($code67 -eq '200') "[T67a] 비인증 GET /favicon.ico 200 (실제 $code67)" $resp67
                 Assert-True ($ct67 -match '^image/') "[T67a] /favicon.ico Content-Type image/* (실제 $ct67)" $resp67
                 Assert-True ($sha67 -eq $shaRepo67) "[T67a] /favicon.ico 내용 = frontend/public/favicon.ico ($sha67 vs $shaRepo67)" $resp67
                 Assert-True ($csp67 -and $csp67.Contains("frame-ancestors 'none'") -and (Get-HeaderValue $resp67 "X-Content-Type-Options") -eq "nosniff") "[T67a] /favicon.ico 보안 헤더(CSP frame-ancestors, nosniff)" $resp67
-                Assert-True ($access67 -ge 1 -and $audit67.Count -eq 0) "[T67a] /favicon.ico 요청의 nginx-waf 접근 줄 있음($access67)·ModSecurity 감사 줄 0건($($audit67.Count))"
+                Assert-True ($access67 -ge 1 -and $intr67 -eq 0 -and @($rules67 | Where-Object { $_ -ne '920350' }).Count -eq 0) "[T67a] 숫자 Host /favicon.ico: 접근 줄 있음($access67), 감사 줄은 끊김 없이 920350(숫자 Host)뿐 (규칙 [$($rules67 -join ', ')], 끊김 $intr67)"
+                Assert-True ($code67b -eq '200' -and $access67b -ge 1 -and $audit67b.Count -eq 0) "[T67a] 이름 Host /favicon.ico: 200($code67b), 접근 줄 있음($access67b), ModSecurity 감사 줄 0건($($audit67b.Count))"
                 Assert-True ($bundleText.Contains('모델이 올린 인시던트') -and $bundleText.Contains('분석가 판정') -and -not $bundleText.Contains('모델 판정')) "[T67a] SPA 번들에 T67 판정 문장이 있고 옛 카드 이름 '모델 판정'이 없음"
 
                 # [2] /api/** 는 SPA로 폴백하지 않는다
