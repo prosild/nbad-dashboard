@@ -96,7 +96,7 @@
 - **모델 묶음 `zeekad-fusion/3` (결합 v2) 및 30분 초과 사건**: 결합 v2 champion 번들 `zeekad-fusion/3`은 여러 탐지 창을 합쳐 30분보다 긴 사건을 만들 수 있습니다. 대시보드는 사건 길이에 상한이 있다고 가정하지 않고 그대로 보여 줍니다.
 - **모델 점수·근거 API·상태 변경**: `incident_model_scores`, 근거 API(`GET /api/v1/jobs/{job_id}/incidents/{rank}`), `transition_incident`의 `p_job`은 현재 화면 큐의 `job_id`(최신 작업)를 사용합니다.
 - **사건 상태 및 이력**: 상태는 `incident_id`에 붙어 있어 새 채점 작업이 생겨도 이어집니다. `incident_status_history`는 `incident_id` 기준으로 모든 작업의 이력을 모아 최신순으로 보여 줍니다.
-- **운영 상태 분석가 결론 집계(`feedback_summary`)**: `/operations` 화면에서 `dashboard.feedback_summary`를 `SELECT *` 방어 매핑과 허용 캡처 IDOR 필터로 조회해 보여 줍니다. 맨 위 상태 카드(파이프라인·모델 판정·경보) 아래에 캡처별 `'all'`(모든 모델 합계) 행만 기본으로 보이고 탐지 모델별 행은 펼쳐서 봅니다. 정탐률은 판정 10건 미만이면 "표본 부족"으로 보입니다(값은 툴팁). 미탐(재현율)은 이 집계로 알 수 없다고 안내합니다(T20, 정의는 `docs/ui-terminology.md` '운영 지표 정의'). 첫 화면(`/`)은 같은 API로 그리는 관제 현황판입니다.
+- **운영 상태 분석가 결론 집계(`feedback_summary`)**: `/operations` 화면에서 `dashboard.feedback_summary`를 `SELECT *` 방어 매핑과 허용 캡처 IDOR 필터로 조회해 보여 줍니다. 맨 위 상태 카드(파이프라인·분석가 판정·경보) 아래에 캡처별 `'all'`(모든 모델 합계) 행만 기본으로 보이고 탐지 모델별 행은 펼쳐서 봅니다. 정탐률은 판정 10건 미만이면 "표본 부족"으로 보입니다(값은 툴팁). 미탐(재현율)은 이 집계로 알 수 없다고 안내합니다(T20, 정의는 `docs/ui-terminology.md` '운영 지표 정의'). 첫 화면(`/`)은 같은 API로 그리는 관제 현황판입니다.
 
 ### 2.3 근거 FastAPI (`evidence.v1`) 연동
 - 대시보드 백엔드는 `ZEEKAD_EVIDENCE_API_URL`로 `GET /api/v1/jobs`, `GET /api/v1/captures/{capture_id}/queue`, `GET /api/v1/jobs/{job_id}/incidents/{rank}`를 부릅니다(읽기 전용).
