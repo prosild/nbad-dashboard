@@ -10,6 +10,7 @@ import { fakeQueue, unified } from './fakeQueueServer';
 import { EmptyPeriodText, OutsidePeriodNotice } from '../components/OutsidePeriodNotice';
 import { SourceSelect } from '../components/ConditionBar';
 import { ThreatPanels } from '../components/dashboard/ThreatPanels';
+import { OLD_TERMS } from './screenTerms';
 
 /**
  * 화면 문구 회귀 검사(T17): 주요 화면의 보이는 글에 내부 DB·필드 이름과 `한국어 (영어 코드)` 병기가 없어야 한다.
@@ -17,58 +18,7 @@ import { ThreatPanels } from '../components/dashboard/ThreatPanels';
  * T18b: 관제 표준 용어로 바꾸기 전의 풀어 쓴 옛 표기(OLD_TERMS)도 남으면 안 된다(2026-11-21 결정).
  */
 const FORBIDDEN = ['dashboard.', 'zeekad_', 'job_id', 'queue_rank', 'evidence.v1', '단계 5'];
-/** T17·T18 표기 중 T18b에서 관제 표준 용어로 바꾼 것. "종료"는 세션 상태 설명(정상 종료 등)에 남으므로 뺀다. */
-const OLD_TERMS = [
-  '탐지 사건',
-  '판단 요청',
-  '판단 대기',
-  '조사 중',
-  '정상 행위',
-  '조사 진행',
-  '오탐으로 종료',
-  '연결 시작 측',
-  '연결 수신 측',
-  '수집 구간',
-  '분석 실행',
-  '모델 구성',
-  '주 탐지 모델',
-  '함께 탐지한 모델',
-  '근거 요약',
-  '대표 연결',
-  '연결 수',
-  '이상 판정 구간',
-  'AI 분석 보고서',
-  '사실 검증',
-  '알림 보냄',
-  '알림 보류',
-  '알림 전송 판단',
-  '첫 알림',
-  '시험 모드',
-  '개인정보 가림',
-  '자산 송신 바이트',
-  '자산 수신 바이트',
-  // T20: 운영 지표를 관제 표준 용어(정탐률·판정·미탐)로 바꿨다. "모든 모델 합계"는 zeek_AD 표기라 남긴다.
-  '정밀도',
-  '경보 정밀도',
-  '알림 정밀도',
-  '알림 없음',
-  '결론',
-  '판정 비율',
-  '놓친 공격',
-  '전체 (all)',
-  // T21 정정: 에스컬레이션 결정은 반영되면 상태를 바꾼다(zeek_AD 계약). 옛 안내(T19)는 남으면 안 된다.
-  '에스컬레이션 결정은 인시던트 상태를 바꾸지 않습니다',
-  '인시던트 상태는 바뀌지 않습니다',
-  '결정이 자동 처리에 반영됨',
-  // T21: 발송 판단(would_send)을 "경보 발송 판단"으로 부르지 않는다
-  '경보 발송 판단',
-  // T24: 현황판을 시간·수집원 기준으로 바꿨다. 캡처 기준 누적 화면의 용어는 남으면 안 된다.
-  '데이터 기준',
-  '캡처별 현황',
-  '판정 완료',
-  // T27: '#'은 인시던트 번호에만 쓴다. 작업 번호는 "작업 44"
-  '작업 #',
-];
+// OLD_TERMS(T17·T18 표기 중 T18b~T27에서 바꾼 것)는 T68에서 소스 정적 검사(t68ScreenWording.test.ts)와 함께 쓰려고 screenTerms.ts로 옮겼다.
 const PAREN_PATTERN = /[가-힣]\s*\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const ALLOWED_ABBREVIATIONS = new Set([
   'IP',
