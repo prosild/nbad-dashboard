@@ -142,7 +142,7 @@ flowchart LR
 | 공개 스택 리허설 | 공개 데모와 같은 구성에 스냅샷을 복원해 E2E와 ZAP을 돌린 뒤 지운다 (`scripts/portfolio-verify.ps1`) |
 | 공개 주소 확인 | 배포 뒤 공개 주소에서 로그인·마스킹·숨김 캡처 `403`·속도 제한 등을 확인 |
 
-최근 결과(2026-11-27, commit `ccb314a`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과, 공개 주소 확인 317항목 중 315 통과(남은 둘은 NAS의 Docker 환경 차이: 내부 전용 네트워크에서 NAS 호스트 주소에 닿음, 커널이 NoNewPrivs를 표시하지 않아 Docker 설정으로 확인). Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
+최근 결과(2026-11-27, commit `46cc930`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과(commit `ccb314a`, 같은 날), 볼륨을 지우지 않는 제자리 갱신 예행 통과, 공개 주소 확인 322항목 모두 통과. 내부 전용 네트워크는 인터넷으로 나가지 못함을 확인했습니다. NAS 호스트 주소에 닿는 것은 받아들인 남은 위험으로 기록했고, NoNewPrivs는 커널이 표시하지 않아 Docker 설정으로 확인했습니다. 반영 뒤 정각 초기화는 따로 확인해 OK였습니다. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
 
 ## AI와 일한 방식
 
@@ -172,7 +172,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/security-scan.ps1 -E
 ## 문서
 
 - [주요 판단 기록](docs/design-decisions.md)
-- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T66`)
+- [변경 기록](docs/changelog.md): 코드와 시험 이름에 나오는 작업 번호(`T01`~`T67`)
 - [배포 및 운영 가이드](docs/deployment-guide.md): VMware 실습 환경
 - [포트폴리오 공개 배포 안내서](docs/portfolio-deployment.md): 공개 데모(Synology NAS)
 - [보안 검증 보고서](docs/security-verification-report.md)
