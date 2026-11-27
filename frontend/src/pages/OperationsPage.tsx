@@ -698,7 +698,7 @@ function SummaryRow({ row, isAll = false, children }: { row: FeedbackSummaryReco
       <td className="soc-td soc-num text-xs text-slate-200">
         <div>인시던트 {formatNumber(row.incidents)}</div>
         <div className="text-slate-400">
-          경보 발송 {formatNumber(row.alerted)} · 판정 {formatNumber(row.resolved)}
+          경보 발송 {formatNumber(row.alerted)} · 분석가 판정 {formatNumber(row.resolved)}
         </div>
       </td>
       {quiet ? (

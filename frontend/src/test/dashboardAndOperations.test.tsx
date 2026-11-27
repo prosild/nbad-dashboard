@@ -807,6 +807,10 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expect(heads).toContain('경보 정탐률 · 분석가 판정 수');
     expect(heads.join('|')).not.toContain('경보 판정률');
     expect(table.textContent ?? '').not.toMatch(/건\(\s*[\d.]+%\)/);
+    // T67 review-2 L1: 칸 둘째 줄도 머리·카드와 같은 이름("분석가 판정 N")
+    const firstAll = within(table).getByText('표본 부족 · 분석가 판정 9건 / 모델이 올린 인시던트 79건').closest('tr') as HTMLElement;
+    expect(within(firstAll).getByText(/^경보 발송 [\d,]+ · 분석가 판정 9$/)).toBeInTheDocument();
+    expect(table.textContent ?? '').not.toMatch(/경보 발송 [\d,]+ · 판정 \d/);
 
     await user.click(within(table).getByRole('button', { name: /탐지 모델별 2개 펼치기/ }));
     expect(within(table).getByText('통신 관계 이상')).toBeInTheDocument();
