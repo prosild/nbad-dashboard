@@ -6,6 +6,7 @@ import { AppRoutes } from '../App';
 import { AuthProvider } from '../auth/AuthContext';
 import { ToastProvider } from '../components/ToastContext';
 import { DASHBOARD_REFRESH_MS } from '../pages/DashboardPage';
+import { SlashLines } from '../components/dashboard/SlashLines';
 import type {
   CaptureRow,
   DashboardOverviewResponse,
@@ -688,6 +689,20 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expect(alert).toHaveTextContent('표본 부족 · 분석가 판정 4건 / 경보 12건');
     expect(alert.textContent ?? '').not.toContain('33.3%');
     expect(alert).toHaveTextContent('2026-11-21 00:40:00');
+    // T68 추가 결정 3: 카드 첫 줄은 " / " 앞에서 두 줄이다(글은 그대로, " / "는 화면 판독기용으로 남는다)
+    const judgedLines = judged.querySelector('[data-card-lines]') as HTMLElement;
+    expect(judgedLines.textContent).toBe('정탐률 73.7% · 분석가 판정 19건 / 모델이 올린 인시던트 100건');
+    expect(Array.from(judgedLines.querySelectorAll(':scope > [data-line]')).map((l) => [l.className, l.textContent])).toEqual([
+      ['block', '정탐률 73.7% · 분석가 판정 19건 / '],
+      ['block', '모델이 올린 인시던트 100건'],
+    ]);
+    expect(judgedLines.querySelector('[data-line="1"] .sr-only')).toHaveTextContent('/');
+    const alertLines = alert.querySelector('[data-card-lines]') as HTMLElement;
+    expect(alertLines.textContent).toBe('표본 부족 · 분석가 판정 4건 / 경보 12건');
+    expect(Array.from(alertLines.querySelectorAll(':scope > [data-line]')).map((l) => l.textContent)).toEqual([
+      '표본 부족 · 분석가 판정 4건 / ',
+      '경보 12건',
+    ]);
   });
 
   it('판정 집계는 "누적(기간 없음)"이고 기간을 바꿔도 값이 같다. 탐지 작업·Slack 요약은 기간 안만', async () => {
@@ -1386,5 +1401,20 @@ describe('T43 현황판: 기간 안 0건이고 마지막 탐지가 기간 밖인
     });
     await user.click(a);
     expect(screen.getByTestId('location')).toHaveTextContent('/incidents?period=all&captureId=cic17-wed');
+  });
+});
+
+describe('T68 추가 결정 3: SlashLines', () => {
+  it('" / "가 없으면 한 줄 그대로, 있으면 첫 " / " 앞에서 두 줄이고 글(textContent)은 같다', () => {
+    const one = render(<div data-testid="one"><SlashLines text="경보 없음" /></div>);
+    expect(one.getByTestId('one').textContent).toBe('경보 없음');
+    expect(one.getByTestId('one').querySelectorAll('[data-line]')).toHaveLength(0);
+    one.unmount();
+    const two = render(<div data-testid="two"><SlashLines text="분석가 판정 없음 / 모델이 올린 인시던트 5건" /></div>);
+    expect(two.getByTestId('two').textContent).toBe('분석가 판정 없음 / 모델이 올린 인시던트 5건');
+    expect(Array.from(two.getByTestId('two').querySelectorAll('[data-line]')).map((l) => l.textContent)).toEqual([
+      '분석가 판정 없음 / ',
+      '모델이 올린 인시던트 5건',
+    ]);
   });
 });

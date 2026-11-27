@@ -19,6 +19,7 @@ import {
   type BadgeTone,
 } from '../components/StatusBadge';
 import { SvgProgressBar } from '../components/SvgProgressBar';
+import { SlashLines } from '../components/dashboard/SlashLines';
 import type { DashboardOverviewResponse, FeedbackSummaryRecord, OperationsApiResponse, ScoringJob } from '../types/api';
 import { DISPLAY_TIME_ZONE_LABEL, formatDateTime, formatNumber } from '../utils/format';
 import { captureShortNames } from '../utils/labels';
@@ -331,8 +332,9 @@ export function OperationsPage() {
                         ? sampleShortTooltip('정탐률', status.totalsRow.resolved ?? 0, status.totalsRow.zeekadPrecision)
                         : undefined
                     }
+                    data-card-lines=""
                   >
-                    {precisionSummaryText(status.totalsRow)}
+                    <SlashLines text={precisionSummaryText(status.totalsRow)} />
                   </div>
                   <div className="text-xs text-slate-400">
                     미판정{' '}
@@ -346,7 +348,9 @@ export function OperationsPage() {
                   <div className="text-base font-semibold text-slate-50" title={ALERTED_COUNT_TOOLTIP}>
                     경보 발송 {formatNumber(status.totalsRow.alerted)}건
                   </div>
-                  <div className="text-xs text-slate-300">{alertPrecisionSummaryText(status.totalsRow)}</div>
+                  <div className="text-xs text-slate-300" data-card-lines="">
+                    <SlashLines text={alertPrecisionSummaryText(status.totalsRow)} />
+                  </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
                     최근 일일 요약{' '}
                     <span className="tabular-nums text-slate-300">
