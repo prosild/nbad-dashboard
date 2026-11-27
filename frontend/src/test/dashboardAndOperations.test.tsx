@@ -660,17 +660,25 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expect(screen.getByLabelText('수집원')).toHaveValue('cap:syn1-thu');
   });
 
-  it('상태 카드 3개(수집원·모델 판정·경보)와 합계 문장', async () => {
+  it('상태 카드 3개(수집원·분석가 판정·경보)와 합계 문장', async () => {
     renderAt('/operations');
     const cards = await screen.findByRole('region', { name: '상태 요약' });
     const sourceCard = within(cards).getByRole('region', { name: '수집원 상태' });
     await waitFor(() => expect(sourceCard).toHaveTextContent('실습망 센서정상'));
     expect(sourceCard).toHaveTextContent('가져온 데이터 실패 1개 / 2개 캡처');
-    // 판정 19/100, 정탐 14 → 73.7%
-    expect(within(cards).getByRole('region', { name: '모델 판정 상태' })).toHaveTextContent('정탐률 73.7% · 판정 19/100건(19.0%)');
+    // T67: 카드 이름 "분석가 판정". 판정 19, 정탐 14 → 정탐률 73.7%. 판정 ÷ 인시던트 백분율(옛 19.0%)은 쓰지 않는다
+    expect(within(cards).queryByRole('region', { name: '모델 판정 상태' })).not.toBeInTheDocument();
+    const judged = within(cards).getByRole('region', { name: '분석가 판정 상태' });
+    expect(within(judged).getByRole('heading', { name: '분석가 판정' })).toBeInTheDocument();
+    expect(judged).toHaveTextContent('정탐률 73.7% · 분석가 판정 19건 / 모델이 올린 인시던트 100건');
+    expect(judged).toHaveTextContent('미판정 81건');
+    expect(judged).toHaveTextContent('캡처마다 최신 탐지 작업의 모든 모델 합계 기준');
+    expect(judged.textContent ?? '').not.toMatch(/건\(\s*[\d.]+%\)/);
+    expect(judged.textContent ?? '').not.toContain('19.0%');
     const alert = within(cards).getByRole('region', { name: '경보 상태' });
     expect(alert).toHaveTextContent('경보 발송 12건');
-    expect(alert).toHaveTextContent('표본 부족 · 경보 판정 4/12건(33.3%)');
+    expect(alert).toHaveTextContent('표본 부족 · 분석가 판정 4건 / 경보 12건');
+    expect(alert.textContent ?? '').not.toContain('33.3%');
     expect(alert).toHaveTextContent('2026-11-21 00:40:00');
   });
 
@@ -781,20 +789,29 @@ describe('운영 현황(T24 기간·수집원 조건)', () => {
     expectAllTablesInScrollBox();
   });
 
-  it('판정 집계는 모든 모델 합계 행만 기본 표시하고, 펼치면 탐지 모델별 행과 판정 없음 한 줄이 보인다', async () => {
+  it('판정 집계는 모든 모델 합계 행만 기본 표시하고, 펼치면 탐지 모델별 행과 분석가 판정 없음 한 줄이 보인다', async () => {
     const user = userEvent.setup();
     renderAt('/operations');
     const table = (await screen.findAllByText('모든 모델 합계'))[0].closest('table') as HTMLElement;
     expect(within(table).getAllByText('모든 모델 합계')).toHaveLength(2);
     expect(within(table).queryByText('통신 관계 이상')).not.toBeInTheDocument();
-    expect(within(table).getByText('표본 부족 · 판정 9/79건(11.4%)')).toHaveAttribute('title', expect.stringContaining('정탐률 88.9%'));
-    expect(within(table).getByText('정탐률 60.0% · 판정 10/21건(47.6%)')).toBeInTheDocument();
+    expect(within(table).getByText('표본 부족 · 분석가 판정 9건 / 모델이 올린 인시던트 79건')).toHaveAttribute(
+      'title',
+      expect.stringContaining('정탐률 88.9%'),
+    );
+    expect(within(table).getByText('정탐률 60.0% · 분석가 판정 10건 / 모델이 올린 인시던트 21건')).toBeInTheDocument();
     expect(within(table).getByRole('img', { name: '정탐률' })).toBeInTheDocument();
+    // T67: 표 머리. 경보 판정률(판정 ÷ 경보)은 칸에 없으므로 머리에도 쓰지 않는다
+    const heads = within(table).getAllByRole('columnheader').map((th) => th.textContent);
+    expect(heads).toContain('인시던트 / 경보 발송 / 분석가 판정');
+    expect(heads).toContain('경보 정탐률 · 분석가 판정 수');
+    expect(heads.join('|')).not.toContain('경보 판정률');
+    expect(table.textContent ?? '').not.toMatch(/건\(\s*[\d.]+%\)/);
 
     await user.click(within(table).getByRole('button', { name: /탐지 모델별 2개 펼치기/ }));
     expect(within(table).getByText('통신 관계 이상')).toBeInTheDocument();
     const quiet = within(table).getByText('행위 패턴 이탈').closest('tr') as HTMLElement;
-    expect(within(quiet).getByText('판정 없음')).toHaveAttribute('colspan', '3');
+    expect(within(quiet).getByText('분석가 판정 없음')).toHaveAttribute('colspan', '3');
     expect(within(table).queryByText('기준선 이탈')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '탐지 모델별 행 모두 펼치기' }));

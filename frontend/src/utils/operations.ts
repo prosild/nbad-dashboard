@@ -3,8 +3,9 @@
  * 계산식은 zeek_AD dashboard.feedback_summary 뷰 정의를 따른다:
  * - 정탐률 = 정탐 / 판정 완료 (zeekad_precision)
  * - 경보 정탐률 = 경보 발송 ∧ 정탐 / 경보 발송 ∧ 판정 완료 (zeekad_alert_precision)
- * - 경보 판정률 = 경보 발송 ∧ 판정 완료 / 경보 발송 (zeekad_alert_resolved_rate)
- * 문장 형식은 백엔드 FeedbackSummaryRecord#getPrecisionSummaryText·getAlertPrecisionSummaryText와 같다(둘이 다르면 안 된다).
+ * - 경보 판정률 = 경보 발송 ∧ 판정 완료 / 경보 발송 (zeekad_alert_resolved_rate. 경보 판정 수를 되돌릴 때만 쓰고 화면 글에는 쓰지 않는다, T67)
+ * 문장 형식은 백엔드 FeedbackSummaryRecord#getPrecisionSummaryText·getAlertPrecisionSummaryText와 같다(둘이 다르면 안 된다.
+ * 두 시험이 같은 기대값 파일 src/test/fixtures/feedback-summary-text-cases.json을 읽는다).
  */
 import type { FeedbackSummaryRecord, ScoringJob } from '../types/api';
 import { formatNumber } from './format';
@@ -13,16 +14,6 @@ import { formatNumber } from './format';
 export const SAMPLE_MIN = 10;
 export const SAMPLE_SHORT_LABEL = '표본 부족';
 export const SAMPLE_SHORT_TOOLTIP = `판정 ${SAMPLE_MIN}건 미만이라 비율을 믿기 어렵습니다`;
-
-/**
- * 비율을 소수 첫째 자리 퍼센트 글로(반올림). 백엔드 BigDecimal HALF_UP과 같은 값이 나오게 정수 연산 뒤 반올림한다.
- */
-export function percentOf(numerator: number, denominator: number): string {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
-    return '-';
-  }
-  return `${(Math.round((numerator * 1000) / denominator) / 10).toFixed(1)}%`;
-}
 
 /** 0~1 비율 값(뷰가 소수 셋째 자리로 반올림한 값) → "60.0%" */
 export function ratioPercent(ratio: number | null | undefined): string {
@@ -54,24 +45,27 @@ export function effectiveAlertedResolved(row: FeedbackSummaryRecord): number | n
   return null;
 }
 
-/** 정탐률 문장. 예: "정탐률 60.0% · 판정 12/18건(66.7%)", "표본 부족 · 판정 5/18건(27.8%)", "판정 없음" */
+/**
+ * 정탐률 문장(T67). 판정 수 ÷ 인시던트 수의 백분율은 쓰지 않는다(탐지율로 읽힌다). 두 수를 "/"로 나란히 둔다.
+ * 예: "정탐률 60.0% · 분석가 판정 12건 / 모델이 올린 인시던트 18건", "표본 부족 · 분석가 판정 5건 / 모델이 올린 인시던트 2,277건",
+ * "분석가 판정 없음 / 모델이 올린 인시던트 5건", "분석가 판정 없음"(인시던트도 0). 인시던트 0이면 "/ …" 없이 앞머리만.
+ */
 export function precisionSummaryText(row: Pick<FeedbackSummaryRecord, 'incidents' | 'resolved' | 'zeekadPrecision'>): string {
   const resolved = row.resolved ?? 0;
   const incidents = row.incidents ?? 0;
+  const tail = incidents > 0 ? ` / 모델이 올린 인시던트 ${formatNumber(incidents)}건` : '';
   if (resolved <= 0) {
-    return '판정 없음';
+    return `분석가 판정 없음${tail}`;
   }
-  const base =
-    incidents > 0
-      ? `판정 ${formatNumber(resolved)}/${formatNumber(incidents)}건(${percentOf(resolved, incidents)})`
-      : `판정 ${formatNumber(resolved)}건`;
-  if (resolved < SAMPLE_MIN) {
-    return `${SAMPLE_SHORT_LABEL} · ${base}`;
-  }
-  return `정탐률 ${ratioPercent(row.zeekadPrecision)} · ${base}`;
+  const head = resolved < SAMPLE_MIN ? SAMPLE_SHORT_LABEL : `정탐률 ${ratioPercent(row.zeekadPrecision)}`;
+  return `${head} · 분석가 판정 ${formatNumber(resolved)}건${tail}`;
 }
 
-/** 경보 정탐률 문장. 예: "경보 정탐률 75.0% · 경보 판정 12/16건(75.0%)", "표본 부족 · 경보 판정 4/6건(66.7%)", "경보 없음" */
+/**
+ * 경보 정탐률 문장(T67). 판정 수 ÷ 경보 수의 백분율은 쓰지 않는다.
+ * 예: "경보 정탐률 75.0% · 분석가 판정 12건 / 경보 16건", "표본 부족 · 분석가 판정 4건 / 경보 6건", "분석가 판정 없음 / 경보 2건",
+ * "경보 3건 · 분석가 판정 수 알 수 없음", "경보 없음"
+ */
 export function alertPrecisionSummaryText(row: FeedbackSummaryRecord): string {
   const alerted = row.alerted ?? 0;
   if (alerted <= 0) {
@@ -79,16 +73,14 @@ export function alertPrecisionSummaryText(row: FeedbackSummaryRecord): string {
   }
   const eff = effectiveAlertedResolved(row);
   if (eff === null) {
-    return `경보 ${formatNumber(alerted)}건 · 판정 수 알 수 없음`;
+    return `경보 ${formatNumber(alerted)}건 · 분석가 판정 수 알 수 없음`;
   }
+  const tail = ` / 경보 ${formatNumber(alerted)}건`;
   if (eff <= 0) {
-    return `판정 없음 · 경보 ${formatNumber(alerted)}건`;
+    return `분석가 판정 없음${tail}`;
   }
-  const base = `경보 판정 ${formatNumber(eff)}/${formatNumber(alerted)}건(${percentOf(eff, alerted)})`;
-  if (eff < SAMPLE_MIN) {
-    return `${SAMPLE_SHORT_LABEL} · ${base}`;
-  }
-  return `경보 정탐률 ${ratioPercent(row.zeekadAlertPrecision)} · ${base}`;
+  const head = eff < SAMPLE_MIN ? SAMPLE_SHORT_LABEL : `경보 정탐률 ${ratioPercent(row.zeekadAlertPrecision)}`;
+  return `${head} · 분석가 판정 ${formatNumber(eff)}건${tail}`;
 }
 
 /** 정탐률 값(표본 부족이면 null). 표본 부족일 때 실제 값은 툴팁으로 보인다. */

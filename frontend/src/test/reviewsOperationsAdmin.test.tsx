@@ -211,8 +211,8 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
                 extraAttributes: {},
                 allModel: true,
                 effectiveAlertedResolved: 4,
-                precisionSummaryText: '표본 부족 · 판정 5/18건(27.8%)',
-                alertPrecisionSummaryText: '표본 부족 · 경보 판정 4/6건(66.7%)',
+                precisionSummaryText: '표본 부족 · 분석가 판정 5건 / 모델이 올린 인시던트 18건',
+                alertPrecisionSummaryText: '표본 부족 · 분석가 판정 4건 / 경보 6건',
               },
               {
                 captureId: 'cic17-wed',
@@ -231,7 +231,7 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
                 extraAttributes: {},
                 allModel: false,
                 effectiveAlertedResolved: 0,
-                precisionSummaryText: '판정 없음',
+                precisionSummaryText: '분석가 판정 없음',
                 alertPrecisionSummaryText: '경보 없음',
               },
             ],
@@ -248,14 +248,14 @@ describe('승인 대기, 운영 상태(feedback_summary), 관리자 화면', () 
     expect(await screen.findByText('모든 모델 합계')).toBeInTheDocument();
     // T20: 판정 5건(10건 미만)이라 정탐률 대신 표본 부족, 실제 값(60.0%)은 툴팁. 경보도 같은 규칙.
     const table = screen.getByText('모든 모델 합계').closest('table') as HTMLElement;
-    const precision = within(table).getByText('표본 부족 · 판정 5/18건(27.8%)');
+    const precision = within(table).getByText('표본 부족 · 분석가 판정 5건 / 모델이 올린 인시던트 18건');
     expect(precision).toHaveAttribute('title', expect.stringContaining('정탐률 60.0%(판정 5건)'));
-    const alertPrecision = within(table).getByText('표본 부족 · 경보 판정 4/6건(66.7%)');
+    const alertPrecision = within(table).getByText('표본 부족 · 분석가 판정 4건 / 경보 6건');
     expect(alertPrecision).toHaveAttribute('title', expect.stringContaining('경보 정탐률 75.0%(판정 4건)'));
-    // 판정 없는 탐지 모델 행은 기본으로 접혀 있고, 펼치면 "판정 없음" 한 줄로 보인다.
-    expect(within(table).queryByText('판정 없음')).not.toBeInTheDocument();
+    // 판정 없는 탐지 모델 행은 기본으로 접혀 있고, 펼치면 "분석가 판정 없음" 한 줄로 보인다(T67).
+    expect(within(table).queryByText('분석가 판정 없음')).not.toBeInTheDocument();
     await userEvent.setup().click(within(table).getByRole('button', { name: /탐지 모델별 1개 펼치기/ }));
-    expect(within(table).getByText('판정 없음')).toBeInTheDocument();
+    expect(within(table).getByText('분석가 판정 없음')).toBeInTheDocument();
     expect(screen.getByText(/미탐\(재현율\)은 이 집계로 알 수 없음 — 이 표는 탐지된 인시던트만 셉니다/)).toBeInTheDocument();
   });
 

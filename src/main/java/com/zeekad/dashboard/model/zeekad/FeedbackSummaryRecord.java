@@ -82,28 +82,27 @@ public class FeedbackSummaryRecord {
     }
 
     /**
-     * 정탐률 문장(docs/ui-terminology.md '운영 지표 정의', 프론트엔드 utils/operations.ts와 같은 형식).
-     * 판정 0건이면 "판정 없음", 판정 10건 미만이면 "표본 부족 · 판정 r/n건(p%)", 그 밖에는 "정탐률 x% · 판정 r/n건(p%)".
+     * 정탐률 문장(docs/ui-terminology.md '운영 지표 정의', 프론트엔드 utils/operations.ts와 같은 형식. 두 시험이 같은 기대값 파일
+     * frontend/src/test/fixtures/feedback-summary-text-cases.json을 읽는다). T67: 판정 수 ÷ 인시던트 수의 백분율은 쓰지 않는다(탐지율로 읽힌다).
+     * 판정 0건이면 "분석가 판정 없음 / 모델이 올린 인시던트 n건"(인시던트도 0이면 "분석가 판정 없음"),
+     * 판정 10건 미만이면 "표본 부족 · 분석가 판정 r건 / 모델이 올린 인시던트 n건", 그 밖에는 "정탐률 x% · 분석가 판정 r건 / 모델이 올린 인시던트 n건".
+     * 인시던트 0건이면 " / …" 부분이 없다.
      */
     public String getPrecisionSummaryText() {
         long resolvedCount = safeLong(resolved);
         long incidentCount = safeLong(incidents);
+        String tail = incidentCount > 0 ? String.format(Locale.US, " / 모델이 올린 인시던트 %,d건", incidentCount) : "";
         if (resolvedCount <= 0) {
-            return "판정 없음";
+            return "분석가 판정 없음" + tail;
         }
-        String base = incidentCount > 0
-                ? String.format(Locale.US, "판정 %,d/%,d건(%s)", resolvedCount, incidentCount,
-                        percentOf(resolvedCount, incidentCount))
-                : String.format(Locale.US, "판정 %,d건", resolvedCount);
-        if (resolvedCount < SAMPLE_MIN) {
-            return SAMPLE_SHORT_LABEL + " · " + base;
-        }
-        return "정탐률 " + ratioPercent(zeekadPrecision) + " · " + base;
+        String head = resolvedCount < SAMPLE_MIN ? SAMPLE_SHORT_LABEL : "정탐률 " + ratioPercent(zeekadPrecision);
+        return head + String.format(Locale.US, " · 분석가 판정 %,d건", resolvedCount) + tail;
     }
 
     /**
-     * 경보 정탐률 문장. 경보 0건이면 "경보 없음", 경보 판정 0건이면 "판정 없음 · 경보 n건",
-     * 경보 판정 10건 미만이면 "표본 부족 · 경보 판정 r/n건(p%)", 그 밖에는 "경보 정탐률 x% · 경보 판정 r/n건(p%)".
+     * 경보 정탐률 문장(T67: 판정 수 ÷ 경보 수의 백분율은 쓰지 않는다). 경보 0건이면 "경보 없음",
+     * 경보 판정 수를 알 수 없으면 "경보 n건 · 분석가 판정 수 알 수 없음", 경보 판정 0건이면 "분석가 판정 없음 / 경보 n건",
+     * 경보 판정 10건 미만이면 "표본 부족 · 분석가 판정 r건 / 경보 n건", 그 밖에는 "경보 정탐률 x% · 분석가 판정 r건 / 경보 n건".
      */
     public String getAlertPrecisionSummaryText() {
         long alertedCount = safeLong(alerted);
@@ -112,27 +111,14 @@ public class FeedbackSummaryRecord {
         }
         Long effRes = getEffectiveAlertedResolved();
         if (effRes == null) {
-            return String.format(Locale.US, "경보 %,d건 · 판정 수 알 수 없음", alertedCount);
+            return String.format(Locale.US, "경보 %,d건 · 분석가 판정 수 알 수 없음", alertedCount);
         }
+        String tail = String.format(Locale.US, " / 경보 %,d건", alertedCount);
         if (effRes <= 0) {
-            return String.format(Locale.US, "판정 없음 · 경보 %,d건", alertedCount);
+            return "분석가 판정 없음" + tail;
         }
-        String base = String.format(Locale.US, "경보 판정 %,d/%,d건(%s)", effRes, alertedCount,
-                percentOf(effRes, alertedCount));
-        if (effRes < SAMPLE_MIN) {
-            return SAMPLE_SHORT_LABEL + " · " + base;
-        }
-        return "경보 정탐률 " + ratioPercent(zeekadAlertPrecision) + " · " + base;
-    }
-
-    /** 분자/분모를 소수 첫째 자리 퍼센트로(반올림 HALF_UP). 예: 5/18 → "27.8%" */
-    static String percentOf(long numerator, long denominator) {
-        if (denominator <= 0) {
-            return "-";
-        }
-        return BigDecimal.valueOf(numerator).multiply(BigDecimal.valueOf(100))
-                .divide(BigDecimal.valueOf(denominator), 1, RoundingMode.HALF_UP)
-                .toPlainString() + "%";
+        String head = effRes < SAMPLE_MIN ? SAMPLE_SHORT_LABEL : "경보 정탐률 " + ratioPercent(zeekadAlertPrecision);
+        return head + String.format(Locale.US, " · 분석가 판정 %,d건", effRes) + tail;
     }
 
     /** 0~1 비율을 소수 첫째 자리 퍼센트로(반올림 HALF_UP). 예: 0.6 → "60.0%" */

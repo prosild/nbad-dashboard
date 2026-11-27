@@ -9,6 +9,7 @@ import {
   sumAllRows,
   totalsAsRow,
 } from '../utils/operations';
+import sharedCases from './fixtures/feedback-summary-text-cases.json';
 
 function row(partial: Partial<FeedbackSummaryRecord>): FeedbackSummaryRecord {
   return {
@@ -44,45 +45,73 @@ function job(partial: Partial<ScoringJob>): ScoringJob {
   };
 }
 
+/**
+ * T67: 판정 수 ÷ 인시던트(경보) 수의 백분율이 없는지. 남는 백분율은 앞머리의 정탐률·경보 정탐률 하나뿐이다
+ * (백엔드 FeedbackSummaryRecordTest#assertNoResolvedShareOfIncidents와 같은 규칙).
+ */
+function expectNoResolvedShare(text: string): void {
+  expect(text, text).not.toMatch(/건\(\s*[\d.]+%\)/);
+  expect(text, text).not.toMatch(/\d\/[\d,]+건/);
+  const percents = text.match(/%/g) ?? [];
+  expect(percents.length, text).toBeLessThanOrEqual(1);
+  if (percents.length === 1) {
+    expect(text, text).toMatch(/^(정탐률|경보 정탐률) [\d.]+% · /);
+  }
+}
+
 describe('판정 집계 문장(백엔드 FeedbackSummaryRecordTest와 같은 기대값)', () => {
-  it('판정 없음·표본 부족·정탐률', () => {
-    expect(precisionSummaryText(row({ incidents: 5, resolved: 0 }))).toBe('판정 없음');
-    expect(precisionSummaryText(row({ incidents: 0, resolved: 0 }))).toBe('판정 없음');
+  it('분석가 판정 없음·표본 부족·정탐률. 뒤에 "모델이 올린 인시던트 M건"', () => {
+    expect(precisionSummaryText(row({ incidents: 5, resolved: 0 }))).toBe('분석가 판정 없음 / 모델이 올린 인시던트 5건');
+    expect(precisionSummaryText(row({ incidents: 0, resolved: 0 }))).toBe('분석가 판정 없음');
     expect(precisionSummaryText(row({ incidents: 5, resolved: 3, zeekadPrecision: 0.6 }))).toBe(
-      '표본 부족 · 판정 3/5건(60.0%)',
+      '표본 부족 · 분석가 판정 3건 / 모델이 올린 인시던트 5건',
     );
     expect(precisionSummaryText(row({ incidents: 1234, resolved: 9, zeekadPrecision: 0.556 }))).toBe(
-      '표본 부족 · 판정 9/1,234건(0.7%)',
+      '표본 부족 · 분석가 판정 9건 / 모델이 올린 인시던트 1,234건',
     );
     expect(precisionSummaryText(row({ incidents: 1234, resolved: 10, zeekadPrecision: 0.6 }))).toBe(
-      '정탐률 60.0% · 판정 10/1,234건(0.8%)',
+      '정탐률 60.0% · 분석가 판정 10건 / 모델이 올린 인시던트 1,234건',
     );
     expect(precisionSummaryText(row({ incidents: 50, resolved: 18, zeekadPrecision: 0.278 }))).toBe(
-      '정탐률 27.8% · 판정 18/50건(36.0%)',
+      '정탐률 27.8% · 분석가 판정 18건 / 모델이 올린 인시던트 50건',
     );
-    // 반올림 HALF_UP: 49/400 = 12.25% → 12.3%
-    expect(precisionSummaryText(row({ incidents: 400, resolved: 49, zeekadPrecision: 0.5 }))).toBe(
-      '정탐률 50.0% · 판정 49/400건(12.3%)',
-    );
+    // 판정 > 0이고 인시던트 0이면 "/ …" 없이 같은 앞머리
+    expect(precisionSummaryText(row({ incidents: 0, resolved: 3, zeekadPrecision: 0.6 }))).toBe('표본 부족 · 분석가 판정 3건');
+    expect(precisionSummaryText(row({ incidents: 0, resolved: 12, zeekadPrecision: 0.75 }))).toBe('정탐률 75.0% · 분석가 판정 12건');
   });
 
-  it('경보 없음·판정 없음·표본 부족·경보 정탐률', () => {
+  it('경보 없음·분석가 판정 없음·표본 부족·경보 정탐률. 뒤에 "경보 b건"', () => {
     expect(alertPrecisionSummaryText(row({ alerted: 0 }))).toBe('경보 없음');
-    expect(alertPrecisionSummaryText(row({ alerted: 2, zeekadAlertResolvedRate: 0 }))).toBe('판정 없음 · 경보 2건');
-    expect(alertPrecisionSummaryText(row({ alerted: 3 }))).toBe('경보 3건 · 판정 수 알 수 없음');
+    expect(alertPrecisionSummaryText(row({ alerted: 2, zeekadAlertResolvedRate: 0 }))).toBe('분석가 판정 없음 / 경보 2건');
+    expect(alertPrecisionSummaryText(row({ alerted: 3 }))).toBe('경보 3건 · 분석가 판정 수 알 수 없음');
     expect(alertPrecisionSummaryText(row({ alerted: 4, alertedResolved: 2, zeekadAlertPrecision: 0.5 }))).toBe(
-      '표본 부족 · 경보 판정 2/4건(50.0%)',
+      '표본 부족 · 분석가 판정 2건 / 경보 4건',
     );
     // alerted_resolved가 없으면 경보 판정률 × 경보 수로 되돌린다
     expect(alertPrecisionSummaryText(row({ alerted: 4, zeekadAlertResolvedRate: 0.75, zeekadAlertPrecision: 0.67 }))).toBe(
-      '표본 부족 · 경보 판정 3/4건(75.0%)',
+      '표본 부족 · 분석가 판정 3건 / 경보 4건',
     );
     expect(alertPrecisionSummaryText(row({ alerted: 20, alertedResolved: 9, zeekadAlertPrecision: 0.778 }))).toBe(
-      '표본 부족 · 경보 판정 9/20건(45.0%)',
+      '표본 부족 · 분석가 판정 9건 / 경보 20건',
     );
     expect(alertPrecisionSummaryText(row({ alerted: 20, alertedResolved: 10, zeekadAlertPrecision: 0.7 }))).toBe(
-      '경보 정탐률 70.0% · 경보 판정 10/20건(50.0%)',
+      '경보 정탐률 70.0% · 분석가 판정 10건 / 경보 20건',
     );
+  });
+
+  it('T67: 공유 기대값 파일(백엔드 FeedbackSummaryRecordTest가 같은 파일을 읽는다)의 모든 경우가 같은 글이고 판정 ÷ 인시던트·경보 백분율이 없다', () => {
+    expect(sharedCases.precision.length).toBeGreaterThanOrEqual(10);
+    expect(sharedCases.alert.length).toBeGreaterThanOrEqual(10);
+    for (const c of sharedCases.precision) {
+      const text = precisionSummaryText(row(c.input as Partial<FeedbackSummaryRecord>));
+      expect(text, JSON.stringify(c.input)).toBe(c.expected);
+      expectNoResolvedShare(text);
+    }
+    for (const c of sharedCases.alert) {
+      const text = alertPrecisionSummaryText(row(c.input as Partial<FeedbackSummaryRecord>));
+      expect(text, JSON.stringify(c.input)).toBe(c.expected);
+      expectNoResolvedShare(text);
+    }
   });
 
   it('표본 부족 경계: 판정 9건이면 값이 없고 10건이면 값이 있다', () => {
@@ -107,8 +136,8 @@ describe('현황판 합계', () => {
     expect(totals.alertedResolved).toBe(4);
     expect(totals.alertedTruePositive).toBe(3);
     const asRow = totalsAsRow(totals);
-    expect(precisionSummaryText(asRow)).toBe('정탐률 53.8% · 판정 13/100건(13.0%)');
-    expect(alertPrecisionSummaryText(asRow)).toBe('표본 부족 · 경보 판정 4/12건(33.3%)');
+    expect(precisionSummaryText(asRow)).toBe('정탐률 53.8% · 분석가 판정 13건 / 모델이 올린 인시던트 100건');
+    expect(alertPrecisionSummaryText(asRow)).toBe('표본 부족 · 분석가 판정 4건 / 경보 12건');
 
     // T24: 현황판의 '탐지 모델 상태' 패널(modelStatuses)은 없어졌다. 탐지 모델별 행은 운영 현황 판정 집계 표에서 펼쳐 본다.
     expect(modelRows.map((r) => [r.captureId, r.zeekadPickedBy, r.incidents])).toEqual([

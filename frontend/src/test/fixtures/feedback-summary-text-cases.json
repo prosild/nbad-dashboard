@@ -1,0 +1,30 @@
+{
+  "note": "T67: 판정 문장의 공유 기대값. 화면 utils/operations.ts(operationsMetrics.test.ts)와 백엔드 FeedbackSummaryRecord(FeedbackSummaryRecordTest)가 같은 입력에서 이 글을 내야 한다. 판정 수 ÷ 인시던트(경보) 수의 백분율은 쓰지 않는다(docs/ui-terminology.md '운영 지표 정의').",
+  "precision": [
+    { "input": { "incidents": 5, "resolved": 0, "zeekadPrecision": null }, "expected": "분석가 판정 없음 / 모델이 올린 인시던트 5건" },
+    { "input": { "incidents": 0, "resolved": 0, "zeekadPrecision": null }, "expected": "분석가 판정 없음" },
+    { "input": { "incidents": null, "resolved": null, "zeekadPrecision": null }, "expected": "분석가 판정 없음" },
+    { "input": { "incidents": 5, "resolved": 3, "zeekadPrecision": 0.6 }, "expected": "표본 부족 · 분석가 판정 3건 / 모델이 올린 인시던트 5건" },
+    { "input": { "incidents": 2277, "resolved": 5, "zeekadPrecision": 0.6 }, "expected": "표본 부족 · 분석가 판정 5건 / 모델이 올린 인시던트 2,277건" },
+    { "input": { "incidents": 1234, "resolved": 9, "zeekadPrecision": 0.556 }, "expected": "표본 부족 · 분석가 판정 9건 / 모델이 올린 인시던트 1,234건" },
+    { "input": { "incidents": 1234, "resolved": 10, "zeekadPrecision": 0.6 }, "expected": "정탐률 60.0% · 분석가 판정 10건 / 모델이 올린 인시던트 1,234건" },
+    { "input": { "incidents": 50, "resolved": 18, "zeekadPrecision": 0.278 }, "expected": "정탐률 27.8% · 분석가 판정 18건 / 모델이 올린 인시던트 50건" },
+    { "input": { "incidents": 12345, "resolved": 1234, "zeekadPrecision": 0.556 }, "expected": "정탐률 55.6% · 분석가 판정 1,234건 / 모델이 올린 인시던트 12,345건" },
+    { "input": { "incidents": 20, "resolved": 10, "zeekadPrecision": null }, "expected": "정탐률 - · 분석가 판정 10건 / 모델이 올린 인시던트 20건" },
+    { "input": { "incidents": 0, "resolved": 3, "zeekadPrecision": 0.6 }, "expected": "표본 부족 · 분석가 판정 3건" },
+    { "input": { "incidents": 0, "resolved": 12, "zeekadPrecision": 0.75 }, "expected": "정탐률 75.0% · 분석가 판정 12건" }
+  ],
+  "alert": [
+    { "input": { "alerted": 0, "alertedResolved": null, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": null }, "expected": "경보 없음" },
+    { "input": { "alerted": null, "alertedResolved": null, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": null }, "expected": "경보 없음" },
+    { "input": { "alerted": 3, "alertedResolved": null, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": null }, "expected": "경보 3건 · 분석가 판정 수 알 수 없음" },
+    { "input": { "alerted": 1500, "alertedResolved": null, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": null }, "expected": "경보 1,500건 · 분석가 판정 수 알 수 없음" },
+    { "input": { "alerted": 2, "alertedResolved": null, "zeekadAlertResolvedRate": 0, "zeekadAlertPrecision": null }, "expected": "분석가 판정 없음 / 경보 2건" },
+    { "input": { "alerted": 5, "alertedResolved": 0, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": null }, "expected": "분석가 판정 없음 / 경보 5건" },
+    { "input": { "alerted": 4, "alertedResolved": 2, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": 0.5 }, "expected": "표본 부족 · 분석가 판정 2건 / 경보 4건" },
+    { "input": { "alerted": 4, "alertedResolved": null, "zeekadAlertResolvedRate": 0.75, "zeekadAlertPrecision": 0.67 }, "expected": "표본 부족 · 분석가 판정 3건 / 경보 4건" },
+    { "input": { "alerted": 20, "alertedResolved": 9, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": 0.778 }, "expected": "표본 부족 · 분석가 판정 9건 / 경보 20건" },
+    { "input": { "alerted": 20, "alertedResolved": 10, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": 0.7 }, "expected": "경보 정탐률 70.0% · 분석가 판정 10건 / 경보 20건" },
+    { "input": { "alerted": 1234, "alertedResolved": 1000, "zeekadAlertResolvedRate": null, "zeekadAlertPrecision": 0.5 }, "expected": "경보 정탐률 50.0% · 분석가 판정 1,000건 / 경보 1,234건" }
+  ]
+}

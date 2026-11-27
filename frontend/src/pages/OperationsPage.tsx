@@ -322,7 +322,7 @@ export function OperationsPage() {
                   </div>
                   )}
                 </StatusCard>
-                <StatusCard icon={Cpu} title="모델 판정" tone="neutral">
+                <StatusCard icon={Cpu} title="분석가 판정" tone="neutral">
                   <div
                     className="text-base font-semibold text-slate-50"
                     title={
@@ -334,7 +334,7 @@ export function OperationsPage() {
                     {precisionSummaryText(status.totalsRow)}
                   </div>
                   <div className="text-xs text-slate-400">
-                    인시던트 <span className="tabular-nums text-slate-300">{formatNumber(status.totalsRow.incidents)}건</span> · 미판정{' '}
+                    미판정{' '}
                     <span className="tabular-nums text-slate-300">
                       {formatNumber((status.totalsRow.incidents ?? 0) - (status.totalsRow.resolved ?? 0))}건
                     </span>
@@ -416,10 +416,10 @@ export function OperationsPage() {
                         <th className="soc-th" title="탐지 모델별 행은 주 탐지 기준 인시던트 수입니다(교차 탐지를 빼지 않음)">
                           탐지 모델
                         </th>
-                        <th className="soc-th text-right">인시던트 / 경보 발송 / 판정</th>
+                        <th className="soc-th text-right">인시던트 / 경보 발송 / 분석가 판정</th>
                         <th className="soc-th">판정 분포</th>
                         <th className="soc-th">정탐률</th>
-                        <th className="soc-th">경보 정탐률 · 경보 판정률</th>
+                        <th className="soc-th">경보 정탐률 · 분석가 판정 수</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -703,7 +703,7 @@ function SummaryRow({ row, isAll = false, children }: { row: FeedbackSummaryReco
       </td>
       {quiet ? (
         <td className="soc-td text-xs text-slate-500" colSpan={3}>
-          판정 없음
+          분석가 판정 없음
         </td>
       ) : (
         <>

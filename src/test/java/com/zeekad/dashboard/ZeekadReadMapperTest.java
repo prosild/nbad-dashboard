@@ -281,8 +281,8 @@ class ZeekadReadMapperTest {
         assertThat(cicAll.getZeekadPrecision()).isEqualTo(0.0d);
         assertThat(cicAll.getZeekadAlertPrecision()).isNull();
         assertThat(cicAll.getZeekadAlertResolvedRate()).isEqualTo(0.0d);
-        assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 판정 1/3건(33.3%)");
-        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("판정 없음 · 경보 2건");
+        assertThat(cicAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 3건");
+        assertThat(cicAll.getAlertPrecisionSummaryText()).isEqualTo("분석가 판정 없음 / 경보 2건");
 
         // 판정 0건 캡처(lab-fusion-v2)는 정탐률 null 처리
         List<FeedbackSummaryRecord> fusionSummaries = zeekadReadMapper.findRawFeedbackSummaries("lab-fusion-v2")
@@ -300,7 +300,7 @@ class ZeekadReadMapperTest {
         assertThat(fusionAll.getResolved()).isEqualTo(0L);
         assertThat(fusionAll.getZeekadPrecision()).isNull();
         assertThat(fusionAll.getZeekadAlertPrecision()).isNull();
-        assertThat(fusionAll.getPrecisionSummaryText()).isEqualTo("판정 없음");
+        assertThat(fusionAll.getPrecisionSummaryText()).isEqualTo("분석가 판정 없음 / 모델이 올린 인시던트 3건");
 
         // IncidentQueryService 정렬('all' 최우선) 및 IDOR 필터 확인
         DashboardUser cicUser = new DashboardUser();
@@ -399,8 +399,8 @@ class ZeekadReadMapperTest {
             assertThat(calcAll.getZeekadPrecision()).isEqualTo(1.0d);
             assertThat(calcAll.getZeekadAlertPrecision()).isEqualTo(1.0d);
             assertThat(calcAll.getZeekadAlertResolvedRate()).isEqualTo(0.5d);
-            assertThat(calcAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 판정 1/2건(50.0%)");
-            assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("표본 부족 · 경보 판정 1/2건(50.0%)");
+            assertThat(calcAll.getPrecisionSummaryText()).isEqualTo("표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 2건");
+            assertThat(calcAll.getAlertPrecisionSummaryText()).isEqualTo("표본 부족 · 분석가 판정 1건 / 경보 2건");
         } finally {
             jdbc.update("DELETE FROM dashboard.raw_incident_status WHERE incident_id IN (?, ?)", tmpInc1, tmpInc2);
             jdbc.update("DELETE FROM dashboard.raw_slack_deliveries WHERE job_id = ?", tmpJobId);

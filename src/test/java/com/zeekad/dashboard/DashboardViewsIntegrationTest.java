@@ -163,10 +163,10 @@ class DashboardViewsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("zeekad-fusion/1")))
                 .andExpect(content().string(containsString("zeekad-fusion/3")))
-                // T20: 판정 1건(10건 미만)은 정탐률 대신 표본 부족, 판정 0건은 판정 없음
-                .andExpect(content().string(containsString("표본 부족 · 판정 1/3건(33.3%)")))
+                // T20: 판정 1건(10건 미만)은 정탐률 대신 표본 부족, 판정 0건은 분석가 판정 없음(T67 문장)
+                .andExpect(content().string(containsString("표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 3건")))
                 .andExpect(jsonPath("$.feedbackSummaries[?(@.captureId == 'lab-fusion-v2' && @.zeekadPickedBy == 'all')].precisionSummaryText")
-                        .value(hasItem("판정 없음")))
+                        .value(hasItem("분석가 판정 없음 / 모델이 올린 인시던트 3건")))
                 .andExpect(content().string(not(containsString("정확도"))))
                 .andExpect(content().string(not(containsString("정밀도"))))
                 .andExpect(jsonPath("$.slackSummaries[1].dryRunOrRecorded").value(true))
@@ -180,8 +180,8 @@ class DashboardViewsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.selectedCaptureId").value("lab-fusion-v2"))
                 .andExpect(jsonPath("$.feedbackSummaries[?(@.zeekadPickedBy == 'all')].precisionSummaryText")
-                        .value(hasItem("판정 없음")))
-                .andExpect(content().string(not(containsString("표본 부족 · 판정 1/3건(33.3%)"))));
+                        .value(hasItem("분석가 판정 없음 / 모델이 올린 인시던트 3건")))
+                .andExpect(content().string(not(containsString("표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 3건"))));
 
         // 분석가 승인 대기 목록 API (전체 vs 대기 건만, 반영 상태 3종)
         mockMvc.perform(get("/api/reviews").session(session))

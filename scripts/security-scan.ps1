@@ -589,8 +589,10 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 $vAllRow = @($vFeedback | Where-Object { $_.allModel -eq $true -and $_.captureId -eq "cic17-wed" })
                 $e2eLogs.Add("[4c-ops] viewer1 GET /api/operations -> HTTP $($viewerOps.Status) allowedCaptures=[$(@($viewerOps.Json.allowedCaptures) -join ', ')] feedback captures=[$($vCaptures -join ', ')] all-row precisionSummaryText=[$(@($vAllRow | ForEach-Object { $_.precisionSummaryText }) -join ' | ')]")
                 Assert-True ($vFeedback.Count -gt 0 -and $vCaptures.Count -eq 1 -and $vCaptures[0] -eq "cic17-wed") "viewer1 feedback_summary 허용 캡처(cic17-wed)만 노출" $viewerOps
-                # T20: 판정 1건(10건 미만)이라 정탐률 대신 표본 부족(docs/ui-terminology.md '운영 지표 정의')
-                Assert-True (@($vAllRow | Where-Object { $_.precisionSummaryText -eq "표본 부족 · 판정 1/3건(33.3%)" }).Count -eq 1) "viewer1 feedback_summary '표본 부족 · 판정 1/3건(33.3%)'" $viewerOps
+                # T20: 판정 1건(10건 미만)이라 정탐률 대신 표본 부족(docs/ui-terminology.md '운영 지표 정의'). T67: 판정 ÷ 인시던트 백분율 없이 두 수를 나란히
+                Assert-True (@($vAllRow | Where-Object { $_.precisionSummaryText -eq "표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 3건" }).Count -eq 1) "viewer1 feedback_summary '표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 3건'" $viewerOps
+                $vShare = @($vFeedback | ForEach-Object { $_.precisionSummaryText; $_.alertPrecisionSummaryText } | Where-Object { $_ -match '건\(\s*[\d.]+%\)' -or $_ -match '\d/[\d,]+건' })
+                Assert-True ($vShare.Count -eq 0) "viewer1 판정 문장에 판정 ÷ 인시던트·경보 백분율 없음(T67) [$($vShare -join ' | ')]" $viewerOps
                 foreach ($forbidden in @("syn1-tue", "lab-20261118", "lab-fusion-v2", "정확도")) {
                     Assert-True (-not $viewerOps.Body.Contains($forbidden)) "viewer1 /api/operations에 '$forbidden' 없음" $viewerOps
                 }
@@ -731,7 +733,7 @@ if (-not $SkipE2E -or -not $SkipZap) {
                 foreach ($cap in @("cic17-wed", "syn1-tue", "lab-20261118", "lab-fusion-v2")) {
                     Assert-True ($oCaptures -contains $cap) "admin feedback_summary 전체 캡처($cap)" $opsPage
                 }
-                Assert-True (($oTexts -contains "표본 부족 · 판정 1/2건(50.0%)") -and ($oTexts -contains "표본 부족 · 판정 1/1건(100.0%)")) "admin 정탐률 문장('표본 부족 · 판정 1/2건(50.0%)', '표본 부족 · 판정 1/1건(100.0%)')" $opsPage
+                Assert-True (($oTexts -contains "표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 2건") -and ($oTexts -contains "표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 1건")) "admin 정탐률 문장('표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 2건', '표본 부족 · 분석가 판정 1건 / 모델이 올린 인시던트 1건')" $opsPage
                 Assert-True (-not $opsPage.Body.Contains("정확도")) "admin /api/operations에 '정확도' 없음" $opsPage
 
                 $fusionDetail = Invoke-Http -Url "$baseHttps/api/incidents/602/rank/1" -CookieJar $adminCookies
