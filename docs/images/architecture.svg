@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="590" viewBox="0 0 1100 590" font-family="'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <!-- README '무엇을 만들었나'의 구성도 원본. 고친 뒤 docs/images/architecture.png를 Chrome 헤드리스
+       스크린샷(창 1100x590, 배율 2)으로 다시 만든다. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .box { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.5; }
+      .app { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; }
+      .api { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.5; }
+      .db { fill: #fefce8; stroke: #ca8a04; stroke-width: 1.5; }
+      .group { fill: #f8fafc; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 6 4; }
+      .edge { fill: none; stroke: #475569; stroke-width: 1.6; marker-end: url(#arrow); }
+      .t { font-size: 16px; font-weight: 700; fill: #0f172a; text-anchor: middle; }
+      .s { font-size: 13px; fill: #334155; text-anchor: middle; }
+      .n { font-size: 12px; fill: #64748b; text-anchor: middle; }
+      .lbl { font-size: 12.5px; fill: #1e293b; }
+      .code { font-family: Consolas, 'Courier New', monospace; }
+      .grp { font-size: 14px; font-weight: 700; fill: #475569; }
+    </style>
+  </defs>
+  <rect width="1100" height="590" fill="#ffffff"/>
+
+  <!-- 1줄: 방문자 → 공유기 → DSM 역방향 프록시 → nginx-waf -->
+  <rect class="box" x="15" y="30" width="215" height="110" rx="8"/>
+  <text class="t" x="122.5" y="91">방문자 브라우저</text>
+
+  <rect class="box" x="300" y="30" width="215" height="110" rx="8"/>
+  <text class="t" x="407.5" y="91">공유기</text>
+
+  <rect class="box" x="585" y="30" width="215" height="110" rx="8"/>
+  <text class="t" x="692.5" y="74">Synology DSM</text>
+  <text class="t" x="692.5" y="97">역방향 프록시</text>
+  <text class="n" x="692.5" y="121">TLS 종료</text>
+
+  <rect class="box" x="870" y="30" width="215" height="110" rx="8"/>
+  <text class="t code" x="977.5" y="62">nginx-waf</text>
+  <text class="s" x="977.5" y="84">Nginx + ModSecurity</text>
+  <text class="s" x="977.5" y="102">OWASP CRS</text>
+  <text class="n" x="977.5" y="124">NAS 127.0.0.1에만 열림</text>
+
+  <path class="edge" d="M230,85 L298,85"/>
+  <text class="lbl" x="265" y="77" text-anchor="middle">HTTPS 443</text>
+  <path class="edge" d="M515,85 L583,85"/>
+  <path class="edge" d="M800,85 L868,85"/>
+  <text class="lbl" x="835" y="77" text-anchor="middle">HTTP</text>
+
+  <!-- 2줄: dashboard-app -->
+  <rect class="app" x="430" y="200" width="240" height="100" rx="8"/>
+  <text class="t code" x="550" y="235">dashboard-app</text>
+  <text class="s" x="550" y="258">Spring Boot + MyBatis</text>
+  <text class="n" x="550" y="279">React SPA 같은 출처</text>
+  <path class="edge" d="M977.5,140 L977.5,250 L672,250"/>
+
+  <!-- 3줄: 근거 API -->
+  <rect class="api" x="40" y="410" width="240" height="90" rx="8"/>
+  <text class="t" x="160" y="448">근거 API</text>
+  <text class="s" x="160" y="472">FastAPI (NBAD)</text>
+  <path class="edge" d="M430,250 L160,250 L160,408"/>
+  <text class="lbl" x="295" y="241" text-anchor="middle">근거 조회</text>
+
+  <!-- 3줄: PostgreSQL 17 -->
+  <rect class="group" x="330" y="360" width="755" height="210" rx="10"/>
+  <text class="grp" x="345" y="383">PostgreSQL 17</text>
+
+  <path class="db" d="M380,412 a150,14 0 0,0 300,0 v104 a150,14 0 0,1 -300,0 z"/>
+  <ellipse class="db" cx="530" cy="412" rx="150" ry="14"/>
+  <text class="t code" x="530" y="463">zeekad DB</text>
+  <text class="s" x="530" y="487">dashboard 스키마</text>
+
+  <path class="db" d="M760,412 a145,14 0 0,0 290,0 v104 a145,14 0 0,1 -290,0 z"/>
+  <ellipse class="db" cx="905" cy="412" rx="145" ry="14"/>
+  <text class="t code" x="905" y="463">zeekad_dashboard DB</text>
+  <text class="s" x="905" y="487">사용자 · 감사 로그</text>
+
+  <!-- DB 연결 -->
+  <path class="edge" d="M530,300 L530,396"/>
+  <text class="lbl code" x="520" y="326" text-anchor="end">dashboard_ro: 뷰 SELECT만</text>
+  <text class="lbl code" x="520" y="345" text-anchor="end">dashboard_rw: 함수 3개 EXECUTE만</text>
+
+  <path class="edge" d="M640,300 L640,322 L905,322 L905,396"/>
+  <text class="lbl code" x="772" y="314" text-anchor="middle">dashboard_app</text>
+
+  <path class="edge" d="M280,465 L378,465"/>
+</svg>

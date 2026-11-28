@@ -13,6 +13,9 @@
 
 ## 공개 데모 둘러보기
 
+<details>
+<summary>계정별로 보이는 것, 데이터 설명, 처음 보실 때 권하는 순서 (눌러서 펼치기)</summary>
+
 - 데이터는 2026-11-26 23:06:00 KST에 멈춘 고정 스냅샷입니다. 화면의 "최근 24시간"은 이 기준 시각에서 셉니다.
 - `demo`는 조회자(`VIEWER`)입니다. IP는 뒤 두 옥텟이 가려지고(`10.10.*.*`), 상태 변경·담당 지정·에스컬레이션 결정은 할 수 없습니다. 볼 수 있는 캡처는 CIC-IDS2017(`cic17-*`), 합성 패턴을 끼운 CIC 데이터(`syn1-*`), Kali 실습망 캡처 셋(`lab-20261119`, `lab-20261122`, `lab-20261126`)입니다.
 - `trial-analyst`는 분석가(`ANALYST`)입니다. 볼 수 있는 캡처는 `demo`와 같고 IP가 가려지지 않습니다. 모든 방문자가 같은 계정을 쓰므로 다른 방문자가 바꾼 상태나 적은 사유가 다음 정각까지 보일 수 있습니다. 정각 직후에는 화면을 새로 고쳐 주세요.
@@ -43,6 +46,8 @@
 5. **호스트 위험도**: 기간을 "전체"로 바꾸면 먼저 볼 호스트가 위에 옵니다.
 6. **운영 현황**: 분석가 판정 집계, 처리 시간(MTTD·MTTA·MTTR), 탐지 작업 기록입니다. 판정 집계와 처리 시간에는 예시 셋이 전체 기간에만 들어갑니다(기록 시각이 스냅샷 기준 시각 뒤라 처리 시간이 며칠로 보입니다).
 
+</details>
+
 ## 무엇을 만들었나
 
 NBAD는 Zeek 네트워크 로그를 여러 이상탐지 모델로 채점하고 인시던트마다 AI 분석 리포트와 경보 발송 판단을 만드는 파이프라인입니다. NBAD도 제가 만든 프로젝트이고 이 저장소는 그 결과를 사람이 조사하고 판정하는 쪽을 맡습니다.
@@ -51,22 +56,7 @@ NBAD는 Zeek 네트워크 로그를 여러 이상탐지 모델로 채점하고 �
 - 대시보드 자신의 데이터(사용자, 담당자, 인시던트 번호, 감사 로그)는 같은 PostgreSQL 안의 별도 DB에 둡니다.
 - 인시던트 상세의 증거는 NBAD의 근거 API(FastAPI)에서 받아 백엔드가 권한 검사와 마스킹을 거친 뒤 보냅니다.
 
-```mermaid
-flowchart LR
-    V["방문자 브라우저"] -->|"HTTPS 443"| R["공유기"]
-    R --> D["Synology DSM 역방향 프록시<br/>(TLS 종료)"]
-    D -->|"HTTP, NAS 127.0.0.1에만 열림"| W["nginx-waf<br/>Nginx + ModSecurity OWASP CRS"]
-    W --> A["dashboard-app<br/>Spring Boot + MyBatis<br/>React SPA 같은 출처"]
-    A -->|"근거 조회"| E["근거 API<br/>FastAPI (NBAD)"]
-    subgraph PG["PostgreSQL 17"]
-        Z[("zeekad DB<br/>dashboard 스키마")]
-        B[("zeekad_dashboard DB<br/>사용자·감사 로그")]
-    end
-    A -->|"dashboard_ro: 뷰 SELECT만"| Z
-    A -->|"dashboard_rw: 함수 3개 EXECUTE만"| Z
-    A -->|"dashboard_app"| B
-    E --> Z
-```
+![공개 데모 구성도: 방문자 브라우저 → 공유기 → Synology DSM 역방향 프록시(TLS 종료) → nginx-waf → dashboard-app. dashboard-app은 근거 API(FastAPI)에서 근거를 받고, zeekad DB는 dashboard_ro(뷰 SELECT만)·dashboard_rw(함수 3개 EXECUTE만)로, zeekad_dashboard DB는 dashboard_app으로 접속한다](docs/images/architecture.png)
 
 공개 데모의 구성은 [`compose.portfolio.yml`](compose.portfolio.yml)이고 VMware 실습 환경(NBAD와 같은 VM) 구성은 [`compose.yml`](compose.yml)입니다.
 
@@ -114,6 +104,11 @@ flowchart LR
 
 ## 보안 설계
 
+역할 기반 권한, 캡처 단위 접근 통제, 개인정보 마스킹, 관리자 TOTP, 계정 잠금, 세션·CSRF, 응답 헤더, WAF, 감사 로그, DB 계정·네트워크 분리 등 통제 15가지를 두었습니다.
+
+<details>
+<summary>통제별 내용과 근거 코드·시험 (눌러서 펼치기)</summary>
+
 | 통제 | 내용 | 근거 |
 |---|---|---|
 | 역할 기반 권한 | 조회자(읽기)·분석가(상태 변경·담당·에스컬레이션 결정)·관리자(사용자·감사 로그) | `config/SecurityConfig.java`, 시험 `TotpAndRbacIntegrationTest` |
@@ -132,6 +127,8 @@ flowchart LR
 | 네트워크 분리 | 공개 스택은 네트워크가 둘이다. 인터넷 요청을 받는 WAF는 앱과만 같은 네트워크에 있고 DB·근거 API·초기화 도구는 내부 전용 네트워크에 있어 WAF에서 DB와 근거 API에 닿지 않고 인터넷으로 나가지 못한다. 다만 공개 데모 NAS의 Docker는 이 네트워크에도 호스트로 가는 경로를 넣어 NAS 자신의 주소에는 닿는다 | `compose.portfolio.yml`, 리허설 `[T61a]`~`[T61c]`, 공개 확인 `[T61a]`(NAS), 시험 `StaticSecurityAndConfigTest` |
 | 컨테이너 | 비루트 실행, 최종 이미지에 Node·JDK 없음(JRE만). 공개 스택의 모든 서비스와 VMware 구성의 두 서비스가 `cap_drop: [ALL]`·`no-new-privileges`로 돌고 공개 스택의 DB도 root로 시작하지 않는다 | `Dockerfile`, `compose.portfolio.yml`, `compose.yml`, 리허설 `[T61d]` |
 
+</details>
+
 ## 검증
 
 | 검증 | 방법 |
@@ -142,7 +139,12 @@ flowchart LR
 | 공개 스택 리허설 | 공개 데모와 같은 구성에 스냅샷을 복원해 E2E와 ZAP을 돌린 뒤 지운다 (`scripts/portfolio-verify.ps1`) |
 | 공개 주소 확인 | 배포 뒤 공개 주소에서 로그인·마스킹·숨김 캡처 `403`·속도 제한 등을 확인 |
 
+<details>
+<summary>최근 결과(2026-11-27): E2E 통과, ZAP High·Medium·Low 0, 공개 주소 확인 327항목 중 326 통과 (눌러서 자세히)</summary>
+
 최근 결과(2026-11-27, commit `fba13ba`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과(commit `ccb314a`, 같은 날), 볼륨을 지우지 않는 제자리 갱신 예행 통과, 공개 주소 확인 327항목 중 326 통과(남은 하나는 반영 뒤 감사 삭제 줄인데, 제자리 갱신이라 반영 때 실행한 초기화 결과로 따로 확인). 내부 전용 네트워크는 인터넷으로 나가지 못함을 확인했습니다. NAS 호스트 주소에 닿는 것은 받아들인 남은 위험으로 기록했고, NoNewPrivs는 커널이 표시하지 않아 Docker 설정으로 확인했습니다. 반영 뒤 정각 초기화는 따로 확인해 OK였습니다. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
+
+</details>
 
 ## AI와 일한 방식
 
