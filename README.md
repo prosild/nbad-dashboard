@@ -56,7 +56,7 @@ NBAD는 Zeek 네트워크 로그를 여러 이상탐지 모델로 채점하고 �
 - 대시보드 자신의 데이터(사용자, 담당자, 인시던트 번호, 감사 로그)는 같은 PostgreSQL 안의 별도 DB에 둡니다.
 - 인시던트 상세의 증거는 NBAD의 근거 API(FastAPI)에서 받아 백엔드가 권한 검사와 마스킹을 거친 뒤 보냅니다.
 
-![공개 데모 구성도: 방문자 브라우저 → 공유기 → Synology DSM 역방향 프록시(TLS 종료) → nginx-waf → dashboard-app. dashboard-app은 근거 API(FastAPI)에서 근거를 받고, zeekad DB는 dashboard_ro(뷰 SELECT만)·dashboard_rw(함수 3개 EXECUTE만)로, zeekad_dashboard DB는 dashboard_app으로 접속한다](docs/images/architecture.png)
+![공개 데모 구성도: 방문자 브라우저 → 공유기 → Synology DSM 역방향 프록시(TLS 종료) → nginx-waf → dashboard-app. dashboard-app은 근거 API(FastAPI)에서 근거를 받고, zeekad DB는 dashboard_ro(뷰 SELECT만)·dashboard_rw(함수 3개 EXECUTE만)로, zeekad_dashboard DB는 dashboard_app으로 접속한다. 근거 API도 zeekad DB를 읽는다](docs/images/architecture.png)
 
 공개 데모의 구성은 [`compose.portfolio.yml`](compose.portfolio.yml)이고 VMware 실습 환경(NBAD와 같은 VM) 구성은 [`compose.yml`](compose.yml)입니다.
 
@@ -140,7 +140,7 @@ NBAD는 Zeek 네트워크 로그를 여러 이상탐지 모델로 채점하고 �
 | 공개 주소 확인 | 배포 뒤 공개 주소에서 로그인·마스킹·숨김 캡처 `403`·속도 제한 등을 확인 |
 
 <details>
-<summary>최근 결과(2026-11-27): E2E 통과, ZAP High·Medium·Low 0, 공개 주소 확인 327항목 중 326 통과 (눌러서 자세히)</summary>
+<summary>최근 결과(2026-11-27): E2E 통과, ZAP High·Medium·Low 0(<code>XSRF-TOKEN</code> 예외 제외), 공개 주소 확인 327항목 중 326 통과 (눌러서 자세히)</summary>
 
 최근 결과(2026-11-27, commit `fba13ba`): E2E 통과, ZAP High·Medium·Low 0(`XSRF-TOKEN` 예외 제외), 공개 스택 리허설 통과(commit `ccb314a`, 같은 날), 볼륨을 지우지 않는 제자리 갱신 예행 통과, 공개 주소 확인 327항목 중 326 통과(남은 하나는 반영 뒤 감사 삭제 줄인데, 제자리 갱신이라 반영 때 실행한 초기화 결과로 따로 확인). 내부 전용 네트워크는 인터넷으로 나가지 못함을 확인했습니다. NAS 호스트 주소에 닿는 것은 받아들인 남은 위험으로 기록했고, NoNewPrivs는 커널이 표시하지 않아 Docker 설정으로 확인했습니다. 반영 뒤 정각 초기화는 따로 확인해 OK였습니다. Trivy 결과와 남은 위험은 [보안 검증 보고서](docs/security-verification-report.md)에 있습니다.
 
