@@ -42,7 +42,7 @@
   <text class="st" x="660" y="117">분석 중</text>
   <rect class="closed" x="890" y="75" width="180" height="70" rx="35"/>
   <text class="st" x="980" y="106">종결</text>
-  <text class="n" x="980" y="128">판정: 정탐·오탐·정상 행위</text>
+  <text class="n" x="980" y="128">판정: 정탐·오탐·정상</text>
 
   <path class="edge" d="M220,110 L298,110"/>
   <path class="edge" d="M440,110 L588,110"/>
@@ -61,7 +61,7 @@
   <text class="t" x="430" y="259">에스컬레이션</text>
   <text class="s" x="430" y="283">파이프라인이 분석가 판단을 요청</text>
   <path class="edge" d="M120,170 L120,266 L298,266"/>
-  <text class="lbl" x="130" y="222">판단 요청</text>
+  <text class="lbl" x="130" y="222">에스컬레이션 넘김</text>
   <path class="edge" d="M560,250 L660,250 L660,142"/>
   <text class="lbl" x="670" y="205">승인</text>
   <path class="edge" d="M560,284 L980,284 L980,147"/>
