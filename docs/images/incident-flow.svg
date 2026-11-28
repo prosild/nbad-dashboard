@@ -75,7 +75,7 @@
   <text class="li" x="38" y="454">· 분석 중으로 바꾸면 표지가 사라짐</text>
 
   <rect class="note" x="380" y="350" width="340" height="140" rx="8"/>
-  <text class="h" x="398" y="378">대응 조치 (분석 중에 기록)</text>
+  <text class="h" x="398" y="378">대응 조치 (착수 뒤 기록)</text>
   <text class="li" x="398" y="406">· IP 차단, 호스트 격리, 계정 잠금, 이관</text>
   <text class="li" x="398" y="430">· 모니터링 강화, 조치 없음, 기타</text>
   <text class="li" x="398" y="454">· 기록만 하고 방화벽·EDR에 명령하지 않음</text>
