@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="510" viewBox="0 0 1100 510" font-family="'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <!-- README '인시던트 처리 흐름' 그림 원본. 고친 뒤 incident-flow.png를 Chrome 헤드리스 스크린샷(창 1100x510, 배율 2)으로 다시 만든다. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+    </marker>
+    <style>
+      .box { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.5; }
+      .new { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
+      .inv { fill: #e0f2fe; stroke: #0284c7; stroke-width: 2; }
+      .closed { fill: #dcfce7; stroke: #16a34a; stroke-width: 2; }
+      .esc { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.5; }
+      .note { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.2; }
+      .edge { fill: none; stroke: #475569; stroke-width: 1.6; marker-end: url(#arrow); }
+      .back { fill: none; stroke: #b45309; stroke-width: 1.6; stroke-dasharray: 6 4; marker-end: url(#arrowB); }
+      .t { font-size: 16px; font-weight: 700; fill: #0f172a; text-anchor: middle; }
+      .st { font-size: 19px; font-weight: 700; fill: #0f172a; text-anchor: middle; }
+      .s { font-size: 13px; fill: #334155; text-anchor: middle; }
+      .n { font-size: 12px; fill: #64748b; text-anchor: middle; }
+      .lbl { font-size: 13px; fill: #1e293b; }
+      .lblb { font-size: 13px; fill: #92400e; }
+      .h { font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .li { font-size: 13px; fill: #334155; }
+    </style>
+  </defs>
+  <rect width="1100" height="510" fill="#ffffff"/>
+
+  <!-- 파이프라인 -->
+  <rect class="box" x="20" y="50" width="200" height="120" rx="8"/>
+  <text class="t" x="120" y="82">NBAD 파이프라인</text>
+  <text class="s" x="120" y="106">인시던트 생성</text>
+  <text class="s" x="120" y="128">우선순위 High·Medium·Low</text>
+  <text class="n" x="120" y="150">중요 자산은 한 단계 위</text>
+
+  <!-- 상태 -->
+  <rect class="new" x="300" y="80" width="140" height="60" rx="30"/>
+  <text class="st" x="370" y="117">신규</text>
+  <rect class="inv" x="590" y="80" width="140" height="60" rx="30"/>
+  <text class="st" x="660" y="117">분석 중</text>
+  <rect class="closed" x="890" y="75" width="180" height="70" rx="35"/>
+  <text class="st" x="980" y="106">종결</text>
+  <text class="n" x="980" y="128">판정: 정탐·오탐·정상 행위</text>
+
+  <path class="edge" d="M220,110 L298,110"/>
+  <path class="edge" d="M440,110 L588,110"/>
+  <text class="lbl" x="514" y="101" text-anchor="middle">착수</text>
+  <text class="n" x="514" y="130">착수하면 담당자로 지정</text>
+  <path class="edge" d="M730,110 L888,110"/>
+  <text class="lbl" x="809" y="101" text-anchor="middle">종결 처리</text>
+  <text class="n" x="809" y="130">정탐은 대응 조치 1건 이상</text>
+
+  <!-- 다시 열기 -->
+  <path class="back" d="M980,75 L980,36 L660,36 L660,78"/>
+  <text class="lblb" x="820" y="27" text-anchor="middle">다시 열기: 사유 필수, 앞선 판정은 이력에 남음</text>
+
+  <!-- 에스컬레이션 -->
+  <rect class="esc" x="300" y="228" width="260" height="76" rx="8"/>
+  <text class="t" x="430" y="259">에스컬레이션</text>
+  <text class="s" x="430" y="283">파이프라인이 분석가 판단을 요청</text>
+  <path class="edge" d="M120,170 L120,266 L298,266"/>
+  <text class="lbl" x="130" y="222">판단 요청</text>
+  <path class="edge" d="M560,250 L660,250 L660,142"/>
+  <text class="lbl" x="670" y="205">승인</text>
+  <path class="edge" d="M560,284 L980,284 L980,147"/>
+  <text class="lbl" x="840" y="276" text-anchor="middle">오탐 종결</text>
+
+  <!-- 아래 설명 -->
+  <rect class="note" x="20" y="350" width="340" height="140" rx="8"/>
+  <text class="h" x="38" y="378">착수 목표 (실습망 신규 인시던트)</text>
+  <text class="li" x="38" y="406">· High 30분, Medium 4시간, Low 24시간</text>
+  <text class="li" x="38" y="430">· 넘기면 빨간 "착수 지연" 표지</text>
+  <text class="li" x="38" y="454">· 분석 중으로 바꾸면 표지가 사라짐</text>
+
+  <rect class="note" x="380" y="350" width="340" height="140" rx="8"/>
+  <text class="h" x="398" y="378">대응 조치 (분석 중에 기록)</text>
+  <text class="li" x="398" y="406">· IP 차단, 호스트 격리, 계정 잠금, 이관</text>
+  <text class="li" x="398" y="430">· 모니터링 강화, 조치 없음, 기타</text>
+  <text class="li" x="398" y="454">· 기록만 하고 방화벽·EDR에 명령하지 않음</text>
+
+  <rect class="note" x="740" y="350" width="340" height="140" rx="8"/>
+  <text class="h" x="758" y="378">기록</text>
+  <text class="li" x="758" y="406">· 상태 변경·담당·대응 조치는 이력 탭에</text>
+  <text class="li" x="758" y="430">· 상태 변경·원문 열람은 감사 로그에도</text>
+  <text class="li" x="758" y="454">· 감사 로그는 고치거나 지울 수 없음</text>
+  <text class="li" x="770" y="478" fill="#64748b" style="font-size:12px;fill:#64748b">(보관 기한이 지난 기록만 전용 함수로 삭제)</text>
+</svg>

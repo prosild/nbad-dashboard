@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="540" viewBox="0 0 1100 540" font-family="'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <!-- README '보안 설계' 방어 계층 그림 원본. 고친 뒤 security-layers.png를 Chrome 헤드리스 스크린샷(창 1100x540, 배율 2)으로 다시 만든다. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .band { stroke-width: 1.5; }
+      .num { font-size: 15px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+      .h { font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .where { font-size: 12.5px; fill: #64748b; }
+      .li { font-size: 13.5px; fill: #1e293b; }
+      .code { font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
+      .side { font-size: 13px; fill: #475569; font-weight: 700; }
+    </style>
+  </defs>
+  <rect width="1100" height="540" fill="#ffffff"/>
+
+  <!-- 요청 방향 -->
+  <line x1="40" y1="20" x2="40" y2="498" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <text class="side" x="24" y="260" text-anchor="middle" transform="rotate(-90 24 260)">인터넷 요청 방향</text>
+
+  <!-- 1 입구 -->
+  <rect class="band" x="60" y="20" width="1025" height="88" rx="10" fill="#fef2f2" stroke="#f87171"/>
+  <circle cx="88" cy="50" r="14" fill="#dc2626"/><text class="num" x="88" y="55">1</text>
+  <text class="h" x="112" y="56">입구</text>
+  <text class="where" x="112" y="80">nginx-waf</text>
+  <text class="li" x="290" y="54">· OWASP CRS 차단 모드: SQLi·XSS·경로 탐색 → 403</text>
+  <text class="li" x="290" y="84">· IP별 로그인·TOTP 확인 속도 제한(분당 10회)</text>
+  <text class="li" x="700" y="54">· 신뢰하는 프록시 밖의 전달 헤더는 버림</text>
+  <text class="li" x="700" y="84">· 감사 줄에 헤더·본문을 남기지 않음</text>
+
+  <!-- 2 인증·세션 -->
+  <rect class="band" x="60" y="118" width="1025" height="88" rx="10" fill="#fff7ed" stroke="#fb923c"/>
+  <circle cx="88" cy="148" r="14" fill="#ea580c"/><text class="num" x="88" y="153">2</text>
+  <text class="h" x="112" y="154">인증 · 세션</text>
+  <text class="where" x="112" y="178">Spring Security</text>
+  <text class="li" x="290" y="152">· 5회 실패에 15분 잠금(공개한 두 계정만 제외)</text>
+  <text class="li" x="290" y="182">· 관리자는 TOTP 확인 전까지 업무 API 403</text>
+  <text class="li" x="700" y="152">· 서버 세션 유휴 30분·절대 8시간, CSRF 토큰</text>
+  <text class="li" x="700" y="182">· CSP 인라인 금지, frame-ancestors 'none'</text>
+
+  <!-- 3 권한·노출 -->
+  <rect class="band" x="60" y="216" width="1025" height="88" rx="10" fill="#fefce8" stroke="#facc15"/>
+  <circle cx="88" cy="246" r="14" fill="#ca8a04"/><text class="num" x="88" y="251">3</text>
+  <text class="h" x="112" y="252">권한 · 노출</text>
+  <text class="where" x="112" y="276">서비스 계층</text>
+  <text class="li" x="290" y="250">· 역할 셋: 조회자·분석가·관리자</text>
+  <text class="li" x="290" y="280">· 캡처 단위 열람 허용, 밖이면 403 + IDOR 감사</text>
+  <text class="li" x="700" y="250">· 조회자 마스킹: IP 뒤 두 옥텟·계정 이름 등</text>
+  <text class="li" x="700" y="280">· 숨은 문자·LLM 글은 바깥 입력으로 다룸</text>
+
+  <!-- 4 데이터 -->
+  <rect class="band" x="60" y="314" width="1025" height="88" rx="10" fill="#f0fdf4" stroke="#4ade80"/>
+  <circle cx="88" cy="344" r="14" fill="#16a34a"/><text class="num" x="88" y="349">4</text>
+  <text class="h" x="112" y="350">데이터</text>
+  <text class="where" x="112" y="374">PostgreSQL 17</text>
+  <text class="li" x="290" y="348">· 읽기 계정은 뷰 SELECT만</text>
+  <text class="li" x="290" y="378">· 쓰기 계정은 NBAD 함수 3개 EXECUTE만</text>
+  <text class="li" x="700" y="348">· MyBatis <tspan class="code">#{}</tspan> 바인딩만(<tspan class="code">${}</tspan>는 시험이 금지)</text>
+  <text class="li" x="700" y="378">· 감사 로그 수정은 DB 트리거가 막음</text>
+
+  <!-- 5 실행 환경 -->
+  <rect class="band" x="60" y="412" width="1025" height="88" rx="10" fill="#eff6ff" stroke="#60a5fa"/>
+  <circle cx="88" cy="442" r="14" fill="#2563eb"/><text class="num" x="88" y="447">5</text>
+  <text class="h" x="112" y="448">실행 환경</text>
+  <text class="where" x="112" y="472">Docker</text>
+  <text class="li" x="290" y="446">· WAF는 앱과만 같은 네트워크</text>
+  <text class="li" x="290" y="476">· DB·근거 API는 내부 전용 네트워크</text>
+  <text class="li" x="700" y="446">· 비루트, cap_drop ALL, no-new-privileges</text>
+  <text class="li" x="700" y="476">· 최종 이미지는 JRE만(Node·JDK 없음)</text>
+</svg>

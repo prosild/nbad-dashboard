@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="380" viewBox="0 0 1100 380" font-family="'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif">
+  <!-- README '검증' 단계 그림 원본. 고친 뒤 verification.png를 Chrome 헤드리스 스크린샷(창 1100x380, 배율 2)으로 다시 만든다. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .card { fill: #ffffff; stroke: #94a3b8; stroke-width: 1.5; }
+      .head { stroke: none; }
+      .ht { font-size: 16px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+      .when { font-size: 12.5px; fill: #0f172a; text-anchor: middle; font-weight: 700; }
+      .tool { font-size: 12.5px; fill: #475569; text-anchor: middle; font-family: Consolas, 'Courier New', monospace; }
+      .li { font-size: 13px; fill: #1e293b; text-anchor: middle; }
+      .edge { fill: none; stroke: #475569; stroke-width: 1.8; marker-end: url(#arrow); }
+      .foot { font-size: 13.5px; fill: #334155; }
+    </style>
+  </defs>
+  <rect width="1100" height="380" fill="#ffffff"/>
+
+  <!-- 1 -->
+  <rect class="card" x="13" y="20" width="240" height="270" rx="10"/>
+  <path class="head" d="M13,30 a10,10 0 0,1 10,-10 h220 a10,10 0 0,1 10,10 v34 h-240 z" fill="#475569"/>
+  <text class="ht" x="133" y="49">1 단위·통합·정적 시험</text>
+  <rect x="33" y="76" width="200" height="26" rx="13" fill="#f1f5f9"/>
+  <text class="when" x="133" y="94">모든 작업</text>
+  <text class="tool" x="133" y="128">Gradle check · Vitest</text>
+  <text class="li" x="133" y="160">Spring Boot 통합 시험</text>
+  <text class="li" x="133" y="184">MyBatis 매퍼 시험</text>
+  <text class="li" x="133" y="208">보안 설정 정적 검사</text>
+  <text class="li" x="133" y="232">XSS·숨은 문자·내보내기 방어</text>
+  <text class="li" x="133" y="256">화면 용어 회귀·접근성 이름</text>
+
+  <!-- 2 -->
+  <rect class="card" x="291" y="20" width="240" height="270" rx="10"/>
+  <path class="head" d="M291,30 a10,10 0 0,1 10,-10 h220 a10,10 0 0,1 10,10 v34 h-240 z" fill="#dc2626"/>
+  <text class="ht" x="411" y="49">2 E2E 보안 스캔</text>
+  <rect x="301" y="76" width="220" height="26" rx="13" fill="#fef2f2"/>
+  <text class="when" x="411" y="94">DB 구조·인증·권한·배포 설정</text>
+  <text class="tool" x="411" y="128">scripts/security-scan.ps1</text>
+  <text class="li" x="411" y="160">PostgreSQL 17 + WAF 스택</text>
+  <text class="li" x="411" y="184">역할별 권한·IDOR·마스킹</text>
+  <text class="li" x="411" y="208">WAF 차단·전달 헤더 위조</text>
+  <text class="li" x="411" y="232">OWASP ZAP 베이스라인</text>
+  <text class="li" x="411" y="256">Trivy·CycloneDX SBOM</text>
+
+  <!-- 3 -->
+  <rect class="card" x="569" y="20" width="240" height="270" rx="10"/>
+  <path class="head" d="M569,30 a10,10 0 0,1 10,-10 h220 a10,10 0 0,1 10,10 v34 h-240 z" fill="#ea580c"/>
+  <text class="ht" x="689" y="49">3 공개 스택 리허설</text>
+  <rect x="589" y="76" width="200" height="26" rx="13" fill="#fff7ed"/>
+  <text class="when" x="689" y="94">공개 스택 구성 변경</text>
+  <text class="tool" x="689" y="128">scripts/portfolio-verify.ps1</text>
+  <text class="li" x="689" y="160">공개 데모와 같은 구성</text>
+  <text class="li" x="689" y="184">스냅샷 복원</text>
+  <text class="li" x="689" y="208">E2E·ZAP 실행</text>
+  <text class="li" x="689" y="232">끝나면 지움</text>
+
+  <!-- 4 -->
+  <rect class="card" x="847" y="20" width="240" height="270" rx="10"/>
+  <path class="head" d="M847,30 a10,10 0 0,1 10,-10 h220 a10,10 0 0,1 10,10 v34 h-240 z" fill="#16a34a"/>
+  <text class="ht" x="967" y="49">4 공개 주소 확인</text>
+  <rect x="867" y="76" width="200" height="26" rx="13" fill="#f0fdf4"/>
+  <text class="when" x="967" y="94">배포 뒤</text>
+  <text class="li" x="967" y="160">공개 주소에서 로그인</text>
+  <text class="li" x="967" y="184">마스킹</text>
+  <text class="li" x="967" y="208">숨김 캡처 403</text>
+  <text class="li" x="967" y="232">속도 제한 등</text>
+
+  <path class="edge" d="M253,155 L289,155"/>
+  <path class="edge" d="M531,155 L567,155"/>
+  <path class="edge" d="M809,155 L845,155"/>
+
+  <rect x="13" y="310" width="1074" height="52" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text class="foot" x="33" y="341">화면·문서 작업은 1과 화면 직접 확인으로 끝낸다. 처음에는 모든 작업에 같은 무거운 검증을 돌렸고, 2026-11-22부터 위험에 따라 나눴다.</text>
+</svg>
